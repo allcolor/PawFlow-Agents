@@ -1,0 +1,1 @@
+{"name": "Sub-Flow: Uppercase", "tasks": {"upper": {"type": "replace_text", "parameters": {"search_pattern": ".*", "replacement": "PROCESSED", "regex": true}}}, "relations": []}

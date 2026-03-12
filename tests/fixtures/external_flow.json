@@ -1,0 +1,29 @@
+{
+  "id": "external_etl_flow",
+  "name": "External ETL Flow",
+  "version": "2.0.0",
+  "description": "An externally authored ETL flow for import",
+  "author": "External Team",
+  "tasks": {
+    "read_csv": {
+      "type": "getFile",
+      "parameters": {"path": "./data", "pattern": "*.csv"}
+    },
+    "to_json": {
+      "type": "convertCSVToJSON",
+      "parameters": {}
+    },
+    "write_out": {
+      "type": "putFile",
+      "parameters": {"output_directory": "./output"}
+    }
+  },
+  "relations": [
+    {"from": "read_csv", "to": "to_json", "type": "success"},
+    {"from": "to_json", "to": "write_out", "type": "success"}
+  ],
+  "entries": ["read_csv"],
+  "exits": ["write_out"],
+  "variables": {},
+  "groups": {}
+}

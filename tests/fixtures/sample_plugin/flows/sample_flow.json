@@ -1,0 +1,29 @@
+{
+  "id": "plugin_sample_flow",
+  "name": "Sample Plugin Flow",
+  "version": "1.0.0",
+  "description": "A sample flow provided by the sample plugin",
+  "author": "Test Author",
+  "tasks": {
+    "generate": {
+      "type": "generateFlowFile",
+      "parameters": {"content": "hello world", "count": "1"}
+    },
+    "upper": {
+      "type": "uppercase",
+      "parameters": {}
+    },
+    "log_result": {
+      "type": "log",
+      "parameters": {"message": "Uppercased!", "level": "INFO"}
+    }
+  },
+  "relations": [
+    {"from": "generate", "to": "upper", "type": "success"},
+    {"from": "upper", "to": "log_result", "type": "success"}
+  ],
+  "entries": ["generate"],
+  "exits": ["log_result"],
+  "variables": {},
+  "groups": {}
+}

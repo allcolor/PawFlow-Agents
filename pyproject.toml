@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfi2"
+version = "1.0.0"
+description = "Apache NiFi-inspired data workflow framework in Python"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [
+    {name = "PyFi2 Team"},
+]
+keywords = ["dataflow", "workflow", "etl", "nifi", "pipeline"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Framework :: FastAPI",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+]
+
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.0.0",
+    "streamlit>=1.28.0",
+    "streamlit-flow-component>=0.5.0",
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "pyyaml>=6.0",
+    "sqlalchemy>=2.0.0",
+    "requests>=2.31.0",
+    "httpx>=0.25.0",
+    "pyjwt>=2.8.0",
+    "cryptography>=41.0.0",
+    "GitPython>=3.1.0",
+    "python-dateutil>=2.8.0",
+    "jinja2>=3.1.0",
+    "apscheduler>=3.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-cov>=4.1.0",
+    "pytest-asyncio>=0.21.0",
+    "mypy>=1.7.0",
+    "black>=23.0.0",
+    "isort>=5.12.0",
+]
+docs = [
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.0.0",
+]
+sftp = ["paramiko>=3.3.0"]
+s3 = ["boto3>=1.34.0"]
+kafka = ["kafka-python>=2.0.0"]
+mqtt = ["paho-mqtt>=1.6.0"]
+avro = ["fastavro>=1.8.0"]
+parquet = ["pyarrow>=13.0.0"]
+gcs = ["google-cloud-storage>=2.10.0"]
+azure = ["azure-storage-blob>=12.17.0"]
+postgres = ["psycopg2-binary>=2.9.0"]
+mysql = ["pymysql>=1.1.0"]
+all = [
+    "pyfi2[sftp,s3,kafka,mqtt,avro,parquet,gcs,azure,postgres,mysql]",
+]
+
+[project.scripts]
+pyfi2 = "cli:main"
+
+[project.urls]
+Homepage = "https://github.com/pyfi2/pyfi2"
+Documentation = "https://github.com/pyfi2/pyfi2/tree/main/docs"
+Repository = "https://github.com/pyfi2/pyfi2"
+Issues = "https://github.com/pyfi2/pyfi2/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+filterwarnings = [
+    "ignore::pytest.PytestReturnNotNoneWarning",
+]
+
+[tool.black]
+line-length = 100
+target-version = ["py310", "py311", "py312"]
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[tool.setuptools.packages.find]
+include = ["core*", "engine*", "tasks*", "services*", "api*", "gui*"]
+exclude = ["tests*"]

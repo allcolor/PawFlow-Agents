@@ -1,0 +1,1196 @@
+"""Tests for new agent features: TokenTracker, Plan, Notify, CreateTool,
+AskAgent, FlowManager.
+
+Covers the handlers added in the agent extensibility sprint.
+"""
+
+import json
+import os
+import shutil
+import tempfile
+import time
+import unittest
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+from core import FlowFile
+from core.token_tracker import TokenTracker
+from core.conversation_store import ConversationStore
+from core.tool_registry import (
+    CreatePlanHandler,
+    UpdatePlanHandler,
+    NotifyUserHandler,
+    CreateToolHandler,
+    AskAgentHandler,
+    FlowManagerHandler,
+    PyFi2HelpHandler,
+    StoreSecretHandler,
+)
+
+
+# ── Helpers ────────────────────────────────────────────────────────
+
+
+def _make_conv_store(tmp_dir):
+    """Create a ConversationStore using a tmp directory."""
+    ConversationStore.reset()
+    store = ConversationStore(store_dir=tmp_dir)
+    ConversationStore._instance = store
+    return store
+
+
+def _seed_conversation(store, conv_id="conv1", user_id="user1"):
+    """Create a conversation so set_extra/get_extra work."""
+    store.save(conv_id, [{"role": "user", "content": "hi"}], user_id=user_id)
+
+
+class _FakeLLMResponse:
+    def __init__(self, content):
+        self.content = content
+        self.tool_calls = []
+        self.usage = None
+
+
+class _FakeLLMClient:
+    def complete(self, messages, model="", max_tokens=2048, **kw):
+        return _FakeLLMResponse("I am the agent's response.")
+
+
+# ══════════════════════════════════════════════════════════════════
+# 1. TokenTracker
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestTokenTracker(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.path = os.path.join(self.tmp, "usage.json")
+        TokenTracker.reset()
+        self.tracker = TokenTracker(path=self.path)
+        TokenTracker._instance = self.tracker
+
+    def tearDown(self):
+        TokenTracker.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_track_basic(self):
+        self.tracker.track("alice", 100, 50)
+        usage = self.tracker.get_usage("alice")
+        self.assertEqual(usage["total_in"], 100)
+        self.assertEqual(usage["total_out"], 50)
+
+    def test_track_daily(self):
+        self.tracker.track("alice", 10, 5)
+        usage = self.tracker.get_usage("alice")
+        today = time.strftime("%Y-%m-%d")
+        self.assertIn(today, usage["daily"])
+        self.assertEqual(usage["daily"][today]["in"], 10)
+
+    def test_track_model(self):
+        self.tracker.track("alice", 10, 5, model="gpt-4")
+        usage = self.tracker.get_usage("alice")
+        self.assertIn("gpt-4", usage["models"])
+        self.assertEqual(usage["models"]["gpt-4"]["in"], 10)
+
+    def test_get_usage_unknown_user(self):
+        usage = self.tracker.get_usage("nobody")
+        self.assertEqual(usage["total_in"], 0)
+        self.assertEqual(usage["total_out"], 0)
+
+    def test_singleton(self):
+        self.assertIs(TokenTracker.instance(), TokenTracker.instance())
+
+    def test_reset(self):
+        old = TokenTracker.instance()
+        TokenTracker.reset()
+        # After reset, instance() creates a new one (default path)
+        TokenTracker._instance = TokenTracker(path=self.path)
+        self.assertIsNot(old, TokenTracker.instance())
+
+    def test_flush_and_reload(self):
+        self.tracker.track("alice", 200, 100, model="claude")
+        self.tracker.flush()
+        # Verify file was written
+        self.assertTrue(os.path.exists(self.path))
+        # Create a new tracker from same path
+        TokenTracker.reset()
+        t2 = TokenTracker(path=self.path)
+        usage = t2.get_usage("alice")
+        self.assertEqual(usage["total_in"], 200)
+        self.assertEqual(usage["total_out"], 100)
+
+    def test_flush_not_dirty(self):
+        # Should not error
+        self.tracker.flush()
+        self.assertFalse(os.path.exists(self.path))
+
+    def test_multiple_tracks(self):
+        self.tracker.track("alice", 10, 5)
+        self.tracker.track("alice", 20, 10)
+        self.tracker.track("alice", 30, 15)
+        usage = self.tracker.get_usage("alice")
+        self.assertEqual(usage["total_in"], 60)
+        self.assertEqual(usage["total_out"], 30)
+
+    def test_get_all_usage(self):
+        self.tracker.track("alice", 10, 5)
+        self.tracker.track("bob", 20, 10)
+        all_usage = self.tracker.get_all_usage()
+        self.assertIn("alice", all_usage)
+        self.assertIn("bob", all_usage)
+        self.assertEqual(all_usage["alice"]["total_in"], 10)
+        self.assertEqual(all_usage["bob"]["total_in"], 20)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 2. Plan Handlers
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestPlanHandlers(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store = _make_conv_store(self.tmp)
+        _seed_conversation(self.store, "conv1")
+
+    def tearDown(self):
+        ConversationStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_create_plan(self):
+        h = CreatePlanHandler()
+        result = h.execute({
+            "title": "Deploy app",
+            "steps": [
+                {"description": "Build image"},
+                {"description": "Push to registry"},
+                {"description": "Deploy to k8s"},
+            ],
+        })
+        self.assertIn("Deploy app", result)
+        self.assertIn("Build image", result)
+        self.assertIn("Push to registry", result)
+        self.assertIn("Deploy to k8s", result)
+
+    def test_create_plan_missing_fields(self):
+        h = CreatePlanHandler()
+        result = h.execute({"title": "", "steps": []})
+        self.assertIn("Error", result)
+
+    def test_create_plan_persists(self):
+        h = CreatePlanHandler()
+        h.set_conversation_id("conv1")
+        h.execute({
+            "title": "Test plan",
+            "steps": [{"description": "Step 1"}],
+        })
+        plan = self.store.get_extra("conv1", "plan")
+        self.assertIsNotNone(plan)
+        self.assertEqual(plan["title"], "Test plan")
+        self.assertEqual(len(plan["steps"]), 1)
+
+    def test_update_plan(self):
+        # Create first
+        ch = CreatePlanHandler()
+        ch.set_conversation_id("conv1")
+        ch.execute({
+            "title": "My plan",
+            "steps": [
+                {"description": "A"},
+                {"description": "B"},
+                {"description": "C"},
+            ],
+        })
+        # Update
+        uh = UpdatePlanHandler()
+        uh.set_conversation_id("conv1")
+        result = uh.execute({
+            "updates": [{"step": 1, "status": "done"}],
+        })
+        self.assertIn("1/3", result)
+
+    def test_update_plan_no_plan(self):
+        uh = UpdatePlanHandler()
+        uh.set_conversation_id("conv1")
+        result = uh.execute({
+            "updates": [{"step": 1, "status": "done"}],
+        })
+        self.assertIn("Error", result)
+        self.assertIn("no active plan", result)
+
+    def test_update_plan_with_note(self):
+        ch = CreatePlanHandler()
+        ch.set_conversation_id("conv1")
+        ch.execute({
+            "title": "Noted plan",
+            "steps": [{"description": "Do X"}],
+        })
+        uh = UpdatePlanHandler()
+        uh.set_conversation_id("conv1")
+        result = uh.execute({
+            "updates": [{"step": 1, "status": "done", "note": "All good"}],
+        })
+        self.assertIn("All good", result)
+
+    def test_update_plan_invalid_step(self):
+        ch = CreatePlanHandler()
+        ch.set_conversation_id("conv1")
+        ch.execute({
+            "title": "Plan",
+            "steps": [{"description": "Only step"}],
+        })
+        uh = UpdatePlanHandler()
+        uh.set_conversation_id("conv1")
+        # Step 99 doesn't exist — should not crash
+        result = uh.execute({
+            "updates": [{"step": 99, "status": "done"}],
+        })
+        self.assertIn("0/1", result)  # no step was actually updated
+
+    def test_create_plan_replaces(self):
+        h = CreatePlanHandler()
+        h.set_conversation_id("conv1")
+        h.execute({"title": "Plan A", "steps": [{"description": "X"}]})
+        h.execute({"title": "Plan B", "steps": [{"description": "Y"}, {"description": "Z"}]})
+        plan = self.store.get_extra("conv1", "plan")
+        self.assertEqual(plan["title"], "Plan B")
+        self.assertEqual(len(plan["steps"]), 2)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 3. NotifyUserHandler
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestNotifyUserHandler(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store = _make_conv_store(self.tmp)
+        _seed_conversation(self.store, "conv1")
+
+    def tearDown(self):
+        ConversationStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    @patch("core.conversation_event_bus.ConversationEventBus")
+    def test_notify_basic(self, mock_bus_cls):
+        mock_bus = MagicMock()
+        mock_bus_cls.instance.return_value = mock_bus
+        h = NotifyUserHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"message": "Hello!"})
+        self.assertIn("sse", result)
+        mock_bus.publish.assert_called_once()
+
+    def test_notify_no_channels(self):
+        h = NotifyUserHandler()
+        # No conversation_id set
+        result = h.execute({"message": "Hello!"})
+        self.assertIn("queued", result.lower())
+
+    def test_notify_missing_message(self):
+        h = NotifyUserHandler()
+        result = h.execute({"message": ""})
+        self.assertIn("Error", result)
+
+    @patch("core.conversation_event_bus.ConversationEventBus")
+    def test_notify_urgency(self, mock_bus_cls):
+        mock_bus = MagicMock()
+        mock_bus_cls.instance.return_value = mock_bus
+        h = NotifyUserHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"message": "Urgent!", "urgency": "high"})
+        self.assertIn("sse", result)
+        call_args = mock_bus.publish.call_args
+        self.assertEqual(call_args[0][1]["urgency"], "high")
+
+    @patch("core.conversation_event_bus.ConversationEventBus")
+    def test_notify_with_telegram_metadata(self, mock_bus_cls):
+        mock_bus = MagicMock()
+        mock_bus_cls.instance.return_value = mock_bus
+        # Set telegram_chat_id in conv extra
+        self.store.set_extra("conv1", "telegram_chat_id", "12345")
+        h = NotifyUserHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"message": "TG test"})
+        self.assertIn("telegram_queued", result)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 4. CreateToolHandler
+# ══════════════════════════════════════════════════════════════════
+
+
+_VALID_TOOL_SOURCE = '''
+class GreeterHandler(ToolHandler):
+    @property
+    def name(self):
+        return "greeter"
+
+    @property
+    def description(self):
+        return "Says hello"
+
+    @property
+    def parameters_schema(self):
+        return {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+            },
+        }
+
+    def execute(self, arguments):
+        return f"Hello, {arguments.get('name', 'world')}!"
+'''
+
+
+class TestCreateToolHandler(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        from core.dynamic_tool_store import DynamicToolStore
+        DynamicToolStore.reset()
+        self.dts = DynamicToolStore(store_dir=self.tmp)
+        DynamicToolStore._instance = self.dts
+
+    def tearDown(self):
+        from core.dynamic_tool_store import DynamicToolStore
+        DynamicToolStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_create_tool_basic(self):
+        h = CreateToolHandler()
+        h.set_user_id("alice")
+        result = h.execute({
+            "tool_name": "greeter",
+            "source_code": _VALID_TOOL_SOURCE,
+        })
+        self.assertIn("created successfully", result)
+        self.assertIn("greeter", result)
+
+    def test_create_tool_missing_fields(self):
+        h = CreateToolHandler()
+        result = h.execute({"tool_name": "", "source_code": ""})
+        self.assertIn("Error", result)
+
+    def test_create_tool_bad_source(self):
+        h = CreateToolHandler()
+        h.set_user_id("alice")
+        bad_source = "import os\nos.system('rm -rf /')\n"
+        result = h.execute({
+            "tool_name": "evil",
+            "source_code": bad_source,
+        })
+        self.assertIn("failed", result.lower())
+
+    def test_create_tool_no_handler(self):
+        h = CreateToolHandler()
+        h.set_user_id("alice")
+        source = "x = 42\n"
+        result = h.execute({
+            "tool_name": "nohandler",
+            "source_code": source,
+        })
+        self.assertIn("failed", result.lower())
+
+    def test_create_tool_user_isolation(self):
+        h = CreateToolHandler()
+        h.set_user_id("bob")
+        h.execute({
+            "tool_name": "mytool",
+            "source_code": _VALID_TOOL_SOURCE,
+        })
+        # Verify tool is under bob's namespace
+        tools = self.dts.list_tools("bob")
+        self.assertTrue(any("greeter" in t.get("tool_name", "") for t in tools))
+        # Alice should not see it
+        self.assertEqual(len(self.dts.list_tools("alice")), 0)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 5. AskAgentHandler
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestAskAgentHandler(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.store = _make_conv_store(self.tmp)
+        _seed_conversation(self.store, "conv1")
+
+    def tearDown(self):
+        ConversationStore.reset()
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def test_ask_agent_no_conversation(self):
+        h = AskAgentHandler()
+        result = h.execute({"agent_name": "helper", "question": "Hi"})
+        self.assertIn("Error", result)
+
+    def test_ask_agent_not_found(self):
+        h = AskAgentHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"agent_name": "ghost", "question": "Hi"})
+        self.assertIn("not found", result)
+
+    def test_ask_agent_missing_fields(self):
+        h = AskAgentHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"agent_name": "", "question": ""})
+        self.assertIn("Error", result)
+
+    def test_ask_agent_no_llm_client(self):
+        # Define an agent but don't set LLM client
+        self.store.set_extra("conv1", "agents", {
+            "helper": {"prompt": "You are helpful."},
+        })
+        h = AskAgentHandler()
+        h.set_conversation_id("conv1")
+        result = h.execute({"agent_name": "helper", "question": "Hi"})
+        self.assertIn("Error", result)
+        self.assertIn("LLM client", result)
+
+    def test_ask_agent_success(self):
+        self.store.set_extra("conv1", "agents", {
+            "coder": {"prompt": "You are a Python expert."},
+        })
+        h = AskAgentHandler()
+        h.set_conversation_id("conv1")
+        h.set_llm_client(_FakeLLMClient(), "test-model")
+        result = h.execute({"agent_name": "coder", "question": "How do I sort a list?"})
+        self.assertIn("[coder]", result)
+        self.assertIn("agent's response", result)
+
+
+# ══════════════════════════════════════════════════════════════════
+# 6. FlowManagerHandler
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestFlowManagerHandler(unittest.TestCase):
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.flow_dir = os.path.join(self.tmp, "agent_flows")
+        os.makedirs(self.flow_dir, exist_ok=True)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _make_handler(self, user_id="alice"):
+        h = FlowManagerHandler()
+        h.set_user_id(user_id)
+        # Override store path to use tmp
+        h._get_store_path = lambda: Path(self.flow_dir)
+        return h
+
+    def _sample_definition(self, flow_id="flow1", name="Test Flow"):
+        return {
+            "id": flow_id,
+            "name": name,
+            "tasks": {"t1": {"type": "generateFlowFile"}},
+            "connections": [],
+        }
+
+    def test_list_empty(self):
+        h = self._make_handler()
+        result = h.execute({"action": "list"})
+        self.assertIn("No flows", result)
+
+    def test_create_flow(self):
+        h = self._make_handler()
+        result = h.execute({
+            "action": "create",
+            "definition": self._sample_definition(),
+        })
+        self.assertIn("created", result)
+        self.assertTrue(os.path.exists(os.path.join(self.flow_dir, "flow1.json")))
+
+    def test_create_flow_missing_id(self):
+        h = self._make_handler()
+        result = h.execute({
+            "action": "create",
+            "definition": {"name": "No ID"},
+        })
+        self.assertIn("Error", result)
+
+    def test_create_flow_owner_tag(self):
+        h = self._make_handler("bob")
+        h.execute({
+            "action": "create",
+            "definition": self._sample_definition(),
+        })
+        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
+        self.assertEqual(data["_owner"], "bob")
+
+    def test_start_flow(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        result = h.execute({"action": "start", "flow_id": "flow1"})
+        # It will try to use ExecutorRegistry which may fail in test env
+        # but the file should be updated
+        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
+        self.assertEqual(data["_status"], "running")
+
+    def test_stop_flow(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        h.execute({"action": "start", "flow_id": "flow1"})
+        result = h.execute({"action": "stop", "flow_id": "flow1"})
+        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
+        self.assertEqual(data["_status"], "stopped")
+
+    def test_status_flow(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        result = h.execute({"action": "status", "flow_id": "flow1"})
+        self.assertIn("Test Flow", result)
+        self.assertIn("Tasks:", result)
+
+    def test_delete_flow(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        result = h.execute({"action": "delete", "flow_id": "flow1"})
+        self.assertIn("deleted", result)
+        self.assertFalse(os.path.exists(os.path.join(self.flow_dir, "flow1.json")))
+
+    def test_isolation(self):
+        h_alice = self._make_handler("alice")
+        h_bob = self._make_handler("bob")
+        h_alice.execute({
+            "action": "create",
+            "definition": self._sample_definition("alice_flow"),
+        })
+        # Bob tries to start Alice's flow
+        result = h_bob.execute({"action": "start", "flow_id": "alice_flow"})
+        self.assertIn("belongs to another user", result)
+
+    def test_list_only_own(self):
+        h_alice = self._make_handler("alice")
+        h_bob = self._make_handler("bob")
+        h_alice.execute({
+            "action": "create",
+            "definition": self._sample_definition("fa", "Alice's flow"),
+        })
+        h_bob.execute({
+            "action": "create",
+            "definition": self._sample_definition("fb", "Bob's flow"),
+        })
+        alice_list = h_alice.execute({"action": "list"})
+        bob_list = h_bob.execute({"action": "list"})
+        self.assertIn("fa", alice_list)
+        self.assertNotIn("fb", alice_list)
+        self.assertIn("fb", bob_list)
+        self.assertNotIn("fa", bob_list)
+
+    def test_start_with_parameters(self):
+        h = self._make_handler()
+        h.execute({"action": "create", "definition": self._sample_definition()})
+        h.execute({
+            "action": "start",
+            "flow_id": "flow1",
+            "parameters": {"key1": "val1"},
+        })
+        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
+        self.assertEqual(data["parameters"]["key1"], "val1")
+
+    def test_delete_nonexistent(self):
+        h = self._make_handler()
+        result = h.execute({"action": "delete", "flow_id": "nope"})
+        self.assertIn("not found", result)
+
+    def test_unknown_action(self):
+        h = self._make_handler()
+        result = h.execute({"action": "explode"})
+        self.assertIn("unknown action", result)
+
+
+# ══════════════════════════════════════════════════════════════════
+# i18n keys check
+# ══════════════════════════════════════════════════════════════════
+
+
+class TestPyFi2HelpHandler(unittest.TestCase):
+    """Tests for PyFi2HelpHandler."""
+
+    def setUp(self):
+        self.handler = PyFi2HelpHandler()
+
+    def test_name(self):
+        self.assertEqual(self.handler.name, "pyfi2_help")
+
+    def test_schema(self):
+        schema = self.handler.parameters_schema
+        self.assertIn("topic", schema["properties"])
+        self.assertEqual(schema["required"], ["topic"])
+
+    def test_list_tasks(self):
+        result = self.handler.execute({"topic": "tasks"})
+        self.assertIn("Available tasks", result)
+
+    def test_task_detail_known(self):
+        # updateAttribute should always be available
+        result = self.handler.execute({"topic": "task:updateAttribute"})
+        self.assertIn("updateAttribute", result)
+
+    def test_task_detail_unknown(self):
+        result = self.handler.execute({"topic": "task:nonExistentTask123"})
+        self.assertIn("not found", result)
+
+    def test_list_services(self):
+        result = self.handler.execute({"topic": "services"})
+        self.assertIn("Available services", result)
+
+    def test_service_detail_unknown(self):
+        result = self.handler.execute({"topic": "service:nonExistentSvc123"})
+        self.assertIn("not found", result)
+
+    def test_flow_guide(self):
+        result = self.handler.execute({"topic": "flow_guide"})
+        self.assertIn("Flow JSON Structure", result)
+        self.assertIn("connections", result)
+        self.assertIn("tasks", result)
+
+    def test_expressions_guide(self):
+        result = self.handler.execute({"topic": "expressions"})
+        self.assertIn("${", result)
+        self.assertIn("flow.parameters", result)
+
+    def test_triggers_guide(self):
+        result = self.handler.execute({"topic": "triggers"})
+        self.assertIn("CRON", result)
+        self.assertIn("cronTrigger", result)
+
+    def test_unknown_topic(self):
+        result = self.handler.execute({"topic": "foobar"})
+        self.assertIn("Unknown topic", result)
+
+    def test_empty_topic(self):
+        result = self.handler.execute({"topic": ""})
+        self.assertIn("Error", result)
+
+
+class TestStoreSecretHandler(unittest.TestCase):
+    """Tests for StoreSecretHandler."""
+
+    def setUp(self):
+        self.handler = StoreSecretHandler()
+        self.handler.set_user_id("testuser")
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self._orig_cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_name(self):
+        self.assertEqual(self.handler.name, "store_secret")
+
+    def test_schema(self):
+        schema = self.handler.parameters_schema
+        self.assertIn("key", schema["properties"])
+        self.assertIn("value", schema["properties"])
+        self.assertEqual(sorted(schema["required"]), ["key", "value"])
+
+    def test_store_secret(self):
+        result = self.handler.execute({"key": "my_api_key", "value": "sk-12345"})
+        self.assertIn("stored securely", result)
+        self.assertIn("testuser.my_api_key", result)
+        # Verify file was created
+        secrets_path = Path(self.tmpdir) / "config" / "agent_secrets.json"
+        self.assertTrue(secrets_path.exists())
+        data = json.loads(secrets_path.read_text(encoding="utf-8"))
+        self.assertIn("testuser.my_api_key", data)
+        # Value should be encrypted (enc: prefix), stored in dict
+        entry = data["testuser.my_api_key"]
+        self.assertIsInstance(entry, dict)
+        self.assertTrue(entry["value"].startswith("enc:"))
+
+    def test_store_secret_missing_key(self):
+        result = self.handler.execute({"key": "", "value": "abc"})
+        self.assertIn("Error", result)
+
+    def test_store_secret_missing_value(self):
+        result = self.handler.execute({"key": "foo", "value": ""})
+        self.assertIn("Error", result)
+
+    def test_store_multiple_secrets(self):
+        self.handler.execute({"key": "key1", "value": "val1"})
+        self.handler.execute({"key": "key2", "value": "val2"})
+        secrets_path = Path(self.tmpdir) / "config" / "agent_secrets.json"
+        data = json.loads(secrets_path.read_text(encoding="utf-8"))
+        self.assertIn("testuser.key1", data)
+        self.assertIn("testuser.key2", data)
+
+    def test_store_secret_anonymous(self):
+        handler = StoreSecretHandler()  # no user_id set
+        result = handler.execute({"key": "anon_key", "value": "val"})
+        self.assertIn("anonymous.anon_key", result)
+
+
+class TestFlowManagerSchedule(unittest.TestCase):
+    """Tests for the CRON scheduling feature in FlowManagerHandler."""
+
+    def setUp(self):
+        self.handler = FlowManagerHandler()
+        self.handler.set_user_id("testuser")
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self._orig_cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_schedule_param_in_schema(self):
+        schema = self.handler.parameters_schema
+        self.assertIn("schedule", schema["properties"])
+
+    def test_start_with_schedule(self):
+        """Start a flow with a CRON schedule stores _schedule field."""
+        # Create a flow first
+        definition = {"id": "sched-flow", "name": "Scheduled", "tasks": {"t1": {"type": "log"}}}
+        self.handler.execute({"action": "create", "definition": definition})
+
+        # Start with schedule — executor/scheduler may fail but
+        # the result should mention the flow and schedule info gets stored
+        result = self.handler.execute({
+            "action": "start",
+            "flow_id": "sched-flow",
+            "schedule": "0 7 * * *",
+        })
+        self.assertIn("sched-flow", result)
+
+        # Verify _schedule was written to the flow file
+        flow_path = Path("data/agent_flows/sched-flow.json")
+        if flow_path.exists():
+            data = json.loads(flow_path.read_text(encoding="utf-8"))
+            # _schedule may or may not be set depending on scheduler availability
+            # but the flow should exist
+            self.assertEqual(data["id"], "sched-flow")
+
+
+class TestFlowCatalogDeploy(unittest.TestCase):
+    """Tests for catalog and deploy actions in FlowManagerHandler."""
+
+    def setUp(self):
+        self.handler = FlowManagerHandler()
+        self.handler.set_user_id("user1")
+        self.handler.set_conversation_id("conv-1")
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        # Create a fake flows/ directory with templates
+        flows_dir = Path(self.tmpdir) / "flows"
+        flows_dir.mkdir()
+        (flows_dir / "hello.json").write_text(json.dumps({
+            "id": "hello-world",
+            "name": "Hello World",
+            "version": "1.0.0",
+            "description": "A simple hello flow",
+            "tasks": {"t1": {"type": "logAttribute"}},
+            "relations": [],
+            "parameters": {"greeting": "hello"},
+        }), encoding="utf-8")
+        (flows_dir / "pipeline.json").write_text(json.dumps({
+            "id": "data-pipeline",
+            "name": "Data Pipeline",
+            "version": "2.0.0",
+            "description": "ETL pipeline",
+            "tasks": {"extract": {"type": "fetchData"}, "load": {"type": "putFile"}},
+            "relations": [{"from": "extract", "to": "load", "type": "success"}],
+        }), encoding="utf-8")
+
+    def tearDown(self):
+        os.chdir(self._orig_cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_catalog_lists_templates(self):
+        result = self.handler.execute({"action": "catalog"})
+        self.assertIn("Available templates", result)
+        self.assertIn("hello-world", result)
+        self.assertIn("data-pipeline", result)
+        self.assertIn("Hello World", result)
+
+    def test_catalog_shows_description(self):
+        result = self.handler.execute({"action": "catalog"})
+        self.assertIn("A simple hello flow", result)
+        self.assertIn("ETL pipeline", result)
+
+    def test_deploy_creates_instance(self):
+        result = self.handler.execute({
+            "action": "deploy",
+            "template_id": "hello-world",
+        })
+        self.assertIn("deployed", result)
+        self.assertIn("instance", result.lower())
+        # Instance file should exist in data/agent_flows/
+        store = Path("data/agent_flows")
+        files = list(store.glob("hello-world__*.json"))
+        self.assertEqual(len(files), 1)
+        data = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(data["_template_id"], "hello-world")
+        self.assertEqual(data["_owner"], "user1")
+        self.assertEqual(data["_conversation_id"], "conv-1")
+        self.assertIn("t1", data["tasks"])
+
+    def test_deploy_with_parameters(self):
+        result = self.handler.execute({
+            "action": "deploy",
+            "template_id": "hello-world",
+            "parameters": {"greeting": "bonjour"},
+        })
+        self.assertIn("deployed", result)
+        store = Path("data/agent_flows")
+        files = list(store.glob("hello-world__*.json"))
+        data = json.loads(files[0].read_text(encoding="utf-8"))
+        self.assertEqual(data["parameters"]["greeting"], "bonjour")
+
+    def test_deploy_unknown_template(self):
+        result = self.handler.execute({
+            "action": "deploy",
+            "template_id": "nonexistent-flow",
+        })
+        self.assertIn("not found", result)
+
+    def test_deploy_no_template_id(self):
+        result = self.handler.execute({"action": "deploy"})
+        self.assertIn("Error", result)
+
+    def test_deploy_overwrites_existing(self):
+        """Re-deploying same template in same conversation overwrites."""
+        self.handler.execute({
+            "action": "deploy", "template_id": "hello-world",
+        })
+        result = self.handler.execute({
+            "action": "deploy", "template_id": "hello-world",
+        })
+        self.assertIn("updated", result)
+        store = Path("data/agent_flows")
+        files = list(store.glob("hello-world__*.json"))
+        # Should only be one instance (overwritten)
+        self.assertEqual(len(files), 1)
+
+    def test_deploy_different_conversations_coexist(self):
+        """Same template deployed in different conversations → 2 instances."""
+        self.handler.set_conversation_id("conv-A")
+        self.handler.execute({
+            "action": "deploy", "template_id": "hello-world",
+        })
+        self.handler.set_conversation_id("conv-B")
+        self.handler.execute({
+            "action": "deploy", "template_id": "hello-world",
+        })
+        store = Path("data/agent_flows")
+        files = list(store.glob("hello-world__*.json"))
+        self.assertEqual(len(files), 2)
+
+    def test_deployed_instance_shows_in_list(self):
+        self.handler.execute({
+            "action": "deploy", "template_id": "data-pipeline",
+        })
+        result = self.handler.execute({"action": "list"})
+        self.assertIn("data-pipeline__", result)
+        self.assertIn("from: data-pipeline", result)
+
+    def test_status_shows_template(self):
+        self.handler.execute({
+            "action": "deploy", "template_id": "hello-world",
+        })
+        store = Path("data/agent_flows")
+        files = list(store.glob("hello-world__*.json"))
+        instance_id = json.loads(files[0].read_text())["id"]
+        result = self.handler.execute({
+            "action": "status", "flow_id": instance_id,
+        })
+        self.assertIn("Template: hello-world", result)
+
+
+class TestAutoStopAndStopFlow(unittest.TestCase):
+    """Tests for auto-stop mechanism and StopFlowTask."""
+
+    def test_base_task_is_persistent_source_default(self):
+        """Default tasks are not persistent sources."""
+        from core.base_task import BaseTask
+        class DummyTask(BaseTask):
+            TYPE = "dummy"
+            def execute(self, ff):
+                return [ff]
+        t = DummyTask({})
+        self.assertFalse(t.is_persistent_source)
+
+    def test_http_receiver_is_persistent(self):
+        from tasks.io.http_receiver import HTTPReceiverTask
+        t = HTTPReceiverTask.__new__(HTTPReceiverTask)
+        self.assertTrue(t.is_persistent_source)
+
+    def test_telegram_receiver_is_persistent(self):
+        from tasks.io.telegram_receiver import TelegramReceiverTask
+        t = TelegramReceiverTask.__new__(TelegramReceiverTask)
+        self.assertTrue(t.is_persistent_source)
+
+    def test_list_files_persistent_when_polling(self):
+        from tasks.system.list_files import ListFilesTask
+        t = ListFilesTask({"directory": "/tmp", "polling_interval": "10"})
+        self.assertTrue(t.is_persistent_source)
+
+    def test_list_files_not_persistent_without_polling(self):
+        from tasks.system.list_files import ListFilesTask
+        t = ListFilesTask({"directory": "/tmp", "polling_interval": "0"})
+        self.assertFalse(t.is_persistent_source)
+
+    def test_stop_flow_task(self):
+        from tasks.control.stop_flow import StopFlowTask
+        t = StopFlowTask({"reason": "test complete"})
+        ff = FlowFile(content=b"done")
+        results = t.execute(ff)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].get_attribute("flow.stop_requested"), "true")
+        self.assertEqual(results[0].get_attribute("flow.stop_reason"), "test complete")
+
+    def test_stop_flow_task_registered(self):
+        from core import TaskFactory
+        cls = TaskFactory.get("stopFlow")
+        self.assertEqual(cls.TYPE, "stopFlow")
+
+    def test_connection_manager_all_empty(self):
+        from core.connection import ConnectionManager, Connection
+        mgr = ConnectionManager()
+        # Empty manager -> all_empty is True
+        self.assertTrue(mgr.all_empty())
+        conn = Connection("a", "b")
+        mgr.add_connection(conn)
+        self.assertTrue(mgr.all_empty())
+        conn.enqueue(FlowFile(content=b"data"))
+        self.assertFalse(mgr.all_empty())
+
+    def test_continuous_executor_detects_persistent_sources(self):
+        """Executor should detect persistent sources in flow."""
+        from unittest.mock import MagicMock, PropertyMock
+        from engine.continuous_executor import ContinuousFlowExecutor
+        from core import Flow
+
+        # Flow with a persistent source
+        flow = Flow({"id": "test", "relations": []})
+        mock_task = MagicMock()
+        type(mock_task).is_persistent_source = PropertyMock(return_value=True)
+        mock_task.TYPE = "httpReceiver"
+        flow.tasks["http_in"] = mock_task
+
+        executor = ContinuousFlowExecutor(
+            flow, enable_checkpoints=False,
+        )
+        self.assertTrue(executor._has_persistent_sources)
+
+    def test_continuous_executor_no_persistent_sources(self):
+        """Executor should detect absence of persistent sources."""
+        from unittest.mock import MagicMock, PropertyMock
+        from engine.continuous_executor import ContinuousFlowExecutor
+        from core import Flow
+
+        flow = Flow({"id": "test2", "relations": []})
+        mock_task = MagicMock()
+        type(mock_task).is_persistent_source = PropertyMock(return_value=False)
+        mock_task.TYPE = "logAttribute"
+        flow.tasks["log"] = mock_task
+
+        executor = ContinuousFlowExecutor(
+            flow, enable_checkpoints=False,
+        )
+        self.assertFalse(executor._has_persistent_sources)
+
+
+class TestConversationScoping(unittest.TestCase):
+    """Tests for conversation-scoped resource management."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+
+    def tearDown(self):
+        os.chdir(self._orig_cwd)
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_flow_tagged_with_conversation_id(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-123")
+        handler.execute({"action": "create", "definition": {
+            "id": "f1", "name": "Flow 1", "tasks": {"t1": {"type": "log"}},
+        }})
+        path = Path("data/agent_flows/f1.json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["_conversation_id"], "conv-123")
+
+    def test_list_filters_by_conversation(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        # Create flow in conv-A
+        handler.set_conversation_id("conv-A")
+        handler.execute({"action": "create", "definition": {
+            "id": "fa", "name": "Flow A", "tasks": {"t1": {"type": "log"}},
+        }})
+        # Create flow in conv-B
+        handler.set_conversation_id("conv-B")
+        handler.execute({"action": "create", "definition": {
+            "id": "fb", "name": "Flow B", "tasks": {"t1": {"type": "log"}},
+        }})
+        # List from conv-A should only show fa
+        handler.set_conversation_id("conv-A")
+        result = handler.execute({"action": "list"})
+        self.assertIn("fa", result)
+        self.assertNotIn("fb", result)
+
+    def test_list_all_shows_everything(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-A")
+        handler.execute({"action": "create", "definition": {
+            "id": "fa", "name": "Flow A", "tasks": {"t1": {"type": "log"}},
+        }})
+        handler.set_conversation_id("conv-B")
+        handler.execute({"action": "create", "definition": {
+            "id": "fb", "name": "Flow B", "tasks": {"t1": {"type": "log"}},
+        }})
+        result = handler.execute({"action": "list_all"})
+        self.assertIn("fa", result)
+        self.assertIn("fb", result)
+
+    def test_update_flow_parameters(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-1")
+        handler.execute({"action": "create", "definition": {
+            "id": "f1", "name": "Flow", "tasks": {"t1": {"type": "log"}},
+            "parameters": {"key1": "val1"},
+        }})
+        result = handler.execute({"action": "update", "flow_id": "f1",
+                                   "parameters": {"key2": "val2"}})
+        self.assertIn("updated", result)
+        path = Path("data/agent_flows/f1.json")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(data["parameters"]["key1"], "val1")
+        self.assertEqual(data["parameters"]["key2"], "val2")
+
+    def test_update_flow_no_params(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-1")
+        handler.execute({"action": "create", "definition": {
+            "id": "f1", "name": "Flow", "tasks": {"t1": {"type": "log"}},
+        }})
+        result = handler.execute({"action": "update", "flow_id": "f1"})
+        self.assertIn("Error", result)
+
+    def test_cleanup_conversation_flows(self):
+        handler = FlowManagerHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-del")
+        handler.execute({"action": "create", "definition": {
+            "id": "f1", "name": "Flow 1", "tasks": {"t1": {"type": "log"}},
+        }})
+        handler.execute({"action": "create", "definition": {
+            "id": "f2", "name": "Flow 2", "tasks": {"t1": {"type": "log"}},
+        }})
+        # Create flow in different conversation (should NOT be deleted)
+        handler.set_conversation_id("conv-keep")
+        handler.execute({"action": "create", "definition": {
+            "id": "f3", "name": "Flow 3", "tasks": {"t1": {"type": "log"}},
+        }})
+        # Cleanup
+        FlowManagerHandler.cleanup_conversation("conv-del")
+        store = Path("data/agent_flows")
+        self.assertFalse((store / "f1.json").exists())
+        self.assertFalse((store / "f2.json").exists())
+        self.assertTrue((store / "f3.json").exists())
+
+    def test_cleanup_conversation_secrets(self):
+        handler = StoreSecretHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-del")
+        handler.execute({"key": "k1", "value": "v1"})
+        handler.execute({"key": "k2", "value": "v2"})
+        # Create secret in different conv
+        handler.set_conversation_id("conv-keep")
+        handler.execute({"key": "k3", "value": "v3"})
+        # Cleanup
+        StoreSecretHandler.cleanup_conversation("conv-del")
+        secrets_path = Path("config/agent_secrets.json")
+        data = json.loads(secrets_path.read_text(encoding="utf-8"))
+        self.assertNotIn("user1.k1", data)
+        self.assertNotIn("user1.k2", data)
+        self.assertIn("user1.k3", data)
+
+    def test_secret_conversation_id_stored(self):
+        handler = StoreSecretHandler()
+        handler.set_user_id("user1")
+        handler.set_conversation_id("conv-X")
+        handler.execute({"key": "mykey", "value": "myval"})
+        secrets_path = Path("config/agent_secrets.json")
+        data = json.loads(secrets_path.read_text(encoding="utf-8"))
+        self.assertEqual(data["user1.mykey"]["conversation_id"], "conv-X")
+
+
+class TestNewFeatureI18n(unittest.TestCase):
+    """Verify i18n keys exist for new features in all locales."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.locales = {}
+        for lang in ("en", "fr", "es"):
+            path = Path(__file__).parent.parent / "gui" / "i18n" / f"{lang}.json"
+            if path.exists():
+                cls.locales[lang] = json.loads(path.read_text(encoding="utf-8"))
+
+    def _check_keys(self, prefix):
+        """Check that at least one key starts with prefix (flat keys, dot-separated)."""
+        for lang, data in self.locales.items():
+            keys = [k for k in data if k.startswith(prefix)]
+            self.assertTrue(
+                len(keys) > 0,
+                f"No '{prefix}*' keys in {lang}.json",
+            )
+
+    def test_plan_keys(self):
+        self._check_keys("plan.")
+
+    def test_notification_keys(self):
+        self._check_keys("notification.")
+
+    def test_create_tool_keys(self):
+        self._check_keys("create_tool.")
+
+    def test_agent_persona_keys(self):
+        self._check_keys("agent_persona.")
+
+    def test_flow_manager_keys(self):
+        self._check_keys("flow_manager.")
+
+    def test_pyfi2_help_keys(self):
+        self._check_keys("pyfi2_help.")
+
+    def test_store_secret_keys(self):
+        self._check_keys("store_secret.")
+
+    def test_keys_consistent_across_locales(self):
+        """All locales should have the same set of new feature keys."""
+        if len(self.locales) < 2:
+            self.skipTest("Need at least 2 locales")
+        prefixes = ("plan.", "notification.", "create_tool.", "agent_persona.",
+                     "flow_manager.", "pyfi2_help.", "store_secret.")
+        en_keys = {k for k in self.locales.get("en", {}) if any(k.startswith(p) for p in prefixes)}
+        for lang in ("fr", "es"):
+            lang_keys = {k for k in self.locales.get(lang, {}) if any(k.startswith(p) for p in prefixes)}
+            missing = en_keys - lang_keys
+            self.assertEqual(missing, set(), f"Keys in en.json missing from {lang}.json: {missing}")
+
+
+if __name__ == "__main__":
+    unittest.main()

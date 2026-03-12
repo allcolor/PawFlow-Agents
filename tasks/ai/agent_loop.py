@@ -1,0 +1,3301 @@
+"""AgentLoop Task — Composite task implementing an LLM agent with tool-use loop.
+
+The agent receives a user message (from FlowFile content), calls the LLM with
+tool definitions, executes tool calls, feeds results back, and loops until the
+LLM produces a final text response (no more tool calls).
+
+Flow pattern: httpReceiver → agentLoop → handleHTTPResponse
+
+Config:
+    provider: "openai" or "anthropic" (default: openai)
+    api_key: API key (required)
+    base_url: API base URL (optional)
+    model: Model name (optional)
+    system_prompt: System prompt for the agent
+    temperature: Sampling temperature (default: 0.7)
+    max_tokens: Max response tokens per LLM call (default: 4096)
+    max_iterations: Max tool-use loop iterations (default: 200, safety limit)
+    tools: JSON list of tool definitions (optional, overrides builtin)
+    timeout: Request timeout in seconds (default: 120)
+    conversation_attribute: If set, store conversation history in this attribute (JSON)
+
+Output attributes:
+    agent.iterations: Number of loop iterations
+    agent.tools_called: Comma-separated list of tools called
+    agent.model: Model used
+    agent.tokens_in: Total input tokens
+    agent.tokens_out: Total output tokens
+    agent.duration_ms: Total duration
+    agent.finish_reason: Final stop reason
+"""
+
+import json
+import logging
+import threading
+import time
+from typing import Dict, Any, List, Optional
+
+from core.base_task import BaseTask
+from core import FlowFile, TaskFactory
+from core.llm_client import (
+    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
+    LLMToolCall, LLMToolResult, LLMClientError,
+)
+from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
+
+logger = logging.getLogger(__name__)
+
+
+class AgentLoopTask(BaseTask):
+    """LLM agent with tool-use loop.
+
+    Loops: user message → LLM → tool_call → execute → LLM → ... → final text.
+    """
+
+    TYPE = "agentLoop"
+    VERSION = "1.0.0"
+    NAME = "Agent Loop"
+    DESCRIPTION = "LLM agent with tool-use loop (function calling)"
+    ICON = "ai"
+
+    def __init__(self, config: Dict[str, Any]):
+        super().__init__(config)
+        self._tool_registry: Optional[ToolRegistry] = None
+        self._poller_started = False
+        self._poller_stop = threading.Event()
+        self._active_conversations: set = set()  # convs currently being processed
+        self._active_lock = threading.Lock()
+        # Track poll cooldown per conversation:
+        # conv_id -> (updated_at_when_checked, recheck_after_timestamp)
+        # Only re-poll if: user interacted (updated_at changed) OR recheck time passed
+        self._poll_cooldown: Dict[str, tuple] = {}  # conv_id -> (last_updated_at, recheck_at)
+        # Generation counter per conversation — prevents stale threads from overwriting
+        # newer data.  Incremented on each user request; poller threads capture the
+        # generation at start and skip saves if it changed.
+        self._conv_generation: Dict[str, int] = {}
+        self._conv_gen_lock = threading.Lock()
+
+    def initialize(self):
+        """Start the poller at flow startup (not just on first request).
+
+        This ensures scheduled rechecks from PollScheduler fire even if
+        no user has sent a message yet after a server restart.
+        """
+        poll_interval = int(self.config.get("poll_interval", 0))
+        if poll_interval > 0 and not self._poller_started:
+            self._poller_started = True
+            poller = threading.Thread(
+                target=self._poll_conversations,
+                args=(poll_interval,),
+                daemon=True,
+                name="agent-poller",
+            )
+            poller.start()
+            logger.info(f"Agent poller started at flow init (interval={poll_interval}s)")
+
+    def get_tool_registry(self) -> ToolRegistry:
+        """Get or create the tool registry for this agent.
+
+        Priority:
+        1. Custom registry set via set_tool_registry()
+        2. Flow-level agent_tools (injected by parser)
+        3. Default builtin registry
+        """
+        if self._tool_registry is None:
+            agent_tools_config = self.config.get("agent_tools", {})
+            if agent_tools_config:
+                self._tool_registry = load_agent_tools(agent_tools_config)
+            else:
+                self._tool_registry = create_default_registry()
+            # Merge dynamic user-uploaded tools
+            try:
+                from core.dynamic_tool_store import DynamicToolStore
+                for name, handler in DynamicToolStore.instance().get_all_handlers().items():
+                    if not self._tool_registry.get(name):
+                        self._tool_registry.register(handler)
+            except Exception as e:
+                logger.warning(f"Failed to load dynamic tools: {e}")
+        return self._tool_registry
+
+    def set_tool_registry(self, registry: ToolRegistry):
+        """Set a custom tool registry (for testing or extension)."""
+        self._tool_registry = registry
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "provider": {
+                "type": "string", "required": False, "default": "openai",
+                "description": "LLM provider: openai, anthropic",
+            },
+            "api_key": {
+                "type": "string", "required": True, "sensitive": True,
+                "description": "API key for the LLM provider",
+            },
+            "base_url": {
+                "type": "string", "required": False, "default": "",
+                "description": "API base URL (for self-hosted or compatible APIs)",
+            },
+            "model": {
+                "type": "string", "required": False, "default": "",
+                "description": "Model name (empty = provider default)",
+            },
+            "system_prompt": {
+                "type": "string", "required": False, "default": "You are a helpful assistant.",
+                "description": "System prompt for the agent",
+            },
+            "temperature": {
+                "type": "float", "required": False, "default": 0.7,
+                "description": "Sampling temperature (0-2)",
+            },
+            "max_tokens": {
+                "type": "integer", "required": False, "default": 4096,
+                "description": "Maximum response tokens per LLM call",
+            },
+            "max_iterations": {
+                "type": "integer", "required": False, "default": 200,
+                "description": "Maximum tool-use loop iterations (safety limit — agent synthesizes at the end if reached)",
+            },
+            "tools": {
+                "type": "string", "required": False, "default": "",
+                "description": "JSON list of custom tool definitions (overrides builtins)",
+            },
+            "timeout": {
+                "type": "integer", "required": False, "default": 120,
+                "description": "Request timeout in seconds",
+            },
+            "conversation_attribute": {
+                "type": "string", "required": False, "default": "",
+                "description": "Attribute to store/restore conversation history (JSON)",
+            },
+            "conversation_store": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Use persistent ConversationStore (for multi-turn HTTP)",
+            },
+            "conversation_ttl": {
+                "type": "integer", "required": False, "default": 0,
+                "description": "Conversation TTL in seconds (0 = no expiry)",
+            },
+            "file_base_url": {
+                "type": "string", "required": False, "default": "",
+                "description": "Base URL for generated file download links",
+            },
+            "streaming": {
+                "type": "boolean", "required": False, "default": False,
+                "description": "Enable SSE streaming mode (publishes events to ConversationEventBus)",
+            },
+            "pixazo_api_key": {
+                "type": "string", "required": False, "default": "", "sensitive": True,
+                "description": "Pixazo API key for image generation (or set PIXAZO_API_KEY env var)",
+            },
+            "max_rounds": {
+                "type": "integer", "required": False, "default": 1,
+                "description": "Max autonomous continuation rounds (agent calls schedule_continuation to trigger next round)",
+            },
+            "poll_interval": {
+                "type": "integer", "required": False, "default": 0,
+                "description": "Autonomous poll interval in seconds (0 = disabled). When enabled, the agent periodically checks active conversations for pending work.",
+            },
+            "poll_recheck_delay": {
+                "type": "integer", "required": False, "default": 7200,
+                "description": "When the agent finds no pending work, wait this many seconds before rechecking (default 2 hours). Ignored if user interacts before the delay expires.",
+            },
+            "context_max_tokens": {
+                "type": "integer", "required": False, "default": 64000,
+                "description": "Maximum context size in tokens (estimated). When reached, older messages are compacted into a summary.",
+            },
+            "context_compact_threshold": {
+                "type": "float", "required": False, "default": 0.8,
+                "description": "Compact when context reaches this fraction of context_max_tokens (default 0.8 = 80%)",
+            },
+            "context_keep_recent": {
+                "type": "integer", "required": False, "default": 6,
+                "description": "Number of recent messages to keep intact during compaction (never summarized)",
+            },
+        }
+
+    def _prepare_agent_context(self, flowfile: FlowFile):
+        """Extract common context from flowfile and config for both sync and streaming modes."""
+        provider = self.config.get("provider", "openai")
+        api_key = self.config.get("api_key", "")
+        llm_base_url = self.config.get("base_url", "")
+        model = self.config.get("model", "")
+        timeout = int(self.config.get("timeout", 120))
+
+        client = LLMClient(
+            provider=provider, api_key=api_key, base_url=llm_base_url,
+            default_model=model, timeout=timeout,
+        )
+
+        registry = self.get_tool_registry()
+        # conversation_id/user_id not yet known — will be set in _execute_streaming
+        self._configure_tool_handlers(registry)
+
+        # Set up SubAgentExecutor for spawn_agents/use_skill/get_agent_results
+        from core.agent_executor import SubAgentExecutor
+        from core.tool_registry import (
+            SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
+        )
+        sub_executor = SubAgentExecutor(client, registry, max_workers=4)
+        for h in registry.list_tools():
+            if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
+                h.set_executor(sub_executor)
+
+        user_role = flowfile.get_attribute("http.auth.roles") or ""
+        if user_role:
+            registry = self._filter_tools_by_role(registry, user_role)
+
+        custom_tools_json = self.config.get("tools", "")
+        if custom_tools_json:
+            try:
+                custom_tools = json.loads(custom_tools_json)
+                tool_defs = [
+                    LLMToolDefinition(
+                        name=t["name"],
+                        description=t.get("description", ""),
+                        parameters=t.get("parameters", {"type": "object", "properties": {}}),
+                    )
+                    for t in custom_tools
+                ]
+            except (json.JSONDecodeError, KeyError) as e:
+                raise ValueError(f"Invalid tools JSON: {e}")
+        else:
+            tool_defs = [
+                LLMToolDefinition(
+                    name=h.name, description=h.description, parameters=h.parameters_schema,
+                )
+                for h in registry.list_tools()
+            ]
+
+        system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+        # Inject current date/time so the agent is always aware
+        from datetime import datetime
+        system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # Will be overridden below if a persona is selected (after conversation_id is known)
+        _base_system_prompt = system_prompt
+        temperature = float(self.config.get("temperature", 0.7))
+        max_tokens = int(self.config.get("max_tokens", 4096))
+        max_iterations = int(self.config.get("max_iterations", 200))
+
+        use_conv_store = self.config.get("conversation_store", False)
+        conv_ttl = int(self.config.get("conversation_ttl", 0))
+        conv_attr = self.config.get("conversation_attribute", "")
+
+        raw_body = flowfile.get_content().decode("utf-8", errors="replace")
+        user_text = raw_body
+        conversation_id = None
+        attachments = []  # list of {"type": "image"|"document", ...}
+
+        if raw_body.strip().startswith("{"):
+            try:
+                body_json = json.loads(raw_body)
+                if isinstance(body_json, dict) and "message" in body_json:
+                    user_text = body_json["message"]
+                    conversation_id = body_json.get("conversation_id")
+                    attachments = body_json.get("attachments", [])
+                    # Per-conversation TTL override from chat UI
+                    if "ttl" in body_json:
+                        conv_ttl = int(body_json["ttl"])
+            except json.JSONDecodeError:
+                pass
+
+        # Telegram multimodal: inject image from attributes
+        tg_image = flowfile.get_attribute("telegram.image_base64") or ""
+        if tg_image:
+            attachments.append({
+                "filename": "telegram_photo.jpg",
+                "mime_type": "image/jpeg",
+                "data": tg_image,
+            })
+
+        # Cross-channel identity resolution for Telegram
+        tg_chat_id = flowfile.get_attribute("telegram.chat_id") or ""
+        tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
+        channel = "web"
+        if tg_chat_id:
+            channel = "telegram"
+            if use_conv_store and tg_user_id:
+                from core.identity_service import IdentityService
+                ids = IdentityService.instance()
+                resolved_user = ids.resolve_user("telegram", tg_user_id)
+                if resolved_user:
+                    # Linked user — resolve active conversation
+                    flowfile.set_attribute("http.auth.principal", resolved_user)
+                    active = ids.get_active_conv(resolved_user, "telegram")
+                    if active:
+                        conversation_id = active
+                    # Store chat_id for notifications
+                    self._pending_telegram_chat_id = tg_chat_id
+                else:
+                    # Not linked — use telegram chat_id as conversation_id
+                    self._pending_telegram_chat_id = tg_chat_id
+            else:
+                self._pending_telegram_chat_id = tg_chat_id
+
+        messages: List[LLMMessage] = []
+
+        if use_conv_store and conversation_id:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            existing = store.load(conversation_id)
+            if existing:
+                try:
+                    messages = self._rebuild_context(
+                        conversation_id, existing, system_prompt,
+                        int(self.config.get("context_max_tokens", 64000)),
+                        int(self.config.get("context_keep_recent", 6)),
+                    )
+                    logger.info(f"[context:{conversation_id[:8]}] rebuilt context: "
+                                f"{len(messages)} messages from {len(existing)} total")
+                except (KeyError, TypeError) as deser_err:
+                    logger.error(f"[context:{conversation_id[:8]}] context rebuild failed: {deser_err}")
+            else:
+                logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
+                               f"starting fresh conversation")
+        elif conv_attr:
+            existing = flowfile.get_attribute(conv_attr)
+            if existing:
+                try:
+                    messages = self._deserialize_messages(json.loads(existing))
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        if not messages:
+            messages = [LLMMessage(role="system", content=system_prompt)]
+            # Fresh conversation — everything is new (including system prompt)
+            base_message_count = 0
+        else:
+            # Loaded from store — these messages are already persisted
+            base_message_count = len(messages)
+
+        # File TTL = conversation TTL (0 = unlimited)
+        from core.tool_registry import CreateFileHandler, ExecuteScriptHandler
+        for h in registry.list_tools():
+            if isinstance(h, (CreateFileHandler, ExecuteScriptHandler)):
+                h.set_ttl(conv_ttl)
+
+        if use_conv_store and not conversation_id:
+            from core.conversation_store import ConversationStore
+            conversation_id = ConversationStore.instance().generate_id()
+
+        # Store Telegram chat_id for cross-channel notifications
+        if use_conv_store and conversation_id and getattr(self, '_pending_telegram_chat_id', ''):
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_extra(
+                    conversation_id, "telegram_chat_id",
+                    self._pending_telegram_chat_id,
+                )
+            except Exception:
+                pass
+            self._pending_telegram_chat_id = ""
+
+        # Check for selected agent persona and active skills
+        if use_conv_store and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                from core.resource_store import ResourceStore
+                cstore = ConversationStore.instance()
+                rs = ResourceStore.instance()
+                active_res = cstore.get_extra(conversation_id, "active_resources") or {}
+                _uid = flowfile.get_attribute("http.auth.principal") or "anonymous"
+
+                # Active agent overrides system prompt
+                selected = active_res.get("agent", "")
+                if selected:
+                    agent_def = rs.get("agent", selected, _uid)
+                    if agent_def:
+                        system_prompt = agent_def["prompt"]
+                        system_prompt += f"\n\n[You are agent '{selected}']\n"
+                        system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        # List other available agents
+                        all_agents = rs.list("agent", _uid)
+                        others = [a["name"] for a in all_agents if a["name"] != selected]
+                        if others:
+                            system_prompt += (
+                                f"\n\nOther agents available: "
+                                f"{', '.join(others)}. Use spawn_agents or "
+                                f"manage_resource to work with them."
+                            )
+
+                # Inject active skills into system prompt
+                active_skills = active_res.get("skills", [])
+                if active_skills:
+                    skill_sections = []
+                    for sname in active_skills:
+                        skill_def = rs.get("skill", sname, _uid)
+                        if skill_def:
+                            skill_sections.append(
+                                f"### Skill: {sname}\n{skill_def['prompt']}"
+                            )
+                    if skill_sections:
+                        system_prompt += (
+                            "\n\n## Active Skills\n"
+                            "The following skills are active. You can apply them "
+                            "via the use_skill tool or follow their instructions "
+                            "directly:\n\n" + "\n\n".join(skill_sections)
+                        )
+            except Exception:
+                pass
+
+        if user_text.strip() or attachments:
+            user_content = self._build_user_content(user_text, attachments)
+            messages.append(LLMMessage(role="user", content=user_content))
+
+        model_name = self.config.get("model", "")
+        user_id = flowfile.get_attribute("http.auth.principal") or ""
+        return {
+            "client": client, "registry": registry, "tool_defs": tool_defs,
+            "messages": messages, "model": model_name,
+            "temperature": temperature, "max_tokens": max_tokens,
+            "max_iterations": max_iterations,
+            "max_rounds": int(self.config.get("max_rounds", 1)),
+            "use_conv_store": use_conv_store, "conv_ttl": conv_ttl,
+            "conv_attr": conv_attr, "conversation_id": conversation_id,
+            "user_id": user_id,
+            "_base_message_count": base_message_count,
+            "context_max_tokens": int(self.config.get("context_max_tokens", 64000)),
+            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
+            "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
+            "channel": channel,
+        }
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        # Reject unlinked Telegram users (require identity link for security)
+        tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
+        if tg_user_id:
+            raw_text = flowfile.get_content().decode("utf-8", errors="replace").strip()
+            # Allow /conv commands (they handle their own auth messages)
+            if not raw_text.startswith("/conv"):
+                from core.identity_service import IdentityService
+                resolved = IdentityService.instance().resolve_user("telegram", tg_user_id)
+                if not resolved:
+                    flowfile.set_content(
+                        "Access denied. Your Telegram account is not linked to a PyFi2 user.\n"
+                        "Ask an administrator to link your account from the web chat using:\n"
+                        "/link telegram YOUR_TELEGRAM_USER_ID"
+                        .encode("utf-8")
+                    )
+                    return [flowfile]
+
+        # Check for action-based requests (list/load/delete conversations)
+        use_conv_store = self.config.get("conversation_store", False)
+        if use_conv_store:
+            action_result = self._handle_action(flowfile)
+            if action_result is not None:
+                return action_result
+
+        streaming = self.config.get("streaming", False)
+        if streaming:
+            return self._execute_streaming(flowfile)
+        return self._execute_sync(flowfile)
+
+    def _handle_action(self, flowfile: FlowFile) -> Optional[List[FlowFile]]:
+        """Handle action-based requests (list/load/delete conversations).
+
+        Returns None if the request is not an action (i.e. a normal message).
+        Also handles Telegram /conv commands for cross-channel conversation management.
+        """
+        raw_body = flowfile.get_content().decode("utf-8", errors="replace")
+
+        # Handle Telegram /conv commands (text-based, not JSON)
+        tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
+        if tg_user_id and raw_body.strip().startswith("/conv"):
+            result = self._handle_telegram_conv_command(
+                raw_body.strip(), tg_user_id, flowfile,
+            )
+            if result is not None:
+                return result
+
+        if not raw_body.strip().startswith("{"):
+            return None
+        try:
+            body = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(body, dict) or "action" not in body:
+            return None
+
+        action = body["action"]
+        user_id = flowfile.get_attribute("http.auth.principal") or ""
+
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+
+        if action == "list_conversations":
+            convs = store.list_conversations(user_id=user_id)
+            result = json.dumps({"conversations": convs}, ensure_ascii=False)
+            flowfile.set_content(result.encode("utf-8"))
+            return [flowfile]
+
+        if action == "load_history":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            messages = store.load(conv_id, user_id=user_id)
+            if messages is None:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            # Return all display-relevant messages with type classification
+            history = self._classify_messages_for_display(messages)
+            result = json.dumps({
+                "conversation_id": conv_id,
+                "messages": history,
+                "message_count": len(messages),  # total raw count for polling
+            }, ensure_ascii=False)
+            flowfile.set_content(result.encode("utf-8"))
+            return [flowfile]
+
+        if action == "delete_conversation":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            # Collect file IDs from conversation before deleting
+            history = store.load(conv_id, user_id=user_id)
+            if history:
+                self._cleanup_conversation_files(history)
+            # Cascade cleanup: flows, dynamic tools, secrets
+            self._cleanup_conversation_resources(conv_id)
+            deleted = store.delete(conv_id, user_id=user_id)
+            logger.info(f"[action] delete_conversation {conv_id}: deleted={deleted}, "
+                        f"user_id={user_id}")
+            result = json.dumps({"deleted": deleted, "conversation_id": conv_id})
+            flowfile.set_content(result.encode("utf-8"))
+            return [flowfile]
+
+        if action == "ping":
+            # Keep-alive: session renewal happens in validateSessionAuth upstream
+            flowfile.set_content(json.dumps({"status": "ok"}).encode())
+            return [flowfile]
+
+        if action == "poll":
+            # Efficient delta check: client sends last known message_count,
+            # server returns new messages only if count increased.
+            conv_id = body.get("conversation_id", "")
+            last_count = int(body.get("last_count", 0))
+            if not conv_id:
+                flowfile.set_content(json.dumps({"new_messages": []}).encode())
+                return [flowfile]
+            current_count = store.message_count(conv_id)
+            if current_count <= last_count:
+                flowfile.set_content(json.dumps({
+                    "new_messages": [], "message_count": current_count,
+                }).encode())
+                return [flowfile]
+            # Load full history and return only the new portion
+            all_messages = store.load(conv_id, user_id=user_id)
+            if all_messages is None:
+                flowfile.set_content(json.dumps({
+                    "new_messages": [], "message_count": 0,
+                }).encode())
+                return [flowfile]
+            new_raw = all_messages[last_count:]
+            new_classified = self._classify_messages_for_display(new_raw)
+            flowfile.set_content(json.dumps({
+                "new_messages": new_classified,
+                "message_count": len(all_messages),
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "add_secret":
+            key = body.get("key", "").strip()
+            value = body.get("value", "")
+            if not key or not value:
+                flowfile.set_content(json.dumps({"error": "key and value are required"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.tool_registry import StoreSecretHandler
+            handler = StoreSecretHandler()
+            handler.set_user_id(user_id or "anonymous")
+            handler.set_conversation_id(body.get("conversation_id", ""))
+            result_text = handler.execute({"key": key, "value": value})
+            namespaced = f"{user_id or 'anonymous'}.{key}"
+            flowfile.set_content(json.dumps({
+                "result": result_text, "key": namespaced,
+            }).encode())
+            return [flowfile]
+
+        if action == "add_variable":
+            key = body.get("key", "").strip()
+            value = body.get("value", "")
+            if not key or not value:
+                flowfile.set_content(json.dumps({"error": "key and value are required"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            uid = user_id or "anonymous"
+            namespaced = f"{uid}.{key}"
+            from pathlib import Path
+            var_path = Path("config/agent_variables.json")
+            var_path.parent.mkdir(parents=True, exist_ok=True)
+            variables = {}
+            if var_path.exists():
+                try:
+                    variables = json.loads(var_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            variables[namespaced] = {"value": value}
+            var_path.write_text(json.dumps(variables, ensure_ascii=False, indent=2), encoding="utf-8")
+            flowfile.set_content(json.dumps({
+                "result": f"Variable '{key}' stored. Use ${{var.{namespaced}}} in flows or get_variable('{key}') in scripts.",
+                "key": namespaced,
+            }).encode())
+            return [flowfile]
+
+        if action == "list_secrets":
+            from core.tool_registry import ListSecretsHandler
+            handler = ListSecretsHandler()
+            handler.set_user_id(user_id or "anonymous")
+            result_text = handler.execute({})
+            flowfile.set_content(json.dumps({"result": result_text}).encode())
+            return [flowfile]
+
+        if action == "list_variables":
+            uid = user_id or "anonymous"
+            from pathlib import Path
+            var_path = Path("config/agent_variables.json")
+            if not var_path.exists():
+                flowfile.set_content(json.dumps({"result": "No variables stored."}).encode())
+                return [flowfile]
+            try:
+                variables = json.loads(var_path.read_text(encoding="utf-8"))
+            except Exception:
+                flowfile.set_content(json.dumps({"result": "Error reading variables."}).encode())
+                return [flowfile]
+            prefix = f"{uid}."
+            user_vars = {k[len(prefix):]: v["value"] for k, v in variables.items()
+                         if k.startswith(prefix) and isinstance(v, dict)}
+            if not user_vars:
+                flowfile.set_content(json.dumps({"result": "No variables stored."}).encode())
+                return [flowfile]
+            lines = [f"Variables ({len(user_vars)}):"]
+            for k, v in sorted(user_vars.items()):
+                lines.append(f"- {k} = {v}")
+            flowfile.set_content(json.dumps({"result": "\n".join(lines)}).encode())
+            return [flowfile]
+
+        if action == "file_result":
+            # Browser responding to a local_files tool request
+            request_id = body.get("request_id", "")
+            result = body.get("result", {})
+            if not request_id:
+                flowfile.set_content(json.dumps({"error": "Missing request_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.tool_registry import LocalFilesHandler
+            LocalFilesHandler.resolve_request(request_id, result)
+            flowfile.set_content(json.dumps({"status": "ok"}).encode())
+            return [flowfile]
+
+        if action == "list_schedules":
+            conv_id = body.get("conversation_id", "")
+            from core.poll_scheduler import PollScheduler
+            all_scheds = PollScheduler.instance().list_all()
+            # Filter to current conversation
+            scheds = [s for s in all_scheds if s["conversation_id"] == conv_id]
+            flowfile.set_content(json.dumps({"schedules": scheds}, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "add_schedule":
+            conv_id = body.get("conversation_id", "")
+            at_str = body.get("at", "")
+            reason = body.get("reason", "manual schedule")
+            if not conv_id or not at_str:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or at"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from datetime import datetime, timezone as tz
+            from core.poll_scheduler import PollScheduler
+            try:
+                dt = datetime.strptime(at_str, "%Y%m%d%H%M%S")
+                dt = dt.replace(tzinfo=tz.utc)
+                recheck_at = dt.timestamp()
+            except ValueError:
+                flowfile.set_content(json.dumps({"error": f"Invalid date: {at_str}"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            PollScheduler.instance().schedule(conv_id, recheck_at, user_id, reason)
+            store.set_status(conv_id, "active")
+            flowfile.set_content(json.dumps({"scheduled": True, "at": recheck_at}).encode())
+            return [flowfile]
+
+        if action == "delete_schedule":
+            conv_id = body.get("conversation_id", "")
+            from core.poll_scheduler import PollScheduler
+            cancelled = PollScheduler.instance().cancel(conv_id)
+            flowfile.set_content(json.dumps({"cancelled": cancelled}).encode())
+            return [flowfile]
+
+        if action == "list_conv_files":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"files": []}).encode())
+                return [flowfile]
+            messages_data = store.load(conv_id, user_id=user_id)
+            if not messages_data:
+                flowfile.set_content(json.dumps({"files": []}).encode())
+                return [flowfile]
+            import re as _re
+            from core.file_store import FileStore
+            fstore = FileStore.instance()
+            pattern = _re.compile(r'/files/([a-f0-9]{12})/([^\s"<>]+)')
+            seen = set()
+            files = []
+            for msg in messages_data:
+                content = msg.get("content", "")
+                if not isinstance(content, str):
+                    continue
+                for match in pattern.finditer(content):
+                    fid = match.group(1)
+                    fname = match.group(2)
+                    if fid in seen:
+                        continue
+                    seen.add(fid)
+                    available = fstore.exists(fid)
+                    files.append({
+                        "file_id": fid, "filename": fname,
+                        "available": available,
+                    })
+            flowfile.set_content(json.dumps({"files": files}, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "list_conv_flows":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"flows": []}).encode())
+                return [flowfile]
+            from pathlib import Path as _Path
+            agent_store = _Path("data/agent_flows")
+            flows_list = []
+            if agent_store.exists():
+                for fp in agent_store.glob("*.json"):
+                    try:
+                        fdata = json.loads(fp.read_text(encoding="utf-8"))
+                        if fdata.get("_conversation_id") != conv_id:
+                            continue
+                        if user_id and fdata.get("_owner") != user_id:
+                            continue
+                        flows_list.append({
+                            "id": fdata.get("id", fp.stem),
+                            "name": fdata.get("name", fp.stem),
+                            "status": fdata.get("_status", "stopped"),
+                            "schedule": fdata.get("_schedule", ""),
+                            "template": fdata.get("_template_id", ""),
+                            "tasks_count": len(fdata.get("tasks", {})),
+                        })
+                    except Exception:
+                        continue
+            flowfile.set_content(
+                json.dumps({"flows": flows_list}, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "manage_conv_flow":
+            conv_id = body.get("conversation_id", "")
+            flow_id = body.get("flow_id", "")
+            flow_action = body.get("flow_action", "")
+            if not flow_id or not flow_action:
+                flowfile.set_content(json.dumps(
+                    {"error": "flow_id and flow_action required"}).encode())
+                return [flowfile]
+            from pathlib import Path as _Path
+            fpath = _Path("data/agent_flows") / f"{flow_id}.json"
+            if not fpath.exists():
+                flowfile.set_content(json.dumps(
+                    {"error": f"Flow '{flow_id}' not found"}).encode())
+                return [flowfile]
+            fdata = json.loads(fpath.read_text(encoding="utf-8"))
+            # Ownership check
+            if user_id and fdata.get("_owner") != user_id:
+                flowfile.set_content(json.dumps(
+                    {"error": "Permission denied"}).encode())
+                return [flowfile]
+            if fdata.get("_conversation_id") != conv_id:
+                flowfile.set_content(json.dumps(
+                    {"error": "Flow not in this conversation"}).encode())
+                return [flowfile]
+
+            if flow_action == "start":
+                try:
+                    from gui.services.executor_registry import ExecutorRegistry
+                    from engine.parser import FlowParser
+                    from engine.continuous_executor import ContinuousFlowExecutor
+                    clean = {k: v for k, v in fdata.items()
+                             if not k.startswith("_")}
+                    flow = FlowParser.parse(clean)
+                    reg = ExecutorRegistry.get_instance()
+                    existing = reg.get(flow.id)
+                    if existing:
+                        try:
+                            existing.stop()
+                        except Exception:
+                            pass
+                        reg.unregister(flow.id)
+                    executor = ContinuousFlowExecutor(
+                        flow, max_workers=4, max_retries=3)
+                    executor.start()
+                    reg.register(flow.id, executor)
+                    fdata["_status"] = "running"
+                    fpath.write_text(json.dumps(
+                        fdata, ensure_ascii=False, indent=2), encoding="utf-8")
+                    flowfile.set_content(json.dumps(
+                        {"message": f"Flow '{flow_id}' started"}).encode())
+                except Exception as e:
+                    flowfile.set_content(json.dumps(
+                        {"error": f"Start failed: {e}"}).encode())
+
+            elif flow_action == "stop":
+                try:
+                    from gui.services.executor_registry import ExecutorRegistry
+                    reg = ExecutorRegistry.get_instance()
+                    ex = reg.get(flow_id)
+                    if ex:
+                        ex.stop()
+                        reg.unregister(flow_id)
+                    fdata["_status"] = "stopped"
+                    fpath.write_text(json.dumps(
+                        fdata, ensure_ascii=False, indent=2), encoding="utf-8")
+                    flowfile.set_content(json.dumps(
+                        {"message": f"Flow '{flow_id}' stopped"}).encode())
+                except Exception as e:
+                    flowfile.set_content(json.dumps(
+                        {"error": f"Stop failed: {e}"}).encode())
+
+            elif flow_action == "delete":
+                try:
+                    from gui.services.executor_registry import ExecutorRegistry
+                    reg = ExecutorRegistry.get_instance()
+                    ex = reg.get(flow_id)
+                    if ex:
+                        ex.stop()
+                        reg.unregister(flow_id)
+                    fpath.unlink()
+                    flowfile.set_content(json.dumps(
+                        {"message": f"Flow '{flow_id}' deleted"}).encode())
+                except Exception as e:
+                    flowfile.set_content(json.dumps(
+                        {"error": f"Delete failed: {e}"}).encode())
+            else:
+                flowfile.set_content(json.dumps(
+                    {"error": f"Unknown action: {flow_action}"}).encode())
+            return [flowfile]
+
+        if action == "compact":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            messages_data = store.load(conv_id, user_id=user_id)
+            if not messages_data or len(messages_data) < 4:
+                flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
+                return [flowfile]
+            # Run compaction
+            provider = self.config.get("provider", "openai")
+            api_key = self.config.get("api_key", "")
+            llm_base_url = self.config.get("base_url", "")
+            mdl = self.config.get("model", "")
+            timeout = int(self.config.get("timeout", 120))
+            if not api_key:
+                flowfile.set_content(json.dumps({"error": "No API key configured"}).encode())
+                return [flowfile]
+            client = LLMClient(
+                provider=provider, api_key=api_key, base_url=llm_base_url,
+                default_model=mdl, timeout=timeout,
+            )
+            try:
+                msgs = self._deserialize_messages(messages_data)
+                before_count = len(msgs)
+                # Force compaction to generate a summary (persisted by _compact_if_needed)
+                compacted = self._compact_if_needed(
+                    msgs, client, mdl or "default",
+                    int(self.config.get("context_max_tokens", 64000)),
+                    0.5,  # aggressive
+                    int(self.config.get("context_keep_recent", 6)),
+                    conversation_id=conv_id,
+                )
+                after_count = len(compacted)
+                # Conversation messages stay intact — only the context_summary is updated
+                summary = store.get_context_summary(conv_id)
+                flowfile.set_content(json.dumps({
+                    "compacted": True, "before": before_count, "after": after_count,
+                    "summary_chars": len(summary),
+                }).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "create_agent":
+            conv_id = body.get("conversation_id", "")
+            agent_name = body.get("name", "").strip()
+            agent_prompt = body.get("prompt", "").strip()
+            if not agent_name or not agent_prompt:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing name or prompt",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            try:
+                data = {"prompt": agent_prompt}
+                model = body.get("model", "")
+                if model:
+                    data["model"] = model
+                tools = body.get("tools")
+                if tools:
+                    data["tools"] = tools
+                description = body.get("description", "")
+                if description:
+                    data["description"] = description
+                if rs.exists("agent", agent_name, uid):
+                    rs.update("agent", agent_name, uid, data)
+                else:
+                    rs.create("agent", agent_name, uid, data)
+                # Auto-activate in conversation
+                if conv_id:
+                    active = store.get_extra(conv_id, "active_resources") or {}
+                    active["agent"] = agent_name
+                    store.set_extra(conv_id, "active_resources", active)
+                flowfile.set_content(json.dumps({
+                    "created": True, "name": agent_name,
+                }).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "list_agents":
+            conv_id = body.get("conversation_id", "")
+            from core.resource_store import ResourceStore
+            uid = user_id or "anonymous"
+            agents_list = ResourceStore.instance().list("agent", uid)
+            agents = {a["name"]: a for a in agents_list}
+            # Get selected agent from active_resources
+            selected = ""
+            if conv_id:
+                active = store.get_extra(conv_id, "active_resources") or {}
+                selected = active.get("agent", "")
+            flowfile.set_content(json.dumps({
+                "agents": agents, "selected": selected,
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "select_agent":
+            conv_id = body.get("conversation_id", "")
+            agent_name = body.get("name", "").strip()
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            if agent_name:
+                from core.resource_store import ResourceStore
+                uid = user_id or "anonymous"
+                if not ResourceStore.instance().exists("agent", agent_name, uid):
+                    flowfile.set_content(json.dumps({
+                        "error": f"Agent '{agent_name}' not found",
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "404")
+                    return [flowfile]
+            active = store.get_extra(conv_id, "active_resources") or {}
+            if agent_name:
+                active["agent"] = agent_name
+            else:
+                active.pop("agent", None)
+            store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "selected": agent_name or "(default)",
+            }).encode())
+            return [flowfile]
+
+        if action == "delete_agent":
+            agent_name = body.get("name", "").strip()
+            conv_id = body.get("conversation_id", "")
+            if not agent_name:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing name",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            uid = user_id or "anonymous"
+            deleted = ResourceStore.instance().delete("agent", agent_name, uid)
+            # Deactivate if it was active
+            if conv_id:
+                active = store.get_extra(conv_id, "active_resources") or {}
+                if active.get("agent") == agent_name:
+                    active.pop("agent", None)
+                    store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "deleted": deleted, "name": agent_name,
+            }).encode())
+            return [flowfile]
+
+        if action in ("create_skill", "add_skill"):
+            skill_name = body.get("name", "").strip()
+            skill_prompt = body.get("prompt", "").strip()
+            conv_id = body.get("conversation_id", "")
+            if not skill_name or not skill_prompt:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing name or prompt",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            try:
+                data = {"prompt": skill_prompt}
+                description = body.get("description", "")
+                if description:
+                    data["description"] = description
+                if rs.exists("skill", skill_name, uid):
+                    rs.update("skill", skill_name, uid, data)
+                else:
+                    rs.create("skill", skill_name, uid, data)
+                # Auto-activate in conversation
+                if conv_id:
+                    active = store.get_extra(conv_id, "active_resources") or {}
+                    skills = active.get("skills", [])
+                    if skill_name not in skills:
+                        skills.append(skill_name)
+                    active["skills"] = skills
+                    store.set_extra(conv_id, "active_resources", active)
+                flowfile.set_content(json.dumps({
+                    "created": True, "name": skill_name,
+                }).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "delete_skill":
+            skill_name = body.get("name", "").strip()
+            conv_id = body.get("conversation_id", "")
+            if not skill_name:
+                flowfile.set_content(json.dumps({"error": "Missing name"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            uid = user_id or "anonymous"
+            deleted = ResourceStore.instance().delete("skill", skill_name, uid)
+            if conv_id:
+                active = store.get_extra(conv_id, "active_resources") or {}
+                skills = active.get("skills", [])
+                if skill_name in skills:
+                    skills.remove(skill_name)
+                active["skills"] = skills
+                store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "deleted": deleted, "name": skill_name,
+            }).encode())
+            return [flowfile]
+
+        if action == "list_skills":
+            from core.resource_store import ResourceStore
+            uid = user_id or "anonymous"
+            skills = ResourceStore.instance().list("skill", uid)
+            conv_id = body.get("conversation_id", "")
+            active_skills = []
+            if conv_id:
+                active = store.get_extra(conv_id, "active_resources") or {}
+                active_skills = active.get("skills", [])
+            flowfile.set_content(json.dumps({
+                "skills": [{
+                    "name": s["name"],
+                    "description": s.get("description", ""),
+                    "prompt": s.get("prompt", "")[:80],
+                    "active": s["name"] in active_skills,
+                } for s in skills],
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "list_resources":
+            # List all resource types for the user
+            conv_id = body.get("conversation_id", "")
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            active = {}
+            if conv_id:
+                active = store.get_extra(conv_id, "active_resources") or {}
+            result = {
+                "agents": [{
+                    "name": a["name"],
+                    "description": a.get("description", ""),
+                    "active": active.get("agent") == a["name"],
+                } for a in rs.list("agent", uid)],
+                "skills": [{
+                    "name": s["name"],
+                    "description": s.get("description", ""),
+                    "active": s["name"] in active.get("skills", []),
+                } for s in rs.list("skill", uid)],
+                "mcp_servers": [{
+                    "name": m["name"],
+                    "url": m.get("url", ""),
+                    "active": m["name"] in active.get("mcps", []),
+                } for m in rs.list("mcp", uid)],
+            }
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "activate_resource":
+            conv_id = body.get("conversation_id", "")
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            if not conv_id or not rtype or not rname:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing conversation_id, resource_type, or name",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            active = store.get_extra(conv_id, "active_resources") or {}
+            if rtype == "agent":
+                active["agent"] = rname
+            elif rtype == "skill":
+                skills = active.get("skills", [])
+                if rname not in skills:
+                    skills.append(rname)
+                active["skills"] = skills
+            elif rtype == "mcp":
+                mcps = active.get("mcps", [])
+                if rname not in mcps:
+                    mcps.append(rname)
+                active["mcps"] = mcps
+            store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "activated": True, "type": rtype, "name": rname,
+            }).encode())
+            return [flowfile]
+
+        if action == "deactivate_resource":
+            conv_id = body.get("conversation_id", "")
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            if not conv_id or not rtype or not rname:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing conversation_id, resource_type, or name",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            active = store.get_extra(conv_id, "active_resources") or {}
+            if rtype == "agent":
+                if active.get("agent") == rname:
+                    active.pop("agent", None)
+            elif rtype == "skill":
+                skills = active.get("skills", [])
+                if rname in skills:
+                    skills.remove(rname)
+                active["skills"] = skills
+            elif rtype == "mcp":
+                mcps = active.get("mcps", [])
+                if rname in mcps:
+                    mcps.remove(rname)
+                active["mcps"] = mcps
+            store.set_extra(conv_id, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "deactivated": True, "type": rtype, "name": rname,
+            }).encode())
+            return [flowfile]
+
+        if action == "share_resource":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            target_conv = body.get("target_conversation_id", "")
+            if not rtype or not rname or not target_conv:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing resource_type, name, or target_conversation_id",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            # Verify ownership of target conversation
+            target_meta = store.get_metadata(target_conv)
+            if not target_meta or (user_id and target_meta.get("user_id") != user_id):
+                flowfile.set_content(json.dumps({
+                    "error": "Target conversation not found or access denied",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            # Activate in target
+            active = store.get_extra(target_conv, "active_resources") or {}
+            if rtype == "agent":
+                active["agent"] = rname
+            elif rtype == "skill":
+                skills = active.get("skills", [])
+                if rname not in skills:
+                    skills.append(rname)
+                active["skills"] = skills
+            elif rtype == "mcp":
+                mcps = active.get("mcps", [])
+                if rname not in mcps:
+                    mcps.append(rname)
+                active["mcps"] = mcps
+            store.set_extra(target_conv, "active_resources", active)
+            flowfile.set_content(json.dumps({
+                "shared": True, "type": rtype, "name": rname,
+                "target": target_conv,
+            }).encode())
+            return [flowfile]
+
+        if action == "link_telegram":
+            tg_user_id = body.get("telegram_user_id", "").strip()
+            bot_token = body.get("bot_token", "").strip()
+            if not user_id:
+                flowfile.set_content(json.dumps({
+                    "error": "Authentication required",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "401")
+                return [flowfile]
+            if not tg_user_id:
+                flowfile.set_content(json.dumps({
+                    "error": "Missing telegram_user_id",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.identity_service import IdentityService
+            linked = IdentityService.instance().link(
+                user_id, "telegram", tg_user_id, bot_token=bot_token,
+            )
+            if not linked:
+                flowfile.set_content(json.dumps({
+                    "error": "This Telegram ID is already linked to another user",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "409")
+                return [flowfile]
+            result = {"linked": True, "telegram_user_id": tg_user_id}
+            # Register personal bot in the pool
+            if bot_token:
+                try:
+                    from services.telegram_bot_service import TelegramBotPool
+                    username = TelegramBotPool.instance().register_bot(
+                        bot_token, user_id,
+                    )
+                    result["bot_username"] = username
+                except Exception as e:
+                    result["bot_warning"] = f"Bot token invalid: {e}"
+            flowfile.set_content(json.dumps(result).encode())
+            return [flowfile]
+
+        if action == "unlink_telegram":
+            if not user_id:
+                flowfile.set_content(json.dumps({
+                    "error": "Authentication required",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "401")
+                return [flowfile]
+            from core.identity_service import IdentityService
+            ids = IdentityService.instance()
+            # Unregister personal bot from pool before unlinking
+            bot_token = ids.get_bot_token(user_id, "telegram")
+            if bot_token:
+                try:
+                    from services.telegram_bot_service import TelegramBotPool
+                    TelegramBotPool.instance().unregister_bot(bot_token)
+                except Exception:
+                    pass
+            unlinked = ids.unlink(user_id, "telegram")
+            flowfile.set_content(json.dumps({
+                "unlinked": unlinked,
+            }).encode())
+            return [flowfile]
+
+        if action == "get_links":
+            if not user_id:
+                flowfile.set_content(json.dumps({"links": {}}).encode())
+                return [flowfile]
+            from core.identity_service import IdentityService
+            ids = IdentityService.instance()
+            links = ids.get_links(user_id)
+            active_conv = ids.get_active_conv(user_id, "telegram")
+            flowfile.set_content(json.dumps({
+                "links": links, "active_telegram_conv": active_conv,
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "get_usage":
+            try:
+                from core.token_tracker import TokenTracker
+                is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+                if is_admin:
+                    usage = TokenTracker.instance().get_all_usage()
+                else:
+                    usage = {user_id: TokenTracker.instance().get_usage(user_id)}
+                flowfile.set_content(json.dumps({
+                    "usage": usage,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "list_memories":
+            try:
+                from core.memory_store import MemoryStore
+                entries = MemoryStore.instance().list_all(user_id)
+                result = [{
+                    "id": e.id, "text": e.text, "tags": e.tags,
+                    "created_at": e.created_at, "source": e.source,
+                } for e in entries]
+                flowfile.set_content(json.dumps({
+                    "memories": result, "count": len(result),
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "delete_memory":
+            memory_id = body.get("memory_id", "")
+            if not memory_id:
+                flowfile.set_content(json.dumps({"error": "Missing memory_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                from core.memory_store import MemoryStore
+                deleted = MemoryStore.instance().forget(user_id, memory_id)
+                flowfile.set_content(json.dumps({"deleted": deleted}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "install_tool":
+            filename = body.get("filename", "")
+            source = body.get("source", "")
+            if not source:
+                flowfile.set_content(json.dumps({"error": "Missing source code"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                from core.dynamic_tool_store import DynamicToolStore
+                result = DynamicToolStore.instance().install(user_id, filename, source)
+                # Reset tool registry so new tool is picked up
+                self._tool_registry = None
+                flowfile.set_content(json.dumps({
+                    "installed": True, **result,
+                }).encode())
+            except (ValueError, PermissionError) as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        if action == "uninstall_tool":
+            tool_name = body.get("tool_name", "")
+            if not tool_name:
+                flowfile.set_content(json.dumps({"error": "Missing tool_name"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                from core.dynamic_tool_store import DynamicToolStore
+                is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+                removed = DynamicToolStore.instance().uninstall(
+                    user_id, tool_name, is_admin=is_admin,
+                )
+                # Reset tool registry
+                self._tool_registry = None
+                flowfile.set_content(json.dumps({
+                    "uninstalled": removed, "tool_name": tool_name,
+                }).encode())
+            except PermissionError as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
+
+        if action == "list_tools":
+            try:
+                from core.dynamic_tool_store import DynamicToolStore
+                is_admin = "admin" in (flowfile.get_attribute("http.auth.roles") or "")
+                tools = DynamicToolStore.instance().list_tools(
+                    user_id=user_id, is_admin=is_admin,
+                )
+                flowfile.set_content(json.dumps({
+                    "tools": tools,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        return None  # Unknown action — treat as normal message
+
+    def _handle_telegram_conv_command(
+        self, text: str, tg_user_id: str, flowfile: FlowFile,
+    ) -> Optional[List[FlowFile]]:
+        """Handle /conv commands from Telegram for cross-channel conversation management.
+
+        Commands:
+          /conv list       — list the user's conversations
+          /conv select ID  — switch active conversation
+          /conv new        — start a new conversation
+          /conv info       — show current active conversation
+        """
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+        resolved_user = ids.resolve_user("telegram", tg_user_id)
+        if not resolved_user:
+            flowfile.set_content(
+                "Your Telegram account is not linked to a PyFi2 user.\n"
+                "Use /link telegram YOUR_TG_ID from the web chat to link it."
+                .encode("utf-8")
+            )
+            return [flowfile]
+
+        parts = text.split(maxsplit=2)
+        subcmd = parts[1] if len(parts) > 1 else "info"
+
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+
+        if subcmd == "list":
+            convs = store.list_conversations(user_id=resolved_user)
+            active = ids.get_active_conv(resolved_user, "telegram") or ""
+            if not convs:
+                flowfile.set_content("No conversations found.".encode("utf-8"))
+                return [flowfile]
+            lines = []
+            for c in convs[:20]:  # limit to 20
+                cid = c.get("conversation_id", "")
+                short_id = cid[:12]
+                marker = " *" if cid == active else ""
+                msg_count = c.get("message_count", 0)
+                lines.append(f"{'>' if cid == active else ' '} {short_id} ({msg_count} msgs){marker}")
+            header = f"Your conversations ({len(convs)}):\n"
+            footer = "\n\nUse /conv select ID to switch."
+            flowfile.set_content((header + "\n".join(lines) + footer).encode("utf-8"))
+            return [flowfile]
+
+        if subcmd == "select":
+            conv_id_prefix = parts[2].strip() if len(parts) > 2 else ""
+            if not conv_id_prefix:
+                flowfile.set_content(
+                    "Usage: /conv select <conversation_id>".encode("utf-8")
+                )
+                return [flowfile]
+            # Find conversation matching prefix
+            convs = store.list_conversations(user_id=resolved_user)
+            match = None
+            for c in convs:
+                cid = c.get("conversation_id", "")
+                if cid == conv_id_prefix or cid.startswith(conv_id_prefix):
+                    match = cid
+                    break
+            if not match:
+                flowfile.set_content(
+                    f"Conversation '{conv_id_prefix}' not found.".encode("utf-8")
+                )
+                return [flowfile]
+            ids.set_active_conv(resolved_user, "telegram", match)
+            flowfile.set_content(
+                f"Switched to conversation {match[:12]}".encode("utf-8")
+            )
+            return [flowfile]
+
+        if subcmd == "new":
+            new_id = store.generate_id()
+            ids.set_active_conv(resolved_user, "telegram", new_id)
+            flowfile.set_content(
+                f"New conversation started: {new_id[:12]}".encode("utf-8")
+            )
+            return [flowfile]
+
+        # /conv info (default)
+        active = ids.get_active_conv(resolved_user, "telegram")
+        if active:
+            count = store.message_count(active)
+            flowfile.set_content(
+                f"Active conversation: {active[:12]} ({count} msgs)\n"
+                f"User: {resolved_user}".encode("utf-8")
+            )
+        else:
+            flowfile.set_content(
+                f"No active conversation. Use /conv new or /conv select ID.\n"
+                f"User: {resolved_user}".encode("utf-8")
+            )
+        return [flowfile]
+
+    def _execute_sync(self, flowfile: FlowFile) -> List[FlowFile]:
+        start_time = time.time()
+        total_tokens_in = 0
+        total_tokens_out = 0
+        tools_called: List[str] = []
+
+        ctx = self._prepare_agent_context(flowfile)
+        client = ctx["client"]
+        registry = ctx["registry"]
+        tool_defs = ctx["tool_defs"]
+        messages = ctx["messages"]
+        model = ctx["model"]
+        conversation_id = ctx["conversation_id"]
+        use_conv_store = ctx["use_conv_store"]
+        conv_ttl = ctx["conv_ttl"]
+        conv_attr = ctx["conv_attr"]
+        base_count = ctx.get("_base_message_count", 0)
+
+        iteration = 0
+        final_model = ""
+        finish_reason = ""
+        response_content = ""
+
+        while iteration < ctx["max_iterations"]:
+            iteration += 1
+
+            response = client.complete(
+                messages=messages,
+                model=model or None,
+                temperature=ctx["temperature"],
+                max_tokens=ctx["max_tokens"],
+                tools=tool_defs if tool_defs else None,
+            )
+
+            total_tokens_in += response.tokens_in
+            total_tokens_out += response.tokens_out
+            final_model = response.model
+            finish_reason = response.finish_reason
+
+            if not response.tool_calls:
+                messages.append(LLMMessage(role="assistant", content=response.content))
+                response_content = response.content
+                break
+
+            messages.append(LLMMessage(
+                role="assistant", content=response.content,
+                tool_calls=response.tool_calls,
+            ))
+
+            for tc in response.tool_calls:
+                tools_called.append(tc.name)
+                logger.info(f"Agent calling tool '{tc.name}' with args: {tc.arguments}")
+                result_text = registry.execute(tc.name, tc.arguments)
+                messages.append(LLMMessage(
+                    role="tool", content=result_text, tool_call_id=tc.id,
+                ))
+        else:
+            logger.warning(f"Agent reached max iterations ({ctx['max_iterations']}), "
+                           f"forcing final synthesis")
+            messages.append(LLMMessage(
+                role="user",
+                content=(
+                    "[System: You have reached the maximum number of tool calls. "
+                    "You MUST now provide your final response to the user. "
+                    "Synthesize all the information you gathered from your tool calls "
+                    "and present a clear, comprehensive answer. Do NOT call any more tools.]"
+                ),
+            ))
+            try:
+                final_resp = client.complete(
+                    messages=messages,
+                    model=model or None,
+                    temperature=ctx["temperature"],
+                    max_tokens=ctx["max_tokens"],
+                    tools=None,
+                )
+                messages.append(LLMMessage(role="assistant", content=final_resp.content))
+                response_content = final_resp.content
+                total_tokens_in += final_resp.tokens_in
+                total_tokens_out += final_resp.tokens_out
+                final_model = final_resp.model
+            except Exception as synth_err:
+                logger.error(f"Final synthesis failed: {synth_err}")
+                response_content = messages[-1].content if messages else "Max iterations reached"
+
+        # If the agent produced no final text, force a synthesis
+        if not response_content:
+            logger.warning(f"[agent] empty response — forcing synthesis")
+            messages.append(LLMMessage(
+                role="user",
+                content=(
+                    "[System: You did not provide a response to the user. "
+                    "You MUST respond now. Synthesize any information you have and present "
+                    "a clear answer. Do NOT call any tools.]"
+                ),
+            ))
+            synth_context = self._compact_if_needed(
+                list(messages), client, model or ctx["model"],
+                ctx.get("context_max_tokens", 64000),
+                0.6,
+                ctx.get("context_keep_recent", 6),
+            )
+            synth_ok = False
+            for _attempt in range(2):
+                try:
+                    synth_resp = client.complete(
+                        messages=synth_context,
+                        model=model or None,
+                        temperature=ctx["temperature"],
+                        max_tokens=ctx["max_tokens"],
+                        tools=None,
+                    )
+                    messages.append(LLMMessage(role="assistant", content=synth_resp.content))
+                    response_content = synth_resp.content
+                    total_tokens_in += synth_resp.tokens_in
+                    total_tokens_out += synth_resp.tokens_out
+                    final_model = synth_resp.model
+                    synth_ok = True
+                    break
+                except Exception as synth_err:
+                    err_str = str(synth_err)
+                    if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
+                        logger.warning(f"[agent] synthesis overflow, forcing aggressive compaction...")
+                        synth_context = self._compact_if_needed(
+                            synth_context, client, model or ctx["model"],
+                            ctx.get("context_max_tokens", 64000),
+                            0.4,
+                            ctx.get("context_keep_recent", 4),
+                        )
+                        continue
+                    logger.error(f"Forced synthesis failed: {synth_err}")
+                    break
+            if not synth_ok:
+                response_content = (
+                    "I performed research but encountered an error generating the response.\n"
+                    f"Tools used: {', '.join(tools_called)}"
+                )
+
+        duration_ms = (time.time() - start_time) * 1000
+        flowfile.set_attribute("agent.iterations", str(iteration))
+        flowfile.set_attribute("agent.tools_called", ",".join(tools_called))
+        flowfile.set_attribute("agent.model", final_model)
+        flowfile.set_attribute("agent.tokens_in", str(total_tokens_in))
+        flowfile.set_attribute("agent.tokens_out", str(total_tokens_out))
+        flowfile.set_attribute("agent.duration_ms", f"{duration_ms:.1f}")
+        flowfile.set_attribute("agent.finish_reason", finish_reason)
+
+        # Track token usage
+        try:
+            from core.token_tracker import TokenTracker
+            tracker_user = ctx.get("user_id", "anonymous")
+            TokenTracker.instance().track(
+                tracker_user, total_tokens_in, total_tokens_out,
+                model=final_model,
+            )
+            TokenTracker.instance().flush()
+        except Exception:
+            pass
+
+        if use_conv_store and conversation_id:
+            from core.conversation_store import ConversationStore
+            new_msgs = messages[base_count:]
+            if new_msgs:
+                ConversationStore.instance().append_messages(
+                    conversation_id,
+                    self._serialize_messages(new_msgs, channel=ctx.get("channel", "")),
+                    ttl=conv_ttl, user_id=ctx.get("user_id", ""),
+                )
+
+        if conv_attr:
+            flowfile.set_attribute(conv_attr, json.dumps(
+                self._serialize_messages(messages, channel=ctx.get("channel", "")),
+                ensure_ascii=False,
+            ))
+
+        if use_conv_store:
+            output = json.dumps({
+                "response": response_content,
+                "conversation_id": conversation_id,
+                "model": final_model,
+                "tokens_in": total_tokens_in,
+                "tokens_out": total_tokens_out,
+            }, ensure_ascii=False)
+            flowfile.set_content(output.encode("utf-8"))
+            flowfile.set_attribute("agent.conversation_id", conversation_id)
+        else:
+            flowfile.set_content(response_content.encode("utf-8"))
+
+        return [flowfile]
+
+    def _execute_streaming(self, flowfile: FlowFile) -> List[FlowFile]:
+        """Streaming mode: publish SSE events to ConversationEventBus.
+
+        Returns immediately with a JSON ack.  The agent loop runs in a
+        background thread, publishing events as it goes.
+        """
+        from core.conversation_event_bus import ConversationEventBus
+
+        ctx = self._prepare_agent_context(flowfile)
+        conversation_id = ctx["conversation_id"]
+        bus = ConversationEventBus.instance()
+
+        # Configure conversation-aware handlers with runtime context
+        from core.tool_registry import (
+            AskAgentHandler, CreatePlanHandler, FlowManagerHandler,
+            LocalFilesHandler, NotifyUserHandler, ScheduleRecheckHandler,
+            UpdatePlanHandler,
+        )
+        for h in ctx["registry"].list_tools():
+            if isinstance(h, ScheduleRecheckHandler):
+                h.set_conversation_id(conversation_id)
+                h.set_user_id(ctx.get("user_id", ""))
+            elif isinstance(h, LocalFilesHandler):
+                h.set_conversation_id(conversation_id)
+            elif isinstance(h, AskAgentHandler):
+                h.set_conversation_id(conversation_id)
+                h.set_llm_client(ctx["client"], ctx.get("model", ""))
+            elif isinstance(h, FlowManagerHandler):
+                h.set_conversation_id(conversation_id)
+                h.set_user_id(ctx.get("user_id", ""))
+            elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler)):
+                h.set_conversation_id(conversation_id)
+            elif isinstance(h, NotifyUserHandler):
+                h.set_conversation_id(conversation_id)
+
+        # Publish "thinking" immediately
+        bus.publish_event(conversation_id, "thinking", {"conversation_id": conversation_id})
+
+        # Bump generation counter — any older thread (e.g. poller) for this
+        # conversation will see the mismatch and skip its save.
+        with self._conv_gen_lock:
+            gen = self._conv_generation.get(conversation_id, 0) + 1
+            self._conv_generation[conversation_id] = gen
+        ctx["_generation"] = gen
+
+        # Mark conversation as active (prevents poller from picking it up)
+        # Also clear cooldown so poller can check again after this interaction
+        with self._active_lock:
+            self._active_conversations.add(conversation_id)
+            self._poll_cooldown.pop(conversation_id, None)
+
+        # Set conversation status to active
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().set_status(conversation_id, "active")
+
+        # Start agent loop in background thread
+        thread = threading.Thread(
+            target=self._streaming_agent_loop,
+            args=(ctx, conversation_id, bus),
+            daemon=True,
+            name=f"agent-stream-{conversation_id}",
+        )
+        thread.start()
+
+        # Start poller if configured and not already running
+        poll_interval = int(self.config.get("poll_interval", 0))
+        if poll_interval > 0 and not self._poller_started:
+            self._poller_started = True
+            poller = threading.Thread(
+                target=self._poll_conversations,
+                args=(poll_interval,),
+                daemon=True,
+                name="agent-poller",
+            )
+            poller.start()
+            logger.info(f"Agent poller started (interval={poll_interval}s)")
+
+        # Return immediately with ack (include message_count so client can sync)
+        from core.conversation_store import ConversationStore as _CS
+        msg_count = _CS.instance().message_count(conversation_id)
+        ack = json.dumps({
+            "status": "accepted",
+            "conversation_id": conversation_id,
+            "message_count": msg_count,
+        }, ensure_ascii=False)
+        flowfile.set_content(ack.encode("utf-8"))
+        flowfile.set_attribute("agent.conversation_id", conversation_id)
+        flowfile.set_attribute("agent.streaming", "true")
+
+        return [flowfile]
+
+    def _is_current_generation(self, conversation_id: str, generation: int) -> bool:
+        """Check if this thread's generation is still current.
+
+        Returns False if a newer user request has started for this conversation,
+        meaning this thread should NOT overwrite the conversation store.
+        """
+        with self._conv_gen_lock:
+            return self._conv_generation.get(conversation_id, 0) == generation
+
+    def _streaming_agent_loop(self, ctx: Dict, conversation_id: str,
+                              bus) -> None:
+        """Background thread: run agent loop, publish events to EventBus.
+
+        Supports autonomous continuation: if the agent calls the
+        ``schedule_continuation`` tool during a round, the loop will
+        publish a ``done`` event with the intermediate response, wait
+        the requested delay, then start a new round with the
+        continuation plan injected as a system message.
+        """
+        from core.conversation_event_bus import ConversationEventBus
+
+        my_generation = ctx.get("_generation", 0)
+        start_time = time.time()
+        total_tokens_in = 0
+        total_tokens_out = 0
+        tools_called: List[str] = []
+
+        client = ctx["client"]
+        registry = ctx["registry"]
+        tool_defs = ctx["tool_defs"]
+        messages = ctx["messages"]  # LLM working context (may be compacted)
+        model = ctx["model"]
+        use_conv_store = ctx["use_conv_store"]
+        conv_ttl = ctx["conv_ttl"]
+        channel = ctx.get("channel", "")
+
+        # Track new messages added during this run for append-only persistence.
+        # The canonical conversation history lives in the ConversationStore and
+        # is only extended — never overwritten — by this thread.
+        new_messages: List[LLMMessage] = []
+        # The user message was already appended to `messages` by _prepare_agent_context.
+        # Record it as a new message so it gets persisted.
+        base_count = ctx.get("_base_message_count", 0)
+        if len(messages) > base_count:
+            new_messages.extend(messages[base_count:])
+
+        max_rounds = int(ctx.get("max_rounds", 1))
+        iteration = 0
+        final_model = ""
+        finish_reason = ""
+        response_content = ""
+
+        user_id = ctx.get("user_id", "")
+
+        def _append(msg: LLMMessage):
+            """Append a message to both the LLM context and the new-messages list."""
+            messages.append(msg)
+            new_messages.append(msg)
+
+        def _flush_new():
+            """Persist new messages to the canonical conversation history."""
+            nonlocal new_messages
+            if not (use_conv_store and conversation_id and new_messages):
+                return
+            if not self._is_current_generation(conversation_id, my_generation):
+                logger.info(f"[agent:{conversation_id[:8]}] skipping flush — "
+                            f"generation {my_generation} is stale")
+                return
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().append_messages(
+                conversation_id,
+                self._serialize_messages(new_messages, channel=channel),
+                ttl=conv_ttl, user_id=user_id,
+            )
+            new_messages = []
+
+        # Persist the user message immediately so it's never lost
+        _flush_new()
+
+        try:
+            for current_round in range(1, max_rounds + 1):
+                # Track continuation requests for this round
+                continuation_plan = None
+                continuation_delay = 3
+
+                while iteration < ctx["max_iterations"]:
+                    iteration += 1
+
+                    # During poll first iteration, suppress streaming to avoid
+                    # showing [NO_PENDING_WORK] in the UI. If tool calls happen,
+                    # poll_silent flips off and subsequent iterations stream normally.
+                    poll_silent = ctx.get("is_poll", False) and iteration == 1
+
+                    # Notify client that LLM is being called
+                    logger.info(f"[agent:{conversation_id[:8]}] round {current_round}/{max_rounds}, "
+                                f"iteration {iteration}/{ctx['max_iterations']}, "
+                                f"messages={len(messages)}, tools_called={len(tools_called)}")
+                    if not poll_silent:
+                        bus.publish_event(conversation_id, "thinking", {
+                            "iteration": iteration,
+                            "round": current_round,
+                        })
+
+                    # Use streaming LLM call with token callback
+                    token_parts: List[str] = []
+                    last_token_time = time.time()
+
+                    def on_token(text: str):
+                        nonlocal last_token_time
+                        last_token_time = time.time()
+                        token_parts.append(text)
+                        if not poll_silent:
+                            bus.publish_event(conversation_id, "token", {"text": text})
+
+                    # Heartbeat thread (suppressed during silent poll)
+                    heartbeat_stop = threading.Event()
+
+                    def heartbeat():
+                        while not heartbeat_stop.wait(5.0):
+                            if poll_silent:
+                                continue
+                            elapsed = int(time.time() - last_token_time)
+                            bus.publish_event(conversation_id, "thinking", {
+                                "iteration": iteration,
+                                "round": current_round,
+                                "waiting_seconds": elapsed,
+                            })
+
+                    hb_thread = threading.Thread(target=heartbeat, daemon=True)
+                    hb_thread.start()
+
+                    # Compact context if approaching token limit.
+                    # Compaction works on a COPY — the canonical `messages` list
+                    # is never modified so it stays consistent for persistence.
+                    llm_context = self._compact_if_needed(
+                        list(messages), client, model or ctx["model"],
+                        ctx.get("context_max_tokens", 64000),
+                        ctx.get("context_compact_threshold", 0.8),
+                        ctx.get("context_keep_recent", 6),
+                        conversation_id=conversation_id,
+                    )
+
+                    try:
+                        response = client.complete_stream(
+                            messages=llm_context,
+                            model=model or None,
+                            temperature=ctx["temperature"],
+                            max_tokens=ctx["max_tokens"],
+                            tools=tool_defs if tool_defs else None,
+                            callback=on_token,
+                        )
+                    except Exception as llm_err:
+                        err_str = str(llm_err)
+                        # Detect context overflow — force aggressive compaction and retry once
+                        if "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
+                            logger.warning(f"[agent:{conversation_id[:8]}] Context overflow detected, "
+                                           f"forcing aggressive compaction and retrying...")
+                            bus.publish_event(conversation_id, "thinking", {
+                                "iteration": iteration, "detail": "compacting context...",
+                            })
+                            llm_context = self._compact_if_needed(
+                                llm_context, client, model or ctx["model"],
+                                ctx.get("context_max_tokens", 64000),
+                                0.5,  # aggressive threshold
+                                ctx.get("context_keep_recent", 6),
+                                conversation_id=conversation_id,
+                            )
+                            try:
+                                heartbeat_stop.clear()
+                                hb_thread = threading.Thread(target=heartbeat, daemon=True)
+                                hb_thread.start()
+                                response = client.complete_stream(
+                                    messages=llm_context,
+                                    model=model or None,
+                                    temperature=ctx["temperature"],
+                                    max_tokens=ctx["max_tokens"],
+                                    tools=tool_defs if tool_defs else None,
+                                    callback=on_token,
+                                )
+                            except Exception as retry_err:
+                                logger.error(f"LLM retry also failed (iter {iteration}): {retry_err}")
+                                bus.publish_event(conversation_id, "error_event", {
+                                    "message": f"LLM call failed after compaction: {retry_err}",
+                                })
+                                response_content = f"Error: {retry_err}"
+                                break
+                            finally:
+                                heartbeat_stop.set()
+                                hb_thread.join(timeout=1)
+                        else:
+                            logger.error(f"LLM call failed (iter {iteration}): {llm_err}")
+                            bus.publish_event(conversation_id, "error_event", {
+                                "message": f"LLM call failed: {llm_err}",
+                            })
+                            response_content = f"Error: {llm_err}"
+                            break
+                    finally:
+                        heartbeat_stop.set()
+                        hb_thread.join(timeout=1)
+
+                    total_tokens_in += response.tokens_in
+                    total_tokens_out += response.tokens_out
+                    final_model = response.model
+                    finish_reason = response.finish_reason
+
+                    logger.info(f"[agent:{conversation_id[:8]}] LLM responded: "
+                                f"tokens_in={response.tokens_in}, tokens_out={response.tokens_out}, "
+                                f"tool_calls={len(response.tool_calls) if response.tool_calls else 0}, "
+                                f"finish={finish_reason}, content_len={len(response.content or '')}")
+
+                    if not response.tool_calls:
+                        _append(LLMMessage(role="assistant", content=response.content))
+                        response_content = response.content
+                        _flush_new()
+                        break
+
+                    # Tool calls
+                    _append(LLMMessage(
+                        role="assistant", content=response.content,
+                        tool_calls=response.tool_calls,
+                    ))
+
+                    # If poll was silent but LLM made tool calls → real work detected
+                    # Emit thinking event to wake up the UI
+                    if poll_silent and response.tool_calls:
+                        poll_silent = False
+                        bus.publish_event(conversation_id, "thinking", {
+                            "iteration": iteration, "round": current_round,
+                        })
+
+                    for tc in response.tool_calls:
+                        tools_called.append(tc.name)
+                        bus.publish_event(conversation_id, "tool_call", {
+                            "tool": tc.name, "arguments": tc.arguments,
+                        })
+
+                        try:
+                            result_text = registry.execute(tc.name, tc.arguments)
+                        except Exception as tool_err:
+                            result_text = f"Error: {tool_err}"
+                            logger.error(f"Tool '{tc.name}' failed: {tool_err}")
+
+                        # Detect continuation request
+                        if tc.name == "schedule_continuation":
+                            continuation_plan = tc.arguments.get("plan", "Continue working")
+                            continuation_delay = int(tc.arguments.get("delay_seconds", 3))
+
+                        _append(LLMMessage(
+                            role="tool", content=result_text, tool_call_id=tc.id,
+                        ))
+
+                        bus.publish_event(conversation_id, "tool_result", {
+                            "tool": tc.name,
+                            "result": result_text[:2000],
+                        })
+
+                    # Flush tool calls + results to disk after each iteration
+                    _flush_new()
+                else:
+                    # Max iterations reached with tool calls still active.
+                    # Force one final LLM call WITHOUT tools to get a synthesis.
+                    logger.warning(f"Agent reached max iterations ({ctx['max_iterations']}), "
+                                   f"forcing final synthesis")
+                    bus.publish_event(conversation_id, "thinking", {
+                        "iteration": iteration + 1,
+                        "round": current_round,
+                    })
+                    _append(LLMMessage(
+                        role="user",
+                        content=(
+                            "[System: You have reached the maximum number of tool calls. "
+                            "You MUST now provide your final response to the user. "
+                            "Synthesize all the information you gathered from your tool calls "
+                            "and present a clear, comprehensive answer. Do NOT call any more tools.]"
+                        ),
+                    ))
+                    try:
+                        final_resp = client.complete_stream(
+                            messages=messages,
+                            model=model or None,
+                            temperature=ctx["temperature"],
+                            max_tokens=ctx["max_tokens"],
+                            tools=None,  # No tools — force text response
+                            callback=lambda text: bus.publish_event(
+                                conversation_id, "token", {"text": text}),
+                        )
+                        _append(LLMMessage(role="assistant", content=final_resp.content))
+                        response_content = final_resp.content
+                        total_tokens_in += final_resp.tokens_in
+                        total_tokens_out += final_resp.tokens_out
+                        final_model = final_resp.model
+                    except Exception as synth_err:
+                        logger.error(f"Final synthesis failed: {synth_err}")
+                        response_content = messages[-1].content if messages else "Max iterations reached"
+
+                # Flush any remaining new messages to the canonical history
+                _flush_new()
+
+                # Check if continuation was requested
+                if continuation_plan and current_round < max_rounds:
+                    # Publish intermediate done so the UI shows the current response
+                    duration_ms = (time.time() - start_time) * 1000
+                    from core.conversation_store import ConversationStore as _CS2
+                    bus.publish_event(conversation_id, "done", {
+                        "response": response_content,
+                        "conversation_id": conversation_id,
+                        "model": final_model,
+                        "tokens_in": total_tokens_in,
+                        "tokens_out": total_tokens_out,
+                        "tools_called": tools_called,
+                        "iterations": iteration,
+                        "duration_ms": round(duration_ms, 1),
+                        "continuing": True,
+                        "message_count": _CS2.instance().message_count(conversation_id),
+                    })
+
+                    logger.info(f"[agent:{conversation_id[:8]}] continuation scheduled: "
+                                f"plan='{continuation_plan}', delay={continuation_delay}s, "
+                                f"next_round={current_round + 1}/{max_rounds}")
+
+                    # Wait before continuing
+                    time.sleep(continuation_delay)
+
+                    # Inject continuation as a system message
+                    _append(LLMMessage(
+                        role="user",
+                        content=(
+                            f"[System: Automatic continuation — round {current_round + 1}]\n"
+                            f"Continue with your plan: {continuation_plan}\n"
+                            f"Build on your previous findings. When done, provide a final synthesis. "
+                            f"If you still have more work, call schedule_continuation again."
+                        ),
+                    ))
+
+                    # Reset response_content for next round
+                    response_content = ""
+                    continue
+                else:
+                    # No continuation — we're done
+                    break
+
+            # If the agent produced no final text, force a synthesis
+            if not response_content:
+                logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")
+                bus.publish_event(conversation_id, "thinking", {
+                    "iteration": iteration + 1,
+                    "round": "synthesis",
+                })
+                _append(LLMMessage(
+                    role="user",
+                    content=(
+                        "[System: You did not provide a response to the user. "
+                        "You MUST respond now. Synthesize any information you have and present "
+                        "a clear answer. Do NOT call any tools.]"
+                    ),
+                ))
+                # Compact before synthesis — context may be huge after many tool calls
+                synth_context = self._compact_if_needed(
+                    list(messages), client, model or ctx["model"],
+                    ctx.get("context_max_tokens", 64000),
+                    0.6,  # aggressive threshold for synthesis
+                    ctx.get("context_keep_recent", 6),
+                )
+                synth_ok = False
+                for _attempt in range(2):
+                    try:
+                        synth_resp = client.complete_stream(
+                            messages=synth_context,
+                            model=model or None,
+                            temperature=ctx["temperature"],
+                            max_tokens=ctx["max_tokens"],
+                            tools=None,
+                            callback=lambda text: bus.publish_event(
+                                conversation_id, "token", {"text": text}),
+                        )
+                        _append(LLMMessage(role="assistant", content=synth_resp.content))
+                        response_content = synth_resp.content
+                        total_tokens_in += synth_resp.tokens_in
+                        total_tokens_out += synth_resp.tokens_out
+                        final_model = synth_resp.model
+                        logger.info(f"[agent:{conversation_id[:8]}] forced synthesis produced "
+                                    f"{len(response_content)} chars")
+                        _flush_new()
+                        synth_ok = True
+                        break
+                    except Exception as synth_err:
+                        err_str = str(synth_err)
+                        if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
+                            logger.warning(f"[agent:{conversation_id[:8]}] synthesis overflow, "
+                                           f"forcing aggressive compaction and retrying...")
+                            synth_context = self._compact_if_needed(
+                                synth_context, client, model or ctx["model"],
+                                ctx.get("context_max_tokens", 64000),
+                                0.4,  # very aggressive
+                                ctx.get("context_keep_recent", 4),
+                            )
+                            continue
+                        logger.error(f"[agent:{conversation_id[:8]}] forced synthesis failed: {synth_err}")
+                        break
+                if not synth_ok:
+                    response_content = (
+                        "I performed the following research but encountered an error "
+                        f"generating the final response.\n\n"
+                        f"Tools used: {', '.join(tools_called)}"
+                    )
+
+            # Handle [NO_PENDING_WORK] / [RECHECK_IN:...] tags
+            if "[NO_PENDING_WORK]" in (response_content or ""):
+                import re as _re
+                recheck_match = _re.search(r'\[RECHECK_IN:(\d+)\]', response_content or "")
+                default_recheck = int(self.config.get("poll_recheck_delay", 7200))
+                recheck_delay = int(recheck_match.group(1)) if recheck_match else default_recheck
+
+                # Strip tags to see if there's real content underneath
+                stripped = _re.sub(r'\s*\[NO_PENDING_WORK\]', '', response_content)
+                stripped = _re.sub(r'\s*\[RECHECK_IN:\d+\]', '', stripped)
+                stripped = _re.sub(r'\[System:[^\]]*\]', '', stripped)
+                stripped = stripped.strip()
+
+                # Set cooldown (in-memory) AND persistent schedule
+                from core.conversation_store import ConversationStore
+                from core.poll_scheduler import PollScheduler
+                convs = ConversationStore.instance().list_conversations()
+                conv_meta = next((c for c in convs if c["conversation_id"] == conversation_id), None)
+                current_updated_at = conv_meta["updated_at"] if conv_meta else time.time()
+                self._poll_cooldown[conversation_id] = (current_updated_at, time.time() + recheck_delay)
+                # Persist to PollScheduler so it survives restarts
+                user_id = ctx.get("user_id", "")
+                PollScheduler.instance().schedule_delay(
+                    conversation_id, recheck_delay, user_id=user_id,
+                    reason="[RECHECK_IN] tag from agent response",
+                )
+
+                if not stripped:
+                    # Pure poll check-in with nothing to say — discard entirely
+                    logger.info(f"[agent:{conversation_id[:8]}] poll check-in: no pending work, "
+                                f"recheck in {recheck_delay}s (discarded)")
+                    bus.publish_event(conversation_id, "discard", {})
+                    new_messages.clear()
+                    # Mark conversation idle — agent has no pending work
+                    ConversationStore.instance().set_status(conversation_id, "idle")
+                    return
+                else:
+                    # Real content + tags — keep the content, strip the tags
+                    logger.info(f"[agent:{conversation_id[:8]}] response with NO_PENDING_WORK tag, "
+                                f"keeping {len(stripped)} chars, recheck in {recheck_delay}s")
+                    response_content = stripped
+                    # Also strip from the persisted assistant message
+                    if new_messages:
+                        last_assistant = None
+                        for msg in reversed(new_messages):
+                            if msg.role == "assistant":
+                                last_assistant = msg
+                                break
+                        if last_assistant and "[NO_PENDING_WORK]" in (last_assistant.content or ""):
+                            last_assistant.content = stripped
+                    _flush_new()
+
+            # Publish final done event
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(f"[agent:{conversation_id[:8]}] done: response_len={len(response_content or '')}, "
+                        f"tools={tools_called}")
+            from core.conversation_store import ConversationStore as _CS3
+            bus.publish_event(conversation_id, "done", {
+                "response": response_content,
+                "conversation_id": conversation_id,
+                "model": final_model,
+                "tokens_in": total_tokens_in,
+                "tokens_out": total_tokens_out,
+                "tools_called": tools_called,
+                "iterations": iteration,
+                "duration_ms": round(duration_ms, 1),
+                "message_count": _CS3.instance().message_count(conversation_id),
+            })
+
+            # Track token usage
+            try:
+                from core.token_tracker import TokenTracker
+                tracker_user = ctx.get("user_id", "anonymous")
+                TokenTracker.instance().track(
+                    tracker_user, total_tokens_in, total_tokens_out,
+                    model=final_model,
+                )
+                TokenTracker.instance().flush()
+            except Exception:
+                pass
+
+            # Update conversation status — idle unless tools were used (active = may need follow-up)
+            from core.conversation_store import ConversationStore as _CS
+            _CS.instance().set_status(
+                conversation_id,
+                "active" if tools_called else "idle",
+            )
+
+        except Exception as e:
+            logger.error(f"Streaming agent loop error: {e}", exc_info=True)
+            bus.publish_event(conversation_id, "error_event", {
+                "message": str(e),
+                "conversation_id": conversation_id,
+            })
+        finally:
+            with self._active_lock:
+                self._active_conversations.discard(conversation_id)
+
+    def _poll_conversations(self, interval: int) -> None:
+        """Background poller: periodically check active conversations for pending work.
+
+        For each eligible conversation (has an SSE subscriber, not currently being
+        processed, last message was from assistant with tool usage), re-run the
+        agent loop with a check-in prompt.
+        """
+        from core.conversation_event_bus import ConversationEventBus
+        from core.conversation_store import ConversationStore
+
+        logger.info(f"Agent poller running (interval={interval}s)")
+
+        while not self._poller_stop.wait(interval):
+            try:
+                self._poll_once()
+            except Exception as e:
+                logger.error(f"Agent poller error: {e}", exc_info=True)
+
+    def _poll_once(self) -> None:
+        """Single poll iteration: check scheduled rechecks and active conversations."""
+        from core.conversation_event_bus import ConversationEventBus
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+
+        bus = ConversationEventBus.instance()
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+
+        # Collect conversations to poll from two sources:
+        # 1. Scheduled rechecks that are due (persistent, works without SSE)
+        # 2. Active SSE conversations with cooldown expired (legacy behavior)
+        to_poll: set[str] = set()
+        # Scheduled rechecks bypass eligibility checks (they were explicitly requested)
+        scheduled_ids: set[str] = set()
+
+        # Source 1: PollScheduler — persistent scheduled rechecks
+        # Map cid -> list of reasons for scheduled wakeups
+        scheduled_reasons: Dict[str, List[str]] = {}
+        due_entries = scheduler.get_due()
+        for entry in due_entries:
+            cid = entry["conversation_id"]
+            reason = entry.get("reason", "scheduled recheck")
+            logger.info(f"[poller] Scheduled recheck due for {cid[:8]}: {reason}")
+            # Set status to active so the poll runs
+            store.set_status(cid, "active")
+            # Clear any in-memory cooldown that would block the poll
+            self._poll_cooldown.pop(cid, None)
+            to_poll.add(cid)
+            scheduled_ids.add(cid)
+            scheduled_reasons.setdefault(cid, []).append(reason)
+
+        # Source 2: Active SSE conversations (user has UI open)
+        # Only wake if cooldown expired — NOT on user interaction alone.
+        # User interaction triggers the agent via the normal HTTP request path,
+        # not via the poller.  The poller is only for autonomous check-ins.
+        active_sse = bus.active_conversations()
+        for conversation_id in active_sse:
+            # Skip if this conversation already has a PollScheduler entry
+            # (it will be woken at the right time by source 1)
+            if scheduler.get(conversation_id):
+                continue
+            # Check cooldown
+            cooldown = self._poll_cooldown.get(conversation_id)
+            if cooldown:
+                _last_updated_at, recheck_at = cooldown
+                now = time.time()
+                if now < recheck_at:
+                    continue  # cooldown not expired yet
+                # Cooldown expired — eligible for poll
+                del self._poll_cooldown[conversation_id]
+            else:
+                # No cooldown set — skip (no autonomous work expected)
+                continue
+            to_poll.add(conversation_id)
+
+        if not to_poll:
+            return
+
+        for conversation_id in to_poll:
+            # Skip if already being processed
+            with self._active_lock:
+                if conversation_id in self._active_conversations:
+                    continue
+
+            # Load conversation history
+            messages_data = store.load(conversation_id)
+            if not messages_data:
+                continue
+
+            # Scheduled rechecks bypass eligibility (explicitly requested by agent)
+            if conversation_id not in scheduled_ids:
+                if not self._is_eligible_for_poll(conversation_id, messages_data):
+                    continue
+
+            logger.info(f"[poller] Waking up conversation {conversation_id[:8]}")
+
+            # Bump generation for the poll run
+            with self._conv_gen_lock:
+                gen = self._conv_generation.get(conversation_id, 0) + 1
+                self._conv_generation[conversation_id] = gen
+
+            # Mark as active
+            with self._active_lock:
+                self._active_conversations.add(conversation_id)
+
+            # Build context and run agent loop
+            try:
+                reasons = scheduled_reasons.get(conversation_id, [])
+                ctx = self._build_poll_context(conversation_id, messages_data,
+                                               scheduled_reasons=reasons)
+                if ctx is None:
+                    with self._active_lock:
+                        self._active_conversations.discard(conversation_id)
+                    continue
+                ctx["_generation"] = gen
+
+                bus.publish_event(conversation_id, "thinking", {
+                    "iteration": 0,
+                    "poll": True,
+                })
+
+                thread = threading.Thread(
+                    target=self._streaming_agent_loop,
+                    args=(ctx, conversation_id, bus),
+                    daemon=True,
+                    name=f"agent-poll-{conversation_id[:8]}",
+                )
+                thread.start()
+            except Exception as e:
+                logger.error(f"[poller] Failed to wake {conversation_id[:8]}: {e}")
+                with self._active_lock:
+                    self._active_conversations.discard(conversation_id)
+
+    def _is_eligible_for_poll(self, conversation_id: str,
+                              messages_data: List[Dict]) -> bool:
+        """Check if a conversation is eligible for autonomous polling.
+
+        Eligible if conversation status is ``active`` (set by the agent when
+        it used tools and may have follow-up work).  Falls back to message
+        heuristics if status is not set.
+        """
+        if not messages_data or len(messages_data) < 3:
+            return False
+
+        # Primary check: use conversation status
+        from core.conversation_store import ConversationStore
+        meta = ConversationStore.instance().get_metadata(conversation_id)
+        if meta:
+            status = meta.get("status", "idle")
+            # Only poll active conversations
+            if status != "active":
+                return False
+
+        # Find the last non-system message
+        last_msg = None
+        for msg in reversed(messages_data):
+            role = msg.get("role", "")
+            if role in ("assistant", "user", "tool"):
+                last_msg = msg
+                break
+
+        if not last_msg:
+            return False
+
+        # Must end with assistant message (not waiting for user)
+        if last_msg.get("role") != "assistant":
+            return False
+
+        # Don't re-poll if last message is already a poll check-in response
+        content = last_msg.get("content", "")
+        if "[NO_PENDING_WORK]" in content:
+            return False
+
+        # Must have had tool calls in history (active work, not just chat)
+        has_tools = any(
+            msg.get("role") == "tool" or msg.get("tool_calls")
+            for msg in messages_data
+        )
+        if not has_tools:
+            return False
+
+        return True
+
+    def _build_poll_context(self, conversation_id: str,
+                            messages_data: List[Dict],
+                            scheduled_reasons: Optional[List[str]] = None,
+                            ) -> Optional[Dict]:
+        """Build an agent context for a poll-triggered run."""
+        provider = self.config.get("provider", "openai")
+        api_key = self.config.get("api_key", "")
+        llm_base_url = self.config.get("base_url", "")
+        model = self.config.get("model", "")
+        timeout = int(self.config.get("timeout", 120))
+
+        if not api_key:
+            return None
+
+        client = LLMClient(
+            provider=provider, api_key=api_key, base_url=llm_base_url,
+            default_model=model, timeout=timeout,
+        )
+
+        # Recover user_id from the conversation entry (never lose ownership)
+        from core.conversation_store import ConversationStore
+        meta = ConversationStore.instance().get_metadata(conversation_id)
+        poll_user_id = meta["user_id"] if meta else ""
+
+        registry = self.get_tool_registry()
+        self._configure_tool_handlers(
+            registry, conversation_id=conversation_id, user_id=poll_user_id,
+        )
+
+        tool_defs = [
+            LLMToolDefinition(
+                name=h.name, description=h.description, parameters=h.parameters_schema,
+            )
+            for h in registry.list_tools()
+        ]
+
+        # Rebuild context from summary + recent (avoids re-summarizing)
+        system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+        from datetime import datetime
+        system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        try:
+            messages = self._rebuild_context(
+                conversation_id, messages_data, system_prompt,
+                int(self.config.get("context_max_tokens", 64000)),
+                int(self.config.get("context_keep_recent", 6)),
+            )
+        except (KeyError, TypeError):
+            return None
+
+        # Inject poll check-in prompt (not persisted unless real work happens)
+        if scheduled_reasons:
+            # This wake-up was explicitly scheduled — tell the agent why
+            reasons_text = "\n".join(f"- {r}" for r in scheduled_reasons)
+            checkin_content = (
+                "[System: Scheduled wake-up]\n"
+                f"You are being woken up because of scheduled reminder(s):\n"
+                f"{reasons_text}\n\n"
+                "Act on these scheduled reasons. Respond to the user accordingly.\n"
+                "If the reason is a reminder, remind the user.\n"
+                "If the reason is to continue work, continue using your tools.\n"
+                "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
+                "addressed all scheduled reasons above."
+            )
+        else:
+            checkin_content = (
+                "[System: Autonomous check-in]\n"
+                "Review the conversation above. Is there pending research or work "
+                "that you started but didn't finish? If yes, continue working on it "
+                "using your available tools.\n"
+                "If everything is complete, respond with [NO_PENDING_WORK].\n"
+                "You can also use the schedule_recheck tool to schedule a future check-in "
+                "at a specific time or after a delay."
+            )
+        messages.append(LLMMessage(role="user", content=checkin_content))
+        # Set base count AFTER check-in prompt so it's not treated as "new"
+        # and won't be persisted unless the agent does real work after it.
+        base_message_count = len(messages)
+
+        temperature = float(self.config.get("temperature", 0.7))
+        max_tokens = int(self.config.get("max_tokens", 4096))
+        max_iterations = int(self.config.get("max_iterations", 200))
+        conv_ttl = int(self.config.get("conversation_ttl", 0))
+
+        # File TTL = conversation TTL (0 = unlimited)
+        from core.tool_registry import CreateFileHandler, ExecuteScriptHandler
+        for h in registry.list_tools():
+            if isinstance(h, (CreateFileHandler, ExecuteScriptHandler)):
+                h.set_ttl(conv_ttl)
+
+        return {
+            "client": client, "registry": registry, "tool_defs": tool_defs,
+            "messages": messages, "model": model,
+            "temperature": temperature, "max_tokens": max_tokens,
+            "max_iterations": max_iterations,
+            "max_rounds": int(self.config.get("max_rounds", 1)),
+            "use_conv_store": True, "conv_ttl": conv_ttl,
+            "conv_attr": "", "conversation_id": conversation_id,
+            "user_id": poll_user_id,
+            "is_poll": True,
+            "_base_message_count": base_message_count,
+        }
+
+    def _configure_tool_handlers(
+        self, registry: ToolRegistry,
+        conversation_id: str = "", user_id: str = "",
+    ) -> None:
+        """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
+        from core.tool_registry import (
+            AskAgentHandler, CreateFileHandler, CreatePlanHandler,
+            CreateToolHandler, ExecuteScriptHandler, FlowManagerHandler,
+            ForgetHandler, GetAgentResultsHandler, ImageGenerationHandler,
+            LocalFilesHandler, ManageResourceHandler, NotifyUserHandler,
+            RecallHandler, RememberHandler, ListSecretsHandler,
+            ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
+            StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
+        )
+
+        file_base_url = self.config.get("file_base_url", "")
+        # file_ttl is set per-request to match conversation TTL
+        # (see _prepare_agent_context and _build_poll_context)
+        pixazo_key = self.config.get("pixazo_api_key", "")
+
+        for h in registry.list_tools():
+            if isinstance(h, CreateFileHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+            elif isinstance(h, ExecuteScriptHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+            elif isinstance(h, ImageGenerationHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+                if pixazo_key:
+                    h.set_api_key(pixazo_key)
+            elif isinstance(h, ScheduleRecheckHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, LocalFilesHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, (RememberHandler, RecallHandler, ForgetHandler)):
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler)):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, NotifyUserHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, CreateToolHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, FlowManagerHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, StoreSecretHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, ListSecretsHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, AskAgentHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, ManageResourceHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, (SpawnAgentsHandler, UseSkillHandler)):
+                if user_id:
+                    h.set_user_id(user_id)
+                # SubAgentExecutor is set up lazily in _prepare_agent_context
+            elif isinstance(h, ShowFileHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+
+    @staticmethod
+    def _cleanup_conversation_resources(conversation_id: str):
+        """Cascade-delete all resources tied to a conversation: flows, tools, secrets."""
+        from core.tool_registry import FlowManagerHandler, StoreSecretHandler
+        try:
+            FlowManagerHandler.cleanup_conversation(conversation_id)
+        except Exception as e:
+            logger.warning(f"[cleanup] flow cleanup failed: {e}")
+        try:
+            StoreSecretHandler.cleanup_conversation(conversation_id)
+        except Exception as e:
+            logger.warning(f"[cleanup] secret cleanup failed: {e}")
+        try:
+            from core.dynamic_tool_store import DynamicToolStore
+            DynamicToolStore.instance().cleanup_conversation(conversation_id)
+        except Exception as e:
+            logger.warning(f"[cleanup] dynamic tool cleanup failed: {e}")
+
+    @staticmethod
+    def _cleanup_conversation_files(messages: List[Dict[str, Any]]):
+        """Delete files referenced in conversation messages (on conv delete)."""
+        import re
+        from core.file_store import FileStore
+        store = FileStore.instance()
+        file_ids = set()
+        # Scan for /files/{file_id}/ patterns in message content
+        pattern = re.compile(r'/files/([a-f0-9]{12})/')
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                for match in pattern.finditer(content):
+                    file_ids.add(match.group(1))
+        for fid in file_ids:
+            store.delete(fid)
+        if file_ids:
+            logger.info(f"[cleanup] deleted {len(file_ids)} files from conversation")
+
+    def _filter_tools_by_role(self, registry: ToolRegistry,
+                              user_role: str) -> ToolRegistry:
+        """Return a filtered registry containing only tools the user can access.
+
+        Each tool handler may have an ``allowed_roles`` attribute (set by
+        load_agent_tools from the flow config).  If not set, the tool is
+        accessible to everyone.
+        """
+        filtered = ToolRegistry()
+        for handler in registry.list_tools():
+            allowed = getattr(handler, "allowed_roles", None)
+            if allowed is None or user_role in allowed:
+                filtered.register(handler)
+        return filtered
+
+    # ── Context rebuild ─────────────────────────────────────────────
+
+    def _rebuild_context(
+        self,
+        conversation_id: str,
+        all_messages: List[Dict[str, Any]],
+        system_prompt: str,
+        max_tokens: int,
+        keep_recent: int,
+    ) -> List[LLMMessage]:
+        """Rebuild the LLM context from the conversation history.
+
+        If a persisted context_summary exists, uses it instead of re-summarizing.
+        Otherwise falls back to loading all messages (which will be compacted
+        before the LLM call by ``_compact_if_needed``).
+
+        Returns a list of LLMMessage ready for the LLM, structured as:
+        ``[system_prompt, summary_user, summary_ack, ...recent_messages]``
+        """
+        from core.conversation_store import ConversationStore
+
+        summary = ConversationStore.instance().get_context_summary(conversation_id)
+        all_deserialized = self._deserialize_messages(all_messages)
+
+        # Estimate if the full conversation fits in context
+        estimated = self._estimate_tokens(all_deserialized)
+        limit = int(max_tokens * 0.8)
+
+        if estimated <= limit:
+            # Everything fits — no need for summary
+            logger.info(f"[rebuild:{conversation_id[:8]}] full history fits "
+                        f"({estimated} tokens <= {limit})")
+            return all_deserialized
+
+        if not summary:
+            # No summary available — load everything and let _compact_if_needed handle it
+            logger.info(f"[rebuild:{conversation_id[:8]}] no summary available, "
+                        f"loading all {len(all_deserialized)} messages for compaction")
+            return all_deserialized
+
+        # Rebuild from summary + recent messages
+        # Find system prompt in the existing messages (or use the config one)
+        if all_deserialized and all_deserialized[0].role == "system":
+            sys_msg = all_deserialized[0]
+        else:
+            sys_msg = LLMMessage(role="system", content=system_prompt)
+
+        # Take the last keep_recent messages (user/assistant/tool only, not system)
+        non_system = [m for m in all_deserialized if m.role != "system"]
+        recent = non_system[-keep_recent:] if len(non_system) > keep_recent else non_system
+
+        context = [sys_msg]
+        context.append(LLMMessage(
+            role="user",
+            content=f"[Conversation summary — earlier messages compacted]\n\n{summary}",
+        ))
+        context.append(LLMMessage(
+            role="assistant",
+            content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
+        ))
+        context.extend(recent)
+
+        rebuilt_estimate = self._estimate_tokens(context)
+        logger.info(f"[rebuild:{conversation_id[:8]}] rebuilt from summary + "
+                    f"{len(recent)} recent = {rebuilt_estimate} tokens "
+                    f"(full was {estimated} tokens, {len(all_deserialized)} msgs)")
+        return context
+
+    # ── Context compaction ────────────────────────────────────────────
+
+    @staticmethod
+    def _estimate_tokens(messages: List[LLMMessage]) -> int:
+        """Token estimate: ~3 chars per token (conservative to avoid overflow).
+
+        Uses 3 chars/token instead of 3.5-4 to ensure compaction triggers
+        before the real limit is hit.  Each message also adds ~4 tokens of
+        overhead (role, separators).
+        """
+        total_chars = 0
+        for m in messages:
+            total_chars += 12  # message overhead (role, separators)
+            if isinstance(m.content, str):
+                total_chars += len(m.content)
+            elif isinstance(m.content, list):
+                for part in m.content:
+                    if part.get("type") == "text":
+                        total_chars += len(part.get("text", ""))
+                    elif part.get("type") == "document":
+                        total_chars += len(part.get("text", ""))
+                    elif part.get("type") == "image_url":
+                        total_chars += 1000
+            if m.tool_calls:
+                for tc in m.tool_calls:
+                    total_chars += len(tc.name) + len(json.dumps(tc.arguments))
+        return int(total_chars / 3)
+
+    def _compact_if_needed(
+        self,
+        messages: List[LLMMessage],
+        client: LLMClient,
+        model: str,
+        max_tokens: int,
+        threshold: float,
+        keep_recent: int,
+        conversation_id: str = "",
+    ) -> List[LLMMessage]:
+        """Compact conversation history if approaching the token limit.
+
+        Strategy:
+        1. First pass: truncate long tool_results (>500 chars → 200 + "...truncated")
+        2. If still over threshold: summarize old messages via LLM call
+
+        Always preserves:
+        - System prompt (first message)
+        - Last `keep_recent` messages (never compacted)
+
+        If *conversation_id* is given, the resulting summary is persisted
+        to the ConversationStore so it can be reused after a restart.
+        """
+        estimated = self._estimate_tokens(messages)
+        limit = int(max_tokens * threshold)
+
+        if estimated <= limit:
+            return messages
+
+        logger.info(f"[compact] Estimated {estimated} tokens (limit {limit}), compacting...")
+
+        # Pass 1: Truncate long tool results
+        truncated = False
+        for m in messages:
+            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > 500:
+                m.content = m.content[:200] + "\n...[truncated]..."
+                truncated = True
+
+        if truncated:
+            estimated = self._estimate_tokens(messages)
+            if estimated <= limit:
+                logger.info(f"[compact] Pass 1 (truncate tool results) sufficient: {estimated} tokens")
+                return messages
+
+        # Pass 2: LLM-based summarization of old messages
+        if len(messages) <= keep_recent + 1:
+            # Not enough messages to compact
+            logger.info(f"[compact] Only {len(messages)} messages, cannot compact further")
+            return messages
+
+        # Split: system prompt | old messages | recent messages
+        system_msg = messages[0] if messages[0].role == "system" else None
+        start_idx = 1 if system_msg else 0
+        split_point = len(messages) - keep_recent
+        if split_point <= start_idx:
+            return messages
+
+        old_messages = messages[start_idx:split_point]
+        recent_messages = messages[split_point:]
+
+        # Summarize old messages (chunked if too large for LLM context)
+        try:
+            summary = self._summarize_messages(old_messages, client, model, max_tokens)
+        except Exception as e:
+            logger.error(f"[compact] Summarization failed: {e}")
+            return messages  # Keep original if summarization fails
+
+        # Rebuild messages: system + summary + recent
+        compacted: List[LLMMessage] = []
+        if system_msg:
+            compacted.append(system_msg)
+        compacted.append(LLMMessage(
+            role="user",
+            content=f"[Conversation summary — earlier messages compacted]\n\n{summary}",
+        ))
+        compacted.append(LLMMessage(
+            role="assistant",
+            content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
+        ))
+        compacted.extend(recent_messages)
+
+        new_estimate = self._estimate_tokens(compacted)
+        logger.info(f"[compact] Final: {new_estimate} tokens (was {estimated}), "
+                    f"{len(compacted)} messages (was {len(messages)})")
+
+        # Persist the summary so it survives restarts
+        if conversation_id and summary:
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_context_summary(conversation_id, summary)
+                logger.info(f"[compact] Persisted context summary for {conversation_id[:8]} "
+                            f"({len(summary)} chars)")
+            except Exception as e:
+                logger.warning(f"[compact] Failed to persist summary: {e}")
+
+        return compacted
+
+    def _summarize_messages(
+        self,
+        old_messages: List[LLMMessage],
+        client: LLMClient,
+        model: str,
+        max_tokens: int,
+    ) -> str:
+        """Summarize messages, chunking if the text is too large for the LLM.
+
+        Strategy: estimate how many tokens the summary request will use.
+        If it exceeds ~70% of max_tokens, split messages in half, summarize
+        each half recursively, combine, and do a final summary pass.
+        """
+        summary_text = self._sanitize_for_llm(self._messages_to_text(old_messages))
+        # Estimate: system prompt (~100 tokens) + summary_text + output (2000)
+        text_tokens = self._estimate_tokens([LLMMessage(role="user", content=summary_text)])
+        safe_limit = int(max_tokens * 0.65)  # leave room for system prompt + output
+
+        if text_tokens <= safe_limit:
+            # Fits in one call
+            return self._call_summarize(client, model, summary_text)
+
+        # Too large — split in half and summarize each part recursively
+        mid = len(old_messages) // 2
+        if mid == 0:
+            # Single huge message — just hard-truncate it
+            truncated = summary_text[:safe_limit * 3]  # ~safe_limit tokens at 3 chars/token
+            return self._call_summarize(client, model, truncated)
+
+        logger.info(f"[compact] Text too large ({text_tokens} tokens > {safe_limit}), "
+                    f"splitting {len(old_messages)} messages into 2 chunks of {mid} + {len(old_messages) - mid}")
+
+        summary_a = self._summarize_messages(old_messages[:mid], client, model, max_tokens)
+        summary_b = self._summarize_messages(old_messages[mid:], client, model, max_tokens)
+
+        # Combine both summaries and do a final reduction pass
+        combined = f"Part 1:\n{summary_a}\n\nPart 2:\n{summary_b}"
+        combined_tokens = self._estimate_tokens([LLMMessage(role="user", content=combined)])
+
+        if combined_tokens <= safe_limit:
+            return self._call_summarize(client, model, combined)
+        else:
+            # Still too big — just concatenate (will be compacted on next cycle)
+            logger.warning(f"[compact] Combined summaries still large ({combined_tokens} tokens), concatenating")
+            return combined
+
+    def _call_summarize(self, client: LLMClient, model: str, text: str) -> str:
+        """Single LLM call to summarize text."""
+        # Double-sanitize: the text may contain tool results with weird chars
+        clean_text = self._sanitize_for_llm(text)
+        try:
+            response = client.complete(
+                messages=[
+                    LLMMessage(role="system", content=(
+                        "You are a conversation summarizer. Summarize the following conversation "
+                        "exchange concisely, preserving all key facts, decisions, research findings, "
+                        "URLs discovered, tool results, and any important context. "
+                        "Do NOT lose any factual information. Be concise but complete."
+                    )),
+                    LLMMessage(role="user", content=clean_text),
+                ],
+                model=model or None,
+                temperature=0.3,
+                max_tokens=2000,
+            )
+        except Exception as e:
+            err_str = str(e)
+            # Log debug info to help diagnose malformed content
+            if "parse" in err_str.lower() or "500" in err_str:
+                # Find the approximate problematic position
+                import re as _re
+                pos_match = _re.search(r'pos (\d+)', err_str)
+                pos = int(pos_match.group(1)) if pos_match else -1
+                context_start = max(0, pos - 100)
+                context_end = min(len(clean_text), pos + 100)
+                snippet = clean_text[context_start:context_end]
+                # Show char codes around the problem area
+                if pos >= 0 and pos < len(clean_text):
+                    char_codes = [f"0x{ord(c):04x}" for c in clean_text[max(0,pos-5):pos+5]]
+                else:
+                    char_codes = []
+                logger.error(
+                    f"[compact] Summarization parse error at pos {pos}, "
+                    f"text_len={len(clean_text)}, "
+                    f"nearby_chars={char_codes}, "
+                    f"snippet=...{repr(snippet)}..."
+                )
+                # Fallback: aggressively strip non-ASCII and retry
+                ascii_text = clean_text.encode("ascii", errors="replace").decode("ascii")
+                try:
+                    response = client.complete(
+                        messages=[
+                            LLMMessage(role="system", content=(
+                                "You are a conversation summarizer. Summarize concisely, "
+                                "preserving key facts, decisions, and findings."
+                            )),
+                            LLMMessage(role="user", content=ascii_text),
+                        ],
+                        model=model or None,
+                        temperature=0.3,
+                        max_tokens=2000,
+                    )
+                    logger.info("[compact] ASCII fallback succeeded")
+                except Exception as e2:
+                    logger.error(f"[compact] ASCII fallback also failed: {e2}")
+                    raise
+            else:
+                raise
+        summary = response.content
+        logger.info(f"[compact] Summarized {len(text)} chars into {len(summary)} chars "
+                    f"({self._estimate_tokens([LLMMessage(role='user', content=summary)])} tokens)")
+        return summary
+
+    @staticmethod
+    def _sanitize_for_llm(text: str) -> str:
+        """Remove characters that break LLM API JSON parsing."""
+        import re as _re
+        # Strip C0/C1 control chars except \n \r \t
+        text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        # Remove lone surrogates (invalid in JSON)
+        text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+        # Replace null bytes that may survive
+        text = text.replace('\x00', '')
+        return text
+
+    @staticmethod
+    def _messages_to_text(messages: List[LLMMessage]) -> str:
+        """Convert a list of messages to readable text for summarization."""
+        lines = []
+        for m in messages:
+            role = m.role.upper()
+            if isinstance(m.content, str):
+                content = m.content
+            elif isinstance(m.content, list):
+                parts = []
+                for p in m.content:
+                    if p.get("type") == "text":
+                        parts.append(p["text"])
+                    elif p.get("type") == "document":
+                        parts.append(f"[Document: {p.get('filename', 'file')}] {p.get('text', '')[:500]}")
+                    elif p.get("type") == "image_url":
+                        parts.append("[Image attached]")
+                content = "\n".join(parts)
+            else:
+                content = str(m.content)
+
+            if m.tool_calls:
+                tc_desc = ", ".join(f"{tc.name}({json.dumps(tc.arguments)[:100]})" for tc in m.tool_calls)
+                lines.append(f"{role}: {content}\n  Tool calls: {tc_desc}")
+            elif m.role == "tool":
+                lines.append(f"TOOL_RESULT (id={m.tool_call_id}): {content[:300]}")
+            else:
+                lines.append(f"{role}: {content}")
+        return "\n\n".join(lines)
+
+    # ── Attachment handling ──────────────────────────────────────────
+
+    def _build_user_content(self, text: str, attachments: List[Dict]) -> Any:
+        """Build user message content from text and optional attachments.
+
+        If no attachments, returns plain str.
+        If attachments exist, returns multi-part list for vision/document support.
+
+        Attachment format from client:
+            {"filename": "photo.png", "mime_type": "image/png", "data": "base64..."}
+            {"filename": "doc.pdf", "mime_type": "application/pdf", "data": "base64..."}
+        """
+        if not attachments:
+            return text
+
+        import base64
+
+        _IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp"}
+        _TEXT_TYPES = {
+            "text/plain", "text/html", "text/markdown", "text/csv",
+            "application/json", "application/xml",
+        }
+
+        parts: List[Dict[str, Any]] = []
+
+        # Add text first
+        if text.strip():
+            parts.append({"type": "text", "text": text})
+
+        for att in attachments:
+            mime = att.get("mime_type", "application/octet-stream")
+            filename = att.get("filename", "file")
+            data_b64 = att.get("data", "")
+
+            if mime in _IMAGE_TYPES:
+                # Image: send as image_url with data URI (OpenAI format, converted for Anthropic)
+                parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{data_b64}"},
+                })
+            elif mime == "application/pdf":
+                # PDF: try to extract text
+                try:
+                    raw = base64.b64decode(data_b64)
+                    pdf_text = self._extract_pdf_text(raw)
+                    parts.append({
+                        "type": "document",
+                        "filename": filename,
+                        "text": pdf_text,
+                    })
+                except Exception as e:
+                    parts.append({
+                        "type": "text",
+                        "text": f"[Attached PDF: {filename} — could not extract text: {e}]",
+                    })
+            elif mime in _TEXT_TYPES or filename.endswith((".txt", ".md", ".html", ".csv", ".json")):
+                # Text file: decode and inject
+                try:
+                    raw = base64.b64decode(data_b64)
+                    file_text = raw.decode("utf-8", errors="replace")
+                    parts.append({
+                        "type": "document",
+                        "filename": filename,
+                        "text": file_text,
+                    })
+                except Exception as e:
+                    parts.append({
+                        "type": "text",
+                        "text": f"[Attached file: {filename} — could not decode: {e}]",
+                    })
+            else:
+                # Unknown type — mention it
+                parts.append({
+                    "type": "text",
+                    "text": f"[Attached file: {filename} ({mime}) — binary content not supported]",
+                })
+
+        return parts if len(parts) > 1 or any(p["type"] != "text" for p in parts) else (parts[0]["text"] if parts else text)
+
+    @staticmethod
+    def _extract_pdf_text(raw_bytes: bytes) -> str:
+        """Extract text from PDF bytes using available libraries."""
+        # Try PyPDF2 first (most common)
+        try:
+            import io
+            from PyPDF2 import PdfReader
+            reader = PdfReader(io.BytesIO(raw_bytes))
+            pages = []
+            for page in reader.pages:
+                t = page.extract_text()
+                if t:
+                    pages.append(t)
+            if pages:
+                return "\n\n---\n\n".join(pages)
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+        # Try pdfminer
+        try:
+            import io
+            from pdfminer.high_level import extract_text as _pdfminer_extract
+            return _pdfminer_extract(io.BytesIO(raw_bytes))
+        except ImportError:
+            pass
+
+        # Fallback: raw text extraction (basic)
+        text = raw_bytes.decode("latin-1", errors="replace")
+        # Extract readable strings (crude but works for simple PDFs)
+        import re
+        strings = re.findall(r'[\x20-\x7E]{10,}', text)
+        if strings:
+            return "\n".join(strings[:200])
+
+        raise RuntimeError("No PDF library available (install PyPDF2 or pdfminer.six)")
+
+    @staticmethod
+    def _classify_messages_for_display(
+        raw_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Classify stored messages for chat UI display.
+
+        Returns list of dicts with:
+          type: "user" | "assistant" | "tool_call" | "tool_result" | "system"
+          role: original role
+          content: text content
+          tool_name: (for tool_call/tool_result) tool name
+          tool_args: (for tool_call) stringified arguments
+        System messages are excluded (internal to LLM context).
+        """
+        result = []
+        for m in raw_messages:
+            role = m.get("role", "")
+            if role == "system":
+                continue  # skip system prompts
+            raw_content = m.get("content", "")
+            # Normalize content to string (may be a list for multipart messages)
+            if isinstance(raw_content, list):
+                text_parts = []
+                for p in raw_content:
+                    if isinstance(p, dict):
+                        if p.get("type") == "text":
+                            text_parts.append(p.get("text", ""))
+                        elif p.get("type") == "image_url":
+                            text_parts.append("[Image]")
+                        elif p.get("type") == "document":
+                            text_parts.append(f"[Document: {p.get('filename', 'file')}]")
+                    elif isinstance(p, str):
+                        text_parts.append(p)
+                content = "\n".join(text_parts)
+            elif isinstance(raw_content, str):
+                content = raw_content
+            else:
+                content = str(raw_content) if raw_content else ""
+
+            tool_calls = m.get("tool_calls")
+            tool_call_id = m.get("tool_call_id")
+
+            if role == "assistant" and tool_calls:
+                # Assistant message that contains tool calls
+                if content:
+                    result.append({
+                        "type": "assistant", "role": "assistant",
+                        "content": content,
+                    })
+                for tc in tool_calls:
+                    result.append({
+                        "type": "tool_call", "role": "assistant",
+                        "content": f"🔧 {tc.get('name', '?')}",
+                        "tool_name": tc.get("name", ""),
+                        "tool_args": json.dumps(tc.get("arguments", {}),
+                                                ensure_ascii=False)[:500],
+                    })
+            elif role == "tool" and tool_call_id:
+                # Tool result message
+                preview = content[:300]
+                result.append({
+                    "type": "tool_result", "role": "tool",
+                    "content": preview + ("..." if len(content) > 300 else ""),
+                    "tool_call_id": tool_call_id,
+                })
+            elif role in ("user", "assistant"):
+                # Skip internal system instructions injected as user messages
+                if role == "user" and content.startswith("[System:"):
+                    continue
+                entry = {"type": role, "role": role, "content": content}
+                if m.get("channel"):
+                    entry["channel"] = m["channel"]
+                result.append(entry)
+        return result
+
+    def _serialize_messages(self, messages: List[LLMMessage],
+                           channel: str = "") -> List[Dict[str, Any]]:
+        """Serialize messages for storage."""
+        result = []
+        for m in messages:
+            entry: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                entry["tool_calls"] = [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in m.tool_calls
+                ]
+            if m.tool_call_id:
+                entry["tool_call_id"] = m.tool_call_id
+            if channel and m.role in ("user", "assistant"):
+                entry["channel"] = channel
+            result.append(entry)
+        return result
+
+    def _deserialize_messages(self, data: List[Dict[str, Any]]) -> List[LLMMessage]:
+        """Deserialize messages from storage."""
+        messages = []
+        for entry in data:
+            tool_calls = None
+            if "tool_calls" in entry:
+                tool_calls = [
+                    LLMToolCall(
+                        id=tc["id"],
+                        name=tc["name"],
+                        arguments=tc.get("arguments", {}),
+                    )
+                    for tc in entry["tool_calls"]
+                ]
+            messages.append(LLMMessage(
+                role=entry["role"],
+                content=entry.get("content", ""),
+                tool_calls=tool_calls,
+                tool_call_id=entry.get("tool_call_id"),
+            ))
+        return messages
+
+
+TaskFactory.register(AgentLoopTask)

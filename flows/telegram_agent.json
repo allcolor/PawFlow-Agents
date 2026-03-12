@@ -1,0 +1,66 @@
+{
+  "id": "telegram-agent",
+  "name": "Telegram Agent",
+  "version": "1.0.0",
+  "description": "LLM agent accessible via Telegram. Messages from Telegram are processed by the agent and responses are sent back.",
+  "parameters": {
+    "provider": "openai",
+    "api_key": "",
+    "base_url": "",
+    "model": "",
+    "bot_token": "",
+    "allowed_users": "",
+    "conversation_ttl": 0
+  },
+  "services": {
+    "telegram_bot": {
+      "type": "telegramBot",
+      "parameters": {
+        "bot_token": "${flow.parameters.bot_token}",
+        "poll_timeout": 30,
+        "allowed_users": "${flow.parameters.allowed_users}"
+      }
+    }
+  },
+  "tasks": {
+    "receive": {
+      "type": "telegramReceiver",
+      "parameters": {
+        "service_id": "telegram_bot"
+      }
+    },
+    "agent": {
+      "type": "agentLoop",
+      "parameters": {
+        "provider": "${flow.parameters.provider}",
+        "api_key": "${flow.parameters.api_key}",
+        "base_url": "${flow.parameters.base_url}",
+        "model": "${flow.parameters.model}",
+        "system_prompt": "You are a helpful AI assistant on Telegram. Be concise and helpful. Use Markdown formatting.",
+        "conversation_attribute": "telegram.chat_id",
+        "conversation_ttl": "${flow.parameters.conversation_ttl}",
+        "max_iterations": 50
+      }
+    },
+    "send_reply": {
+      "type": "telegramSend",
+      "parameters": {
+        "service_id": "telegram_bot",
+        "chat_id": "${telegram.chat_id}",
+        "parse_mode": "Markdown"
+      }
+    }
+  },
+  "connections": [
+    {
+      "source": "receive",
+      "target": "agent",
+      "relationships": ["success"]
+    },
+    {
+      "source": "agent",
+      "target": "send_reply",
+      "relationships": ["success"]
+    }
+  ]
+}

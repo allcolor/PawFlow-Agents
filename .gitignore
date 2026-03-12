@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Test/IDE
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.*
+venv/
+.venv/
+
+# Secrets & auth (NEVER commit)
+config/secret.key
+config/agent_secrets.json
+config/sessions.json
+config/users.json
+config/agent_variables.json
+
+# Runtime state
+continuous_state.json
+config/storage/
+config/flow_versions/
+
+# User data (runtime, not source)
+data/conversations/
+data/agent_flows/
+data/dynamic_tools/
+data/files/
+data/poll_schedule/
+data/token_usage.json
+data/identities.json
+checkpoints/
+memory/
+
+# Plugin builds
+plugins/*.pfp
+
+# Config for user resources (runtime)
+config/agents.json
+config/skills.json
+config/mcp_servers.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temp test files
+_test_path.py
+test_flow.py
+test_gui.py
+test_input/

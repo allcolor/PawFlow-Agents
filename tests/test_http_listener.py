@@ -1,0 +1,846 @@
+"""Tests for HTTP Listener Service, httpReceiver, handleHTTPResponse, validateHTTPAuth."""
+
+import json
+import queue
+import threading
+import time
+import urllib.request
+import urllib.error
+import pytest
+
+from services.http_listener_service import (
+    HTTPListenerService, PendingRequest, RouteRegistry,
+    RouteConflictError, RouteEntry,
+)
+from services.http_auth_service import HTTPAuthService, AuthValidationResult
+from tasks.io.http_receiver import HTTPReceiverTask
+from tasks.io.handle_http_response import HandleHTTPResponseTask
+from tasks.io.validate_http_auth import ValidateHTTPAuthTask
+from core import FlowFile
+
+
+# ---------------------------------------------------------------------------
+# RouteRegistry tests
+# ---------------------------------------------------------------------------
+
+class TestRouteRegistry:
+
+    def test_register_and_match(self):
+        reg = RouteRegistry()
+        cb = lambda req: None
+        reg.register("GET", "/api/hello", "flow1", cb)
+        result = reg.match("GET", "/api/hello")
+        assert result is not None
+        entry, params = result
+        assert entry.method == "GET"
+        assert entry.pattern == "/api/hello"
+        assert params == {}
+
+    def test_path_params(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/api/users/{id}", "flow1", lambda r: None)
+        result = reg.match("GET", "/api/users/42")
+        assert result is not None
+        entry, params = result
+        assert params == {"id": "42"}
+
+    def test_multiple_path_params(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/api/{org}/repos/{repo}", "flow1", lambda r: None)
+        result = reg.match("GET", "/api/acme/repos/widget")
+        assert result is not None
+        _, params = result
+        assert params == {"org": "acme", "repo": "widget"}
+
+    def test_no_match_returns_none(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/api/hello", "flow1", lambda r: None)
+        assert reg.match("POST", "/api/hello") is None
+        assert reg.match("GET", "/api/other") is None
+
+    def test_conflict_error(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/api/x", "flow1", lambda r: None)
+        with pytest.raises(RouteConflictError):
+            reg.register("GET", "/api/x", "flow2", lambda r: None)
+
+    def test_idempotent_same_owner(self):
+        reg = RouteRegistry()
+        cb1 = lambda r: None
+        cb2 = lambda r: None
+        reg.register("GET", "/api/x", "flow1", cb1)
+        reg.register("GET", "/api/x", "flow1", cb2)
+        assert len(reg.get_routes()) == 1
+
+    def test_unregister(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/a", "flow1", lambda r: None)
+        reg.register("POST", "/b", "flow1", lambda r: None)
+        reg.register("GET", "/c", "flow2", lambda r: None)
+        reg.unregister("flow1")
+        routes = reg.get_routes()
+        assert len(routes) == 1
+        assert routes[0]["owner"] == "flow2"
+
+    def test_get_routes(self):
+        reg = RouteRegistry()
+        reg.register("GET", "/a", "f1", lambda r: None)
+        reg.register("POST", "/b", "f2", lambda r: None)
+        routes = reg.get_routes()
+        assert len(routes) == 2
+        methods = {r["method"] for r in routes}
+        assert methods == {"GET", "POST"}
+
+
+# ---------------------------------------------------------------------------
+# PendingRequest tests
+# ---------------------------------------------------------------------------
+
+class TestPendingRequest:
+
+    def test_wait_timeout(self):
+        req = PendingRequest(
+            request_id="abc", method="GET", path="/",
+            headers={}, body=b"",
+        )
+        assert req.wait(timeout=0.1) is False
+        assert req.completed is False
+
+    def test_complete_unblocks_wait(self):
+        req = PendingRequest(
+            request_id="abc", method="GET", path="/",
+            headers={}, body=b"",
+        )
+        def respond():
+            time.sleep(0.1)
+            req.complete(200, {"Content-Type": "text/plain"}, b"OK")
+        t = threading.Thread(target=respond)
+        t.start()
+        assert req.wait(timeout=2.0) is True
+        assert req.completed is True
+        assert req.response_status == 200
+        assert req.response_body == b"OK"
+        t.join()
+
+
+# ---------------------------------------------------------------------------
+# HTTPListenerService tests
+# ---------------------------------------------------------------------------
+
+class TestHTTPListenerService:
+
+    def test_create_and_connect(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19876})
+        svc.connect()
+        assert svc.is_connected()
+        svc.disconnect()
+
+    def test_register_route(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19877})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/test", "owner1", lambda r: None)
+            routes = svc.get_routes()
+            assert len(routes) == 1
+            assert routes[0]["method"] == "GET"
+        finally:
+            svc.disconnect()
+
+    def test_unregister_routes(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19878})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/a", "owner1", lambda r: None)
+            svc.register_route("POST", "/b", "owner1", lambda r: None)
+            svc.unregister_routes("owner1")
+            assert len(svc.get_routes()) == 0
+        finally:
+            svc.disconnect()
+
+    def test_submit_response(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19879})
+        svc.connect()
+        try:
+            results = []
+            def on_request(req):
+                results.append(req)
+            svc.register_route("GET", "/hello", "test", on_request)
+
+            # Make HTTP request in a thread
+            response_holder = [None]
+            def make_request():
+                try:
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:19879/hello",
+                        method="GET",
+                    )
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    response_holder[0] = (resp.status, resp.read())
+                except Exception as e:
+                    response_holder[0] = e
+
+            t = threading.Thread(target=make_request)
+            t.start()
+            time.sleep(0.3)
+
+            # Submit response
+            assert len(results) == 1
+            svc.submit_response(
+                results[0].request_id, 200,
+                {"Content-Type": "text/plain"},
+                b"Hello World",
+            )
+            t.join(timeout=5)
+            assert response_holder[0] == (200, b"Hello World")
+        finally:
+            svc.disconnect()
+
+    def test_404_on_no_match(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19880})
+        svc.connect()
+        try:
+            try:
+                req = urllib.request.Request(
+                    "http://127.0.0.1:19880/nonexistent",
+                    method="GET",
+                )
+                urllib.request.urlopen(req, timeout=5)
+                assert False, "Should have raised"
+            except urllib.error.HTTPError as e:
+                assert e.code == 404
+                body = json.loads(e.read())
+                assert "Not Found" in body["error"]
+        finally:
+            svc.disconnect()
+
+    def test_504_on_timeout(self):
+        svc = HTTPListenerService({
+            "host": "127.0.0.1", "port": 19881,
+            "request_timeout": 0.5,
+        })
+        svc.connect()
+        try:
+            # Register route but never respond
+            svc.register_route("GET", "/slow", "test", lambda r: None)
+
+            try:
+                req = urllib.request.Request(
+                    "http://127.0.0.1:19881/slow",
+                    method="GET",
+                )
+                urllib.request.urlopen(req, timeout=5)
+                assert False, "Should have raised"
+            except urllib.error.HTTPError as e:
+                assert e.code == 504
+        finally:
+            svc.disconnect()
+
+    def test_pending_count(self):
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19882})
+        svc.connect()
+        try:
+            assert svc.get_pending_count() == 0
+        finally:
+            svc.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# HTTPReceiverTask tests
+# ---------------------------------------------------------------------------
+
+class TestHTTPReceiverTask:
+
+    def test_has_pending_input_default_false(self):
+        task = HTTPReceiverTask({"service_id": "svc1", "routes": []})
+        assert task.has_pending_input() is False
+
+    def test_on_request_enqueues(self):
+        task = HTTPReceiverTask({"service_id": "svc1", "routes": []})
+        task._registered = True  # Skip service registration
+        req = PendingRequest(
+            request_id="r1", method="GET", path="/test",
+            headers={"Host": "localhost"}, body=b"body",
+            path_params={"id": "42"}, query_string="foo=bar",
+        )
+        task._on_request(req, "GET:/test")
+        assert task.has_pending_input() is True
+
+        results = task.execute(None)
+        assert len(results) == 1
+        ff = results[0]
+        assert ff.get_attribute("http.request.id") == "r1"
+        assert ff.get_attribute("http.method") == "GET"
+        assert ff.get_attribute("http.path") == "/test"
+        assert ff.get_attribute("http.query") == "foo=bar"
+        assert ff.get_attribute("http.path.id") == "42"
+        assert ff.get_attribute("route.relationship") == "GET:/test"
+        assert ff.get_content() == b"body"
+
+    def test_execute_empty_queue(self):
+        task = HTTPReceiverTask({"service_id": "svc1", "routes": []})
+        # Shouldn't raise, returns empty
+        task._registered = True  # Skip registration
+        results = task.execute(None)
+        assert results == []
+
+
+# ---------------------------------------------------------------------------
+# HandleHTTPResponseTask tests
+# ---------------------------------------------------------------------------
+
+class TestHandleHTTPResponseTask:
+
+    def test_missing_request_id(self):
+        task = HandleHTTPResponseTask({"service_id": "svc1"})
+        ff = FlowFile(content=b"test")
+        with pytest.raises(RuntimeError, match="Missing http.request.id"):
+            task.execute(ff)
+
+    def test_status_code_from_config(self):
+        """Verify config status_code is used when no attribute override."""
+        task = HandleHTTPResponseTask({
+            "service_id": "svc1",
+            "status_code": 201,
+        })
+        # We need to test the logic without a real service
+        # Just verify the config is parsed
+        assert task.config["status_code"] == 201
+
+    def test_headers_override_from_attributes(self):
+        task = HandleHTTPResponseTask({
+            "service_id": "svc1",
+            "content_type": "text/html",
+        })
+        ff = FlowFile(content=b"<h1>Hi</h1>")
+        ff.set_attribute("http.request.id", "req1")
+        ff.set_attribute("http.response.header.X-Custom", "value")
+        ff.set_attribute("http.response.status", "201")
+        # Without service, this will raise — but we verified the attribute parsing logic
+        # in the integration test above
+
+
+# ---------------------------------------------------------------------------
+# HTTPAuthService tests
+# ---------------------------------------------------------------------------
+
+class TestHTTPAuthService:
+
+    def test_bearer_valid(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["abc123"]})
+        result = svc.validate("Bearer abc123")
+        assert result.valid is True
+        assert "abc123" in result.principal
+
+    def test_bearer_invalid(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["abc123"]})
+        result = svc.validate("Bearer wrong")
+        assert result.valid is False
+        assert result.status_code == 401
+
+    def test_no_auth_header(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["t"]})
+        result = svc.validate(None)
+        assert result.valid is False
+        assert result.status_code == 401
+
+    def test_malformed_header(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["t"]})
+        result = svc.validate("malformed")
+        assert result.valid is False
+
+    def test_basic_valid(self):
+        import base64
+        svc = HTTPAuthService({
+            "auth_type": "basic",
+            "users": {"admin": "secret"},
+        })
+        creds = base64.b64encode(b"admin:secret").decode()
+        result = svc.validate(f"Basic {creds}")
+        assert result.valid is True
+        assert result.principal == "admin"
+
+    def test_basic_invalid_password(self):
+        import base64
+        svc = HTTPAuthService({
+            "auth_type": "basic",
+            "users": {"admin": "secret"},
+        })
+        creds = base64.b64encode(b"admin:wrong").decode()
+        result = svc.validate(f"Basic {creds}")
+        assert result.valid is False
+
+    def test_basic_unknown_user(self):
+        import base64
+        svc = HTTPAuthService({
+            "auth_type": "basic",
+            "users": {"admin": "secret"},
+        })
+        creds = base64.b64encode(b"unknown:pass").decode()
+        result = svc.validate(f"Basic {creds}")
+        assert result.valid is False
+
+    def test_add_remove_token(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": []})
+        result = svc.validate("Bearer tok1")
+        assert result.valid is False
+        svc.add_token("tok1")
+        result = svc.validate("Bearer tok1")
+        assert result.valid is True
+        svc.remove_token("tok1")
+        result = svc.validate("Bearer tok1")
+        assert result.valid is False
+
+    def test_add_remove_user(self):
+        import base64
+        svc = HTTPAuthService({"auth_type": "basic", "users": {}})
+        svc.add_user("bob", "pass")
+        creds = base64.b64encode(b"bob:pass").decode()
+        result = svc.validate(f"Basic {creds}")
+        assert result.valid is True
+        svc.remove_user("bob")
+        result = svc.validate(f"Basic {creds}")
+        assert result.valid is False
+
+    def test_custom_validator(self):
+        svc = HTTPAuthService({"auth_type": "custom"})
+        svc.set_custom_validator(
+            lambda scheme, creds: AuthValidationResult(
+                valid=(creds == "magic"), principal="wizard"
+            )
+        )
+        assert svc.validate("Bearer magic").valid is True
+        assert svc.validate("Bearer other").valid is False
+
+    def test_unsupported_scheme(self):
+        svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["t"]})
+        result = svc.validate("Digest abc")
+        assert result.valid is False
+
+    def test_realm_property(self):
+        svc = HTTPAuthService({"realm": "TestRealm"})
+        assert svc.realm == "TestRealm"
+
+
+# ---------------------------------------------------------------------------
+# ValidateHTTPAuthTask tests
+# ---------------------------------------------------------------------------
+
+class TestValidateHTTPAuthTask:
+
+    def _make_task_with_services(self, auth_config, listener_svc=None):
+        task = ValidateHTTPAuthTask({
+            "auth_service_id": "auth",
+            "listener_service_id": "listener",
+            "auto_respond": bool(listener_svc),
+        })
+        services = {"auth": HTTPAuthService(auth_config)}
+        if listener_svc:
+            services["listener"] = listener_svc
+        task.set_services(services)
+        return task
+
+    def test_valid_bearer(self):
+        task = self._make_task_with_services(
+            {"auth_type": "bearer", "tokens": ["tok1"]}
+        )
+        ff = FlowFile(content=b"data")
+        ff.set_attribute("http.header.authorization", "Bearer tok1")
+        results = task.execute(ff)
+        assert len(results) == 1
+        assert results[0].get_attribute("http.auth.valid") == "true"
+
+    def test_invalid_bearer_routes_to_failure(self):
+        task = self._make_task_with_services(
+            {"auth_type": "bearer", "tokens": ["tok1"]}
+        )
+        ff = FlowFile(content=b"data")
+        ff.set_attribute("http.header.authorization", "Bearer wrong")
+        results = task.execute(ff)
+        assert len(results) == 1
+        assert results[0].get_attribute("http.auth.valid") == "false"
+        assert results[0].get_attribute("route.relationship") == "failure"
+
+    def test_no_auth_header(self):
+        task = self._make_task_with_services(
+            {"auth_type": "bearer", "tokens": ["t"]}
+        )
+        ff = FlowFile(content=b"data")
+        ff.set_attribute("http.request.id", "r1")
+        results = task.execute(ff)
+        assert results[0].get_attribute("http.auth.valid") == "false"
+
+
+# ---------------------------------------------------------------------------
+# Integration: full HTTP request-response cycle
+# ---------------------------------------------------------------------------
+
+class TestHTTPListenerIntegration:
+
+    def test_full_cycle(self):
+        """Test: HTTP request -> httpReceiver -> handleHTTPResponse -> HTTP response."""
+        port = 19883
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+
+        try:
+            # Setup httpReceiver
+            receiver = HTTPReceiverTask({
+                "service_id": "listener",
+                "routes": [{"method": "GET", "pattern": "/api/greet/{name}"}],
+            })
+            receiver.set_services({"listener": svc})
+            receiver._ensure_routes_registered()
+
+            # Setup handleHTTPResponse
+            responder = HandleHTTPResponseTask({
+                "service_id": "listener",
+                "content_type": "text/html",
+            })
+            responder.set_services({"listener": svc})
+
+            # Make HTTP request in background
+            response_holder = [None]
+            def make_request():
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/api/greet/World",
+                        method="GET",
+                    )
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    response_holder[0] = (resp.status, resp.read().decode())
+                except Exception as e:
+                    response_holder[0] = e
+
+            t = threading.Thread(target=make_request)
+            t.start()
+            time.sleep(0.3)
+
+            # Receiver picks up the request
+            assert receiver.has_pending_input() is True
+            ffs = receiver.execute(None)
+            assert len(ffs) == 1
+            ff = ffs[0]
+            assert ff.get_attribute("http.path.name") == "World"
+
+            # Simulate flow processing: build response
+            name = ff.get_attribute("http.path.name")
+            ff.set_content(f"<h1>Hello {name}!</h1>".encode())
+
+            # Send response
+            results = responder.execute(ff)
+            assert len(results) == 1
+            assert results[0].get_attribute("http.response.sent") == "true"
+
+            t.join(timeout=5)
+            assert response_holder[0] == (200, "<h1>Hello World!</h1>")
+        finally:
+            svc.disconnect()
+
+    def test_full_cycle_with_auth(self):
+        """HTTP request with auth validation."""
+        port = 19884
+        listener_svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        auth_svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["validtoken"]})
+        listener_svc.connect()
+
+        try:
+            # Setup receiver
+            receiver = HTTPReceiverTask({
+                "service_id": "listener",
+                "routes": [{"method": "GET", "pattern": "/secure"}],
+            })
+            receiver.set_services({"listener": listener_svc})
+            receiver._ensure_routes_registered()
+
+            # Setup auth validator
+            validator = ValidateHTTPAuthTask({
+                "auth_service_id": "auth",
+                "listener_service_id": "listener",
+                "auto_respond": True,
+            })
+            validator.set_services({"auth": auth_svc, "listener": listener_svc})
+
+            # Request WITH valid token
+            response_holder = [None]
+            def make_authed_request():
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/secure",
+                        method="GET",
+                        headers={"Authorization": "Bearer validtoken"},
+                    )
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    response_holder[0] = (resp.status, resp.read())
+                except urllib.error.HTTPError as e:
+                    response_holder[0] = ("error", e.code)
+                except Exception as e:
+                    response_holder[0] = e
+
+            t = threading.Thread(target=make_authed_request)
+            t.start()
+            time.sleep(0.3)
+
+            ffs = receiver.execute(None)
+            ff = ffs[0]
+            results = validator.execute(ff)
+            assert results[0].get_attribute("http.auth.valid") == "true"
+
+            # Send success response
+            responder = HandleHTTPResponseTask({"service_id": "listener"})
+            responder.set_services({"listener": listener_svc})
+            results[0].set_content(b'{"ok": true}')
+            responder.execute(results[0])
+
+            t.join(timeout=5)
+            assert response_holder[0] == (200, b'{"ok": true}')
+
+        finally:
+            listener_svc.disconnect()
+
+    def test_auth_rejection_auto_response(self):
+        """Auth failure auto-responds with 401."""
+        port = 19885
+        listener_svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        auth_svc = HTTPAuthService({"auth_type": "bearer", "tokens": ["validtoken"]})
+        listener_svc.connect()
+
+        try:
+            receiver = HTTPReceiverTask({
+                "service_id": "listener",
+                "routes": [{"method": "GET", "pattern": "/protected"}],
+            })
+            receiver.set_services({"listener": listener_svc})
+            receiver._ensure_routes_registered()
+
+            validator = ValidateHTTPAuthTask({
+                "auth_service_id": "auth",
+                "listener_service_id": "listener",
+                "auto_respond": True,
+            })
+            validator.set_services({"auth": auth_svc, "listener": listener_svc})
+
+            # Request with WRONG token
+            response_holder = [None]
+            def make_bad_request():
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/protected",
+                        method="GET",
+                        headers={"Authorization": "Bearer wrongtoken"},
+                    )
+                    urllib.request.urlopen(req, timeout=5)
+                except urllib.error.HTTPError as e:
+                    response_holder[0] = e.code
+
+            t = threading.Thread(target=make_bad_request)
+            t.start()
+            time.sleep(0.3)
+
+            ffs = receiver.execute(None)
+            ff = ffs[0]
+            # Auth validation should auto-respond 401
+            results = validator.execute(ff)
+            assert results[0].get_attribute("http.auth.valid") == "false"
+            assert results[0].get_attribute("http.response.sent") == "true"
+
+            t.join(timeout=5)
+            assert response_holder[0] == 401
+
+        finally:
+            listener_svc.disconnect()
+
+    def test_custom_status_and_headers(self):
+        """Test custom status code and headers in response."""
+        port = 19886
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+        svc.connect()
+
+        try:
+            receiver = HTTPReceiverTask({
+                "service_id": "listener",
+                "routes": [{"method": "POST", "pattern": "/create"}],
+            })
+            receiver.set_services({"listener": svc})
+            receiver._ensure_routes_registered()
+
+            responder = HandleHTTPResponseTask({
+                "service_id": "listener",
+                "status_code": 200,  # default, will be overridden
+            })
+            responder.set_services({"listener": svc})
+
+            response_holder = [None]
+            def make_request():
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/create",
+                        method="POST",
+                        data=b'{"name": "test"}',
+                        headers={"Content-Type": "application/json"},
+                    )
+                    resp = urllib.request.urlopen(req, timeout=5)
+                    response_holder[0] = (resp.status, resp.read(), dict(resp.headers))
+                except urllib.error.HTTPError as e:
+                    response_holder[0] = (e.code, e.read(), dict(e.headers))
+
+            t = threading.Thread(target=make_request)
+            t.start()
+            time.sleep(0.3)
+
+            ffs = receiver.execute(None)
+            ff = ffs[0]
+            # Override status and add custom header
+            ff.set_attribute("http.response.status", "201")
+            ff.set_attribute("http.response.header.X-Custom-Id", "42")
+            ff.set_attribute("http.response.header.Content-Type", "application/json")
+            ff.set_content(b'{"id": 42, "created": true}')
+
+            responder.execute(ff)
+            t.join(timeout=5)
+
+            status, body, headers = response_holder[0]
+            assert status == 201
+            assert json.loads(body)["id"] == 42
+            assert headers.get("X-Custom-Id") == "42"
+
+        finally:
+            svc.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# Shared port (singleton) tests
+# ---------------------------------------------------------------------------
+
+class TestSharedPort:
+
+    def setup_method(self):
+        """Ensure singleton map is clean before each test."""
+        from services.http_listener_service import _instances, _instances_lock
+        with _instances_lock:
+            _instances.clear()
+
+    def teardown_method(self):
+        from services.http_listener_service import _instances, _instances_lock
+        with _instances_lock:
+            _instances.clear()
+
+    def test_shared_port_same_singleton(self):
+        """Two instances on the same port return the exact same object."""
+        svc_a = HTTPListenerService({"host": "127.0.0.1", "port": 19890})
+        svc_b = HTTPListenerService({"host": "127.0.0.1", "port": 19890})
+        assert svc_a is svc_b
+
+    def test_different_ports_different_instances(self):
+        """Different ports create different instances."""
+        svc_a = HTTPListenerService({"host": "127.0.0.1", "port": 19891})
+        svc_b = HTTPListenerService({"host": "127.0.0.1", "port": 19892})
+        assert svc_a is not svc_b
+
+    def test_shared_port_different_routes(self):
+        """Two flows sharing a port can register different routes."""
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19893})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/api/users", "flow_A", lambda r: None)
+            svc.register_route("POST", "/api/orders", "flow_B", lambda r: None)
+            routes = svc.get_routes()
+            assert len(routes) == 2
+            methods = {r["method"] for r in routes}
+            assert methods == {"GET", "POST"}
+        finally:
+            svc.disconnect()
+
+    def test_shared_port_collision(self):
+        """Same route registered by different owners raises RouteConflictError."""
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19894})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/api/data", "flow_A", lambda r: None)
+            with pytest.raises(RouteConflictError, match="flow_A"):
+                svc.register_route("GET", "/api/data", "flow_B", lambda r: None)
+        finally:
+            svc.disconnect()
+
+    def test_shared_port_ref_counting(self):
+        """Flow A disconnect -> server stays up; Flow B disconnect -> server stops."""
+        port = 19895
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": port})
+
+        # Flow A connects
+        svc.connect()
+        assert svc.is_connected()
+        assert svc._ref_count == 1
+
+        # Flow B connects (same singleton)
+        svc.connect()
+        assert svc._ref_count == 2
+        assert svc._server is not None
+
+        # Flow A disconnects — server still up
+        svc.disconnect()
+        assert svc._ref_count == 1
+        assert svc._server is not None
+
+        # Flow B disconnects — server stops
+        svc.disconnect()
+        assert svc._ref_count == 0
+        assert svc._server is None
+
+    def test_shared_port_cleanup_unregisters_routes(self):
+        """Unregistering one flow's routes leaves the other's intact."""
+        svc = HTTPListenerService({"host": "127.0.0.1", "port": 19896})
+        svc.connect()
+        try:
+            svc.register_route("GET", "/a", "flow_A", lambda r: None)
+            svc.register_route("POST", "/b", "flow_A", lambda r: None)
+            svc.register_route("GET", "/c", "flow_B", lambda r: None)
+
+            # Flow A stops — unregister its routes
+            svc.unregister_routes("flow_A")
+            routes = svc.get_routes()
+            assert len(routes) == 1
+            assert routes[0]["owner"] == "flow_B"
+
+            # Flow B's route still matches
+            result = svc.registry.match("GET", "/c")
+            assert result is not None
+        finally:
+            svc.disconnect()
+
+    def test_singleton_survives_init_call(self):
+        """Second __init__ call (via __new__ returning existing) doesn't reset state."""
+        svc_a = HTTPListenerService({"host": "127.0.0.1", "port": 19897})
+        svc_a.connect()
+        try:
+            svc_a.register_route("GET", "/test", "owner1", lambda r: None)
+            assert len(svc_a.get_routes()) == 1
+
+            # Simulate FlowParser creating "new" instance for same port
+            svc_b = HTTPListenerService({"host": "127.0.0.1", "port": 19897})
+            assert svc_b is svc_a
+            # Routes still intact
+            assert len(svc_b.get_routes()) == 1
+            # Server still running
+            assert svc_b._server is not None
+        finally:
+            svc_a.disconnect()
+
+
+# ---------------------------------------------------------------------------
+# BaseTask.has_pending_input tests
+# ---------------------------------------------------------------------------
+
+class TestBaseTaskPendingInput:
+
+    def test_default_false(self):
+        """BaseTask.has_pending_input() returns False by default."""
+        from core.base_task import BaseTask
+        from core import FlowFile
+
+        class DummyTask(BaseTask):
+            TYPE = "dummy"
+            def execute(self, ff):
+                return [ff]
+
+        task = DummyTask({})
+        assert task.has_pending_input() is False

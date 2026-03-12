@@ -1,0 +1,2297 @@
+"""ServeChatUI Task — Serve a self-contained chat HTML interface.
+
+Returns a complete HTML page with embedded CSS and JavaScript that provides
+a chat interface for the agentLoop. The UI handles conversation_id tracking,
+message history, file download links, and markdown rendering.
+
+Flow pattern:
+    httpReceiver (GET /chat) → serveChatUI → handleHTTPResponse
+"""
+
+import logging
+from typing import Dict, Any, List
+
+from core import FlowFile, TaskFactory
+from core.base_task import BaseTask
+
+logger = logging.getLogger(__name__)
+
+_CHAT_HTML = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PyFi2 Agent Chat</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; }
+.sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
+           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; }
+.sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
+                   display: flex; align-items: center; justify-content: space-between; }
+.sidebar-header h2 { font-size: 14px; color: #8888aa; font-weight: 600; }
+.sidebar-header .btn-new { background: #e94560; color: white; border: none; border-radius: 6px;
+                            padding: 4px 12px; cursor: pointer; font-size: 12px; font-weight: 600; }
+.sidebar-header .btn-new:hover { background: #c73a52; }
+.conv-list { flex: 1; overflow-y: auto; padding: 6px; }
+.conv-item { padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px;
+             border: 1px solid transparent; position: relative; }
+.conv-item:hover { background: #16213e; border-color: #0f3460; }
+.conv-item.active { background: #16213e; border-color: #e94560; }
+.conv-item .conv-preview { font-size: 13px; color: #c0c0d0; white-space: nowrap;
+                            overflow: hidden; text-overflow: ellipsis; }
+.conv-item .conv-meta { font-size: 11px; color: #6c6c8a; margin-top: 3px; }
+.conv-item .conv-delete { position: absolute; right: 8px; top: 8px; background: none;
+                           border: none; color: #6c6c8a; cursor: pointer; font-size: 14px;
+                           display: none; padding: 2px 4px; }
+.conv-item:hover .conv-delete { display: block; }
+.conv-item .conv-delete:hover { color: #e94560; }
+.conv-status { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+               margin-right: 6px; vertical-align: middle; }
+.conv-status.active { background: #4ecdc4; animation: pulse 1.5s ease-in-out infinite; }
+.conv-status.blocked { background: #f0a500; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+.sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; }
+.sidebar-settings label { font-size: 11px; color: #6c6c8a; display: block; margin-bottom: 3px; }
+.sidebar-settings select { width: 100%; background: #1a1a2e; color: #c0c0d0; border: 1px solid #0f3460;
+                            border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; }
+.sidebar-settings select:focus { outline: none; border-color: #e94560; }
+.sidebar-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 100;
+                   background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
+                   border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px; }
+@media (max-width: 700px) {
+  .sidebar { position: fixed; left: -270px; z-index: 99; transition: left 0.2s; }
+  .sidebar.open { left: 0; }
+  .sidebar-toggle { display: block; }
+}
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
+           display: flex; align-items: center; gap: 12px; }
+.header h1 { font-size: 18px; color: #e94560; }
+.header .status { font-size: 12px; color: #6c6c8a; }
+.header .btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
+                     padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
+.header .btn:hover { background: #e94560; color: white; }
+.header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+.header .user-info { font-size: 12px; color: #8888aa; }
+.messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
+       white-space: pre-wrap; word-wrap: break-word; }
+.msg a { color: #4fc3f7; text-decoration: underline; }
+.msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
+.msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;
+           margin: 8px 0; }
+.msg pre code { background: none; padding: 0; }
+.msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px; }
+.msg.assistant { align-self: flex-start; background: #16213e; border: 1px solid #0f3460;
+                  border-bottom-left-radius: 4px; }
+.msg.error { align-self: center; background: #5c1a1a; color: #ff8a80; font-size: 13px; }
+.msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
+.msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
+            border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
+.typing { align-self: flex-start; color: #6c6c8a; font-size: 13px; padding: 8px 14px; }
+.typing span { animation: blink 1.4s infinite; }
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+.input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460;
+               display: flex; gap: 10px; flex-direction: column; }
+.input-row { display: flex; gap: 10px; align-items: flex-end; }
+.input-row textarea { flex: 1; background: #1a1a2e; color: #e0e0e0; border: 1px solid #0f3460;
+                        border-radius: 8px; padding: 10px; font-size: 14px; resize: none;
+                        font-family: inherit; outline: none; min-height: 44px; max-height: 120px; }
+.input-row textarea:focus { border-color: #e94560; }
+.input-row button { background: #e94560; color: white; border: none; border-radius: 8px;
+                      padding: 10px 20px; cursor: pointer; font-size: 14px; font-weight: 600;
+                      white-space: nowrap; height: 44px; }
+.input-row button:hover { background: #c73a52; }
+.input-row button:disabled { background: #3a3a5a; cursor: not-allowed; }
+.btn-attach { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
+.btn-attach:hover { background: #1a4a8a !important; }
+.btn-folder { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
+.btn-folder:hover { background: #1a4a8a !important; }
+.btn-folder.active { background: #1a5a2a !important; }
+.btn-folder.active:hover { background: #2a7a3a !important; }
+.files-panel { background: #0f1629; border-bottom: 1px solid #0f3460; padding: 8px 16px;
+               max-height: 180px; overflow-y: auto; }
+.files-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;
+                color: #c0c0d0; font-size: 13px; }
+.btn-close-panel { background: none; border: none; color: #c0c0d0; cursor: pointer; font-size: 18px; padding: 0 4px; }
+.btn-close-panel:hover { color: #e94560; }
+.files-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.file-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
+             font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
+.file-chip a { color: #4ecdc4; text-decoration: none; }
+.file-chip a:hover { text-decoration: underline; }
+.file-chip .file-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+.file-chip .file-status.available { background: #4ecdc4; }
+.file-chip .file-status.expired { background: #e94560; }
+.flow-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
+             font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
+.flow-chip .flow-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+.flow-chip .flow-status.running { background: #4ecdc4; }
+.flow-chip .flow-status.stopped { background: #e94560; }
+.flow-chip .flow-status.scheduled { background: #f9a825; }
+.sched-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
+              font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
+.sched-chip .sched-icon { color: #f9a825; }
+.flow-chip { cursor: context-menu; }
+.ctx-menu { position: fixed; z-index: 9999; background: #16213e; border: 1px solid #0f3460;
+            border-radius: 6px; padding: 4px 0; min-width: 120px; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+.ctx-menu-item { padding: 6px 14px; font-size: 13px; color: #c0c0d0; cursor: pointer; }
+.ctx-menu-item:hover { background: #0f3460; color: #e0e0f0; }
+.ctx-menu-item.danger { color: #e94560; }
+.ctx-menu-item.danger:hover { background: #e94560; color: #fff; }
+.attachments-preview { display: flex; flex-wrap: wrap; gap: 8px; }
+.attachments-preview:empty { display: none; }
+.att-item { display: flex; align-items: center; gap: 6px; background: #1a1a2e; border: 1px solid #0f3460;
+            border-radius: 6px; padding: 4px 8px; font-size: 12px; color: #c0c0d0; }
+.att-item img { height: 32px; width: 32px; object-fit: cover; border-radius: 4px; }
+.att-item .att-icon { font-size: 16px; }
+.att-item .att-remove { background: none; border: none; color: #e94560; cursor: pointer;
+                         font-size: 14px; padding: 0 2px; }
+.att-item .att-remove:hover { color: #ff6b6b; }
+.msg img.chat-image { max-width: 300px; max-height: 200px; border-radius: 8px; margin: 6px 0;
+                       cursor: pointer; }
+.msg .doc-badge { display: inline-block; background: #0f3460; padding: 2px 8px; border-radius: 4px;
+                   font-size: 11px; color: #8888aa; margin: 2px 0; }
+</style>
+</head>
+<body>
+<button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9776;</button>
+<div class="sidebar" id="sidebar">
+  <div class="sidebar-header">
+    <h2>Conversations</h2>
+    <button class="btn-new" onclick="newChat()">+ New</button>
+  </div>
+  <div class="conv-list" id="convList"></div>
+  <div class="sidebar-settings">
+    <label id="ttlLabel">Expiry</label>
+    <select id="ttlSelect">
+      <option value="0">Unlimited</option>
+      <option value="3600">1 hour</option>
+      <option value="21600">6 hours</option>
+      <option value="86400">24 hours</option>
+      <option value="604800">7 days</option>
+    </select>
+  </div>
+  <div class="sidebar-settings" id="resourcesPanel" style="display:none">
+    <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
+    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;"></div>
+  </div>
+</div>
+<div class="main">
+<div class="header">
+  <h1>PyFi2 Agent</h1>
+  <span class="status" id="status">Ready</span>
+  <div class="actions">
+    <span class="user-info" id="userInfo"></span>
+    <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
+    <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" style="display:none" title="Conversation flows">&#x26A1;</button>
+    <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
+    <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
+    <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
+    <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
+  </div>
+</div>
+<div class="files-panel" id="schedsPanel" style="display:none">
+  <div class="files-header"><strong>Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>
+  <div class="files-list" id="schedsList"></div>
+</div>
+<div class="files-panel" id="flowsPanel" style="display:none">
+  <div class="files-header"><strong>Flows</strong><button class="btn-close-panel" onclick="toggleFlowsPanel()">&times;</button></div>
+  <div class="files-list" id="flowsList"></div>
+</div>
+<div class="files-panel" id="filesPanel" style="display:none">
+  <div class="files-header"><strong>Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
+  <div class="files-list" id="filesList"></div>
+</div>
+<div class="messages" id="messages"></div>
+<div class="input-area">
+  <div class="attachments-preview" id="attachPreview"></div>
+  <div class="input-row">
+    <button class="btn-attach btn-folder" id="folderBtn" onclick="openLocalFolder()" title="Open local folder">&#x1F4C1;</button>
+    <button class="btn-attach" onclick="document.getElementById('fileInput').click()" title="Attach files">&#x1F4CE;</button>
+    <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
+    <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
+              rows="1" onkeydown="handleKey(event)"></textarea>
+    <button id="sendBtn" onclick="send()">Send</button>
+  </div>
+</div>
+</div>
+<script>
+// ── i18n ──
+const _i18n = {
+  en: {
+    ready: 'Ready', sending: 'Sending...', streaming: 'Streaming...',
+    thinking: 'Thinking', thinkingRound: 'Thinking (round {round})',
+    thinkingWait: 'Thinking ({sec}s)', error: 'Error',
+    loading: 'Loading...', reconnecting: 'Reconnecting...',
+    continuing: 'Continuing research...', usingTool: 'Using {tool}...',
+    callingTool: '\u{1F527} Calling tool: {tool}',
+    toolResult: '\u{2705} {tool}: {result}',
+    newConv: 'New conversation started.',
+    welcome: 'Welcome! Type a message to start chatting.',
+    connError: 'Connection error: {msg}',
+    loadError: 'Failed to load conversation',
+    sessionExpired: 'Session expired. Please log in again.',
+    unknownError: 'Unknown error',
+    fileTooLarge: 'File too large: {name} ({size}MB, max 10MB)',
+    send: 'Send', newChat: '+ New', logout: 'Logout', deleteConv: 'Delete conversation',
+    placeholder: 'Type a message... (Enter to send, Shift+Enter for newline)',
+    attachTitle: 'Attach files', conversations: 'Conversations',
+    folderOpen: 'Open local folder', folderActive: 'Local folder: {name}',
+    folderUnsupported: 'Your browser does not support the File System Access API (use Chrome or Edge)',
+    ttlLabel: 'Expiry', fileTtlLabel: 'Files', ttlNone: 'Unlimited', ttl1h: '1 hour', ttl6h: '6 hours',
+    ttl24h: '24 hours', ttl7d: '7 days', emptyResponse: '(Agent finished without producing a response)',
+    secretAdded: 'Secret "{name}" stored securely. Use ${secrets.{ref}} in flows, or get_secret("{short}") in scripts.',
+    secretAddUsage: 'Usage: /add-secret &lt;name&gt; &lt;value&gt;',
+    secretListEmpty: 'No secrets stored.',
+    secretListTitle: 'Your secrets:',
+    variableAdded: 'Variable "{name}" stored. Use ${var.{ref}} in flows, or get_variable("{short}") in scripts.',
+    variableAddUsage: 'Usage: /add-variable &lt;name&gt; &lt;value&gt;',
+    variableListEmpty: 'No variables stored.',
+    variableListTitle: 'Your variables:',
+  },
+  fr: {
+    ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
+    thinking: 'R\u00e9flexion', thinkingRound: 'R\u00e9flexion (tour {round})',
+    thinkingWait: 'R\u00e9flexion ({sec}s)', error: 'Erreur',
+    loading: 'Chargement...', reconnecting: 'Reconnexion...',
+    continuing: 'Recherche en cours...', usingTool: 'Utilisation de {tool}...',
+    callingTool: '\u{1F527} Appel outil : {tool}',
+    toolResult: '\u{2705} {tool}\u00a0: {result}',
+    newConv: 'Nouvelle conversation.',
+    welcome: 'Bienvenue\u00a0! \u00c9crivez un message pour commencer.',
+    connError: 'Erreur de connexion\u00a0: {msg}',
+    loadError: '\u00c9chec du chargement de la conversation',
+    sessionExpired: 'Session expir\u00e9e. Veuillez vous reconnecter.',
+    unknownError: 'Erreur inconnue',
+    fileTooLarge: 'Fichier trop volumineux\u00a0: {name} ({size}\u00a0Mo, max 10\u00a0Mo)',
+    send: 'Envoyer', newChat: '+ Nouveau', logout: 'D\u00e9connexion', deleteConv: 'Supprimer la conversation',
+    placeholder: '\u00c9crivez un message... (Entr\u00e9e pour envoyer, Maj+Entr\u00e9e pour retour \u00e0 la ligne)',
+    attachTitle: 'Joindre des fichiers', conversations: 'Conversations',
+    folderOpen: 'Ouvrir un dossier local', folderActive: 'Dossier local\u00a0: {name}',
+    folderUnsupported: 'Votre navigateur ne supporte pas le File System Access API (utilisez Chrome ou Edge)',
+    ttlLabel: 'Expiration', fileTtlLabel: 'Fichiers', ttlNone: 'Illimit\u00e9', ttl1h: '1 heure', ttl6h: '6 heures',
+    ttl24h: '24 heures', ttl7d: '7 jours', emptyResponse: '(L\'agent a termin\u00e9 sans produire de r\u00e9ponse)',
+    secretAdded: 'Secret "{name}" stock\u00e9 de mani\u00e8re s\u00e9curis\u00e9e. Utilisez ${secrets.{ref}} dans les flux, ou get_secret("{short}") dans les scripts.',
+    secretAddUsage: 'Usage: /add-secret &lt;nom&gt; &lt;valeur&gt;',
+    secretListEmpty: 'Aucun secret stock\u00e9.',
+    secretListTitle: 'Vos secrets :',
+    variableAdded: 'Variable "{name}" stock\u00e9e. Utilisez ${var.{ref}} dans les flux, ou get_variable("{short}") dans les scripts.',
+    variableAddUsage: 'Usage: /add-variable &lt;nom&gt; &lt;valeur&gt;',
+    variableListEmpty: 'Aucune variable stock\u00e9e.',
+    variableListTitle: 'Vos variables :',
+  },
+  es: {
+    ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
+    thinking: 'Pensando', thinkingRound: 'Pensando (ronda {round})',
+    thinkingWait: 'Pensando ({sec}s)', error: 'Error',
+    loading: 'Cargando...', reconnecting: 'Reconectando...',
+    continuing: 'Continuando investigaci\u00f3n...', usingTool: 'Usando {tool}...',
+    callingTool: '\u{1F527} Llamando herramienta: {tool}',
+    toolResult: '\u{2705} {tool}: {result}',
+    newConv: 'Nueva conversaci\u00f3n iniciada.',
+    welcome: '\u00a1Bienvenido! Escribe un mensaje para comenzar.',
+    connError: 'Error de conexi\u00f3n: {msg}',
+    loadError: 'Error al cargar la conversaci\u00f3n',
+    sessionExpired: 'Sesi\u00f3n expirada. Inicia sesi\u00f3n de nuevo.',
+    unknownError: 'Error desconocido',
+    fileTooLarge: 'Archivo muy grande: {name} ({size}MB, m\u00e1x 10MB)',
+    send: 'Enviar', newChat: '+ Nuevo', logout: 'Cerrar sesi\u00f3n', deleteConv: 'Eliminar conversaci\u00f3n',
+    placeholder: 'Escribe un mensaje... (Enter para enviar, Shift+Enter para nueva l\u00ednea)',
+    attachTitle: 'Adjuntar archivos', conversations: 'Conversaciones',
+    folderOpen: 'Abrir carpeta local', folderActive: 'Carpeta local: {name}',
+    folderUnsupported: 'Su navegador no soporta la File System Access API (use Chrome o Edge)',
+    ttlLabel: 'Expiraci\u00f3n', fileTtlLabel: 'Archivos', ttlNone: 'Ilimitado', ttl1h: '1 hora', ttl6h: '6 horas',
+    ttl24h: '24 horas', ttl7d: '7 d\u00edas', emptyResponse: '(El agente termin\u00f3 sin producir una respuesta)',
+    secretAdded: 'Secreto "{name}" almacenado de forma segura. Use ${secrets.{ref}} en flujos, o get_secret("{short}") en scripts.',
+    secretAddUsage: 'Uso: /add-secret &lt;nombre&gt; &lt;valor&gt;',
+    secretListEmpty: 'No hay secretos almacenados.',
+    secretListTitle: 'Sus secretos:',
+    variableAdded: 'Variable "{name}" almacenada. Use ${var.{ref}} en flujos, o get_variable("{short}") en scripts.',
+    variableAddUsage: 'Uso: /add-variable &lt;nombre&gt; &lt;valor&gt;',
+    variableListEmpty: 'No hay variables almacenadas.',
+    variableListTitle: 'Sus variables:',
+  },
+};
+const _lang = (navigator.language || 'en').slice(0, 2);
+const _t = _i18n[_lang] || _i18n.en;
+function t(key, vars) {
+  let s = _t[key] || _i18n.en[key] || key;
+  if (vars) Object.keys(vars).forEach(k => { s = s.replace('{' + k + '}', vars[k]); });
+  return s;
+}
+
+// Apply i18n to static HTML elements
+document.getElementById('status').textContent = t('ready');
+document.getElementById('sendBtn').textContent = t('send');
+document.getElementById('logoutBtn').textContent = t('logout');
+document.getElementById('deleteConvBtn').title = t('deleteConv');
+document.getElementById('input').placeholder = t('placeholder');
+document.querySelector('.btn-attach').title = t('attachTitle');
+document.getElementById('folderBtn').title = t('folderOpen');
+document.querySelector('.sidebar-header h2').textContent = t('conversations');
+document.querySelector('.btn-new').textContent = t('newChat');
+// TTL selector i18n
+document.getElementById('ttlLabel').textContent = t('ttlLabel');
+const ttlOpts = document.getElementById('ttlSelect').options;
+ttlOpts[0].textContent = t('ttlNone');
+ttlOpts[1].textContent = t('ttl1h');
+ttlOpts[2].textContent = t('ttl6h');
+ttlOpts[3].textContent = t('ttl24h');
+ttlOpts[4].textContent = t('ttl7d');
+
+const API = window.location.origin + '{{AGENT_PATH}}';
+const SSE_URL = window.location.origin + '{{SSE_PATH}}';
+const LOGIN_URL = '{{LOGIN_URL}}';
+let conversationId = null;
+let sending = false;
+let eventSource = null;
+let sseRetryCount = 0;     // for exponential backoff on reconnect
+let sseReconnectTimer = null;
+let streamingEl = null;  // current assistant message being streamed
+let streamingText = '';
+let streamingChunks = [];  // all intermediate streaming bubbles (removed on done)
+let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
+let lastSSEActivity = 0;  // timestamp of last SSE event received
+let serverMsgCount = 0;    // last known message_count from server (for poll delta)
+let pollTimer = null;      // 30s fallback poll interval
+
+// ── Watchdog: if sending and no SSE activity for 15s, try recovery ──
+setInterval(() => {
+  if (!sending || !conversationId) return;
+  const now = Date.now();
+  if (lastSSEActivity > 0 && (now - lastSSEActivity) > 15000) {
+    console.log('[watchdog] no SSE activity for 15s while sending — recovering');
+    lastSSEActivity = now;  // reset to avoid re-triggering immediately
+    _recoverConversation(conversationId);
+  }
+}, 5000);
+
+// ── Keep-alive: ping every 4 min to renew sliding session ──
+// Note: cookie is HttpOnly so getToken() returns null — use conversationId as auth indicator
+setInterval(() => {
+  fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'ping' }),
+    credentials: 'same-origin',
+  }).catch(() => {});
+}, 4 * 60 * 1000);
+
+// Auth
+function getToken() {
+  const m = document.cookie.match(/(?:^|;\s*)pyfi2_token=([^;]+)/);
+  return m ? m[1] : null;
+}
+function getAuthHeaders() {
+  const token = getToken();
+  const h = { 'Content-Type': 'application/json' };
+  if (token) h['Authorization'] = 'Bearer ' + token;
+  return h;
+}
+// Page is behind validateSessionAuth, so if we're here, we're logged in
+if (LOGIN_URL) {
+  document.getElementById('logoutBtn').style.display = '';
+}
+function doLogout() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  fetch(window.location.origin + '/auth/logout', { method: 'POST', credentials: 'same-origin' })
+    .finally(() => { window.location.href = LOGIN_URL || '/auth/login'; });
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+}
+
+function newChat() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  stopPollTimer();
+  conversationId = null;
+  serverMsgCount = 0;
+  streamingEl = null;
+  streamingText = '';
+  streamingChunks = [];
+  sending = false;
+  document.getElementById('sendBtn').disabled = false;
+  document.getElementById('messages').innerHTML = '';
+  addMsg('system', t('newConv'));
+  document.getElementById('status').textContent = t('ready');
+  document.getElementById('deleteConvBtn').style.display = 'none';
+  document.getElementById('filesBtn').style.display = 'none';
+  document.getElementById('filesPanel').style.display = 'none';
+  document.getElementById('flowsBtn').style.display = 'none';
+  document.getElementById('flowsPanel').style.display = 'none';
+  document.getElementById('schedsBtn').style.display = 'none';
+  document.getElementById('schedsPanel').style.display = 'none';
+  highlightConv(null);
+  // Close sidebar on mobile
+  document.getElementById('sidebar').classList.remove('open');
+}
+
+function updateDeleteBtn() {
+  const show = conversationId ? '' : 'none';
+  document.getElementById('deleteConvBtn').style.display = show;
+  document.getElementById('refreshConvBtn').style.display = show;
+  document.getElementById('filesBtn').style.display = show;
+  document.getElementById('flowsBtn').style.display = show;
+  document.getElementById('schedsBtn').style.display = show;
+}
+
+// Conversation sidebar
+async function loadConversations() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_conversations' }),
+      credentials: 'same-origin',
+    });
+    if (resp.status === 401 || resp.status === 403) return;
+    if (!resp.ok) return;
+    const data = await resp.json();
+    renderConvList(data.conversations || []);
+  } catch (e) { /* silent */ }
+}
+
+function renderConvList(convs) {
+  const list = document.getElementById('convList');
+  list.innerHTML = '';
+  if (convs.length === 0) {
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">No conversations yet</div>';
+    return;
+  }
+  for (const c of convs) {
+    const el = document.createElement('div');
+    el.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '');
+    el.dataset.cid = c.conversation_id;
+    const preview = c.preview || 'Empty conversation';
+    const date = new Date(c.updated_at * 1000);
+    const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    const statusDot = c.status === 'active' ? '<span class="conv-status active" title="Working"></span>'
+      : c.status === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
+    el.innerHTML = '<div class="conv-preview">' + statusDot + escapeHtml(preview) + '</div>'
+      + '<div class="conv-meta">' + c.message_count + ' messages \u00b7 ' + timeStr + '</div>'
+      + '<button class="conv-delete" title="Delete" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
+    el.onclick = () => resumeConv(c.conversation_id);
+    list.appendChild(el);
+  }
+}
+
+function escapeHtml(s) {
+  const d = document.createElement('div'); d.textContent = s; return d.innerHTML;
+}
+
+function highlightConv(cid) {
+  document.querySelectorAll('.conv-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.cid === cid);
+  });
+}
+
+async function resumeConv(cid) {
+  if (cid === conversationId) return;  // already viewing this one
+  document.getElementById('status').textContent = t('loading');
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'load_history', conversation_id: cid }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) {
+      addMsg('error', t('loadError'));
+      return;
+    }
+    const data = await resp.json();
+    if (data.error) {
+      addMsg('error', data.error);
+      return;
+    }
+    // Switch to this conversation (previous agent thread keeps running server-side)
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    conversationId = cid;
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('messages').innerHTML = '';
+    // Replay messages (using classified types: user/assistant/tool_call/tool_result)
+    for (const m of (data.messages || [])) {
+      addMsg(m.type || m.role, m.content, m);
+    }
+    serverMsgCount = data.message_count || 0;
+    highlightConv(cid);
+    connectSSE(cid);  // subscribe to SSE — will pick up events if agent is still running
+    startPollTimer();
+    updateDeleteBtn();
+    loadResources();
+    document.getElementById('status').textContent = t('ready');
+    document.getElementById('sidebar').classList.remove('open');
+  } catch (e) {
+    addMsg('error', t('connError', {msg: e.message}));
+    document.getElementById('status').textContent = t('error');
+  }
+}
+
+async function _recoverConversation(cid) {
+  // After SSE reconnect or poll, check for new messages via efficient poll action.
+  try {
+    if (cid !== conversationId) return;  // conversation changed during recovery
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'poll',
+        conversation_id: cid,
+        last_count: serverMsgCount,
+      }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const newMsgs = data.new_messages || [];
+    if (newMsgs.length === 0) return;
+
+    console.log('[poll] recovering', newMsgs.length, 'new messages');
+    serverMsgCount = data.message_count || serverMsgCount;
+
+    // Clean up any stale streaming state
+    for (const chunk of streamingChunks) {
+      if (chunk && chunk.parentNode) chunk.remove();
+    }
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    hideTyping();
+
+    // Display the new messages, skipping user messages already shown locally
+    const msgContainer = document.getElementById('messages');
+    for (const m of newMsgs) {
+      const mType = m.type || m.role;
+      if (mType === 'user') {
+        // Check if this user message is already displayed (sent locally by send())
+        const existing = msgContainer.querySelectorAll('.msg.user');
+        const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
+        if (lastUserEl && lastUserEl.textContent.trim() === (m.content || '').trim()) {
+          console.log('[poll] skipping duplicate user message');
+          continue;
+        }
+      }
+      addMsg(mType, m.content, m);
+    }
+
+    // Check if agent is still working
+    const last = newMsgs[newMsgs.length - 1];
+    const lastType = last ? (last.type || last.role) : '';
+    if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
+      showTyping();
+      document.getElementById('status').textContent = t('thinking');
+    } else {
+      sending = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('status').textContent = t('ready');
+    }
+    scrollBottom();
+  } catch (e) {
+    console.warn('[poll] recovery failed:', e);
+  }
+}
+
+async function deleteConv(event, cid) {
+  event.stopPropagation();
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_conversation', conversation_id: cid }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) { console.error('Delete failed:', resp.status); return; }
+    if (cid === conversationId) newChat();
+    loadConversations();
+  } catch (e) { console.error('Delete error:', e); }
+}
+
+async function deleteCurrentConv() {
+  if (!conversationId) return;
+  const cid = conversationId;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_conversation', conversation_id: cid }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) { console.error('Delete failed:', resp.status); return; }
+    newChat();
+    loadConversations();
+  } catch (e) { console.error('Delete error:', e); }
+}
+
+async function refreshCurrentConv() {
+  if (!conversationId) return;
+  const cid = conversationId;
+  document.getElementById('status').textContent = t('loading');
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'load_history', conversation_id: cid }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) { document.getElementById('status').textContent = t('error'); return; }
+    const data = await resp.json();
+    if (data.error) { document.getElementById('status').textContent = t('error'); return; }
+    // Clear and replay
+    document.getElementById('messages').innerHTML = '';
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    for (const m of (data.messages || [])) {
+      addMsg(m.type || m.role, m.content, m);
+    }
+    serverMsgCount = data.message_count || 0;
+    scrollBottom();
+    // Check if agent is still working (last msg is not assistant → still processing)
+    const msgs = data.messages || [];
+    const lastRole = msgs.length > 0 ? (msgs[msgs.length - 1].type || msgs[msgs.length - 1].role) : '';
+    if (lastRole !== 'assistant' && lastRole !== 'user') {
+      sending = true;
+      showTyping();
+      document.getElementById('status').textContent = t('thinking');
+    } else {
+      sending = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('status').textContent = t('ready');
+    }
+    loadConversations();
+  } catch (e) {
+    document.getElementById('status').textContent = t('error');
+  }
+}
+
+function addMsg(role, text, extra) {
+  const el = document.createElement('div');
+  // Support classified types: tool_call, tool_result map to CSS class "tool"
+  const cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
+  el.className = 'msg ' + cssClass;
+  if (role === 'assistant') {
+    el.innerHTML = renderMarkdown(text);
+  } else if (role === 'tool' || role === 'tool_call') {
+    el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
+  } else if (role === 'tool_result') {
+    const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
+    el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">↳ ' + escapeHtml(text) + '</span>';
+  } else {
+    el.textContent = text;
+  }
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function escapeHtml(t) {
+  const d = document.createElement('div');
+  d.textContent = t;
+  return d.innerHTML;
+}
+
+function renderMarkdown(text) {
+  // Detect __show_file__ markers from show_file tool
+  try {
+    if (text.includes('__show_file__')) {
+      const parsed = JSON.parse(text);
+      if (parsed && parsed.__show_file__) {
+        setTimeout(() => openFileViewer(parsed.url), 100);
+        return `<span style="cursor:pointer;color:#6c5ce7;" onclick="openFileViewer('${parsed.url}')">\uD83D\uDCC4 ${parsed.filename} (${parsed.size_kb} KB) — Click to view</span>`;
+      }
+    }
+  } catch(e) {}
+  // Replace file URLs with clickable preview links
+  text = text.replace(/(https?:\/\/[^\s<]*\/files\/[a-f0-9]+\/([^\s<"]+))/g,
+    '<a href="$1" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'$1\')">\uD83D\uDCC4 $2</a>');
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  text = text.replace(/(https?:\/\/[^\s<]+)(?!<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
+  return text;
+}
+
+function isNearBottom() {
+  const m = document.getElementById('messages');
+  // Consider "near bottom" if within 150px of the bottom
+  return m.scrollHeight - m.scrollTop - m.clientHeight < 150;
+}
+
+function scrollBottom(force) {
+  if (force || isNearBottom()) {
+    const m = document.getElementById('messages');
+    m.scrollTop = m.scrollHeight;
+  }
+}
+
+function showTyping() {
+  hideTyping();  // Remove existing typing indicator first
+  const el = document.createElement('div');
+  el.className = 'typing';
+  el.id = 'typing';
+  el.innerHTML = '<span>.</span><span>.</span><span>.</span>';
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+}
+
+function hideTyping() {
+  const el = document.getElementById('typing');
+  if (el) el.remove();
+}
+
+// Connect SSE for a conversation
+function connectSSE(cid) {
+  if (eventSource) eventSource.close();
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
+  const token = getToken();
+  const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)
+    + (token ? '&token=' + encodeURIComponent(token) : '');
+  eventSource = new EventSource(url);
+
+  eventSource.addEventListener('thinking', (e) => {
+    lastSSEActivity = Date.now();
+    // New iteration starting — finalize any previous streaming state
+    if (streamingEl) {
+      streamingEl = null;
+      streamingText = '';
+    }
+    showTyping();
+    const data = e.data ? JSON.parse(e.data) : {};
+    const iter = data.iteration || '';
+    const wait = data.waiting_seconds || 0;
+    let status = wait > 5 ? t('thinkingWait', {sec: wait}) : (data.round > 1 ? t('thinkingRound', {round: data.round}) : t('thinking'));
+    document.getElementById('status').textContent = status;
+  });
+
+  eventSource.addEventListener('token', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    const data = JSON.parse(e.data);
+    streamingText += data.text;
+    if (!streamingEl) {
+      streamingEl = addMsg('assistant', '');
+      streamingChunks.push(streamingEl);
+    }
+    streamingEl.innerHTML = renderMarkdown(streamingText);
+    scrollBottom();
+    document.getElementById('status').textContent = t('streaming');
+  });
+
+  eventSource.addEventListener('tool_call', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    // Finalize any in-progress streaming bubble before tool calls
+    if (streamingEl) {
+      streamingEl = null;
+      streamingText = '';
+    }
+    const data = JSON.parse(e.data);
+    addMsg('tool', t('callingTool', {tool: data.tool}));
+    scrollBottom();
+    document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
+  });
+
+  eventSource.addEventListener('tool_result', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const preview = (data.result || '').substring(0, 200);
+    addMsg('tool', t('toolResult', {tool: data.tool, result: preview + (data.result && data.result.length > 200 ? '...' : '')}));
+    scrollBottom();
+    showTyping();
+  });
+
+  eventSource.addEventListener('notification', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const urgencyIcon = data.urgency === 'high' ? '\u{1F534}' : data.urgency === 'low' ? '\u{26AA}' : '\u{1F535}';
+    addMsg('system', urgencyIcon + ' ' + (data.message || ''));
+    scrollBottom();
+    // Browser notification if page is not visible
+    if (document.hidden && Notification.permission === 'granted') {
+      new Notification('PyFi2 Agent', { body: data.message });
+    }
+  });
+
+  eventSource.addEventListener('done', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    const data = JSON.parse(e.data);
+    console.log('[SSE done]', data.response ? data.response.substring(0, 100) : '(empty)');
+    // Sync message count to prevent poll from re-fetching these messages
+    if (data.message_count) serverMsgCount = data.message_count;
+    // Remove all intermediate streaming chunks (keep tool messages)
+    for (const chunk of streamingChunks) {
+      if (chunk && chunk.parentNode) chunk.remove();
+    }
+    // Strip internal tags that may leak into the response
+    let resp = data.response || '';
+    resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trimEnd();
+    // Show the final response (or fallback if empty)
+    if (resp) {
+      addMsg('assistant', resp);
+    } else if (streamingText) {
+      addMsg('assistant', streamingText);
+    }
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    scrollBottom();
+
+    if (data.continuing) {
+      // Intermediate round — agent will continue autonomously
+      document.getElementById('status').textContent = t('continuing');
+      showTyping();
+    } else {
+      // Final response
+      sending = false;
+      document.getElementById('sendBtn').disabled = false;
+      document.getElementById('status').textContent = t('ready');
+    }
+    // Refresh conversation list
+    loadConversations();
+    // Don't close SSE — keep listening for timer-triggered events
+  });
+
+  eventSource.addEventListener('discard', (e) => {
+    lastSSEActivity = Date.now();
+    // Poll check-in returned [NO_PENDING_WORK] — discard any streamed tokens
+    hideTyping();
+    for (const chunk of streamingChunks) {
+      if (chunk && chunk.parentNode) chunk.remove();
+    }
+    if (streamingEl && !streamingChunks.includes(streamingEl)) {
+      streamingEl.remove();
+    }
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    sending = false;
+    document.getElementById('status').textContent = '';
+  });
+
+  eventSource.addEventListener('file_request', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    handleFileRequest(data);
+  });
+
+  eventSource.addEventListener('error_event', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    const data = JSON.parse(e.data);
+    addMsg('error', data.message || t('unknownError'));
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('status').textContent = t('error');
+  });
+
+  let sseHadError = false;  // track any error on this EventSource
+  let sseEverConnected = false;  // only recover after a real disconnect (not initial connect hiccup)
+
+  eventSource.onerror = (err) => {
+    console.warn('[SSE] error, readyState:', eventSource.readyState, err);
+    sseHadError = true;
+    document.getElementById('status').textContent = t('reconnecting');
+    if (eventSource.readyState === EventSource.CLOSED) {
+      // Connection permanently closed — schedule reconnect with backoff
+      _scheduleSSEReconnect(cid);
+    }
+    // readyState === CONNECTING: browser is auto-retrying, we just update status
+  };
+
+  eventSource.onopen = () => {
+    console.log('[SSE] connected for', cid, sseHadError ? '(reconnect)' : '(initial)');
+    // Only recover if we were previously connected and then lost the connection.
+    // This avoids re-fetching the user message on the initial connection hiccup.
+    const wasDisconnected = sseEverConnected && sseHadError;
+    sseEverConnected = true;
+    sseRetryCount = 0;
+    sseHadError = false;
+    if (wasDisconnected) {
+      // We just reconnected (browser auto-retry or manual) — recover missed messages
+      console.log('[SSE] recovering after reconnect...');
+      _recoverConversation(cid);
+    }
+  };
+}
+
+function _scheduleSSEReconnect(cid) {
+  if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
+  // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
+  const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 15000);
+  sseRetryCount++;
+  console.log('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
+  sseReconnectTimer = setTimeout(() => {
+    sseReconnectTimer = null;
+    if (!cid || cid !== conversationId) return;  // conversation changed, skip
+    // Recover missed messages first, then reconnect SSE
+    _recoverConversation(cid).then(() => {
+      if (cid === conversationId) connectSSE(cid);
+    });
+  }, delay);
+}
+
+// ── Fallback Poll (30s) ──────────────────────────────────────────
+function startPollTimer() {
+  stopPollTimer();
+  pollTimer = setInterval(() => {
+    if (!conversationId) return;
+    _recoverConversation(conversationId);
+  }, 30000);
+}
+function stopPollTimer() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+// ── Local Files (File System Access API) ─────────────────────────
+let localDirHandle = null;
+let localDirName = '';
+
+async function openLocalFolder() {
+  if (!window.showDirectoryPicker) {
+    alert(t('folderUnsupported'));
+    return;
+  }
+  try {
+    localDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    localDirName = localDirHandle.name;
+    const btn = document.getElementById('folderBtn');
+    btn.classList.add('active');
+    btn.title = t('folderActive', {name: localDirName});
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error('Directory picker error:', e);
+  }
+}
+
+async function resolvePathHandle(dirHandle, pathStr, create) {
+  const parts = pathStr.replace(/\\/g, '/').split('/').filter(Boolean);
+  let current = dirHandle;
+  for (let i = 0; i < parts.length - 1; i++) {
+    current = await current.getDirectoryHandle(parts[i], { create: !!create });
+  }
+  return { parent: current, name: parts[parts.length - 1] || '' };
+}
+
+async function listLocalDir(path) {
+  let target = localDirHandle;
+  if (path && path !== '.' && path !== '/') {
+    const parts = path.replace(/\\/g, '/').split('/').filter(Boolean);
+    for (const part of parts) { target = await target.getDirectoryHandle(part); }
+  }
+  const entries = [];
+  for await (const [name, handle] of target) {
+    if (handle.kind === 'file') {
+      try {
+        const f = await handle.getFile();
+        entries.push({ name, kind: 'file', size: f.size });
+      } catch { entries.push({ name, kind: 'file' }); }
+    } else {
+      entries.push({ name, kind: 'directory' });
+    }
+  }
+  entries.sort((a, b) => (a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === 'directory' ? -1 : 1));
+  return { path: path || '.', entries };
+}
+
+async function readLocalFile(path) {
+  const { parent, name } = await resolvePathHandle(localDirHandle, path, false);
+  const fileHandle = await parent.getFileHandle(name);
+  const file = await fileHandle.getFile();
+  const text = await file.text();
+  if (text.length > 100000) {
+    return { content: text.substring(0, 100000), truncated: true, total_size: text.length };
+  }
+  return { content: text, size: text.length };
+}
+
+async function writeLocalFile(path, content) {
+  const { parent, name } = await resolvePathHandle(localDirHandle, path, true);
+  const fileHandle = await parent.getFileHandle(name, { create: true });
+  const writable = await fileHandle.createWritable();
+  await writable.write(content);
+  await writable.close();
+  return { written: true, path, size: content.length };
+}
+
+async function handleFileRequest(data) {
+  const { request_id, action, path, content } = data;
+  let result;
+  try {
+    if (!localDirHandle) {
+      result = { error: 'No local directory open. Ask the user to click the folder button.' };
+    } else if (action === 'list_dir') {
+      result = await listLocalDir(path);
+    } else if (action === 'read_file') {
+      result = await readLocalFile(path);
+    } else if (action === 'write_file') {
+      result = await writeLocalFile(path, content || '');
+    } else {
+      result = { error: 'Unknown action: ' + action };
+    }
+  } catch (e) {
+    result = { error: e.message || String(e) };
+  }
+  // POST result back to agent
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'file_result',
+        request_id: request_id,
+        result: result,
+        conversation_id: conversationId,
+      }),
+    });
+  } catch (e) { console.error('Failed to send file result:', e); }
+}
+
+// ── Slash commands ───────────────────────────────────────────────
+async function handleSlashCommand(text) {
+  const parts = text.split(/\s+/);
+  const cmd = parts[0].toLowerCase();
+
+  if (cmd === '/schedules') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      await cmdSchedulesList();
+    } else if (sub === 'del' || sub === 'delete') {
+      await cmdSchedulesDel();
+    } else if (sub === 'add' && parts[2]) {
+      await cmdSchedulesAdd(parts[2], parts.slice(3).join(' '));
+    } else {
+      addMsg('system', 'Usage: /schedules list | /schedules del | /schedules add YYYYMMDDHHmmss [reason]');
+    }
+    return true;
+  }
+
+  if (cmd === '/compact') {
+    await cmdCompact();
+    return true;
+  }
+
+  if (cmd === '/files') {
+    toggleFilesPanel();
+    return true;
+  }
+
+  if (cmd === '/flows') {
+    toggleFlowsPanel();
+    return true;
+  }
+
+  if (cmd === '/tasks') {
+    toggleSchedsPanel();
+    return true;
+  }
+
+  if (cmd === '/tools') {
+    await cmdToolsList();
+    return true;
+  }
+
+  if (cmd === '/usage') {
+    await cmdUsage();
+    return true;
+  }
+
+  if (cmd === '/agent') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      await cmdAgentList();
+    } else if (sub === 'create') {
+      await cmdAgentCreate();
+    } else if (sub === 'select') {
+      const name = parts[2] || '';
+      await cmdAgentSelect(name);
+    } else if (sub === 'delete' || sub === 'del') {
+      const name = parts[2];
+      if (!name) { addMsg('system', 'Usage: /agent delete <name>'); }
+      else { await cmdAgentDelete(name); }
+    } else {
+      addMsg('system', 'Usage: /agent list | create | select <name> | delete <name>');
+    }
+    return true;
+  }
+
+  if (cmd === '/memory') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      await cmdMemoryList();
+    } else if (sub === 'del' || sub === 'delete') {
+      const memId = parts[2];
+      if (!memId) { addMsg('system', 'Usage: /memory del <memory_id>'); }
+      else { await cmdMemoryDel(memId); }
+    } else {
+      addMsg('system', 'Usage: /memory list | /memory del <id>');
+    }
+    return true;
+  }
+
+  if (cmd === '/install') {
+    addMsg('system', 'To install a tool, drag & drop a .py file into the chat or paste the code with:\n/install filename.py\n```python\n# your code here\n```');
+    return true;
+  }
+
+  if (cmd === '/uninstall') {
+    const toolName = parts[1];
+    if (!toolName) { addMsg('system', 'Usage: /uninstall <tool_name>'); return true; }
+    await cmdUninstallTool(toolName);
+    return true;
+  }
+
+  if (cmd === '/link') {
+    const sub = (parts[1] || '').toLowerCase();
+    if (sub === 'telegram') {
+      const tgId = parts[2];
+      const botToken = parts[3] || '';
+      if (!tgId) { addMsg('system', 'Usage: /link telegram <telegram_user_id> [bot_token]'); return true; }
+      await cmdLinkTelegram(tgId, botToken);
+    } else if (sub === 'unlink') {
+      await cmdUnlinkTelegram();
+    } else if (sub === 'status') {
+      await cmdLinkStatus();
+    } else {
+      addMsg('system', 'Usage: /link telegram <id> | /link unlink | /link status');
+    }
+    return true;
+  }
+
+  if (cmd === '/add-secret') {
+    const name = parts[1];
+    const value = parts.slice(2).join(' ');
+    if (!name || !value) { addMsg('system', t('secretAddUsage')); return true; }
+    await cmdAddSecret(name, value);
+    return true;
+  }
+
+  if (cmd === '/list-secrets' || cmd === '/secrets') {
+    await cmdListSecrets();
+    return true;
+  }
+
+  if (cmd === '/add-variable' || cmd === '/add-var') {
+    const name = parts[1];
+    const value = parts.slice(2).join(' ');
+    if (!name || !value) { addMsg('system', t('variableAddUsage')); return true; }
+    await cmdAddVariable(name, value);
+    return true;
+  }
+
+  if (cmd === '/list-variables' || cmd === '/variables' || cmd === '/vars') {
+    await cmdListVariables();
+    return true;
+  }
+
+  if (cmd === '/skill') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      await cmdSkillList();
+    } else if (sub === 'add' || sub === 'create') {
+      const name = parts[2];
+      const prompt = parts.slice(3).join(' ');
+      if (!name || !prompt) { addMsg('system', 'Usage: /skill add <name> <prompt>'); return true; }
+      await cmdResourceAction('create_skill', {name, prompt});
+    } else if (sub === 'del' || sub === 'delete') {
+      const name = parts[2];
+      if (!name) { addMsg('system', 'Usage: /skill del <name>'); return true; }
+      await cmdResourceAction('delete_skill', {name});
+    } else {
+      addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name>');
+    }
+    return true;
+  }
+
+  if (cmd === '/add-skill') {
+    const name = parts[1];
+    const prompt = parts.slice(2).join(' ');
+    if (!name || !prompt) { addMsg('system', 'Usage: /add-skill <name> <prompt>'); return true; }
+    await cmdResourceAction('create_skill', {name, prompt});
+    return true;
+  }
+
+  if (cmd === '/resources') {
+    await cmdListResources();
+    return true;
+  }
+
+  if (cmd === '/activate') {
+    const rtype = parts[1];
+    const rname = parts[2];
+    if (!rtype || !rname) { addMsg('system', 'Usage: /activate <agent|skill|mcp> <name>'); return true; }
+    await cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
+    return true;
+  }
+
+  if (cmd === '/deactivate') {
+    const rtype = parts[1];
+    const rname = parts[2];
+    if (!rtype || !rname) { addMsg('system', 'Usage: /deactivate <agent|skill|mcp> <name>'); return true; }
+    await cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
+    return true;
+  }
+
+  if (cmd === '/share') {
+    const rtype = parts[1];
+    const rname = parts[2];
+    const targetConv = parts[3];
+    if (!rtype || !rname || !targetConv) {
+      addMsg('system', 'Usage: /share <agent|skill|mcp> <name> <conversation_id>');
+      return true;
+    }
+    await cmdResourceAction('share_resource', {
+      resource_type: rtype, name: rname, target_conversation_id: targetConv
+    });
+    return true;
+  }
+
+  if (cmd === '/view') {
+    const filename = parts.slice(1).join(' ');
+    if (!filename) { addMsg('system', 'Usage: /view <filename>'); return true; }
+    openFileViewer(filename);
+    return true;
+  }
+
+  return false; // not a known command — send as normal message
+}
+
+async function cmdSchedulesList() {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_schedules', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const scheds = data.schedules || [];
+    if (scheds.length === 0) {
+      addMsg('system', 'No scheduled rechecks for this conversation.');
+    } else {
+      const lines = scheds.map(s => {
+        const dt = new Date(s.recheck_at * 1000).toLocaleString();
+        return `\u2022 ${dt} \u2014 ${s.reason || '(no reason)'}`;
+      });
+      addMsg('system', 'Scheduled rechecks:\n' + lines.join('\n'));
+    }
+  } catch (e) { addMsg('error', 'Failed to list schedules: ' + e.message); }
+}
+
+async function cmdSchedulesDel() {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_schedule', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    addMsg('system', data.cancelled ? 'Schedule cancelled.' : 'No schedule to cancel.');
+  } catch (e) { addMsg('error', 'Failed to delete schedule: ' + e.message); }
+}
+
+async function cmdSchedulesAdd(dateStr, reason) {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!/^\d{14}$/.test(dateStr)) {
+    addMsg('system', 'Invalid date format. Use YYYYMMDDHHmmss (e.g. 20260312140000)');
+    return;
+  }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'add_schedule', conversation_id: conversationId,
+        at: dateStr, reason: reason || 'manual schedule',
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    const dt = new Date(data.at * 1000).toLocaleString();
+    addMsg('system', 'Schedule added: ' + dt);
+  } catch (e) { addMsg('error', 'Failed to add schedule: ' + e.message); }
+}
+
+async function cmdUsage() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_usage' }),
+    });
+    const data = await resp.json();
+    const usage = data.usage || {};
+    const lines = [];
+    for (const [uid, u] of Object.entries(usage)) {
+      const totalIn = (u.total_in || 0).toLocaleString();
+      const totalOut = (u.total_out || 0).toLocaleString();
+      lines.push(`**${uid}**: ${totalIn} in / ${totalOut} out`);
+      const models = u.models || {};
+      for (const [model, m] of Object.entries(models)) {
+        lines.push(`  \u2022 ${model}: ${m.in.toLocaleString()} in / ${m.out.toLocaleString()} out`);
+      }
+    }
+    if (lines.length === 0) { addMsg('system', 'No token usage recorded yet.'); }
+    else { addMsg('system', 'Token usage:\n' + lines.join('\n')); }
+  } catch (e) { addMsg('error', 'Failed to get usage: ' + e.message); }
+}
+
+async function cmdLinkTelegram(tgId, botToken) {
+  try {
+    const payload = { action: 'link_telegram', telegram_user_id: tgId };
+    if (botToken) { payload.bot_token = botToken; }
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); }
+    else {
+      let msg = `Telegram user ${tgId} linked successfully!`;
+      if (data.bot_username) { msg += ` Personal bot: @${data.bot_username}`; }
+      if (data.bot_warning) { msg += `\n\u26a0\ufe0f ${data.bot_warning}`; }
+      msg += '\nYou can now use /conv commands on Telegram to access your conversations.';
+      addMsg('system', msg);
+    }
+  } catch (e) { addMsg('error', 'Failed to link: ' + e.message); }
+}
+
+async function cmdUnlinkTelegram() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'unlink_telegram' }),
+    });
+    const data = await resp.json();
+    if (data.unlinked) { addMsg('system', 'Telegram account unlinked.'); }
+    else { addMsg('system', 'No Telegram link found.'); }
+  } catch (e) { addMsg('error', 'Failed to unlink: ' + e.message); }
+}
+
+async function cmdLinkStatus() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_links' }),
+    });
+    const data = await resp.json();
+    const links = data.links || {};
+    if (Object.keys(links).length === 0) {
+      addMsg('system', 'No linked accounts. Use /link telegram <id> to link.');
+    } else {
+      const lines = Object.entries(links).map(([ch, id]) => `\u2022 ${ch}: ${id}`);
+      const active = data.active_telegram_conv || 'none';
+      addMsg('system', 'Linked accounts:\n' + lines.join('\n') + '\n\nActive Telegram conversation: ' + active);
+    }
+  } catch (e) { addMsg('error', 'Failed to get links: ' + e.message); }
+}
+
+async function cmdAgentList() {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const agents = data.agents || {};
+    const selected = data.selected || '';
+    const names = Object.keys(agents);
+    if (names.length === 0) {
+      addMsg('system', 'No agents defined. Use /agent create to add one.');
+    } else {
+      const lines = names.map(n => {
+        const marker = n === selected ? ' \u2705' : '';
+        const prompt = agents[n].prompt.substring(0, 80);
+        return `\u2022 **${n}**${marker} \u2014 ${prompt}...`;
+      });
+      addMsg('system', `Agents (${selected ? 'active: ' + selected : 'none selected'}):\n` + lines.join('\n'));
+    }
+  } catch (e) { addMsg('error', 'Failed to list agents: ' + e.message); }
+}
+
+async function cmdAgentCreate() {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  const name = prompt('Agent name:');
+  if (!name) return;
+  const agentPrompt = prompt('System prompt for this agent:');
+  if (!agentPrompt) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'create_agent', conversation_id: conversationId,
+        name: name, prompt: agentPrompt,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', `Agent '${name}' created. Use /agent select ${name} to activate.`);
+  } catch (e) { addMsg('error', 'Failed to create agent: ' + e.message); }
+}
+
+async function cmdAgentSelect(name) {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'select_agent', conversation_id: conversationId,
+        name: name,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', name ? `Agent '${name}' selected.` : 'Switched to default agent.');
+  } catch (e) { addMsg('error', 'Failed to select agent: ' + e.message); }
+}
+
+async function cmdAgentDelete(name) {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'delete_agent', conversation_id: conversationId,
+        name: name,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', data.deleted ? `Agent '${name}' deleted.` : `Agent '${name}' not found.`);
+  } catch (e) { addMsg('error', 'Failed to delete agent: ' + e.message); }
+}
+
+async function cmdMemoryList() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_memories' }),
+    });
+    const data = await resp.json();
+    const mems = data.memories || [];
+    if (mems.length === 0) {
+      addMsg('system', 'No memories stored. The agent can use the "remember" tool to store facts.');
+    } else {
+      const lines = mems.map(m => {
+        const tags = m.tags.length ? ` [${m.tags.join(', ')}]` : '';
+        return `\u2022 \`${m.id}\`${tags} \u2014 ${m.text}`;
+      });
+      addMsg('system', `${mems.length} memories:\n` + lines.join('\n'));
+    }
+  } catch (e) { addMsg('error', 'Failed to list memories: ' + e.message); }
+}
+
+async function cmdMemoryDel(memId) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_memory', memory_id: memId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', data.deleted ? `Memory ${memId} deleted.` : `Memory ${memId} not found.`);
+  } catch (e) { addMsg('error', 'Failed to delete memory: ' + e.message); }
+}
+
+async function cmdToolsList() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_tools' }),
+    });
+    const data = await resp.json();
+    const tools = data.tools || [];
+    if (tools.length === 0) {
+      addMsg('system', 'No dynamic tools installed. Use /install to add one.');
+    } else {
+      const lines = tools.map(t =>
+        `\u2022 **${t.tool_name}** \u2014 ${t.description} (by ${t.owner})`
+      );
+      addMsg('system', 'Dynamic tools:\n' + lines.join('\n'));
+    }
+  } catch (e) { addMsg('error', 'Failed to list tools: ' + e.message); }
+}
+
+async function cmdUninstallTool(toolName) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'uninstall_tool', tool_name: toolName }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', data.uninstalled ? `Tool '${toolName}' uninstalled.` : `Tool '${toolName}' not found.`);
+  } catch (e) { addMsg('error', 'Failed to uninstall tool: ' + e.message); }
+}
+
+async function cmdCompact() {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  addMsg('system', 'Compacting conversation...');
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'compact', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
+    addMsg('system', `Compacted: ${data.before} messages \u2192 ${data.after} messages`);
+  } catch (e) { addMsg('error', 'Compaction failed: ' + e.message); }
+}
+
+// ── Secrets & Variables ──────────────────────────────────────────
+async function cmdAddSecret(name, value) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'add_secret', key: name, value: value,
+                             conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('secretAdded', { name, ref: data.key || name, short: name }));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdListSecrets() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_secrets' }),
+    });
+    const data = await resp.json();
+    const result = data.result || '';
+    if (!result || result.includes('No secrets')) {
+      addMsg('system', t('secretListEmpty'));
+    } else {
+      addMsg('system', result);
+    }
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdAddVariable(name, value) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'add_variable', key: name, value: value }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('variableAdded', { name, ref: data.key || name, short: name }));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdListVariables() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_variables' }),
+    });
+    const data = await resp.json();
+    const result = data.result || '';
+    if (!result || result.includes('No variables')) {
+      addMsg('system', t('variableListEmpty'));
+    } else {
+      addMsg('system', result);
+    }
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+// ── Files panel ─────────────────────────────────────────────────
+async function toggleFilesPanel() {
+  const panel = document.getElementById('filesPanel');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    await loadConvFiles();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function loadConvFiles() {
+  if (!conversationId) return;
+  const list = document.getElementById('filesList');
+  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_conv_files', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const files = data.files || [];
+    if (files.length === 0) {
+      list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
+      return;
+    }
+    list.innerHTML = files.map(f => {
+      const statusCls = f.available ? 'available' : 'expired';
+      const statusTip = f.available ? 'Available' : 'Expired/cleaned';
+      const href = window.location.origin + '/files/' + f.file_id + '/' + f.filename;
+      const nameHtml = f.available
+        ? `<a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`
+        : `<span style="text-decoration:line-through;color:#808090" title="${statusTip}">${escapeHtml(f.filename)}</span>`;
+      return `<span class="file-chip"><span class="file-status ${statusCls}" title="${statusTip}"></span>${nameHtml}</span>`;
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load files</span>';
+  }
+}
+
+// ── Flow context menu ──────────────────────────────────────────
+function showFlowMenu(e, flowId, flowStatus) {
+  e.preventDefault();
+  closeFlowMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.id = 'flowCtxMenu';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+
+  if (flowStatus === 'running') {
+    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'stop\')">&#x23F9; Stop</div>' +
+      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; Delete</div>';
+  } else {
+    menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'start\')">&#x25B6; Start</div>' +
+      '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; Delete</div>';
+  }
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', closeFlowMenu, {once: true}), 0);
+}
+
+function closeFlowMenu() {
+  const m = document.getElementById('flowCtxMenu');
+  if (m) m.remove();
+}
+
+async function flowAction(flowId, action) {
+  closeFlowMenu();
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'manage_conv_flow',
+        conversation_id: conversationId,
+        flow_id: flowId,
+        flow_action: action,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      addMsg('system', '\\u274C ' + data.error);
+    } else {
+      addMsg('system', '\\u2705 ' + (data.message || action + ' done'));
+    }
+    await loadConvFlows();
+  } catch (e) {
+    addMsg('error', 'Flow action failed: ' + e.message);
+  }
+}
+
+// ── Scheduled Tasks panel ──────────────────────────────────────
+async function toggleSchedsPanel() {
+  const panel = document.getElementById('schedsPanel');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    await loadConvScheds();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function loadConvScheds() {
+  if (!conversationId) return;
+  const list = document.getElementById('schedsList');
+  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_schedules', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const scheds = data.schedules || [];
+    if (scheds.length === 0) {
+      list.innerHTML = '<span style="color:#808090;font-size:12px">No scheduled tasks.</span>';
+      return;
+    }
+    list.innerHTML = scheds.map(s => {
+      const at = new Date(s.recheck_at * 1000);
+      const now = Date.now();
+      const isPast = at.getTime() < now;
+      const timeStr = at.toLocaleString();
+      const relative = isPast ? 'overdue' : formatRelative(at.getTime() - now);
+      const reason = s.reason ? escapeHtml(s.reason) : 'recheck';
+      return '<span class="sched-chip">' +
+        '<span class="sched-icon">&#x23F0;</span> ' +
+        escapeHtml(reason) +
+        ' <span style="color:#808090;font-size:11px">(' + timeStr + ', ' + relative + ')</span>' +
+        '</span>';
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load schedules</span>';
+  }
+}
+
+function formatRelative(ms) {
+  if (ms < 0) return 'overdue';
+  const secs = Math.floor(ms / 1000);
+  if (secs < 60) return secs + 's';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return mins + 'min';
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'min';
+  const days = Math.floor(hrs / 24);
+  return days + 'd ' + (hrs % 24) + 'h';
+}
+
+// ── Flows panel ────────────────────────────────────────────────
+async function toggleFlowsPanel() {
+  const panel = document.getElementById('flowsPanel');
+  if (panel.style.display === 'none') {
+    panel.style.display = 'block';
+    await loadConvFlows();
+  } else {
+    panel.style.display = 'none';
+  }
+}
+
+async function loadConvFlows() {
+  if (!conversationId) return;
+  const list = document.getElementById('flowsList');
+  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_conv_flows', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const flows = data.flows || [];
+    if (flows.length === 0) {
+      list.innerHTML = '<span style="color:#808090;font-size:12px">No flows in this conversation.</span>';
+      return;
+    }
+    list.innerHTML = flows.map(f => {
+      let statusCls = f.status || 'stopped';
+      if (f.schedule && f.status !== 'running') statusCls = 'scheduled';
+      const statusTip = escapeHtml(f.status + (f.schedule ? ' (CRON: ' + f.schedule + ')' : ''));
+      const taskInfo = f.tasks_count ? f.tasks_count + ' task(s)' : '';
+      const templateInfo = f.template ? ' from ' + escapeHtml(f.template) : '';
+      const fid = escapeHtml(f.id);
+      const fstatus = escapeHtml(f.status || 'stopped');
+      return '<span class="flow-chip" data-flow-id="' + fid + '" data-flow-status="' + fstatus + '" ' +
+        'oncontextmenu="showFlowMenu(event, \'' + fid + '\', \'' + fstatus + '\')">' +
+        '<span class="flow-status ' + statusCls + '" title="' + statusTip + '"></span>' +
+        escapeHtml(f.name || f.id) +
+        (taskInfo ? ' <span style="color:#808090;font-size:11px">(' + taskInfo + templateInfo + ')</span>' : '') +
+        '</span>';
+    }).join('');
+  } catch (e) {
+    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load flows</span>';
+  }
+}
+
+// File upload handling
+function handleFiles(fileList) {
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB per file
+  for (const file of fileList) {
+    if (file.size > MAX_SIZE) {
+      addMsg('error', t('fileTooLarge', {name: file.name, size: (file.size / 1024 / 1024).toFixed(1)}));
+      continue;
+    }
+    // .py files → offer to install as dynamic tool
+    if (file.name.endsWith('.py')) {
+      const textReader = new FileReader();
+      textReader.onload = async (e) => {
+        const source = e.target.result;
+        addMsg('system', `Installing tool from ${file.name}...`);
+        try {
+          const resp = await fetch(API, {
+            method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({ action: 'install_tool', filename: file.name, source }),
+          });
+          const data = await resp.json();
+          if (data.error) { addMsg('error', 'Install failed: ' + data.error); }
+          else { addMsg('system', `Tool **${data.tool_name}** installed: ${data.description}`); }
+        } catch (err) { addMsg('error', 'Install failed: ' + err.message); }
+      };
+      textReader.readAsText(file);
+      continue;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      const base64 = dataUrl.split(',')[1];
+      const entry = {
+        file: file,
+        filename: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        data: base64,
+        dataUrl: dataUrl,
+      };
+      pendingFiles.push(entry);
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+  // Reset file input so same file can be re-selected
+  document.getElementById('fileInput').value = '';
+}
+
+function removeFile(idx) {
+  pendingFiles.splice(idx, 1);
+  renderAttachments();
+}
+
+function renderAttachments() {
+  const preview = document.getElementById('attachPreview');
+  preview.innerHTML = '';
+  pendingFiles.forEach((f, i) => {
+    const el = document.createElement('div');
+    el.className = 'att-item';
+    const isImage = f.mime_type.startsWith('image/');
+    if (isImage) {
+      el.innerHTML = '<img src="' + f.dataUrl + '" alt="' + escapeHtml(f.filename) + '">';
+    } else {
+      const icons = {'application/pdf': '\u{1F4C4}', 'text/plain': '\u{1F4DD}', 'text/html': '\u{1F310}', 'text/markdown': '\u{1F4DD}'};
+      el.innerHTML = '<span class="att-icon">' + (icons[f.mime_type] || '\u{1F4CE}') + '</span>';
+    }
+    el.innerHTML += '<span>' + escapeHtml(f.filename) + '</span>'
+      + '<button class="att-remove" onclick="removeFile(' + i + ')">\u00d7</button>';
+    preview.appendChild(el);
+  });
+}
+
+function renderUserAttachments(attachments) {
+  // Render attachment badges in user message
+  let html = '';
+  for (const att of attachments) {
+    if (att.mime_type && att.mime_type.startsWith('image/')) {
+      html += '<img class="chat-image" src="data:' + att.mime_type + ';base64,' + att.data + '">';
+    } else {
+      html += '<span class="doc-badge">\u{1F4CE} ' + escapeHtml(att.filename) + '</span> ';
+    }
+  }
+  return html;
+}
+
+// Drag and drop support
+document.addEventListener('DOMContentLoaded', () => {
+  const main = document.querySelector('.main');
+  main.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); });
+  main.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+  });
+});
+
+// Clipboard paste support (Ctrl+V images)
+document.getElementById('input').addEventListener('paste', (e) => {
+  const items = e.clipboardData && e.clipboardData.items;
+  if (!items) return;
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      e.preventDefault();
+      const file = item.getAsFile();
+      if (file) handleFiles([file]);
+      return;
+    }
+  }
+});
+
+async function send() {
+  const input = document.getElementById('input');
+  const text = input.value.trim();
+  if (!text && pendingFiles.length === 0) return;
+
+  // Intercept slash commands
+  if (text.startsWith('/')) {
+    const handled = await handleSlashCommand(text);
+    if (handled) { input.value = ''; input.style.height = 'auto'; return; }
+  }
+
+  // Capture and clear attachments
+  const attachments = pendingFiles.map(f => ({
+    filename: f.filename, mime_type: f.mime_type, data: f.data,
+  }));
+  const attachmentsForDisplay = [...pendingFiles];
+  pendingFiles = [];
+  renderAttachments();
+
+  // Allow stacking: don't block on 'sending', just track pending count
+  sending = true;
+  lastSSEActivity = Date.now();
+  document.getElementById('status').textContent = t('sending');
+  input.value = '';
+  input.style.height = 'auto';
+
+  // Show user message with attachments
+  const msgEl = addMsg('user', text || '');
+  if (attachmentsForDisplay.length > 0) {
+    msgEl.innerHTML = (text ? escapeHtml(text) : '') + renderUserAttachments(attachmentsForDisplay);
+  }
+  scrollBottom(true);  // Force scroll when user sends
+  streamingEl = null;
+  streamingText = '';
+  streamingChunks = [];
+  showTyping();
+
+  try {
+    const body = { message: text };
+    if (conversationId) body.conversation_id = conversationId;
+    if (attachments.length > 0) body.attachments = attachments;
+    const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
+    if (ttlVal > 0) body.ttl = ttlVal;
+
+    let resp;
+    const jsonBody = JSON.stringify(body);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        resp = await fetch(API, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          body: jsonBody,
+          credentials: 'same-origin',
+          redirect: 'manual',
+        });
+        break;  // success
+      } catch (fetchErr) {
+        if (attempt < 2) {
+          console.warn('Fetch attempt ' + (attempt+1) + ' failed, retrying...', fetchErr);
+          await new Promise(r => setTimeout(r, 500));
+        } else {
+          throw fetchErr;
+        }
+      }
+    }
+
+    // Session expired → 401 JSON or opaque redirect (302 to OAuth)
+    if (resp.type === 'opaqueredirect' || resp.status === 401 || resp.status === 403) {
+      hideTyping();
+      if (LOGIN_URL) { window.location.href = LOGIN_URL; return; }
+      addMsg('error', t('sessionExpired'));
+      sending = false;
+      document.getElementById('status').textContent = t('ready');
+      return;
+    }
+
+    if (!resp.ok) {
+      hideTyping();
+      const errText = await resp.text();
+      addMsg('error', 'Error ' + resp.status + ': ' + errText);
+      sending = false;
+      document.getElementById('status').textContent = t('error');
+      return;
+    }
+
+    const data = await resp.json();
+    const cid = data.conversation_id || conversationId;
+    if (cid && cid !== conversationId) {
+      conversationId = cid;
+      // Sync message count from server to prevent poll from re-fetching the user message
+      serverMsgCount = data.message_count || 1;
+      connectSSE(cid);  // Start/reconnect SSE for this conversation
+      startPollTimer();
+      updateDeleteBtn();
+      loadConversations();  // Show new conversation in sidebar immediately
+    }
+
+    // If streaming mode: events come via SSE, don't show response here
+    if (data.status === 'accepted') {
+      if (data.message_count) serverMsgCount = data.message_count;
+      document.getElementById('status').textContent = t('thinking');
+      // SSE will handle the rest
+      return;
+    }
+
+    // Non-streaming mode: show response directly
+    hideTyping();
+    conversationId = data.conversation_id || conversationId;
+    addMsg('assistant', data.response || data.content || JSON.stringify(data));
+    sending = false;
+    document.getElementById('status').textContent = t('ready');
+    loadConversations();
+    loadResources();
+
+  } catch (e) {
+    hideTyping();
+    console.error('send() failed:', e);
+    addMsg('error', t('connError', {msg: e.message + ' (check console)'}));
+    sending = false;
+    document.getElementById('status').textContent = t('error');
+  }
+}
+
+function handleKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    send();
+  }
+  setTimeout(() => {
+    e.target.style.height = 'auto';
+    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+  }, 0);
+}
+
+// ── Resources (agents, skills, mcp) ─────────────────────────────
+async function cmdResourceAction(action, extra) {
+  try {
+    const payload = { action, conversation_id: conversationId, ...extra };
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
+    else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
+    else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
+    else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
+    else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
+    else addMsg('system', JSON.stringify(data, null, 2));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdSkillList() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_skills', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const skills = data.skills || [];
+    if (!skills.length) { addMsg('system', 'No skills defined. Use /add-skill <name> <prompt>'); return; }
+    let lines = ['**Your skills:**'];
+    skills.forEach(s => {
+      const mark = s.active ? '\\u2705' : '\\u2B1C';
+      lines.push(`${mark} **${s.name}** — ${s.description || s.prompt}`);
+    });
+    addMsg('system', lines.join('\\n'));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdListResources() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    let lines = [];
+    if (data.agents && data.agents.length) {
+      lines.push('**Agents:**');
+      data.agents.forEach(a => {
+        const mark = a.active ? '\\u2705' : '\\u2B1C';
+        lines.push(`  ${mark} ${a.name} ${a.description ? '— ' + a.description : ''}`);
+      });
+    }
+    if (data.skills && data.skills.length) {
+      lines.push('**Skills:**');
+      data.skills.forEach(s => {
+        const mark = s.active ? '\\u2705' : '\\u2B1C';
+        lines.push(`  ${mark} ${s.name} ${s.description ? '— ' + s.description : ''}`);
+      });
+    }
+    if (data.mcp_servers && data.mcp_servers.length) {
+      lines.push('**MCP Servers:**');
+      data.mcp_servers.forEach(m => {
+        const mark = m.active ? '\\u2705' : '\\u2B1C';
+        lines.push(`  ${mark} ${m.name} (${m.url})`);
+      });
+    }
+    if (!lines.length) lines.push('No resources defined. Use /agent create, /add-skill, etc.');
+    addMsg('system', lines.join('\\n'));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+// ── Sidebar Resources ───────────────────────────────────────────
+async function loadResources() {
+  if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
+  document.getElementById('resourcesPanel').style.display = 'block';
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    const el = document.getElementById('resourcesContent');
+    let html = '';
+    // Agents
+    if (data.agents && data.agents.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Agents</div>';
+      data.agents.forEach(a => {
+        const active = a.active;
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
+          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${a.name}</span>
+        </div>`;
+      });
+    }
+    // Skills
+    if (data.skills && data.skills.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Skills</div>';
+      data.skills.forEach(s => {
+        const active = s.active;
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
+          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
+        </div>`;
+      });
+    }
+    // MCP
+    if (data.mcp_servers && data.mcp_servers.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">MCP</div>';
+      data.mcp_servers.forEach(m => {
+        const active = m.active;
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
+          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
+        </div>`;
+      });
+    }
+    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use /agent create, /add-skill</div>';
+    el.innerHTML = html;
+  } catch (e) {
+    document.getElementById('resourcesContent').innerHTML = '';
+  }
+}
+
+function toggleResourcesSection() {
+  const el = document.getElementById('resourcesContent');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+// ── File Viewer ─────────────────────────────────────────────────
+function openFileViewer(filenameOrUrl) {
+  let viewer = document.getElementById('fileViewer');
+  if (!viewer) {
+    viewer = document.createElement('div');
+    viewer.id = 'fileViewer';
+    viewer.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:9999;background:#1e1e2e;border-bottom:2px solid #6c5ce7;max-height:50vh;display:flex;flex-direction:column;';
+    viewer.innerHTML = `
+      <div style="display:flex;align-items:center;padding:8px 16px;gap:12px;background:#2d2d44;">
+        <span id="viewerFileName" style="flex:1;color:#ccc;font-size:14px;"></span>
+        <span id="viewerFileSize" style="color:#888;font-size:12px;"></span>
+        <a id="viewerDownload" download style="color:#6c5ce7;text-decoration:none;font-size:14px;cursor:pointer;">\\u2B07 Download</a>
+        <button onclick="closeFileViewer()" style="background:none;border:none;color:#ff6b6b;font-size:18px;cursor:pointer;">\\u2715</button>
+      </div>
+      <div id="viewerContent" style="flex:1;overflow:auto;padding:16px;"></div>
+    `;
+    document.body.prepend(viewer);
+  }
+  viewer.style.display = 'flex';
+  const contentEl = document.getElementById('viewerContent');
+  const nameEl = document.getElementById('viewerFileName');
+  const sizeEl = document.getElementById('viewerFileSize');
+  const dlEl = document.getElementById('viewerDownload');
+
+  // Determine if it's a URL or filename
+  let url = filenameOrUrl;
+  if (!filenameOrUrl.startsWith('http')) {
+    // Search in conversation files
+    url = API.replace(/\\/[^\\/]*$/, '') + '/files/' + encodeURIComponent(filenameOrUrl);
+  }
+  const fname = filenameOrUrl.split('/').pop();
+  const ext = fname.split('.').pop().toLowerCase();
+  nameEl.textContent = fname;
+  dlEl.href = url;
+  dlEl.download = fname;
+
+  if (['png','jpg','jpeg','gif','svg','webp','bmp'].includes(ext)) {
+    contentEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:40vh;object-fit:contain;">`;
+  } else if (ext === 'pdf') {
+    contentEl.innerHTML = `<iframe src="${url}" style="width:100%;height:40vh;border:none;"></iframe>`;
+  } else if (ext === 'html') {
+    contentEl.innerHTML = `<iframe src="${url}" sandbox="allow-same-origin" style="width:100%;height:40vh;border:none;background:#fff;"></iframe>`;
+  } else {
+    // Text/code: fetch and display
+    fetch(url).then(r => r.text()).then(text => {
+      sizeEl.textContent = (text.length / 1024).toFixed(1) + ' KB';
+      contentEl.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all;color:#ddd;font-size:13px;font-family:monospace;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
+    }).catch(() => {
+      contentEl.innerHTML = '<p style="color:#ff6b6b;">Could not load file preview.</p>';
+    });
+    return;
+  }
+  sizeEl.textContent = '';
+}
+
+function closeFileViewer() {
+  const v = document.getElementById('fileViewer');
+  if (v) v.style.display = 'none';
+}
+
+// Intercept file links in messages to open viewer
+document.addEventListener('click', (e) => {
+  const a = e.target.closest('a[href*="/files/"]');
+  if (a) {
+    e.preventDefault();
+    openFileViewer(a.href);
+  }
+});
+
+addMsg('system', t('welcome'));
+document.getElementById('input').focus();
+loadConversations();
+</script>
+</body>
+</html>"""
+
+
+class ServeChatUITask(BaseTask):
+    """Serve a self-contained chat HTML interface."""
+
+    TYPE = "serveChatUI"
+    VERSION = "1.0.0"
+    NAME = "Serve Chat UI"
+    DESCRIPTION = "Serve an HTML chat interface for the agent"
+    ICON = "chat"
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "agent_path": {
+                "type": "string",
+                "required": False,
+                "default": "/api/agent",
+                "description": "Path of the agent POST endpoint (for the chat JS to call)",
+            },
+            "login_url": {
+                "type": "string",
+                "required": False,
+                "default": "",
+                "description": "Login URL for OAuth2 redirect (empty = no auth required)",
+            },
+            "sse_path": {
+                "type": "string",
+                "required": False,
+                "default": "/api/agent/events",
+                "description": "Path of the SSE events endpoint",
+            },
+        }
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        agent_path = self.config.get("agent_path", "/api/agent")
+        login_url = self.config.get("login_url", "")
+        sse_path = self.config.get("sse_path", "/api/agent/events")
+        html = _CHAT_HTML.replace("{{AGENT_PATH}}", agent_path)
+        html = html.replace("{{LOGIN_URL}}", login_url)
+        html = html.replace("{{SSE_PATH}}", sse_path)
+
+        flowfile.set_content(html.encode("utf-8"))
+        flowfile.set_attribute("http.response.status", "200")
+        flowfile.set_attribute("http.response.header.Content-Type", "text/html; charset=utf-8")
+        flowfile.set_attribute("http.response.header.Cache-Control", "no-cache")
+
+        return [flowfile]
+
+
+TaskFactory.register(ServeChatUITask)

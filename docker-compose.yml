@@ -1,0 +1,50 @@
+version: "3.8"
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - PYFI2_CORS_ORIGINS=http://localhost:8501,http://localhost:8000
+      - PYFI2_SECRET_KEY=${PYFI2_SECRET_KEY:-changeme}
+      - PYFI2_RATE_LIMIT=true
+    volumes:
+      - ./flows:/app/flows
+      - ./config:/app/config
+      - ./plugins:/app/plugins
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/system/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  gui:
+    build: .
+    command: ["python", "-m", "streamlit", "run", "gui/main.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+    ports:
+      - "8501:8501"
+    environment:
+      - PYFI2_API_URL=http://api:8000
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Optional: PostgreSQL backend
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=pyfi2
+      - POSTGRES_USER=pyfi2
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pyfi2secret}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    profiles:
+      - postgres
+
+volumes:
+  pgdata:

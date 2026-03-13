@@ -306,7 +306,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 26  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + store_secret + list_secrets + manage_resource + spawn_agents + get_agent_results + use_skill + show_file
+        assert len(defs) == 29  # builtins + memory (remember/recall/semantic_recall/forget) + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -409,7 +409,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 26  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + store_secret + list_secrets + manage_resource + spawn_agents + get_agent_results + use_skill + show_file
+        assert len(registry.list_tools()) == 29  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

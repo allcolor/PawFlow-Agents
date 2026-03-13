@@ -473,6 +473,49 @@ class LLMClient:
         finally:
             conn.close()
 
+    def embed(
+        self,
+        texts: List[str],
+        model: Optional[str] = None,
+    ) -> List[List[float]]:
+        """Call OpenAI /v1/embeddings API. Batches max 2048 texts per call.
+
+        Only supported for OpenAI provider (Anthropic has no embeddings API).
+
+        Args:
+            texts: List of texts to embed.
+            model: Model name (default: text-embedding-3-small).
+
+        Returns:
+            List of embedding vectors (one per input text).
+        """
+        if not self.api_key:
+            raise LLMClientError("api_key is required")
+        if self.provider != "openai":
+            raise LLMClientError("Embeddings are only supported with OpenAI provider")
+
+        model = model or "text-embedding-3-small"
+        all_embeddings: List[List[float]] = []
+        batch_size = 2048
+
+        for i in range(0, len(texts), batch_size):
+            batch = texts[i:i + batch_size]
+            body = {"model": model, "input": batch}
+            data = self._http_post(
+                "/v1/embeddings",
+                body,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+            )
+            # Sort by index to ensure order matches input
+            emb_data = sorted(data.get("data", []), key=lambda x: x.get("index", 0))
+            for item in emb_data:
+                all_embeddings.append(item.get("embedding", []))
+
+        return all_embeddings
+
     def _build_openai_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format."""
         api_messages = []

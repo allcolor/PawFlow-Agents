@@ -1,0 +1,81 @@
+"""discordReceiver — Self-triggering source task for Discord bot messages.
+
+Listens for incoming Discord messages via DiscordBotService and converts
+them into FlowFiles for downstream processing.
+
+Config:
+    service_id: str    — ID of the DiscordBotService in the flow
+
+FlowFile attributes set:
+    discord.channel_id    — channel ID for reply
+    discord.user_id       — sender's Discord user ID
+    discord.username      — sender's username
+    discord.guild_id      — guild (server) ID
+    discord.message_id    — original message ID
+    discord.message_type  — "text"
+"""
+
+import logging
+from typing import Any, Dict, List, Optional
+
+from core import FlowFile, TaskFactory
+from tasks.io.base_messaging_tasks import BaseReceiverTask
+
+logger = logging.getLogger(__name__)
+
+
+class DiscordReceiverTask(BaseReceiverTask):
+    """Self-triggering source task that receives Discord messages."""
+
+    TYPE = "discordReceiver"
+    VERSION = "1.0.0"
+    NAME = "Discord Receiver"
+    DESCRIPTION = "Receive messages from a Discord bot"
+    ICON = "message-circle"
+    TAGS = ["discord", "io", "source"]
+
+    PARAMETERS = {
+        "service_id": {
+            "type": "string",
+            "description": "ID of the DiscordBotService",
+            "required": True,
+        },
+    }
+
+    def initialize(self):
+        if self._registered:
+            return
+        service_id = self.config.get("service_id", "")
+        svc = self.get_service(service_id)
+        if not svc:
+            raise RuntimeError(f"DiscordBotService '{service_id}' not found")
+        svc.ensure_connected()
+        self._owner_id = f"discordReceiver_{id(self)}"
+        svc.register_handler(self._owner_id, self._on_update)
+        self._registered = True
+        logger.info(f"discordReceiver registered on service '{service_id}'")
+
+    def _parse_update(self, update: dict) -> Optional[FlowFile]:
+        content = update.get("content", "")
+        if not content:
+            return None
+
+        ff = FlowFile(content=content.encode("utf-8"))
+        ff.set_attribute("discord.channel_id", update.get("channel_id", ""))
+        ff.set_attribute("discord.user_id", update.get("user_id", ""))
+        ff.set_attribute("discord.username", update.get("username", ""))
+        ff.set_attribute("discord.guild_id", update.get("guild_id", ""))
+        ff.set_attribute("discord.message_id", update.get("message_id", ""))
+        ff.set_attribute("discord.message_type", update.get("message_type", "text"))
+        return ff
+
+    def cleanup(self):
+        if self._registered and self._owner_id:
+            service_id = self.config.get("service_id", "")
+            svc = self.get_service(service_id)
+            if svc:
+                svc.unregister_handler(self._owner_id)
+            self._registered = False
+
+
+TaskFactory.register(DiscordReceiverTask)

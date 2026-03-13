@@ -230,6 +230,9 @@ class AgentLoopTask(BaseTask):
         # conversation_id/user_id not yet known — will be set in _execute_streaming
         self._configure_tool_handlers(registry)
 
+        # Wire embedding function for semantic memory handlers
+        self._wire_embed_fn(registry, provider, api_key, llm_base_url)
+
         # Set up SubAgentExecutor for spawn_agents/use_skill/get_agent_results
         from core.agent_executor import SubAgentExecutor
         from core.tool_registry import (
@@ -307,29 +310,43 @@ class AgentLoopTask(BaseTask):
                 "data": tg_image,
             })
 
-        # Cross-channel identity resolution for Telegram
-        tg_chat_id = flowfile.get_attribute("telegram.chat_id") or ""
-        tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
+        # Cross-channel identity resolution (generic for all channels)
+        CHANNEL_ATTRS = {
+            "telegram": ("telegram.chat_id", "telegram.user_id"),
+            "discord":  ("discord.channel_id", "discord.user_id"),
+            "whatsapp": ("whatsapp.phone", "whatsapp.phone"),
+            "slack":    ("slack.channel_id", "slack.user_id"),
+        }
+
         channel = "web"
-        if tg_chat_id:
-            channel = "telegram"
-            if use_conv_store and tg_user_id:
+        channel_chat_id = ""
+        channel_user_id = ""
+        for ch, (chat_attr, user_attr) in CHANNEL_ATTRS.items():
+            val = flowfile.get_attribute(chat_attr) or ""
+            if val:
+                channel = ch
+                channel_chat_id = val
+                channel_user_id = flowfile.get_attribute(user_attr) or ""
+                break
+
+        if channel_chat_id:
+            if use_conv_store and channel_user_id:
                 from core.identity_service import IdentityService
                 ids = IdentityService.instance()
-                resolved_user = ids.resolve_user("telegram", tg_user_id)
+                resolved_user = ids.resolve_user(channel, channel_user_id)
                 if resolved_user:
-                    # Linked user — resolve active conversation
                     flowfile.set_attribute("http.auth.principal", resolved_user)
-                    active = ids.get_active_conv(resolved_user, "telegram")
+                    active = ids.get_active_conv(resolved_user, channel)
                     if active:
                         conversation_id = active
-                    # Store chat_id for notifications
-                    self._pending_telegram_chat_id = tg_chat_id
+                    self._pending_channel_chat_id = channel_chat_id
+                    self._pending_channel_name = channel
                 else:
-                    # Not linked — use telegram chat_id as conversation_id
-                    self._pending_telegram_chat_id = tg_chat_id
+                    self._pending_channel_chat_id = channel_chat_id
+                    self._pending_channel_name = channel
             else:
-                self._pending_telegram_chat_id = tg_chat_id
+                self._pending_channel_chat_id = channel_chat_id
+                self._pending_channel_name = channel
 
         messages: List[LLMMessage] = []
 
@@ -377,17 +394,19 @@ class AgentLoopTask(BaseTask):
             from core.conversation_store import ConversationStore
             conversation_id = ConversationStore.instance().generate_id()
 
-        # Store Telegram chat_id for cross-channel notifications
-        if use_conv_store and conversation_id and getattr(self, '_pending_telegram_chat_id', ''):
+        # Store channel chat_id for cross-channel notifications
+        if use_conv_store and conversation_id and getattr(self, '_pending_channel_chat_id', ''):
             try:
                 from core.conversation_store import ConversationStore
+                ch_name = getattr(self, '_pending_channel_name', 'telegram')
                 ConversationStore.instance().set_extra(
-                    conversation_id, "telegram_chat_id",
-                    self._pending_telegram_chat_id,
+                    conversation_id, f"{ch_name}_chat_id",
+                    self._pending_channel_chat_id,
                 )
             except Exception:
                 pass
-            self._pending_telegram_chat_id = ""
+            self._pending_channel_chat_id = ""
+            self._pending_channel_name = ""
 
         # Check for selected agent persona and active skills
         if use_conv_store and conversation_id:
@@ -2580,17 +2599,43 @@ class AgentLoopTask(BaseTask):
             "_base_message_count": base_message_count,
         }
 
+    def _wire_embed_fn(
+        self, registry: ToolRegistry,
+        provider: str, api_key: str, base_url: str,
+    ) -> None:
+        """Wire embedding function into RememberHandler and SemanticRecallHandler."""
+        from core.tool_registry import RememberHandler, SemanticRecallHandler
+
+        if not api_key and provider == "openai":
+            return  # No API key, can't embed
+
+        def embed_fn(text: str) -> List[float]:
+            from core.embeddings import EmbeddingProvider
+            results = EmbeddingProvider.instance().embed(
+                [text], provider="auto", api_key=api_key, base_url=base_url,
+            )
+            return results[0] if results else []
+
+        for h in registry.list_tools():
+            if isinstance(h, RememberHandler):
+                h.set_embed_fn(embed_fn)
+            elif isinstance(h, SemanticRecallHandler):
+                h.set_embed_fn(embed_fn)
+
     def _configure_tool_handlers(
         self, registry: ToolRegistry,
         conversation_id: str = "", user_id: str = "",
     ) -> None:
         """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
         from core.tool_registry import (
-            AskAgentHandler, CreateFileHandler, CreatePlanHandler,
+            AskAgentHandler, BrowserActionHandler, CreateFileHandler,
+            CreatePlanHandler,
             CreateToolHandler, ExecuteScriptHandler, FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler, ImageGenerationHandler,
-            LocalFilesHandler, ManageResourceHandler, NotifyUserHandler,
-            RecallHandler, RememberHandler, ListSecretsHandler,
+            LinkIdentityHandler, LocalFilesHandler, ManageResourceHandler,
+            NotifyUserHandler,
+            RecallHandler, RememberHandler, SemanticRecallHandler,
+            ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
         )
@@ -2620,7 +2665,13 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, LocalFilesHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
-            elif isinstance(h, (RememberHandler, RecallHandler, ForgetHandler)):
+            elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, BrowserActionHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, LinkIdentityHandler):
                 if user_id:
                     h.set_user_id(user_id)
             elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler)):

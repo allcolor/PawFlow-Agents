@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 
@@ -23,20 +23,22 @@ _DEFAULT_DIR = "data/memories"
 class MemoryEntry:
     """A single memory entry."""
 
-    __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source")
+    __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source", "embedding")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
-                 created_at: float = 0, updated_at: float = 0):
+                 created_at: float = 0, updated_at: float = 0,
+                 embedding: Optional[List[float]] = None):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
         self.created_at = created_at or time.time()
         self.updated_at = updated_at or self.created_at
         self.source = source  # e.g. "conversation:abc123", "agent", "user"
+        self.embedding = embedding  # optional vector for semantic search
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
+        d = {
             "id": self.id,
             "text": self.text,
             "tags": self.tags,
@@ -44,6 +46,9 @@ class MemoryEntry:
             "updated_at": self.updated_at,
             "source": self.source,
         }
+        if self.embedding is not None:
+            d["embedding"] = self.embedding
+        return d
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "MemoryEntry":
@@ -54,6 +59,7 @@ class MemoryEntry:
             source=data.get("source", ""),
             created_at=data.get("created_at", 0),
             updated_at=data.get("updated_at", 0),
+            embedding=data.get("embedding"),
         )
 
     def matches(self, query: str) -> bool:
@@ -100,7 +106,8 @@ class MemoryStore:
     # ── Public API ────────────────────────────────────────────────
 
     def remember(self, user_id: str, text: str, tags: List[str],
-                 source: str = "") -> MemoryEntry:
+                 source: str = "",
+                 embedding: Optional[List[float]] = None) -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -113,10 +120,13 @@ class MemoryStore:
                     e.updated_at = time.time()
                     if source:
                         e.source = source
+                    if embedding is not None:
+                        e.embedding = embedding
                     self._save_user(user_id)
                     return e
 
-            entry = MemoryEntry(text=text, tags=tags, source=source)
+            entry = MemoryEntry(text=text, tags=tags, source=source,
+                                embedding=embedding)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -192,6 +202,58 @@ class MemoryStore:
         with self._store_lock:
             self._ensure_loaded(user_id)
             return len(self._memories.get(user_id, []))
+
+    # ── Semantic search ─────────────────────────────────────────
+
+    def semantic_recall(self, user_id: str, query_embedding: List[float],
+                        limit: int = 10) -> List[Tuple[MemoryEntry, float]]:
+        """Find memories by semantic similarity using embeddings.
+
+        Returns list of (entry, similarity_score) sorted by score descending.
+        Only considers entries that have embeddings.
+        """
+        from core.embeddings import cosine_similarity as cos_sim
+
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            entries = self._memories.get(user_id, [])
+
+        results = []
+        for e in entries:
+            if e.embedding is not None:
+                try:
+                    score = cos_sim(query_embedding, e.embedding)
+                    results.append((e, score))
+                except (ValueError, ZeroDivisionError):
+                    continue
+
+        results.sort(key=lambda x: x[1], reverse=True)
+        return results[:limit]
+
+    def re_embed_all(self, user_id: str,
+                     embed_fn: Callable[[str], List[float]]) -> int:
+        """Re-embed all memories for a user using the given function.
+
+        Args:
+            user_id: User whose memories to re-embed.
+            embed_fn: Function that takes text and returns embedding vector.
+
+        Returns:
+            Number of entries re-embedded.
+        """
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            entries = self._memories.get(user_id, [])
+            count = 0
+            for e in entries:
+                try:
+                    e.embedding = embed_fn(e.text)
+                    count += 1
+                except Exception as exc:
+                    logger.warning(f"Failed to embed memory {e.id}: {exc}")
+            if count > 0:
+                self._save_user(user_id)
+            return count
 
     # ── Disk persistence ──────────────────────────────────────────
 

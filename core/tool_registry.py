@@ -2219,6 +2219,7 @@ class RememberHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
+        self._embed_fn = None
 
     @property
     def name(self) -> str:
@@ -2253,6 +2254,10 @@ class RememberHandler(ToolHandler):
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
+    def set_embed_fn(self, fn):
+        """Set embedding function for auto-embedding memories."""
+        self._embed_fn = fn
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         text = arguments.get("text", "")
         if not text:
@@ -2263,13 +2268,93 @@ class RememberHandler(ToolHandler):
 
         user_id = self._user_id or "anonymous"
         try:
+            # Auto-embed if embed function is available
+            embedding = None
+            if self._embed_fn:
+                try:
+                    embedding = self._embed_fn(text)
+                except Exception as emb_err:
+                    logger.debug(f"Auto-embed failed: {emb_err}")
+
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
+                embedding=embedding,
             )
             return f"Remembered (id: {entry.id}, tags: {entry.tags})"
         except Exception as e:
             return f"Error storing memory: {e}"
+
+
+class SemanticRecallHandler(ToolHandler):
+    """Search memories by meaning/similarity using vector embeddings."""
+
+    def __init__(self):
+        self._user_id = ""
+        self._embed_fn = None
+
+    @property
+    def name(self) -> str:
+        return "semantic_recall"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Search memories by meaning and similarity (semantic search). "
+            "Use this when keyword search (recall) doesn't find what you need, "
+            "or when the user asks about a topic using different words than stored."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Natural language query to search by meaning",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max results to return (default: 5)",
+                },
+            },
+            "required": ["query"],
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_embed_fn(self, fn):
+        """Set embedding function for query embedding."""
+        self._embed_fn = fn
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        query = arguments.get("query", "")
+        if not query:
+            return "Error: query is required"
+        limit = int(arguments.get("limit", 5))
+
+        if not self._embed_fn:
+            return "Error: semantic search not available (no embedding provider configured)"
+
+        user_id = self._user_id or "anonymous"
+        try:
+            query_embedding = self._embed_fn(query)
+            from core.memory_store import MemoryStore
+            results = MemoryStore.instance().semantic_recall(
+                user_id, query_embedding, limit=limit,
+            )
+            if not results:
+                return "No semantically similar memories found."
+
+            lines = []
+            for entry, score in results:
+                tag_str = ", ".join(entry.tags) if entry.tags else "none"
+                lines.append(f"- [{entry.id}] (score: {score:.3f}, tags: {tag_str}) {entry.text}")
+            return f"Found {len(results)} similar memories:\n" + "\n".join(lines)
+        except Exception as e:
+            return f"Error in semantic recall: {e}"
 
 
 class RecallHandler(ToolHandler):
@@ -3573,6 +3658,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ImageGenerationHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
+    registry.register(SemanticRecallHandler())
     registry.register(ForgetHandler())
     registry.register(CreatePlanHandler())
     registry.register(UpdatePlanHandler())
@@ -3588,7 +3674,250 @@ def create_default_registry() -> ToolRegistry:
     registry.register(GetAgentResultsHandler())
     registry.register(UseSkillHandler())
     registry.register(ShowFileHandler())
+
+    # Browser automation (conditional — requires playwright)
+    try:
+        from services.browser_service import BrowserService  # noqa: F401
+        registry.register(BrowserActionHandler())
+    except ImportError:
+        pass
+
+    # Identity linking
+    registry.register(LinkIdentityHandler())
+
     return registry
+
+
+class BrowserActionHandler(ToolHandler):
+    """Interactive browser control via Playwright."""
+
+    def __init__(self):
+        self._conversation_id = ""
+
+    @property
+    def name(self) -> str:
+        return "browser"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Interactive browser. Actions: navigate (go to URL), click (click element), "
+            "fill (fill input field), extract (get text content), screenshot (capture page), "
+            "scroll (scroll up/down), wait (wait for element), close (close browser)."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["navigate", "click", "fill", "extract", "screenshot",
+                             "scroll", "wait", "close"],
+                    "description": "Browser action to perform",
+                },
+                "url": {
+                    "type": "string",
+                    "description": "URL to navigate to (for navigate action)",
+                },
+                "selector": {
+                    "type": "string",
+                    "description": "CSS selector (for click/fill/extract/wait)",
+                },
+                "value": {
+                    "type": "string",
+                    "description": "Value to fill (for fill action)",
+                },
+                "direction": {
+                    "type": "string",
+                    "enum": ["up", "down"],
+                    "description": "Scroll direction (default: down)",
+                },
+                "timeout_ms": {
+                    "type": "integer",
+                    "description": "Timeout in ms for wait action (default: 5000)",
+                },
+            },
+            "required": ["action"],
+        }
+
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        action = arguments.get("action", "")
+        if not action:
+            return "Error: action is required"
+
+        conv_id = self._conversation_id or "default"
+
+        try:
+            from services.browser_service import BrowserService
+            svc = BrowserService.instance()
+
+            if action == "navigate":
+                url = arguments.get("url", "")
+                if not url:
+                    return "Error: url is required for navigate"
+                return svc.navigate(conv_id, url)
+
+            elif action == "click":
+                selector = arguments.get("selector", "")
+                if not selector:
+                    return "Error: selector is required for click"
+                return svc.click(conv_id, selector)
+
+            elif action == "fill":
+                selector = arguments.get("selector", "")
+                value = arguments.get("value", "")
+                if not selector:
+                    return "Error: selector is required for fill"
+                return svc.fill(conv_id, selector, value)
+
+            elif action == "extract":
+                selector = arguments.get("selector", "")
+                if not selector:
+                    return "Error: selector is required for extract"
+                return svc.extract(conv_id, selector)
+
+            elif action == "screenshot":
+                return svc.screenshot(conv_id)
+
+            elif action == "scroll":
+                direction = arguments.get("direction", "down")
+                return svc.scroll(conv_id, direction)
+
+            elif action == "wait":
+                selector = arguments.get("selector", "")
+                if not selector:
+                    return "Error: selector is required for wait"
+                timeout_ms = int(arguments.get("timeout_ms", 5000))
+                return svc.wait_for(conv_id, selector, timeout_ms)
+
+            elif action == "close":
+                svc.close_session(conv_id)
+                return "Browser session closed."
+
+            else:
+                return f"Error: unknown action '{action}'"
+
+        except ImportError:
+            return "Error: Playwright not installed. Install with: pip install playwright"
+        except Exception as e:
+            return f"Browser error: {e}"
+
+
+class LinkIdentityHandler(ToolHandler):
+    """Generate a code to link identity across channels."""
+
+    _pending_codes: Dict[str, Dict[str, str]] = {}  # code -> {user_id, channel, channel_id, expires}
+    _codes_lock = threading.Lock()
+
+    def __init__(self):
+        self._user_id = ""
+        self._channel = ""
+        self._channel_id = ""
+
+    @property
+    def name(self) -> str:
+        return "link_identity"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Link your identity across channels (web, Telegram, Discord, Slack, WhatsApp). "
+            "Generates a verification code. Send /link CODE on the other channel to complete."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["generate", "verify"],
+                    "description": "generate = create link code, verify = verify a received code",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "6-digit code to verify (for verify action)",
+                },
+            },
+            "required": ["action"],
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_channel_info(self, channel: str, channel_id: str):
+        self._channel = channel
+        self._channel_id = channel_id
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import random
+        import time as _time
+
+        action = arguments.get("action", "generate")
+
+        if action == "generate":
+            if not self._user_id:
+                return "Error: You must be authenticated to generate a link code."
+
+            code = str(random.randint(100000, 999999))
+            with self._codes_lock:
+                # Clean expired codes
+                now = _time.time()
+                expired = [c for c, v in self._pending_codes.items()
+                           if float(v.get("expires", 0)) < now]
+                for c in expired:
+                    del self._pending_codes[c]
+
+                self._pending_codes[code] = {
+                    "user_id": self._user_id,
+                    "channel": self._channel,
+                    "channel_id": self._channel_id,
+                    "expires": str(_time.time() + 300),  # 5 min expiry
+                }
+
+            return (
+                f"Link code: {code}\n"
+                f"Send '/link {code}' on the other channel within 5 minutes to link your accounts."
+            )
+
+        elif action == "verify":
+            code = arguments.get("code", "")
+            if not code:
+                return "Error: code is required for verify"
+
+            with self._codes_lock:
+                entry = self._pending_codes.pop(code, None)
+
+            if not entry:
+                return "Invalid or expired link code."
+
+            if float(entry.get("expires", 0)) < _time.time():
+                return "Link code has expired."
+
+            # Link the identity
+            try:
+                from core.identity_service import IdentityService
+                ids = IdentityService.instance()
+
+                original_user = entry["user_id"]
+                # Link current channel to the original user
+                if self._channel and self._channel_id:
+                    ok = ids.link(original_user, self._channel, self._channel_id)
+                    if not ok:
+                        return "This channel ID is already linked to another user."
+                    return f"Identity linked! User '{original_user}' is now connected on {self._channel}."
+                else:
+                    return "Error: No channel information available for linking."
+            except Exception as e:
+                return f"Error linking identity: {e}"
+
+        return f"Unknown action: {action}"
 
 
 # ── Configurable handlers (for agent_tools) ──────────────────────────

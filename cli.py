@@ -588,6 +588,36 @@ def cmd_cluster(args):
     return 0
 
 
+def cmd_re_embed(args):
+    """Re-embed all memories for a user with vector embeddings."""
+    user_id = args.user_id
+    provider = args.provider or "auto"
+    api_key = args.api_key or os.environ.get("OPENAI_API_KEY", "")
+
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+
+    from core.embeddings import EmbeddingProvider
+    from core.memory_store import MemoryStore
+
+    store = MemoryStore.instance()
+    ep = EmbeddingProvider.instance()
+
+    count = store.count(user_id)
+    if count == 0:
+        print(f"No memories found for user '{user_id}'.")
+        return 0
+
+    print(f"Re-embedding {count} memories for user '{user_id}' (provider: {provider})...")
+
+    def embed_fn(text: str):
+        results = ep.embed([text], provider=provider, api_key=api_key)
+        return results[0] if results else []
+
+    embedded = store.re_embed_all(user_id, embed_fn)
+    print(f"Done. {embedded}/{count} memories re-embedded.")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(
         prog='pyfi2',
@@ -677,6 +707,14 @@ def main():
     cluster_parser.add_argument('action', choices=['status'], help='Cluster action')
     cluster_parser.add_argument('--api-url', dest='api_url', help='API URL (default: http://localhost:8000)')
 
+    # re-embed-memories
+    reembed_parser = subparsers.add_parser('re-embed-memories',
+                                            help='Re-embed all memories with vector embeddings')
+    reembed_parser.add_argument('--user-id', dest='user_id', required=True, help='User ID')
+    reembed_parser.add_argument('--provider', choices=['openai', 'local', 'auto'],
+                                default='auto', help='Embedding provider (default: auto)')
+    reembed_parser.add_argument('--api-key', dest='api_key', help='OpenAI API key (optional, uses env var)')
+
     args = parser.parse_args()
 
     if args.command == 'run':
@@ -703,6 +741,8 @@ def main():
         sys.exit(cmd_triggers(args))
     elif args.command == 'cluster':
         sys.exit(cmd_cluster(args))
+    elif args.command == 're-embed-memories':
+        sys.exit(cmd_re_embed(args))
     else:
         parser.print_help()
 

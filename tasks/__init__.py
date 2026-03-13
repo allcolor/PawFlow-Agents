@@ -34,6 +34,15 @@ def _register_all_services():
     import services.llm_connection           # noqa: F401
     import services.oauth_provider_service   # noqa: F401
     import services.telegram_bot_service    # noqa: F401
+    try:
+        import services.discord_bot_service   # noqa: F401
+    except ImportError:
+        pass  # discord.py not installed
+    import services.whatsapp_service          # noqa: F401
+    try:
+        import services.slack_bot_service     # noqa: F401
+    except ImportError:
+        pass  # slack_sdk not installed
 
 
 def register_all_tasks():
@@ -137,6 +146,17 @@ def register_all_tasks():
     # Telegram
     from tasks.io.telegram_receiver import TelegramReceiverTask
     from tasks.io.telegram_send import TelegramSendTask
+
+    # Discord
+    from tasks.io.discord_receiver import DiscordReceiverTask
+    from tasks.io.discord_send import DiscordSendTask
+
+    # WhatsApp
+    from tasks.io.whatsapp_receiver import WhatsAppReceiverTask
+    from tasks.io.whatsapp_send import WhatsAppSendTask
+
+    # Slack (bidirectional — receiver + send)
+    from tasks.io.slack_receiver import SlackReceiverTask
 
     # SSE streaming
     from tasks.io.agent_sse_stream import AgentSSEStreamTask

@@ -366,45 +366,6 @@ class TestMonitoring:
 
 
 # ============================================================================
-# Scheduler
-# ============================================================================
-
-class TestScheduler:
-
-    def test_list_jobs_empty(self, auth_headers):
-        resp = client.get("/api/v1/scheduler/", headers=auth_headers)
-        assert resp.status_code == 200
-
-    def test_create_job(self, auth_headers):
-        resp = client.post("/api/v1/scheduler/", json={
-            "job_id": "test-job",
-            "flow_path": "flows/demo_pipeline.json",
-            "cron_expression": "0 * * * *",
-        }, headers=auth_headers)
-        assert resp.status_code == 201
-        assert resp.json()["job_id"] == "test-job"
-
-    def test_get_job(self, auth_headers):
-        client.post("/api/v1/scheduler/", json={
-            "job_id": "get-job",
-            "flow_path": "flows/demo.json",
-            "cron_expression": "*/5 * * * *",
-        }, headers=auth_headers)
-
-        resp = client.get("/api/v1/scheduler/get-job", headers=auth_headers)
-        assert resp.status_code == 200
-
-    def test_delete_job(self, auth_headers):
-        client.post("/api/v1/scheduler/", json={
-            "job_id": "del-job",
-            "flow_path": "flows/demo.json",
-            "cron_expression": "0 0 * * *",
-        }, headers=auth_headers)
-
-        resp = client.delete("/api/v1/scheduler/del-job", headers=auth_headers)
-        assert resp.status_code == 200
-
-
 # ============================================================================
 # Workers
 # ============================================================================

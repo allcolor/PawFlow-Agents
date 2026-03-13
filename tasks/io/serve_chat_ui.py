@@ -188,7 +188,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
-    <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" style="display:none" title="Conversation flows">&#x26A1;</button>
+    <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" title="My Flows">&#x26A1;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
     <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
@@ -423,7 +423,6 @@ function newChat() {
   document.getElementById('deleteConvBtn').style.display = 'none';
   document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
-  document.getElementById('flowsBtn').style.display = 'none';
   document.getElementById('flowsPanel').style.display = 'none';
   document.getElementById('schedsBtn').style.display = 'none';
   document.getElementById('schedsPanel').style.display = 'none';
@@ -437,7 +436,6 @@ function updateDeleteBtn() {
   document.getElementById('deleteConvBtn').style.display = show;
   document.getElementById('refreshConvBtn').style.display = show;
   document.getElementById('filesBtn').style.display = show;
-  document.getElementById('flowsBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
 }
 
@@ -1766,24 +1764,22 @@ async function toggleFlowsPanel() {
 }
 
 async function loadConvFlows() {
-  if (!conversationId) return;
   const list = document.getElementById('flowsList');
   list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_conv_flows', conversation_id: conversationId }),
+      body: JSON.stringify({ action: 'list_conv_flows' }),
     });
     const data = await resp.json();
     const flows = data.flows || [];
     if (flows.length === 0) {
-      list.innerHTML = '<span style="color:#808090;font-size:12px">No flows in this conversation.</span>';
+      list.innerHTML = '<span style="color:#808090;font-size:12px">No flows deployed.</span>';
       return;
     }
     list.innerHTML = flows.map(f => {
       let statusCls = f.status || 'stopped';
-      if (f.schedule && f.status !== 'running') statusCls = 'scheduled';
-      const statusTip = escapeHtml(f.status + (f.schedule ? ' (CRON: ' + f.schedule + ')' : ''));
+      const statusTip = escapeHtml(f.status || 'stopped');
       const taskInfo = f.tasks_count ? f.tasks_count + ' task(s)' : '';
       const templateInfo = f.template ? ' from ' + escapeHtml(f.template) : '';
       const fid = escapeHtml(f.id);
@@ -2198,7 +2194,7 @@ function openFileViewer(filenameOrUrl) {
   let url = filenameOrUrl;
   if (!filenameOrUrl.startsWith('http')) {
     // Search in conversation files
-    url = API.replace(/\\/[^\\/]*$/, '') + '/files/' + encodeURIComponent(filenameOrUrl);
+    url = API.replace(/\/[^\/]*$/, '') + '/files/' + encodeURIComponent(filenameOrUrl);
   }
   const fname = filenameOrUrl.split('/').pop();
   const ext = fname.split('.').pop().toLowerCase();

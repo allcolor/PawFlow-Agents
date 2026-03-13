@@ -75,7 +75,6 @@ def register_all_tasks():
     # Tâches de contrôle
     from tasks.control import RouteOnAttributeTask, SplitContentTask, MergeContentTask
     from tasks.control.duplicate_content import DuplicateContentTask
-    from tasks.control.execute_flow import ExecuteFlowTask
     from tasks.control.ports import InputPortTask, OutputPortTask
     from tasks.control.funnel import FunnelTask
     from tasks.control.control_rate import ControlRateTask

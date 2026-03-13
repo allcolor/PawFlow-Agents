@@ -215,8 +215,10 @@ class FlowFile:
 
 class Flow:
     """Orchestration de tâches pour créer un pipeline de traitement."""
-    
+
     def __init__(self, config: Dict[str, Any]):
+        from core.process_group import ProcessGroup
+
         self.id = config.get('id', str(uuid.uuid4()))
         self.name = config.get('name', 'Unnamed Flow')
         self.version = config.get('version', '1.0.0')
@@ -227,7 +229,8 @@ class Flow:
         self.exits = config.get('exits', [])
         self.tasks: Dict[str, Task] = {}
         self.services: Dict[str, Service] = {}
-        self.groups: Dict[str, Dict] = config.get('groups', {})
+        # Groups: Dict[str, ProcessGroup] — parsed from config in FlowParser
+        self.groups: Dict[str, ProcessGroup] = {}
         self.relations = config.get('relations', [])
         self.variables = config.get('variables', {})
         self.agent_tools: Dict[str, Dict] = config.get('agent_tools', {})

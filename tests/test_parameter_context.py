@@ -354,10 +354,11 @@ class TestContinuousExecutorParameters:
 
 
 # ============================================================================
-# ExecuteFlowTask — subflow parameter propagation
+# ExecuteFlowTask — subflow parameter propagation (REMOVED: executeFlow deleted)
 # ============================================================================
 
-class TestSubflowParameterPropagation:
+
+class _TestSubflowParameterPropagation_REMOVED:
 
     def _write_subflow(self, tmpdir, params=None, task_msg="sub: ${flow.parameters.env}"):
         """Write a subflow JSON file and return its path."""
@@ -516,7 +517,7 @@ class TestParameterContextRegression:
 # P8.2 — Subflow validation
 # ============================================================================
 
-class TestSubflowValidation:
+class _TestSubflowValidation_REMOVED:
 
     def _write_subflow(self, tmpdir, params=None, task_msg="msg"):
         subflow = {
@@ -626,50 +627,6 @@ class TestAPIModels:
         from api.routers.execution_router import ContinuousStartRequest
         req = ContinuousStartRequest(flow_id="test", parameters={"mode": "fast"})
         assert req.parameters == {"mode": "fast"}
-
-
-class TestSchedulerParamOverride:
-
-    def test_scheduler_job_with_parameters(self):
-        from engine.scheduler import FlowScheduler
-        scheduler = FlowScheduler()
-        job = scheduler.add_job("test_job", "flows/test.json", "*/5 * * * *",
-                                parameters={"env": "prod", "batch_size": "50"})
-        assert job["parameters"] == {"env": "prod", "batch_size": "50"}
-
-    def test_scheduler_job_without_parameters(self):
-        from engine.scheduler import FlowScheduler
-        scheduler = FlowScheduler()
-        job = scheduler.add_job("test_job", "flows/test.json", "*/5 * * * *")
-        assert job["parameters"] == {}
-
-    def test_scheduler_job_parameters_persist(self):
-        from engine.scheduler import FlowScheduler
-        scheduler = FlowScheduler()
-        scheduler.add_job("p_job", "flows/test.json", "0 * * * *",
-                          parameters={"key": "value"})
-        with tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w") as f:
-            tmp = f.name
-        try:
-            scheduler.save_jobs(tmp)
-            scheduler2 = FlowScheduler()
-            scheduler2.load_jobs(tmp)
-            loaded = scheduler2.get_job("p_job")
-            assert loaded["parameters"] == {"key": "value"}
-        finally:
-            os.unlink(tmp)
-
-    def test_scheduler_api_model_has_parameters(self):
-        from api.routers.scheduler_router import JobCreateRequest
-        req = JobCreateRequest(job_id="j1", flow_path="f.json",
-                               cron_expression="* * * * *",
-                               parameters={"env": "staging"})
-        assert req.parameters == {"env": "staging"}
-
-    def test_scheduler_api_update_model_has_parameters(self):
-        from api.routers.scheduler_router import JobUpdateRequest
-        req = JobUpdateRequest(parameters={"env": "prod"})
-        assert req.parameters == {"env": "prod"}
 
 
 if __name__ == "__main__":

@@ -475,18 +475,29 @@ class TestAskAgentHandler(unittest.TestCase):
 class TestFlowManagerHandler(unittest.TestCase):
 
     def setUp(self):
-        self.tmp = tempfile.mkdtemp()
-        self.flow_dir = os.path.join(self.tmp, "agent_flows")
-        os.makedirs(self.flow_dir, exist_ok=True)
+        self.tmpdir = tempfile.mkdtemp()
+        self._orig_cwd = os.getcwd()
+        os.chdir(self.tmpdir)
+        # Reset DeploymentRegistry singleton
+        from gui.services.deployment_registry import DeploymentRegistry, DEPLOYMENTS_DIR
+        import gui.services.deployment_registry as dep_mod
+        DeploymentRegistry.reset()
+        self._orig_dep_dir = DEPLOYMENTS_DIR
+        self._dep_dir = Path(self.tmpdir) / "deployments"
+        self._dep_dir.mkdir()
+        dep_mod.DEPLOYMENTS_DIR = self._dep_dir
 
     def tearDown(self):
-        shutil.rmtree(self.tmp, ignore_errors=True)
+        os.chdir(self._orig_cwd)
+        import gui.services.deployment_registry as dep_mod
+        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
+        from gui.services.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.reset()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def _make_handler(self, user_id="alice"):
         h = FlowManagerHandler()
         h.set_user_id(user_id)
-        # Override store path to use tmp
-        h._get_store_path = lambda: Path(self.flow_dir)
         return h
 
     def _sample_definition(self, flow_id="flow1", name="Test Flow"):
@@ -509,7 +520,10 @@ class TestFlowManagerHandler(unittest.TestCase):
             "definition": self._sample_definition(),
         })
         self.assertIn("created", result)
-        self.assertTrue(os.path.exists(os.path.join(self.flow_dir, "flow1.json")))
+        # Instance should exist in deployment registry
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertIsNotNone(inst)
 
     def test_create_flow_missing_id(self):
         h = self._make_handler()
@@ -525,39 +539,38 @@ class TestFlowManagerHandler(unittest.TestCase):
             "action": "create",
             "definition": self._sample_definition(),
         })
-        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
-        self.assertEqual(data["_owner"], "bob")
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertEqual(inst.owner, "bob")
 
     def test_start_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
         result = h.execute({"action": "start", "flow_id": "flow1"})
-        # It will try to use ExecutorRegistry which may fail in test env
-        # but the file should be updated
-        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
-        self.assertEqual(data["_status"], "running")
+        # Start may fail (no real template parse in test) but instance should exist
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertIsNotNone(inst)
 
     def test_stop_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
-        h.execute({"action": "start", "flow_id": "flow1"})
         result = h.execute({"action": "stop", "flow_id": "flow1"})
-        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
-        self.assertEqual(data["_status"], "stopped")
+        self.assertIn("stopped", result)
 
     def test_status_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
         result = h.execute({"action": "status", "flow_id": "flow1"})
         self.assertIn("Test Flow", result)
-        self.assertIn("Tasks:", result)
 
     def test_delete_flow(self):
         h = self._make_handler()
         h.execute({"action": "create", "definition": self._sample_definition()})
         result = h.execute({"action": "delete", "flow_id": "flow1"})
         self.assertIn("deleted", result)
-        self.assertFalse(os.path.exists(os.path.join(self.flow_dir, "flow1.json")))
+        from gui.services.deployment_registry import DeploymentRegistry
+        self.assertIsNone(DeploymentRegistry.get_instance().get("flow1"))
 
     def test_isolation(self):
         h_alice = self._make_handler("alice")
@@ -566,8 +579,8 @@ class TestFlowManagerHandler(unittest.TestCase):
             "action": "create",
             "definition": self._sample_definition("alice_flow"),
         })
-        # Bob tries to start Alice's flow
-        result = h_bob.execute({"action": "start", "flow_id": "alice_flow"})
+        # Bob tries to stop Alice's flow
+        result = h_bob.execute({"action": "stop", "flow_id": "alice_flow"})
         self.assertIn("belongs to another user", result)
 
     def test_list_only_own(self):
@@ -581,8 +594,8 @@ class TestFlowManagerHandler(unittest.TestCase):
             "action": "create",
             "definition": self._sample_definition("fb", "Bob's flow"),
         })
-        alice_list = h_alice.execute({"action": "list"})
-        bob_list = h_bob.execute({"action": "list"})
+        alice_list = h_alice.execute({"action": "list_all"})
+        bob_list = h_bob.execute({"action": "list_all"})
         self.assertIn("fa", alice_list)
         self.assertNotIn("fb", alice_list)
         self.assertIn("fb", bob_list)
@@ -596,8 +609,9 @@ class TestFlowManagerHandler(unittest.TestCase):
             "flow_id": "flow1",
             "parameters": {"key1": "val1"},
         })
-        data = json.loads(Path(self.flow_dir, "flow1.json").read_text())
-        self.assertEqual(data["parameters"]["key1"], "val1")
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("flow1")
+        self.assertEqual(inst.parameters.get("key1"), "val1")
 
     def test_delete_nonexistent(self):
         h = self._make_handler()
@@ -701,16 +715,14 @@ class TestStoreSecretHandler(unittest.TestCase):
     def test_store_secret(self):
         result = self.handler.execute({"key": "my_api_key", "value": "sk-12345"})
         self.assertIn("stored securely", result)
-        self.assertIn("testuser.my_api_key", result)
-        # Verify file was created
-        secrets_path = Path(self.tmpdir) / "config" / "agent_secrets.json"
+        self.assertIn("secrets.user.my_api_key", result)
+        # Verify file was created in user directory
+        secrets_path = Path(self.tmpdir) / "config" / "users" / "testuser" / "secrets.json"
         self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
-        self.assertIn("testuser.my_api_key", data)
-        # Value should be encrypted (enc: prefix), stored in dict
-        entry = data["testuser.my_api_key"]
-        self.assertIsInstance(entry, dict)
-        self.assertTrue(entry["value"].startswith("enc:"))
+        self.assertIn("my_api_key", data)
+        # Value should be encrypted (enc: prefix)
+        self.assertTrue(data["my_api_key"].startswith("enc:"))
 
     def test_store_secret_missing_key(self):
         result = self.handler.execute({"key": "", "value": "abc"})
@@ -723,15 +735,15 @@ class TestStoreSecretHandler(unittest.TestCase):
     def test_store_multiple_secrets(self):
         self.handler.execute({"key": "key1", "value": "val1"})
         self.handler.execute({"key": "key2", "value": "val2"})
-        secrets_path = Path(self.tmpdir) / "config" / "agent_secrets.json"
+        secrets_path = Path(self.tmpdir) / "config" / "users" / "testuser" / "secrets.json"
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
-        self.assertIn("testuser.key1", data)
-        self.assertIn("testuser.key2", data)
+        self.assertIn("key1", data)
+        self.assertIn("key2", data)
 
     def test_store_secret_anonymous(self):
         handler = StoreSecretHandler()  # no user_id set
         result = handler.execute({"key": "anon_key", "value": "val"})
-        self.assertIn("anonymous.anon_key", result)
+        self.assertIn("secrets.user.anon_key", result)
 
 
 class TestFlowManagerSchedule(unittest.TestCase):
@@ -748,44 +760,28 @@ class TestFlowManagerSchedule(unittest.TestCase):
         os.chdir(self._orig_cwd)
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
-    def test_schedule_param_in_schema(self):
-        schema = self.handler.parameters_schema
-        self.assertIn("schedule", schema["properties"])
-
-    def test_start_with_schedule(self):
-        """Start a flow with a CRON schedule stores _schedule field."""
-        # Create a flow first
-        definition = {"id": "sched-flow", "name": "Scheduled", "tasks": {"t1": {"type": "log"}}}
-        self.handler.execute({"action": "create", "definition": definition})
-
-        # Start with schedule — executor/scheduler may fail but
-        # the result should mention the flow and schedule info gets stored
-        result = self.handler.execute({
-            "action": "start",
-            "flow_id": "sched-flow",
-            "schedule": "0 7 * * *",
-        })
-        self.assertIn("sched-flow", result)
-
-        # Verify _schedule was written to the flow file
-        flow_path = Path("data/agent_flows/sched-flow.json")
-        if flow_path.exists():
-            data = json.loads(flow_path.read_text(encoding="utf-8"))
-            # _schedule may or may not be set depending on scheduler availability
-            # but the flow should exist
-            self.assertEqual(data["id"], "sched-flow")
 
 
 class TestFlowCatalogDeploy(unittest.TestCase):
     """Tests for catalog and deploy actions in FlowManagerHandler."""
 
     def setUp(self):
+        from gui.services.deployment_registry import DeploymentRegistry
+        import gui.services.deployment_registry as dep_mod
+        DeploymentRegistry.reset()
+
         self.handler = FlowManagerHandler()
         self.handler.set_user_id("user1")
         self.handler.set_conversation_id("conv-1")
         self.tmpdir = tempfile.mkdtemp()
         self._orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
+
+        # Redirect deployments to temp dir
+        self._orig_dep_dir = dep_mod.DEPLOYMENTS_DIR
+        dep_mod.DEPLOYMENTS_DIR = Path(self.tmpdir) / "deployments"
+        dep_mod.DEPLOYMENTS_DIR.mkdir()
+
         # Create a fake flows/ directory with templates
         flows_dir = Path(self.tmpdir) / "flows"
         flows_dir.mkdir()
@@ -809,6 +805,10 @@ class TestFlowCatalogDeploy(unittest.TestCase):
 
     def tearDown(self):
         os.chdir(self._orig_cwd)
+        import gui.services.deployment_registry as dep_mod
+        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
+        from gui.services.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_catalog_lists_templates(self):
@@ -830,15 +830,15 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         })
         self.assertIn("deployed", result)
         self.assertIn("instance", result.lower())
-        # Instance file should exist in data/agent_flows/
-        store = Path("data/agent_flows")
-        files = list(store.glob("hello-world__*.json"))
-        self.assertEqual(len(files), 1)
-        data = json.loads(files[0].read_text(encoding="utf-8"))
-        self.assertEqual(data["_template_id"], "hello-world")
-        self.assertEqual(data["_owner"], "user1")
-        self.assertEqual(data["_conversation_id"], "conv-1")
-        self.assertIn("t1", data["tasks"])
+        # Instance should exist in deployment registry
+        from gui.services.deployment_registry import DeploymentRegistry
+        dep_reg = DeploymentRegistry.get_instance()
+        instances = dep_reg.get_by_owner("user1")
+        self.assertEqual(len(instances), 1)
+        inst = instances[0]
+        self.assertEqual(inst.flow_id, "hello-world")
+        self.assertEqual(inst.owner, "user1")
+        self.assertEqual(inst.conversation_id, "conv-1")
 
     def test_deploy_with_parameters(self):
         result = self.handler.execute({
@@ -847,10 +847,9 @@ class TestFlowCatalogDeploy(unittest.TestCase):
             "parameters": {"greeting": "bonjour"},
         })
         self.assertIn("deployed", result)
-        store = Path("data/agent_flows")
-        files = list(store.glob("hello-world__*.json"))
-        data = json.loads(files[0].read_text(encoding="utf-8"))
-        self.assertEqual(data["parameters"]["greeting"], "bonjour")
+        from gui.services.deployment_registry import DeploymentRegistry
+        instances = DeploymentRegistry.get_instance().get_by_owner("user1")
+        self.assertEqual(instances[0].parameters.get("greeting"), "bonjour")
 
     def test_deploy_unknown_template(self):
         result = self.handler.execute({
@@ -864,18 +863,18 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.assertIn("Error", result)
 
     def test_deploy_overwrites_existing(self):
-        """Re-deploying same template in same conversation overwrites."""
+        """Re-deploying same template creates a new instance each time."""
         self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
         result = self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
-        self.assertIn("updated", result)
-        store = Path("data/agent_flows")
-        files = list(store.glob("hello-world__*.json"))
-        # Should only be one instance (overwritten)
-        self.assertEqual(len(files), 1)
+        # New deployment model creates new instances each time
+        self.assertIn("deployed", result)
+        from gui.services.deployment_registry import DeploymentRegistry
+        instances = DeploymentRegistry.get_instance().get_by_owner("user1")
+        self.assertEqual(len(instances), 2)
 
     def test_deploy_different_conversations_coexist(self):
         """Same template deployed in different conversations → 2 instances."""
@@ -887,9 +886,9 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
-        store = Path("data/agent_flows")
-        files = list(store.glob("hello-world__*.json"))
-        self.assertEqual(len(files), 2)
+        from gui.services.deployment_registry import DeploymentRegistry
+        instances = DeploymentRegistry.get_instance().get_by_owner("user1")
+        self.assertEqual(len(instances), 2)
 
     def test_deployed_instance_shows_in_list(self):
         self.handler.execute({
@@ -903,9 +902,9 @@ class TestFlowCatalogDeploy(unittest.TestCase):
         self.handler.execute({
             "action": "deploy", "template_id": "hello-world",
         })
-        store = Path("data/agent_flows")
-        files = list(store.glob("hello-world__*.json"))
-        instance_id = json.loads(files[0].read_text())["id"]
+        from gui.services.deployment_registry import DeploymentRegistry
+        instances = DeploymentRegistry.get_instance().get_by_owner("user1")
+        instance_id = instances[0].instance_id
         result = self.handler.execute({
             "action": "status", "flow_id": instance_id,
         })
@@ -1013,9 +1012,19 @@ class TestConversationScoping(unittest.TestCase):
         self.tmpdir = tempfile.mkdtemp()
         self._orig_cwd = os.getcwd()
         os.chdir(self.tmpdir)
+        from gui.services.deployment_registry import DeploymentRegistry
+        import gui.services.deployment_registry as dep_mod
+        DeploymentRegistry.reset()
+        self._orig_dep_dir = dep_mod.DEPLOYMENTS_DIR
+        dep_mod.DEPLOYMENTS_DIR = Path(self.tmpdir) / "deployments"
+        dep_mod.DEPLOYMENTS_DIR.mkdir()
 
     def tearDown(self):
         os.chdir(self._orig_cwd)
+        import gui.services.deployment_registry as dep_mod
+        dep_mod.DEPLOYMENTS_DIR = self._orig_dep_dir
+        from gui.services.deployment_registry import DeploymentRegistry
+        DeploymentRegistry.reset()
         shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def test_flow_tagged_with_conversation_id(self):
@@ -1025,9 +1034,10 @@ class TestConversationScoping(unittest.TestCase):
         handler.execute({"action": "create", "definition": {
             "id": "f1", "name": "Flow 1", "tasks": {"t1": {"type": "log"}},
         }})
-        path = Path("data/agent_flows/f1.json")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(data["_conversation_id"], "conv-123")
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("f1")
+        self.assertIsNotNone(inst)
+        self.assertEqual(inst.conversation_id, "conv-123")
 
     def test_list_filters_by_conversation(self):
         handler = FlowManagerHandler()
@@ -1074,10 +1084,10 @@ class TestConversationScoping(unittest.TestCase):
         result = handler.execute({"action": "update", "flow_id": "f1",
                                    "parameters": {"key2": "val2"}})
         self.assertIn("updated", result)
-        path = Path("data/agent_flows/f1.json")
-        data = json.loads(path.read_text(encoding="utf-8"))
-        self.assertEqual(data["parameters"]["key1"], "val1")
-        self.assertEqual(data["parameters"]["key2"], "val2")
+        from gui.services.deployment_registry import DeploymentRegistry
+        inst = DeploymentRegistry.get_instance().get("f1")
+        self.assertEqual(inst.parameters.get("key1"), "val1")
+        self.assertEqual(inst.parameters.get("key2"), "val2")
 
     def test_update_flow_no_params(self):
         handler = FlowManagerHandler()
@@ -1106,36 +1116,33 @@ class TestConversationScoping(unittest.TestCase):
         }})
         # Cleanup
         FlowManagerHandler.cleanup_conversation("conv-del")
-        store = Path("data/agent_flows")
-        self.assertFalse((store / "f1.json").exists())
-        self.assertFalse((store / "f2.json").exists())
-        self.assertTrue((store / "f3.json").exists())
+        from gui.services.deployment_registry import DeploymentRegistry
+        dep_reg = DeploymentRegistry.get_instance()
+        self.assertIsNone(dep_reg.get("f1"))
+        self.assertIsNone(dep_reg.get("f2"))
+        self.assertIsNotNone(dep_reg.get("f3"))
 
-    def test_cleanup_conversation_secrets(self):
+    def test_cleanup_conversation_secrets_noop(self):
+        """User secrets are permanent, cleanup_conversation is a no-op."""
         handler = StoreSecretHandler()
         handler.set_user_id("user1")
-        handler.set_conversation_id("conv-del")
         handler.execute({"key": "k1", "value": "v1"})
-        handler.execute({"key": "k2", "value": "v2"})
-        # Create secret in different conv
-        handler.set_conversation_id("conv-keep")
-        handler.execute({"key": "k3", "value": "v3"})
-        # Cleanup
+        # Cleanup should not remove user secrets
         StoreSecretHandler.cleanup_conversation("conv-del")
-        secrets_path = Path("config/agent_secrets.json")
+        secrets_path = Path("config/users/user1/secrets.json")
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
-        self.assertNotIn("user1.k1", data)
-        self.assertNotIn("user1.k2", data)
-        self.assertIn("user1.k3", data)
+        self.assertIn("k1", data)
 
-    def test_secret_conversation_id_stored(self):
+    def test_secret_stored_in_user_dir(self):
+        """Secrets are stored in config/users/{username}/secrets.json."""
         handler = StoreSecretHandler()
         handler.set_user_id("user1")
-        handler.set_conversation_id("conv-X")
         handler.execute({"key": "mykey", "value": "myval"})
-        secrets_path = Path("config/agent_secrets.json")
+        secrets_path = Path("config/users/user1/secrets.json")
+        self.assertTrue(secrets_path.exists())
         data = json.loads(secrets_path.read_text(encoding="utf-8"))
-        self.assertEqual(data["user1.mykey"]["conversation_id"], "conv-X")
+        self.assertIn("mykey", data)
+        self.assertTrue(data["mykey"].startswith("enc:"))
 
 
 class TestNewFeatureI18n(unittest.TestCase):

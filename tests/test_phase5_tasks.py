@@ -14,7 +14,6 @@ from core import FlowFile, TaskFactory
 from tasks.control.funnel import FunnelTask
 from tasks.data.convert_csv import ConvertCSVToJSONTask, ConvertJSONToCSVTask
 from tasks.data.execute_sql import ExecuteSQLTask, PutSQLTask
-from tasks.control.execute_flow import ExecuteFlowTask
 from tasks.control.ports import InputPortTask, OutputPortTask
 
 
@@ -276,48 +275,6 @@ class TestPutSQLTask:
     def test_put_sql_missing_statement(self, temp_db_with_table):
         with pytest.raises(ValueError, match="sql_statement"):
             PutSQLTask({"db_path": temp_db_with_table})
-
-
-class TestExecuteFlowTask:
-
-    def test_execute_flow_basic(self, tmp_path):
-        sub_flow_path = str(tmp_path / "subflow.json")
-        sub_flow = {
-            "tasks": {
-                "log_1": {
-                    "type": "log",
-                    "parameters": {"message": "test message", "level": "INFO"}
-                }
-            },
-            "entries": ["log_1"],
-            "exits": ["log_1"],
-            "relations": []
-        }
-        with open(sub_flow_path, 'w') as f:
-            json.dump(sub_flow, f)
-
-        task = ExecuteFlowTask({
-            "flow_path": sub_flow_path,
-            "pass_attributes": True
-        })
-        ff = FlowFile(content=b"test data", attributes={"key": "value"})
-        results = task.execute(ff)
-
-        assert len(results) >= 1
-
-    def test_execute_flow_nonexistent_file(self, tmp_path):
-        task = ExecuteFlowTask({
-            "flow_path": str(tmp_path / "nonexistent.json")
-        })
-        ff = FlowFile(content=b"test")
-
-        with pytest.raises(Exception):
-            task.execute(ff)
-
-    def test_execute_flow_missing_path(self):
-        """Validation catches missing required flow_path at init time."""
-        with pytest.raises(ValueError, match="flow_path"):
-            ExecuteFlowTask({})
 
 
 class TestInputPortTask:

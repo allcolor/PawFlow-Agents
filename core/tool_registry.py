@@ -1437,12 +1437,6 @@ class FlowManagerHandler(ToolHandler):
                     "type": "object",
                     "description": "Flow parameters to set on start",
                 },
-                "schedule": {
-                    "type": "string",
-                    "description": "CRON expression for scheduled execution "
-                                   "(e.g. '0 7 * * *' for daily at 7am). "
-                                   "Only for start action.",
-                },
             },
             "required": ["action"],
         }
@@ -1472,8 +1466,7 @@ class FlowManagerHandler(ToolHandler):
             return self._create_flow(definition)
         elif action == "start":
             params = arguments.get("parameters", {})
-            schedule = arguments.get("schedule", "")
-            return self._start_flow(flow_id, params, schedule)
+            return self._start_flow(flow_id, params)
         elif action == "stop":
             return self._stop_flow(flow_id)
         elif action == "status":
@@ -1485,14 +1478,12 @@ class FlowManagerHandler(ToolHandler):
             return self._delete_flow(flow_id)
         return f"Error: unknown action '{action}'"
 
-    def _get_store_path(self):
-        from pathlib import Path
-        p = Path("data/agent_flows")
-        p.mkdir(parents=True, exist_ok=True)
-        return p
+    def _get_deployment_registry(self):
+        from gui.services.deployment_registry import DeploymentRegistry
+        return DeploymentRegistry.get_instance()
 
     def _owner_tag(self) -> str:
-        return self._user_id or "anonymous"
+        return self._user_id or None
 
     @staticmethod
     def _get_template_dirs():
@@ -1536,127 +1527,64 @@ class FlowManagerHandler(ToolHandler):
             return "Error: template_id is required"
 
         # Find the template file
-        template_data = None
         template_path = None
+        template_name = template_id
         for tdir in self._get_template_dirs():
             for f in tdir.glob("*.json"):
                 try:
                     data = json.loads(f.read_text(encoding="utf-8"))
                     if data.get("id") == template_id or f.stem == template_id:
-                        template_data = data
-                        template_path = f
+                        template_path = str(f)
+                        template_name = data.get("name", template_id)
                         break
                 except Exception:
                     continue
-            if template_data:
+            if template_path:
                 break
 
-        if not template_data:
+        if not template_path:
             return (
                 f"Error: template '{template_id}' not found. "
                 "Use action 'catalog' to see available templates."
             )
 
-        canonical_template_id = template_data.get("id", template_id)
-        store = self._get_store_path()
-
-        # Check if an instance of this template already exists in this conversation
-        existing_instance = None
-        for f in store.glob("*.json"):
-            try:
-                existing = json.loads(f.read_text(encoding="utf-8"))
-                if (existing.get("_template_id") == canonical_template_id
-                        and existing.get("_conversation_id") == self._conversation_id
-                        and existing.get("_owner") == self._owner_tag()):
-                    existing_instance = f
-                    # Stop if running before overwriting
-                    if existing.get("_status") == "running":
-                        try:
-                            from gui.services.executor_registry import ExecutorRegistry
-                            reg = ExecutorRegistry.get_instance()
-                            ex = reg.get(existing.get("id", f.stem))
-                            if ex:
-                                ex.stop()
-                                reg.unregister(existing.get("id", f.stem))
-                        except Exception:
-                            pass
-                    break
-            except Exception:
-                continue
-
-        if existing_instance:
-            instance_id = json.loads(
-                existing_instance.read_text(encoding="utf-8")
-            )["id"]
-            action_label = "updated"
-        else:
-            import uuid as _uuid
-            short = _uuid.uuid4().hex[:6]
-            instance_id = f"{canonical_template_id}__{short}"
-            action_label = "deployed"
-
-        # Create/overwrite instance definition
-        instance = dict(template_data)
-        instance["id"] = instance_id
-        instance["_template_id"] = canonical_template_id
-        instance["_template_path"] = str(template_path)
-        instance["_owner"] = self._owner_tag()
-        instance["_conversation_id"] = self._conversation_id
-        instance["_status"] = "stopped"
-
-        # Override parameters if provided
-        if params:
-            inst_params = instance.setdefault("parameters", {})
-            inst_params.update(params)
-
-        path = store / f"{instance_id}.json"
-        path.write_text(
-            json.dumps(instance, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        return (
-            f"Template '{template_data.get('name', template_id)}' {action_label} "
-            f"as instance '{instance_id}'. Use start to run it."
-        )
+        try:
+            dep_reg = self._get_deployment_registry()
+            instance_id = dep_reg.deploy(
+                template_path=template_path,
+                owner=self._owner_tag(),
+                parameters=params or {},
+                source="agent",
+                conversation_id=self._conversation_id,
+            )
+            return (
+                f"Template '{template_name}' deployed as instance "
+                f"'{instance_id}'. Use start to run it."
+            )
+        except Exception as e:
+            return f"Error deploying template: {e}"
 
     def _list_flows(self, conversation_only: bool = True) -> str:
-        store = self._get_store_path()
-        flows = []
-        for f in store.glob("*.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                if data.get("_owner") != self._owner_tag():
-                    continue
-                if conversation_only and self._conversation_id:
-                    if data.get("_conversation_id") != self._conversation_id:
-                        continue
-                schedule = data.get("_schedule", "")
-                template = data.get("_template_id", "")
-                entry = {
-                    "id": data.get("id", f.stem),
-                    "name": data.get("name", ""),
-                    "status": data.get("_status", "stopped"),
-                }
-                if schedule:
-                    entry["schedule"] = schedule
-                if template:
-                    entry["template"] = template
-                flows.append(entry)
-            except Exception:
-                continue
-        if not flows:
-            return "No flows found in this conversation. Use catalog/deploy or create."
+        dep_reg = self._get_deployment_registry()
+        dep_reg.sync_with_executors()
+        owner = self._owner_tag()
+
+        if conversation_only and self._conversation_id:
+            instances = dep_reg.get_by_conversation(self._conversation_id, owner=owner)
+        else:
+            instances = dep_reg.get_by_owner(owner)
+
+        if not instances:
+            return "No flows found. Use catalog/deploy or create."
+
         lines = []
-        for f in flows:
+        for inst in instances:
             extras = []
-            if f.get("template"):
-                extras.append(f"from: {f['template']}")
-            if f.get("schedule"):
-                extras.append(f"cron: {f['schedule']}")
+            if inst.flow_id != inst.instance_id:
+                extras.append(f"from: {inst.flow_id}")
             suffix = f" ({', '.join(extras)})" if extras else ""
-            lines.append(f"- {f['id']}: {f['name']} [{f['status']}]{suffix}")
-        return f"Your flow instances ({len(flows)}):\n" + "\n".join(lines)
+            lines.append(f"- {inst.instance_id}: {inst.flow_name} [{inst.status}]{suffix}")
+        return f"Your flow instances ({len(instances)}):\n" + "\n".join(lines)
 
     def _create_flow(self, definition: Dict) -> str:
         if not definition or "id" not in definition:
@@ -1705,94 +1633,92 @@ class FlowManagerHandler(ToolHandler):
             definition["relations"] = definition.pop("connections")
 
         flow_id = definition["id"]
-        definition["_owner"] = self._owner_tag()
-        definition["_conversation_id"] = self._conversation_id
-        definition["_status"] = "stopped"
+        flow_name = definition.get("name", flow_id)
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if path.exists():
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if existing.get("_owner") != self._owner_tag():
-                return f"Error: flow '{flow_id}' exists and belongs to another user"
-
-        path.write_text(
-            json.dumps(definition, ensure_ascii=False, indent=2),
+        # Save the flow definition as a template in a temp location
+        from pathlib import Path
+        tmp_dir = Path("data/agent_templates")
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+        # Strip internal fields
+        clean_def = {k: v for k, v in definition.items() if not k.startswith("_")}
+        tmp_path = tmp_dir / f"{flow_id}.json"
+        tmp_path.write_text(
+            json.dumps(clean_def, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-        return f"Flow '{flow_id}' created. Use start to run it."
 
-    def _start_flow(self, flow_id: str, params: Dict = None, schedule: str = "") -> str:
+        # Deploy via DeploymentRegistry
+        try:
+            dep_reg = self._get_deployment_registry()
+            instance_id = dep_reg.deploy(
+                template_path=str(tmp_path),
+                owner=self._owner_tag(),
+                parameters=definition.get("parameters", {}),
+                source="agent",
+                conversation_id=self._conversation_id,
+                instance_id=flow_id,  # Use flow_id as instance_id for created flows
+            )
+            return f"Flow '{instance_id}' created. Use start to run it."
+        except Exception as e:
+            return f"Error creating flow: {e}"
+
+    def _start_flow(self, flow_id: str, params: Dict = None) -> str:
         if not flow_id:
             return "Error: flow_id is required"
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if not path.exists():
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
             return f"Error: flow '{flow_id}' not found"
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("_owner") != self._owner_tag():
+        if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
         # Merge parameters
         if params:
-            flow_params = data.setdefault("parameters", {})
-            flow_params.update(params)
+            inst.parameters.update(params)
+            dep_reg._save_instance(inst)
 
-        data["_status"] = "running"
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        # Try to actually start via executor registry
+        # Try to start via executor registry
         try:
             from gui.services.executor_registry import ExecutorRegistry
             from engine.parser import FlowParser
             from engine.continuous_executor import ContinuousFlowExecutor
-            # Remove internal fields before parsing
-            clean = {k: v for k, v in data.items() if not k.startswith("_")}
+
+            # Load the template
+            flow_path = inst.flow_path
+            if not flow_path or not Path(flow_path).exists():
+                flow_path = dep_reg._find_flow_path(inst.flow_id)
+            if not flow_path:
+                dep_reg.update_status(flow_id, "error", "Template file not found")
+                return f"Error: template file not found for '{flow_id}'"
+
+            with open(flow_path, "r", encoding="utf-8") as ff:
+                raw = json.load(ff)
+            clean = {k: v for k, v in raw.items() if not k.startswith("_")}
+            # Apply instance parameters
+            if inst.parameters:
+                clean.setdefault("parameters", {}).update(inst.parameters)
             flow = FlowParser.parse(clean)
+
             reg = ExecutorRegistry.get_instance()
             # Stop existing executor if any
-            existing = reg.get(flow.id)
+            existing = reg.get(flow_id)
             if existing:
                 try:
                     existing.stop()
                 except Exception:
                     pass
-                reg.unregister(flow.id)
-            executor = ContinuousFlowExecutor(flow, max_workers=4, max_retries=3)
+                reg.unregister(flow_id)
+
+            executor = ContinuousFlowExecutor(
+                flow, max_workers=inst.max_workers, max_retries=inst.max_retries
+            )
             executor.start()
-            reg.register(flow.id, executor)
+            reg.register(flow_id, executor)
             msg = f"Flow '{flow_id}' started."
         except Exception as e:
-            # Update JSON status to reflect the failure
-            data["_status"] = "error"
-            data["_error"] = str(e)
-            path.write_text(
-                json.dumps(data, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            msg = f"Flow '{flow_id}' saved but failed to start: {e}"
-
-        # Register CRON schedule if provided
-        if schedule:
-            try:
-                from engine.scheduler import FlowScheduler
-                scheduler = FlowScheduler()
-                scheduler.add_job(flow_id, str(path), schedule)
-                if not scheduler.running:
-                    scheduler.start()
-                data["_schedule"] = schedule
-                path.write_text(
-                    json.dumps(data, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                msg += f" Scheduled with CRON: {schedule}"
-            except Exception as e:
-                msg += f" (schedule registration failed: {e})"
+            dep_reg.update_status(flow_id, "error", str(e))
+            msg = f"Flow '{flow_id}' failed to start: {e}"
 
         return msg
 
@@ -1800,20 +1726,12 @@ class FlowManagerHandler(ToolHandler):
         if not flow_id:
             return "Error: flow_id is required"
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if not path.exists():
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
             return f"Error: flow '{flow_id}' not found"
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("_owner") != self._owner_tag():
+        if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
-
-        data["_status"] = "stopped"
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
 
         try:
             from gui.services.executor_registry import ExecutorRegistry
@@ -1830,17 +1748,15 @@ class FlowManagerHandler(ToolHandler):
         if not flow_id:
             return "Error: flow_id is required"
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if not path.exists():
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
             return f"Error: flow '{flow_id}' not found"
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("_owner") != self._owner_tag():
+        if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
-        # Check real executor status (not just the JSON file)
-        real_status = data.get("_status", "unknown")
+        # Check real executor status
+        real_status = inst.status
         try:
             from gui.services.executor_registry import ExecutorRegistry
             reg = ExecutorRegistry.get_instance()
@@ -1853,16 +1769,13 @@ class FlowManagerHandler(ToolHandler):
         except Exception:
             pass
 
-        template = data.get("_template_id", "")
-        template_info = f"\nTemplate: {template}" if template else ""
-        schedule = data.get("_schedule", "")
-        sched_info = f"\nSchedule: {schedule}" if schedule else ""
+        template_info = f"\nTemplate: {inst.flow_id}" if inst.flow_id != inst.instance_id else ""
+        sched_info = ""
         return (
-            f"Flow: {data.get('name', flow_id)}\n"
+            f"Flow: {inst.flow_name}\n"
             f"Instance: {flow_id}\n"
             f"Status: {real_status}\n"
-            f"Tasks: {len(data.get('tasks', {}))}\n"
-            f"Parameters: {json.dumps(data.get('parameters', {}))}"
+            f"Parameters: {json.dumps(inst.parameters)}"
             f"{template_info}{sched_info}"
         )
 
@@ -1870,20 +1783,14 @@ class FlowManagerHandler(ToolHandler):
         if not flow_id:
             return "Error: flow_id is required"
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if not path.exists():
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
             return f"Error: flow '{flow_id}' not found"
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("_owner") != self._owner_tag():
+        if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
-        # Stop if running
-        if data.get("_status") == "running":
-            self._stop_flow(flow_id)
-
-        path.unlink()
+        dep_reg.undeploy(flow_id)
         return f"Flow '{flow_id}' deleted."
 
     def _update_flow(self, flow_id: str, params: Dict) -> str:
@@ -1892,52 +1799,32 @@ class FlowManagerHandler(ToolHandler):
         if not params:
             return "Error: parameters are required for update"
 
-        store = self._get_store_path()
-        path = store / f"{flow_id}.json"
-        if not path.exists():
+        dep_reg = self._get_deployment_registry()
+        inst = dep_reg.get(flow_id)
+        if inst is None:
             return f"Error: flow '{flow_id}' not found"
-
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("_owner") != self._owner_tag():
+        if inst.owner != self._owner_tag():
             return f"Error: flow '{flow_id}' belongs to another user"
 
-        flow_params = data.setdefault("parameters", {})
-        flow_params.update(params)
-        path.write_text(
-            json.dumps(data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
+        inst.parameters.update(params)
+        dep_reg._save_instance(inst)
         return f"Flow '{flow_id}' parameters updated: {json.dumps(params)}"
 
     @staticmethod
     def cleanup_conversation(conversation_id: str):
         """Delete all flows belonging to a conversation. Called on conv delete."""
-        from pathlib import Path
-        store = Path("data/agent_flows")
-        if not store.exists():
-            return
-        deleted = 0
-        for f in store.glob("*.json"):
-            try:
-                data = json.loads(f.read_text(encoding="utf-8"))
-                if data.get("_conversation_id") == conversation_id:
-                    # Stop if running
-                    if data.get("_status") == "running":
-                        try:
-                            from gui.services.executor_registry import ExecutorRegistry
-                            reg = ExecutorRegistry.get_instance()
-                            ex = reg.get(data.get("id", f.stem))
-                            if ex:
-                                ex.stop()
-                                reg.unregister(data.get("id", f.stem))
-                        except Exception:
-                            pass
-                    f.unlink()
-                    deleted += 1
-            except Exception:
-                continue
-        if deleted:
-            logger.info(f"[cleanup] deleted {deleted} flows for conversation {conversation_id}")
+        try:
+            from gui.services.deployment_registry import DeploymentRegistry
+            dep_reg = DeploymentRegistry.get_instance()
+            instances = dep_reg.get_by_conversation(conversation_id)
+            deleted = 0
+            for inst in instances:
+                dep_reg.undeploy(inst.instance_id)
+                deleted += 1
+            if deleted:
+                logger.info("[cleanup] deleted %d flows for conversation %s", deleted, conversation_id)
+        except Exception as e:
+            logger.warning("Failed to cleanup conversation flows: %s", e)
 
 
 class AskAgentHandler(ToolHandler):
@@ -2762,7 +2649,8 @@ tasks: fetchData → updateAttribute → transformJSON → routeOnAttribute → 
 - Parameters go in the `parameters` key inside the task definition
 - Tasks read config via `self.config.get("key")`
 - Use expressions like `${attribute_name}` in parameter values
-- Use `${secrets.user.key_name}` for encrypted secrets (stored via store_secret tool)
+- Use `${secrets.global.key}` for global secrets or `${secrets.key}` for per-user secrets
+- Use `${global.key}` for global parameters
 - Use `${env.VAR_NAME}` for environment variables
 - Use `${flow.parameters.key}` for flow-level parameters (overridable at start)
 
@@ -2781,7 +2669,7 @@ Tasks can reference a service defined in the flow's `services` section:
   "services": {
     "my_llm": {
       "type": "llmConnection",
-      "parameters": { "provider": "openai", "api_key": "${secrets.user.my_key}", "model": "gpt-4o" }
+      "parameters": { "provider": "openai", "api_key": "${secrets.global.openai_key}", "model": "gpt-4o" }
     }
   },
   "tasks": {
@@ -2824,18 +2712,25 @@ Variables available in scripts:
 
 PyFi2 expressions use `${...}` syntax and are resolved at parse/runtime.
 
-## Secrets (resolved at parse time, encrypted at rest)
-- `${secrets.user_id.key_name}` — Encrypted secret from store
-- Example: `${secrets.anonymous.openai_api_key}`
-- Store via: `/add-secret` in chat (NEVER sent to agent) or `store_secret` tool
-- In scripts (executeScript or agent execute_script): `get_secret('key_name')`
+## Global Secrets (shared across all flows)
+- `${secrets.global.key_name}` — Encrypted global secret (config/global_secrets.json)
+- Managed via Runtime UI (🔑 button next to Global in treeview)
+
+## User Secrets (per-user, encrypted at rest)
+- `${secrets.user.key_name}` — Encrypted user secret (config/users/{username}/secrets.json)
+- Store via: `/add-secret name value` in chat or `store_secret` tool
+- Managed via Runtime UI (🔑 button next to user group in treeview)
 - Use `list_secrets` tool or `/list-secrets` in chat to see available keys
 
-## Variables (resolved at parse time, plaintext)
-- `${var.user_id.key_name}` — Plaintext variable from store
+## Global Parameters (shared across all flows)
+- `${global.key_name}` — Global parameter (config/global_parameters.json)
+- Managed via Runtime UI (⚙️ button next to Global in treeview)
+
+## User Parameters (per-user)
+- `${user.key_name}` — User parameter (config/users/{username}/parameters.json)
 - Store via: `/add-variable name value` in chat
-- In scripts: `get_variable('key_name')`
-- Use `/list-variables` in chat to see available variables
+- Managed via Runtime UI (⚙️ button next to user group in treeview)
+- Use `/list-variables` in chat to see available keys
 
 ## Attribute References
 - `${attribute_name}` — FlowFile attribute value
@@ -2984,10 +2879,9 @@ class StoreSecretHandler(ToolHandler):
     """Securely store a credential or secret value.
 
     Uses the SecretsManager to encrypt the value at rest.
-    The agent can store API keys, tokens, etc. for use in flows.
+    Stores in user-level secrets file: config/users/{username}/secrets.json
+    Referenced via ${secrets.user.key_name} in flows.
     """
-
-    _SECRETS_FILE = "config/agent_secrets.json"
 
     def __init__(self):
         self._user_id = ""
@@ -3002,7 +2896,7 @@ class StoreSecretHandler(ToolHandler):
         return (
             "Securely store a secret (API key, token, password). "
             "The value is encrypted at rest and can be referenced in "
-            "flow configs as ${secrets.key_name}."
+            "flow configs as ${secrets.user.key_name}."
         )
 
     @property
@@ -3034,9 +2928,7 @@ class StoreSecretHandler(ToolHandler):
         if not key or not value:
             return "Error: key and value are required"
 
-        # Namespace secrets per user
         user_id = self._user_id or "anonymous"
-        namespaced_key = f"{user_id}.{key}"
 
         try:
             from pathlib import Path
@@ -3045,56 +2937,29 @@ class StoreSecretHandler(ToolHandler):
             sm = get_secrets_manager()
             encrypted = sm.encrypt(value)
 
-            # Store in secrets JSON file with metadata
-            secrets_path = Path(self._SECRETS_FILE)
+            # Store in user-level secrets file
+            secrets_path = Path("config/users") / user_id / "secrets.json"
             secrets_path.parent.mkdir(parents=True, exist_ok=True)
             secrets = {}
             if secrets_path.exists():
                 secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-            secrets[namespaced_key] = {
-                "value": encrypted,
-                "conversation_id": self._conversation_id,
-            }
+            secrets[key] = encrypted
             secrets_path.write_text(
                 json.dumps(secrets, ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
-            return f"Secret '{key}' stored securely. Reference it in flows as ${{secrets.{namespaced_key}}}"
+            return f"Secret '{key}' stored securely. Reference it in flows as ${{secrets.user.{key}}}"
         except Exception as e:
             return f"Error storing secret: {e}"
 
     @staticmethod
     def cleanup_conversation(conversation_id: str):
-        """Remove all secrets belonging to a conversation."""
-        from pathlib import Path
-        secrets_path = Path(StoreSecretHandler._SECRETS_FILE)
-        if not secrets_path.exists():
-            return
-        try:
-            secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-            to_remove = [
-                k for k, v in secrets.items()
-                if isinstance(v, dict) and v.get("conversation_id") == conversation_id
-            ]
-            for k in to_remove:
-                del secrets[k]
-            if to_remove:
-                secrets_path.write_text(
-                    json.dumps(secrets, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-                logger.info(
-                    f"[cleanup] deleted {len(to_remove)} secrets "
-                    f"for conversation {conversation_id}"
-                )
-        except Exception as e:
-            logger.warning(f"Failed to cleanup secrets: {e}")
+        """No-op: user secrets are permanent and not conversation-scoped."""
+        pass
 
 
 class ListSecretsHandler(ToolHandler):
     """List available secret key names (never values) for the current user."""
-
-    _SECRETS_FILE = "config/agent_secrets.json"
 
     def __init__(self):
         self._user_id = ""
@@ -3108,7 +2973,7 @@ class ListSecretsHandler(ToolHandler):
         return (
             "List available secret names for the current user. "
             "Returns only key names (never values). Use these names "
-            "in flow configs as ${secrets.user_id.key_name}."
+            "in flow configs as ${secrets.user.key_name}."
         )
 
     @property
@@ -3121,7 +2986,8 @@ class ListSecretsHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         from pathlib import Path
 
-        secrets_path = Path(self._SECRETS_FILE)
+        user_id = self._user_id or "anonymous"
+        secrets_path = Path("config/users") / user_id / "secrets.json"
         if not secrets_path.exists():
             return "No secrets stored yet. Use store_secret tool or /add-secret in chat."
 
@@ -3130,17 +2996,12 @@ class ListSecretsHandler(ToolHandler):
         except Exception:
             return "Error reading secrets store."
 
-        user_id = self._user_id or "anonymous"
-        prefix = f"{user_id}."
-        keys = [k for k in secrets if k.startswith(prefix)]
-
-        if not keys:
+        if not secrets:
             return f"No secrets stored for user '{user_id}'."
 
-        lines = [f"Available secrets ({len(keys)}):"]
-        for k in sorted(keys):
-            short = k[len(prefix):]
-            lines.append(f"- {short}  →  ${{secrets.{k}}}")
+        lines = [f"Available secrets ({len(secrets)}):"]
+        for k in sorted(secrets.keys()):
+            lines.append(f"- {k}  →  ${{secrets.user.{k}}}")
         return "\n".join(lines)
 
 

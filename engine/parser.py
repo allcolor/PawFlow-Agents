@@ -12,6 +12,7 @@ from datetime import datetime
 
 from core import Flow, TaskFactory, ServiceFactory, ValidationError, FlowError
 from core.expression import resolve_expression
+from core.process_group import ProcessGroup
 
 
 class FlowParser:
@@ -89,9 +90,17 @@ class FlowParser:
             service = service_class(service_parameters)
             flow.add_service(service_id, service)
         
-        # Parser les groupes
+        # Parser les groupes via ProcessGroup.from_dict (handles legacy format)
         for group_id, group_config in config.get('groups', {}).items():
-            flow.groups[group_id] = group_config
+            if not isinstance(group_config, dict):
+                continue
+            # Ensure id is set
+            group_config.setdefault("id", group_id)
+            pg = ProcessGroup.from_dict(group_config)
+            # For sub-flows, load tasks from the referenced file
+            if pg.is_subflow:
+                pg.load_from_ref()
+            flow.groups[group_id] = pg
         
         # Parser les relations
         flow.relations = config.get('relations', [])

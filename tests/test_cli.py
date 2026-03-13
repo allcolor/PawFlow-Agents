@@ -157,61 +157,6 @@ class TestPluginsCommand(unittest.TestCase):
         self.assertEqual(result, 1)
 
 
-class TestSchedulerCommand(unittest.TestCase):
-    """Test scheduler command."""
-
-    @patch('engine.scheduler.FlowScheduler')
-    def test_scheduler_list_empty(self, MockSched):
-        mock_sched = MagicMock()
-        mock_sched.get_jobs.return_value = {}
-        MockSched.return_value = mock_sched
-
-        args = argparse.Namespace(action='list', job_id=None, flow_path=None, cron=None)
-        with patch('builtins.print') as mock_print:
-            result = cli.cmd_scheduler(args)
-        self.assertEqual(result, 0)
-        mock_print.assert_called_with("No scheduled jobs.")
-
-    @patch('engine.scheduler.FlowScheduler')
-    def test_scheduler_list_with_jobs(self, MockSched):
-        mock_sched = MagicMock()
-        mock_sched.get_jobs.return_value = {
-            'job1': {'cron_expression': '*/5 * * * *', 'flow_path': 'f.json', 'enabled': True}
-        }
-        MockSched.return_value = mock_sched
-
-        args = argparse.Namespace(action='list', job_id=None, flow_path=None, cron=None)
-        with patch('builtins.print') as mock_print:
-            result = cli.cmd_scheduler(args)
-        self.assertEqual(result, 0)
-        call_str = mock_print.call_args[0][0]
-        self.assertIn('job1', call_str)
-        self.assertIn('enabled', call_str)
-
-    @patch('engine.scheduler.FlowScheduler')
-    def test_scheduler_add(self, MockSched):
-        mock_sched = MagicMock()
-        MockSched.return_value = mock_sched
-
-        args = argparse.Namespace(action='add', job_id='j1', flow_path='flow.json', cron='* * * * *')
-        with patch('builtins.print'):
-            result = cli.cmd_scheduler(args)
-        self.assertEqual(result, 0)
-        mock_sched.add_job.assert_called_once_with('j1', 'flow.json', '* * * * *')
-        mock_sched.save_jobs.assert_called_once()
-
-    @patch('engine.scheduler.FlowScheduler')
-    def test_scheduler_remove(self, MockSched):
-        mock_sched = MagicMock()
-        MockSched.return_value = mock_sched
-
-        args = argparse.Namespace(action='remove', job_id='j1', flow_path=None, cron=None)
-        with patch('builtins.print'):
-            result = cli.cmd_scheduler(args)
-        self.assertEqual(result, 0)
-        mock_sched.remove_job.assert_called_once_with('j1')
-
-
 class TestExportCommand(unittest.TestCase):
     """Test export command."""
 

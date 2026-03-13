@@ -93,17 +93,28 @@ class ParameterContext:
         result = {}
         for key, value in d.items():
             if isinstance(value, str):
-                result[key] = self.resolve(value)
+                resolved = self.resolve(value)
+                # Second pass for cascading: ${flow.parameters.x} → ${global.y} → actual value
+                if isinstance(resolved, str) and '${' in resolved:
+                    resolved = self.resolve(resolved)
+                result[key] = resolved
             elif isinstance(value, dict):
                 result[key] = self._resolve_dict(value)
             elif isinstance(value, list):
                 result[key] = [
-                    self.resolve(item) if isinstance(item, str) else item
+                    self._resolve_cascade(item) if isinstance(item, str) else item
                     for item in value
                 ]
             else:
                 result[key] = value
         return result
+
+    def _resolve_cascade(self, value: str) -> str:
+        """Resolve with a second pass for cascading expressions."""
+        resolved = self.resolve(value)
+        if isinstance(resolved, str) and '${' in resolved:
+            resolved = self.resolve(resolved)
+        return resolved
 
     def __repr__(self) -> str:
         return f"ParameterContext({self._params})"

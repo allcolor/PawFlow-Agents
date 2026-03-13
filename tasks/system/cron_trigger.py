@@ -66,7 +66,7 @@ class CronTriggerTask(BaseTask):
         if not self._cron_expression:
             return False
 
-        from engine.scheduler import SimpleCronParser
+        from engine.cron_parser import SimpleCronParser
         parser = SimpleCronParser()
         if parser.matches(self._cron_expression, now):
             with self._lock:

@@ -627,14 +627,24 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "key and value are required"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            from core.tool_registry import StoreSecretHandler
-            handler = StoreSecretHandler()
-            handler.set_user_id(user_id or "anonymous")
-            handler.set_conversation_id(body.get("conversation_id", ""))
-            result_text = handler.execute({"key": key, "value": value})
-            namespaced = f"{user_id or 'anonymous'}.{key}"
+            uid = user_id or "anonymous"
+            from pathlib import Path
+            from core.secrets import get_secrets_manager
+            sm = get_secrets_manager()
+            encrypted = sm.encrypt(value)
+            secrets_path = Path("config/users") / uid / "secrets.json"
+            secrets_path.parent.mkdir(parents=True, exist_ok=True)
+            secrets = {}
+            if secrets_path.exists():
+                try:
+                    secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            secrets[key] = encrypted
+            secrets_path.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
             flowfile.set_content(json.dumps({
-                "result": result_text, "key": namespaced,
+                "result": f"Secret '{key}' stored. Use ${{secrets.user.{key}}} in flows.",
+                "key": key,
             }).encode())
             return [flowfile]
 
@@ -646,53 +656,62 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
             uid = user_id or "anonymous"
-            namespaced = f"{uid}.{key}"
             from pathlib import Path
-            var_path = Path("config/agent_variables.json")
-            var_path.parent.mkdir(parents=True, exist_ok=True)
-            variables = {}
-            if var_path.exists():
+            params_path = Path("config/users") / uid / "parameters.json"
+            params_path.parent.mkdir(parents=True, exist_ok=True)
+            params = {}
+            if params_path.exists():
                 try:
-                    variables = json.loads(var_path.read_text(encoding="utf-8"))
+                    params = json.loads(params_path.read_text(encoding="utf-8"))
                 except Exception:
                     pass
-            variables[namespaced] = {"value": value}
-            var_path.write_text(json.dumps(variables, ensure_ascii=False, indent=2), encoding="utf-8")
+            params[key] = value
+            params_path.write_text(json.dumps(params, ensure_ascii=False, indent=2), encoding="utf-8")
             flowfile.set_content(json.dumps({
-                "result": f"Variable '{key}' stored. Use ${{var.{namespaced}}} in flows or get_variable('{key}') in scripts.",
-                "key": namespaced,
+                "result": f"Parameter '{key}' stored. Use ${{user.{key}}} in flows.",
+                "key": key,
             }).encode())
             return [flowfile]
 
         if action == "list_secrets":
-            from core.tool_registry import ListSecretsHandler
-            handler = ListSecretsHandler()
-            handler.set_user_id(user_id or "anonymous")
-            result_text = handler.execute({})
-            flowfile.set_content(json.dumps({"result": result_text}).encode())
+            uid = user_id or "anonymous"
+            from pathlib import Path
+            secrets_path = Path("config/users") / uid / "secrets.json"
+            if not secrets_path.exists():
+                flowfile.set_content(json.dumps({"result": "No secrets stored."}).encode())
+                return [flowfile]
+            try:
+                secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
+            except Exception:
+                flowfile.set_content(json.dumps({"result": "Error reading secrets."}).encode())
+                return [flowfile]
+            if not secrets:
+                flowfile.set_content(json.dumps({"result": "No secrets stored."}).encode())
+                return [flowfile]
+            lines = [f"Secrets ({len(secrets)}):"]
+            for k in sorted(secrets.keys()):
+                lines.append(f"- {k} → ${{secrets.user.{k}}}")
+            flowfile.set_content(json.dumps({"result": "\n".join(lines)}).encode())
             return [flowfile]
 
         if action == "list_variables":
             uid = user_id or "anonymous"
             from pathlib import Path
-            var_path = Path("config/agent_variables.json")
-            if not var_path.exists():
-                flowfile.set_content(json.dumps({"result": "No variables stored."}).encode())
+            params_path = Path("config/users") / uid / "parameters.json"
+            if not params_path.exists():
+                flowfile.set_content(json.dumps({"result": "No parameters stored."}).encode())
                 return [flowfile]
             try:
-                variables = json.loads(var_path.read_text(encoding="utf-8"))
+                params = json.loads(params_path.read_text(encoding="utf-8"))
             except Exception:
-                flowfile.set_content(json.dumps({"result": "Error reading variables."}).encode())
+                flowfile.set_content(json.dumps({"result": "Error reading parameters."}).encode())
                 return [flowfile]
-            prefix = f"{uid}."
-            user_vars = {k[len(prefix):]: v["value"] for k, v in variables.items()
-                         if k.startswith(prefix) and isinstance(v, dict)}
-            if not user_vars:
-                flowfile.set_content(json.dumps({"result": "No variables stored."}).encode())
+            if not params:
+                flowfile.set_content(json.dumps({"result": "No parameters stored."}).encode())
                 return [flowfile]
-            lines = [f"Variables ({len(user_vars)}):"]
-            for k, v in sorted(user_vars.items()):
-                lines.append(f"- {k} = {v}")
+            lines = [f"Parameters ({len(params)}):"]
+            for k, v in sorted(params.items()):
+                lines.append(f"- {k} = {v} → ${{user.{k}}}")
             flowfile.set_content(json.dumps({"result": "\n".join(lines)}).encode())
             return [flowfile]
 
@@ -782,58 +801,54 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         if action == "list_conv_flows":
-            conv_id = body.get("conversation_id", "")
-            if not conv_id:
-                flowfile.set_content(json.dumps({"flows": []}).encode())
-                return [flowfile]
-            from pathlib import Path as _Path
-            agent_store = _Path("data/agent_flows")
-            flows_list = []
-            if agent_store.exists():
-                for fp in agent_store.glob("*.json"):
+            # Show all flows belonging to this user (not conversation-scoped)
+            try:
+                from gui.services.deployment_registry import DeploymentRegistry
+                dep_reg = DeploymentRegistry.get_instance()
+                dep_reg.sync_with_executors()
+                uid = user_id or None
+                instances = dep_reg.get_by_owner(uid) if uid else []
+                flows_list = []
+                for inst in instances:
+                    tasks_count = 0
                     try:
-                        fdata = json.loads(fp.read_text(encoding="utf-8"))
-                        if fdata.get("_conversation_id") != conv_id:
-                            continue
-                        if user_id and fdata.get("_owner") != user_id:
-                            continue
-                        flows_list.append({
-                            "id": fdata.get("id", fp.stem),
-                            "name": fdata.get("name", fp.stem),
-                            "status": fdata.get("_status", "stopped"),
-                            "schedule": fdata.get("_schedule", ""),
-                            "template": fdata.get("_template_id", ""),
-                            "tasks_count": len(fdata.get("tasks", {})),
-                        })
+                        from pathlib import Path as _Path
+                        raw = json.loads(_Path(inst.flow_path).read_text(encoding="utf-8"))
+                        tasks_count = len(raw.get("tasks", {}))
                     except Exception:
-                        continue
+                        pass
+                    flows_list.append({
+                        "id": inst.instance_id,
+                        "name": inst.flow_name,
+                        "status": inst.status,
+                        "template": inst.flow_id if inst.flow_id != inst.instance_id else "",
+                        "tasks_count": tasks_count,
+                    })
+            except Exception:
+                flows_list = []
             flowfile.set_content(
                 json.dumps({"flows": flows_list}, ensure_ascii=False).encode())
             return [flowfile]
 
         if action == "manage_conv_flow":
-            conv_id = body.get("conversation_id", "")
             flow_id = body.get("flow_id", "")
             flow_action = body.get("flow_action", "")
             if not flow_id or not flow_action:
                 flowfile.set_content(json.dumps(
                     {"error": "flow_id and flow_action required"}).encode())
                 return [flowfile]
-            from pathlib import Path as _Path
-            fpath = _Path("data/agent_flows") / f"{flow_id}.json"
-            if not fpath.exists():
+
+            from gui.services.deployment_registry import DeploymentRegistry
+            dep_reg = DeploymentRegistry.get_instance()
+            inst = dep_reg.get(flow_id)
+            if not inst:
                 flowfile.set_content(json.dumps(
                     {"error": f"Flow '{flow_id}' not found"}).encode())
                 return [flowfile]
-            fdata = json.loads(fpath.read_text(encoding="utf-8"))
             # Ownership check
-            if user_id and fdata.get("_owner") != user_id:
+            if user_id and inst.owner != user_id:
                 flowfile.set_content(json.dumps(
                     {"error": "Permission denied"}).encode())
-                return [flowfile]
-            if fdata.get("_conversation_id") != conv_id:
-                flowfile.set_content(json.dumps(
-                    {"error": "Flow not in this conversation"}).encode())
                 return [flowfile]
 
             if flow_action == "start":
@@ -841,27 +856,33 @@ class AgentLoopTask(BaseTask):
                     from gui.services.executor_registry import ExecutorRegistry
                     from engine.parser import FlowParser
                     from engine.continuous_executor import ContinuousFlowExecutor
-                    clean = {k: v for k, v in fdata.items()
+                    from tasks import register_all_tasks
+                    register_all_tasks()
+                    raw = json.loads(
+                        open(inst.flow_path, encoding="utf-8").read())
+                    clean = {k: v for k, v in raw.items()
                              if not k.startswith("_")}
+                    if inst.parameters:
+                        clean.setdefault("parameters", {}).update(inst.parameters)
                     flow = FlowParser.parse(clean)
                     reg = ExecutorRegistry.get_instance()
-                    existing = reg.get(flow.id)
+                    existing = reg.get(flow_id)
                     if existing:
                         try:
                             existing.stop()
                         except Exception:
                             pass
-                        reg.unregister(flow.id)
+                        reg.unregister(flow_id)
                     executor = ContinuousFlowExecutor(
-                        flow, max_workers=4, max_retries=3)
+                        flow, max_workers=inst.max_workers,
+                        max_retries=inst.max_retries,
+                        parameters=inst.parameters or None)
                     executor.start()
-                    reg.register(flow.id, executor)
-                    fdata["_status"] = "running"
-                    fpath.write_text(json.dumps(
-                        fdata, ensure_ascii=False, indent=2), encoding="utf-8")
+                    reg.register(flow_id, executor)
                     flowfile.set_content(json.dumps(
                         {"message": f"Flow '{flow_id}' started"}).encode())
                 except Exception as e:
+                    dep_reg.update_status(flow_id, "error", str(e))
                     flowfile.set_content(json.dumps(
                         {"error": f"Start failed: {e}"}).encode())
 
@@ -873,9 +894,6 @@ class AgentLoopTask(BaseTask):
                     if ex:
                         ex.stop()
                         reg.unregister(flow_id)
-                    fdata["_status"] = "stopped"
-                    fpath.write_text(json.dumps(
-                        fdata, ensure_ascii=False, indent=2), encoding="utf-8")
                     flowfile.set_content(json.dumps(
                         {"message": f"Flow '{flow_id}' stopped"}).encode())
                 except Exception as e:
@@ -890,7 +908,7 @@ class AgentLoopTask(BaseTask):
                     if ex:
                         ex.stop()
                         reg.unregister(flow_id)
-                    fpath.unlink()
+                    dep_reg.undeploy(flow_id)
                     flowfile.set_content(json.dumps(
                         {"message": f"Flow '{flow_id}' deleted"}).encode())
                 except Exception as e:

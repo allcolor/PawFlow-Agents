@@ -109,18 +109,11 @@ class CheckpointManager:
                 "flowfiles": [],
             }
 
-            # Peek all FlowFiles without removing (drain + re-enqueue)
-            drained = []
-            while not conn.is_empty():
-                ff = conn.dequeue()
-                if ff:
-                    drained.append(ff)
-
-            for ff in drained:
+            # Peek all FlowFiles without removing (no stat corruption)
+            all_ffs = conn.peek_all(limit=conn.max_queue_size)
+            for ff in all_ffs:
                 ff_data = self._serialize_flowfile(ff)
                 queue_data["flowfiles"].append(ff_data)
-                # Re-enqueue
-                conn.enqueue(ff)
 
             if queue_data["flowfiles"]:
                 checkpoint["queues"].append(queue_data)
@@ -201,6 +194,26 @@ class CheckpointManager:
             except Exception:
                 pass
         return result
+
+    def save_layout(self, positions: Dict[str, tuple]):
+        """Save node layout positions to a dedicated file."""
+        layout_file = self._dir / "layout.json"
+        data = {k: {"x": v[0], "y": v[1]} for k, v in positions.items()}
+        with self._lock:
+            with open(layout_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+
+    def load_layout(self) -> Dict[str, tuple]:
+        """Load node layout positions. Returns {task_id: (x, y)}."""
+        layout_file = self._dir / "layout.json"
+        if not layout_file.exists():
+            return {}
+        try:
+            with open(layout_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return {k: (v["x"], v["y"]) for k, v in data.items()}
+        except Exception:
+            return {}
 
     def clear(self):
         """Remove all checkpoints."""

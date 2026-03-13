@@ -24,8 +24,6 @@ class EventType:
     FLOW_COMPLETED = "flow.completed"
     FLOW_FAILED = "flow.failed"
     TASK_FAILED = "task.failed"
-    SCHEDULER_JOB_FIRED = "scheduler.job.fired"
-    SCHEDULER_JOB_FAILED = "scheduler.job.failed"
     SYSTEM_ERROR = "system.error"
     PLUGIN_INSTALLED = "plugin.installed"
     PLUGIN_UNINSTALLED = "plugin.uninstalled"

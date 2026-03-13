@@ -95,12 +95,6 @@ class TestApiClient:
         assert len(tasks) == 1
 
     @patch("gui.services.api_client.urlopen")
-    def test_scheduler_operations(self, mock_urlopen):
-        mock_urlopen.return_value = self._mock_response({"job_id": "j1"})
-        result = self.client.create_job("j1", "flows/test.json", "0 * * * *")
-        assert result["job_id"] == "j1"
-
-    @patch("gui.services.api_client.urlopen")
     def test_logout(self, mock_urlopen):
         mock_urlopen.return_value = self._mock_response({"ok": True})
         self.client.token = "tok"

@@ -11,7 +11,6 @@ Usage:
     python cli.py serve [--host] [--port] [--reload]
     python cli.py gui [--host] [--port] [--headless]
     python cli.py plugins list|install|remove
-    python cli.py scheduler list|add|remove|start
     python cli.py export <flow> [-o output]
     python cli.py import <file> [-o output]
     python cli.py cluster status [--api-url]
@@ -362,42 +361,6 @@ def cmd_plugins(args):
     return 0
 
 
-def cmd_scheduler(args):
-    """Manage CRON scheduler."""
-    from engine.scheduler import FlowScheduler
-    sched = FlowScheduler()
-
-    if args.action == "list":
-        sched.load_jobs("config/scheduler_jobs.json")
-        jobs = sched.get_jobs()
-        if not jobs:
-            print("No scheduled jobs.")
-            return 0
-        for jid, job in jobs.items():
-            status = "enabled" if job.get("enabled") else "disabled"
-            print(f"  {jid}: {job['cron_expression']} -> {job['flow_path']} [{status}]")
-    elif args.action == "add":
-        sched.load_jobs("config/scheduler_jobs.json")
-        sched.add_job(args.job_id, args.flow_path, args.cron)
-        print(f"Added job: {args.job_id}")
-        sched.save_jobs("config/scheduler_jobs.json")
-    elif args.action == "remove":
-        sched.load_jobs("config/scheduler_jobs.json")
-        sched.remove_job(args.job_id)
-        print(f"Removed job: {args.job_id}")
-        sched.save_jobs("config/scheduler_jobs.json")
-    elif args.action == "start":
-        print("Starting scheduler...")
-        sched.load_jobs("config/scheduler_jobs.json")
-        sched.start()
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            sched.stop()
-            print("\nScheduler stopped.")
-    return 0
-
 
 def cmd_export(args):
     """Export a flow as .pfp plugin."""
@@ -671,14 +634,6 @@ def main():
     plugins_parser.add_argument('--plugin-id', help='Plugin ID')
     plugins_parser.add_argument('--version', help='Target version (for upgrade/downgrade)')
 
-    # scheduler
-    sched_parser = subparsers.add_parser('scheduler', help='Manage CRON scheduler')
-    sched_parser.add_argument('action', choices=['list', 'add', 'remove', 'start'],
-                              help='Scheduler action')
-    sched_parser.add_argument('--job-id', dest='job_id', help='Job ID (for add/remove)')
-    sched_parser.add_argument('--flow-path', dest='flow_path', help='Flow JSON path (for add)')
-    sched_parser.add_argument('--cron', help='CRON expression (for add)')
-
     # export
     export_parser = subparsers.add_parser('export', help='Export a flow as .pfp plugin')
     export_parser.add_argument('flow_path', help='Flow JSON file to export')
@@ -731,8 +686,6 @@ def main():
         sys.exit(cmd_gui(args))
     elif args.command == 'plugins':
         sys.exit(cmd_plugins(args))
-    elif args.command == 'scheduler':
-        sys.exit(cmd_scheduler(args))
     elif args.command == 'export':
         sys.exit(cmd_export(args))
     elif args.command == 'import':

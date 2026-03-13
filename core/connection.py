@@ -145,6 +145,18 @@ class Connection:
     def is_empty(self) -> bool:
         return self._queue.is_empty()
 
+    def remove_by_index(self, index: int) -> bool:
+        """Remove a FlowFile by its position in the queue. Returns True on success."""
+        with self._lock:
+            items = self._queue._items
+            if 0 <= index < len(items):
+                ff = items.pop(index)
+                self._total_bytes -= ff.size()
+                self._flowfiles_out += 1
+                self._enqueue_times.pop(ff.process_id, None)
+                return True
+            return False
+
     def clear(self):
         """Drop all queued FlowFiles."""
         with self._lock:

@@ -99,7 +99,6 @@ from api.routers import (
     flows_router,
     execution_router,
     monitoring_router,
-    scheduler_router,
     tasks_router,
     workers_router,
     plugins_router,
@@ -112,7 +111,6 @@ app.include_router(auth_router.router, prefix="/api/v1/auth", tags=["Authenticat
 app.include_router(flows_router.router, prefix="/api/v1/flows", tags=["Flows"])
 app.include_router(execution_router.router, prefix="/api/v1/execution", tags=["Execution"])
 app.include_router(monitoring_router.router, prefix="/api/v1/monitoring", tags=["Monitoring"])
-app.include_router(scheduler_router.router, prefix="/api/v1/scheduler", tags=["Scheduler"])
 app.include_router(tasks_router.router, prefix="/api/v1/tasks", tags=["Tasks & Services"])
 app.include_router(workers_router.router, prefix="/api/v1/workers", tags=["Workers"])
 app.include_router(plugins_router.router, prefix="/api/v1/plugins", tags=["Plugins"])

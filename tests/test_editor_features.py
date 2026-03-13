@@ -887,12 +887,13 @@ class TestDragAndDrop:
             assert "log" in flow["tasks"]
 
     def test_task_colors_complete(self):
-        """Key task types have colors defined."""
-        from gui.components.flow_canvas import TASK_COLORS
-        assert "fetchHTTP" in TASK_COLORS
-        assert TASK_COLORS["fetchHTTP"] == "#0d6efd"
-        assert "log" in TASK_COLORS
-        assert "routeOnAttribute" in TASK_COLORS
+        """Key task types have colors from the category-based color scheme."""
+        from gui.components.color_scheme import get_task_color, TASK_CATEGORIES
+        assert "fetchHTTP" in TASK_CATEGORIES
+        color = get_task_color("fetchHTTP")
+        assert color.startswith("#")
+        assert "log" in TASK_CATEGORIES
+        assert "routeOnAttribute" in TASK_CATEGORIES
 
     def test_build_task_types_for_palette(self):
         """_build_task_types_for_palette produces correct structure."""

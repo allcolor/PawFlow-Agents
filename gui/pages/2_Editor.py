@@ -21,6 +21,8 @@ st.set_page_config(
 # i18n
 from gui.i18n import init as i18n_init, t
 i18n_init(st.session_state.get("locale", "en"))
+from gui.components.theme import inject_theme
+inject_theme()
 
 # Auth
 from gui.utils.auth import require_auth, render_user_info, check_permission
@@ -505,6 +507,9 @@ def render_sidebar():
             layout_options = {
                 "manual": t("editor.layout_manual"),
                 "layered": t("editor.layout_layered"),
+                "hierarchical": t("editor.layout_hierarchical"),
+                "compact": t("editor.layout_compact"),
+                "pipeline": t("editor.layout_pipeline"),
                 "tree": t("editor.layout_tree"),
                 "force": t("editor.layout_force"),
             }
@@ -516,6 +521,26 @@ def render_sidebar():
                 index=0,
             )
             st.session_state.canvas_layout = selected_layout
+
+            if st.button(f"📐 {t('runtime.auto_layout')}", key="editor_auto_layout"):
+                st.session_state.node_positions = {}
+                st.session_state.canvas_layout = "layered"
+                st.session_state.pop("_canvas_state", None)
+                st.session_state.pop("_canvas_fingerprint", None)
+                st.rerun()
+
+        # --- Color Legend ---
+        st.markdown("---")
+        with st.expander(f"🎨 {t('editor.color_legend')}", expanded=False):
+            from gui.components.color_scheme import get_legend_data
+            for item in get_legend_data():
+                st.markdown(
+                    f'<span style="display:inline-block;width:12px;height:12px;'
+                    f'background:{item["color"]};border-radius:3px;margin-right:6px;'
+                    f'vertical-align:middle;"></span>'
+                    f'{item["icon"]} {item["category"]}',
+                    unsafe_allow_html=True,
+                )
 
         # --- Flow Tree ---
         st.markdown("---")

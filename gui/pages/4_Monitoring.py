@@ -21,6 +21,8 @@ st.set_page_config(
 # i18n
 from gui.i18n import init as i18n_init, t
 i18n_init(st.session_state.get("locale", "en"))
+from gui.components.theme import inject_theme
+inject_theme()
 
 # Auth
 from gui.utils.auth import require_auth, render_user_info, check_permission

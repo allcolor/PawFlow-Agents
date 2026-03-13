@@ -182,22 +182,6 @@ class PyFi2ApiClient:
     def get_streaming_stats(self) -> Dict:
         return self._get("/api/v1/monitoring/streaming")
 
-    # === Scheduler ===
-
-    def list_jobs(self) -> List[Dict]:
-        return self._get("/api/v1/scheduler/")
-
-    def create_job(self, job_id: str, flow_path: str, cron_expression: str,
-                   enabled: bool = True, parameters: Dict = None) -> Dict:
-        body = {"job_id": job_id, "flow_path": flow_path,
-                "cron_expression": cron_expression, "enabled": enabled}
-        if parameters:
-            body["parameters"] = parameters
-        return self._post("/api/v1/scheduler/", body)
-
-    def delete_job(self, job_id: str) -> Dict:
-        return self._delete(f"/api/v1/scheduler/{job_id}")
-
     # === Workers ===
 
     def list_workers(self) -> List[Dict]:

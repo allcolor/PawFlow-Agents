@@ -37,10 +37,17 @@ def render_schema_fields(
 
         if param_type == "select":
             options = param_schema.get("options", [])
-            idx = options.index(default) if default and default in options else 0
-            result[param_name] = st.selectbox(
-                label, options=options, index=idx, key=key, help=description,
-            )
+            # If value is an expression ${...}, use text_input so user can edit it
+            if isinstance(default, str) and default.startswith("${"):
+                result[param_name] = st.text_input(
+                    label, value=default, key=key,
+                    help=f"{description} (options: {', '.join(options)})" if options else description,
+                )
+            else:
+                idx = options.index(default) if default and default in options else 0
+                result[param_name] = st.selectbox(
+                    label, options=options, index=idx, key=key, help=description,
+                )
 
         elif param_type == "boolean":
             result[param_name] = st.checkbox(

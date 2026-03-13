@@ -51,14 +51,16 @@ if "initialized" not in st.session_state:
     st.session_state.execution_results = []
     st.session_state.selected_flow_id = None
 
-# CSS personnalisé
+# Global iOS-style theme + custom CSS classes
+from gui.components.theme import inject_theme
+inject_theme()
 st.markdown(
     """
     <style>
     .main-header {
         font-size: 2.5rem;
         font-weight: 700;
-        background: linear-gradient(90deg, #1f77b4 0%, #2ca02c 100%);
+        background: linear-gradient(90deg, #007AFF 0%, #34C759 100%);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
         margin-bottom: 1rem;
@@ -70,26 +72,21 @@ st.markdown(
     }
     .flow-card {
         padding: 1rem;
-        border-radius: 0.5rem;
+        border-radius: 10px;
         margin-bottom: 1rem;
-        background: #f5f5f5;
+        background: rgba(0, 0, 0, 0.05);
     }
     .success-card {
         padding: 1rem;
-        border-radius: 0.5rem;
-        background: #d4edda;
-        border-left: 4px solid #28a745;
+        border-radius: 10px;
+        background: rgba(52, 199, 89, 0.1);
+        border-left: 4px solid #34C759;
     }
     .error-card {
         padding: 1rem;
-        border-radius: 0.5rem;
-        background: #f8d7da;
-        border-left: 4px solid #dc3545;
-    }
-    /* Hide Streamlit deploy button */
-    .stDeployButton, [data-testid="stToolbar"] .stDeployButton,
-    header [data-testid="stToolbar"] button[kind="header"] {
-        display: none !important;
+        border-radius: 10px;
+        background: rgba(255, 59, 48, 0.1);
+        border-left: 4px solid #FF3B30;
     }
     </style>
     """,

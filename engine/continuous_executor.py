@@ -188,11 +188,14 @@ class ContinuousFlowExecutor:
         self._connections.build_from_flow(flow_dict)
 
     def _resolve_service_configs(self, flow: Flow):
-        """Resolve ${flow.parameters.*} expressions in service configs.
+        """Resolve expressions in service configs (cascade-safe).
 
         Services don't receive ParameterContext like tasks do, so we
         resolve expressions in their config dicts using the flow's
         parameter context before they are connected.
+
+        Cascading: if ${flow.parameters.x} resolves to "${secrets.global.y}",
+        a second pass resolves the inner expression too.
         """
         from core.expression import resolve_expression
         params = self._parameter_context._params if self._parameter_context else {}
@@ -200,7 +203,11 @@ class ContinuousFlowExecutor:
         for service_id, service in flow.services.items():
             for key, value in list(service.config.items()):
                 if isinstance(value, str) and '${' in value:
-                    service.config[key] = resolve_expression(value, parameters=params)
+                    resolved = resolve_expression(value, parameters=params)
+                    # Second pass for cascading expressions
+                    if isinstance(resolved, str) and '${' in resolved:
+                        resolved = resolve_expression(resolved, parameters=params)
+                    service.config[key] = resolved
 
     @property
     def task_states(self) -> TaskStateManager:
@@ -427,6 +434,13 @@ class ContinuousFlowExecutor:
             if (self._checkpoint_mgr and
                     time.time() - self._last_checkpoint_time > self._checkpoint_interval):
                 self._save_checkpoint()
+
+        # After the scheduling loop exits:
+        # If we auto-stopped with empty queues, clear stale checkpoints
+        # to prevent restoring outdated FlowFiles on next start.
+        if self._checkpoint_mgr and not self._has_persistent_sources:
+            if self._connections.all_empty():
+                self._checkpoint_mgr.clear()
 
     # -- Task Execution (transactional) --
 
@@ -952,8 +966,11 @@ class ContinuousFlowExecutor:
         return self._connections.get_all_stats()
 
     def get_all_task_states(self) -> Dict[str, dict]:
-        """Get all task states."""
-        return self._task_states.get_all_states()
+        """Get all task states, enriched with in_flight processing indicator."""
+        states = self._task_states.get_all_states()
+        for tid, s in states.items():
+            s["in_flight"] = self._in_flight.get(tid, False)
+        return states
 
     def get_status(self) -> Dict[str, Any]:
         """Get overall executor status."""

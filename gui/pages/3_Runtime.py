@@ -27,6 +27,8 @@ from engine.data_preview import DataPreviewManager
 # i18n
 from gui.i18n import init as i18n_init, t
 i18n_init(st.session_state.get("locale", "en"))
+from gui.components.theme import inject_theme
+inject_theme()
 
 # Auth
 from gui.utils.auth import require_auth, render_user_info, check_permission
@@ -59,29 +61,13 @@ def _get_service_schema_rt(svc_type: str):
 
 
 def render_sidebar():
-    """Barre latérale de navigation."""
+    """Barre latérale — deployment treeview only (page nav is handled by Streamlit)."""
     with st.sidebar:
-        st.markdown(f"# 🚀 {t('app.name')}")
         st.markdown("---")
 
-        menu = st.selectbox(
-            t("common.navigation"),
-            [
-                f"🏠 {t('nav.dashboard')}",
-                f"✏️ {t('nav.editor')}",
-                f"▶️ {t('nav.runtime')}",
-                f"📊 {t('nav.monitoring')}",
-                f"⚙️ {t('nav.settings')}",
-                f"📚 {t('nav.documentation')}",
-            ],
-            index=2,
-        )
-
-        st.markdown("---")
-        st.markdown(f"### {t('common.status')}")
-        st.info(f"{t('dashboard.flows')}: {len(st.session_state.flows)}")
-
-        return menu
+        # Deployment treeview
+        from gui.components.deployment_tree import render_deployment_tree
+        render_deployment_tree()
 
 
 def initialize_state():
@@ -93,21 +79,13 @@ def initialize_state():
 
 
 
-def _get_executors() -> Dict[str, ContinuousFlowExecutor]:
-    """Get all continuous executors from the global registry.
-
-    Uses a process-level singleton that survives page refreshes.
-    Also restores executors from disk on first access after server restart,
-    and syncs with flows started by other components (e.g. agent tools).
-    """
+def _get_executor_registry():
+    """Get the executor registry singleton, restoring from disk on first access."""
     from gui.services.executor_registry import ExecutorRegistry
     registry = ExecutorRegistry.get_instance()
 
     # Restore from disk on first access (e.g. after server restart)
     registry.restore_from_disk()
-
-    # Sync any flows started by agent tools or other components
-    registry.sync_from_disk()
 
     # Migrate legacy session_state executors (one-time)
     if "_continuous_executors" in st.session_state:
@@ -123,7 +101,7 @@ def _get_executors() -> Dict[str, ContinuousFlowExecutor]:
         if registry.get(fid) is None:
             registry.register(fid, legacy)
 
-    return registry.get_all()
+    return registry
 
 
 def _hot_update_flow(executor: ContinuousFlowExecutor):
@@ -171,22 +149,64 @@ def _hot_update_flow(executor: ContinuousFlowExecutor):
         st.error(t("runtime.flow_file_not_found", flow_id=flow_id))
 
 
+@st.fragment(run_every=5)
+def _sync_deployment_statuses():
+    """Periodically sync deployment statuses with running executors."""
+    reg = _get_executor_registry()
+    reg.cleanup_dead()
+    from gui.services.deployment_registry import DeploymentRegistry
+    dep_reg = DeploymentRegistry.get_instance()
+    dep_reg.sync_with_executors()
+
+
 def render_continuous_execution():
-    """Interface for NiFi-style continuous execution with multi-executor support."""
+    """Interface for NiFi-style continuous execution with deployment model."""
     st.markdown(f"### 🔄 {t('runtime.continuous')}")
     st.caption(t("runtime.continuous_desc"))
 
-    executors = _get_executors()
+    # Auto-sync statuses every 5 seconds
+    _sync_deployment_statuses()
 
-    # -- Clean up dead executors --
-    from gui.services.executor_registry import ExecutorRegistry
-    registry = ExecutorRegistry.get_instance()
-    dead = [fid for fid, ex in executors.items() if ex is None]
-    for fid in dead:
-        registry.unregister(fid)
+    registry = _get_executor_registry()
+    executors = registry.get_all()
 
-    # -- Summary bar of all running executors --
-    if executors:
+    # Determine what to show based on treeview selection
+    selected = st.session_state.get("rt_selected_instance")
+
+    if selected == "__new__":
+        _render_new_executor_form()
+        return
+
+    if selected:
+        # Check if this is a running instance with an executor
+        executor = executors.get(selected)
+        if executor is not None:
+            _render_executor_dashboard(executor, selected, executors)
+            return
+
+        # Stopped/error instance — show stopped panel
+        from gui.services.deployment_registry import DeploymentRegistry
+        dep_reg = DeploymentRegistry.get_instance()
+        inst = dep_reg.get(selected)
+        if inst is not None:
+            _render_stopped_instance_panel(inst)
+            return
+
+        # Instance not found (stale selection)
+        st.session_state.pop("rt_selected_instance", None)
+
+    # No selection — overview
+    if not executors:
+        from gui.services.deployment_registry import DeploymentRegistry
+        dep_reg = DeploymentRegistry.get_instance()
+        all_instances = dep_reg.get_all()
+        if not all_instances:
+            st.info(t("runtime.no_deployments"))
+            st.markdown(t("runtime.deploy_new") + " ⬅️")
+        else:
+            st.info(f"{len(all_instances)} deployment(s), none running. Select one from the sidebar.")
+    else:
+        # Quick overview of running executors
         st.markdown("#### " + t('runtime.continuous.status'))
         cols = st.columns(min(len(executors), 4))
         for i, (fid, ex) in enumerate(executors.items()):
@@ -199,34 +219,12 @@ def render_continuous_execution():
                     st.caption(f"v{flow_ver} | {s['tasks_running']} running | {s['total_queued_flowfiles']} queued")
                 except Exception:
                     st.markdown(f"❓ **{fid}**")
-        st.markdown("---")
-
-    # -- Executor selector (view existing or start new) --
-    options = list(executors.keys()) + [f"➕ {t('runtime.new_flow')}"]
-    selected_view = st.selectbox(
-        t('runtime.select_flow'),
-        options=options,
-        index=len(options) - 1 if not executors else 0,
-        key="cont_view_select",
-    )
-
-    # -- Start new flow --
-    if selected_view == f"➕ {t('runtime.new_flow')}":
-        _render_new_executor_form(executors)
-        return
-
-    # -- View existing executor --
-    executor = executors.get(selected_view)
-    if executor is None:
-        st.warning(t("runtime.executor_not_found"))
-        return
-
-    _render_executor_dashboard(executor, selected_view, executors)
+        st.caption("Select an instance from the sidebar to view details.")
 
 
-def _render_new_executor_form(executors: Dict[str, ContinuousFlowExecutor]):
-    """Form to start a new continuous executor."""
-    st.info(t('runtime.select_flow'))
+def _render_new_executor_form():
+    """Form to deploy and start a new flow instance."""
+    st.markdown(f"#### ➕ {t('runtime.deploy_new')}")
 
     flow_service = FlowService()
     flows_dir = Path("flows")
@@ -239,7 +237,7 @@ def _render_new_executor_form(executors: Dict[str, ContinuousFlowExecutor]):
     for jf in json_files:
         try:
             flow = flow_service.parse_from_file(str(jf))
-            flow_map[f"{flow.name} ({flow.id})"] = flow
+            flow_map[f"{flow.name} ({flow.id})"] = (flow, str(jf))
         except Exception:
             pass
 
@@ -247,18 +245,34 @@ def _render_new_executor_form(executors: Dict[str, ContinuousFlowExecutor]):
         st.warning(t('dashboard.no_flows'))
         return
 
-    # Filter out already-running flows
-    running_ids = set(executors.keys())
-    available = {k: v for k, v in flow_map.items() if v.id not in running_ids}
-    if not available:
-        st.info(t("runtime.all_flows_running"))
-        return
-
+    # Template selection — no filtering, same template can be deployed N times
     selected = st.selectbox(
-        t('runtime.select_flow'),
-        options=list(available.keys()),
+        t('runtime.template_source'),
+        options=list(flow_map.keys()),
         key="cont_flow_select",
     )
+
+    # Owner selection
+    owner_options = [t("runtime.owner_global")]
+    try:
+        from core.security import SecurityManager
+        sm = SecurityManager.get_instance()
+        users = sm.list_users() if hasattr(sm, 'list_users') else []
+        owner_options += [u.get("username", u) if isinstance(u, dict) else str(u) for u in users]
+    except Exception:
+        pass
+    # Add current user if not in list
+    current_user = session.get("username", "") if session else ""
+    if current_user and current_user not in owner_options:
+        owner_options.append(current_user)
+
+    owner_choice = st.selectbox(
+        t("runtime.assign_owner"),
+        options=owner_options,
+        key="cont_owner",
+    )
+    owner = None if owner_choice == t("runtime.owner_global") else owner_choice
+
     col1, col2 = st.columns(2)
     with col1:
         max_workers = st.number_input(t("settings.max_workers"), value=4, min_value=1, max_value=32, key="cont_workers")
@@ -267,87 +281,822 @@ def _render_new_executor_form(executors: Dict[str, ContinuousFlowExecutor]):
 
     # Flow parameters override
     cont_params = {}
-    flow_preview = available[selected]
+    flow_preview, template_path = flow_map[selected]
     preview_params = flow_preview.parameters if hasattr(flow_preview, 'parameters') else {}
     if preview_params:
-        st.markdown("**" + t('runtime.parameters') + ":**")
+        st.markdown("**" + t('runtime.instance_params') + ":**")
         for pname, pdefault in preview_params.items():
             cont_params[pname] = st.text_input(
                 f"📎 {pname}", value=str(pdefault), key=f"cont_param_{pname}",
             )
 
-    # Service configuration override
-    flow_obj = available[selected]
+    # Service configuration override (local config or forward to global)
     flow_services = {}
     try:
-        for jf in json_files:
-            _f = flow_service.parse_from_file(str(jf))
-            if _f.id == flow_obj.id:
-                raw = _json.loads(jf.read_text(encoding="utf-8"))
-                flow_services = raw.get("services", {})
-                break
+        raw = _json.loads(Path(template_path).read_text(encoding="utf-8"))
+        flow_services = raw.get("services", {})
     except Exception:
         pass
 
+    svc_forwards = {}  # flow_svc_id → global_svc_id (or None for local)
     if flow_services:
         from gui.components.schema_form import render_schema_fields as _render_fields
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        gsvc_reg = GlobalServiceRegistry.get_instance()
 
         with st.expander(f"🔌 {t('settings.services')}", expanded=True):
             svc_overrides = {}
             for svc_id, svc_def in flow_services.items():
                 svc_type = svc_def.get("type", "?")
-                st.markdown(f"**{svc_id}** (`{svc_type}`)")
                 svc_config = svc_def.get("parameters", svc_def.get("config", {}))
 
-                schema = _get_service_schema_rt(svc_type)
-                if schema:
-                    edited_config = _render_fields(schema, svc_config, key_prefix=f"rt_svc_{svc_id}")
-                else:
-                    edited_config = {}
-                    for cfg_key, cfg_val in svc_config.items():
-                        if isinstance(cfg_val, bool):
-                            edited_config[cfg_key] = st.checkbox(
-                                cfg_key, value=cfg_val, key=f"rt_svc_{svc_id}_{cfg_key}")
-                        elif isinstance(cfg_val, (int, float)):
-                            edited_config[cfg_key] = st.number_input(
-                                cfg_key, value=cfg_val, key=f"rt_svc_{svc_id}_{cfg_key}")
-                        else:
-                            edited_config[cfg_key] = st.text_input(
-                                cfg_key, value=str(cfg_val), key=f"rt_svc_{svc_id}_{cfg_key}")
+                # Check for compatible global services
+                compatible = gsvc_reg.get_compatible(svc_type)
+                options = [t("runtime.svc_use_local")]
+                option_ids = [None]
+                for gs in compatible:
+                    label = f"🔌 {gs.service_id}"
+                    if gs.description:
+                        label += f" — {gs.description}"
+                    if not gs.enabled:
+                        label += f" ({t('common.disabled')})"
+                    options.append(label)
+                    option_ids.append(gs.service_id)
 
-                svc_overrides[svc_id] = {"type": svc_type, "config": edited_config}
+                choice_idx = st.selectbox(
+                    f"**{svc_id}** (`{svc_type}`)",
+                    options=range(len(options)),
+                    format_func=lambda i, opts=options: opts[i],
+                    key=f"rt_svc_mode_{svc_id}",
+                )
+                chosen_global = option_ids[choice_idx]
+                svc_forwards[svc_id] = chosen_global
+
+                # Only show local config if not forwarding
+                if chosen_global is None:
+                    schema = _get_service_schema_rt(svc_type)
+                    if schema:
+                        edited_config = _render_fields(schema, svc_config, key_prefix=f"rt_svc_{svc_id}")
+                    else:
+                        edited_config = {}
+                        for cfg_key, cfg_val in svc_config.items():
+                            if isinstance(cfg_val, bool):
+                                edited_config[cfg_key] = st.checkbox(
+                                    cfg_key, value=cfg_val, key=f"rt_svc_{svc_id}_{cfg_key}")
+                            elif isinstance(cfg_val, (int, float)):
+                                edited_config[cfg_key] = st.number_input(
+                                    cfg_key, value=cfg_val, key=f"rt_svc_{svc_id}_{cfg_key}")
+                            else:
+                                edited_config[cfg_key] = st.text_input(
+                                    cfg_key, value=str(cfg_val), key=f"rt_svc_{svc_id}_{cfg_key}")
+                    svc_overrides[svc_id] = {"type": svc_type, "config": edited_config}
+                else:
+                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{chosen_global}**")
+
             st.session_state._cont_svc_overrides = svc_overrides
 
+    # Build service_overrides dict (only non-None forwards)
+    service_overrides = {k: v for k, v in svc_forwards.items() if v is not None}
+
     if check_permission(session, "flow.execute"):
-        # Check if already running
-        flow = available[selected]
-        from gui.services.executor_registry import ExecutorRegistry
-        _already = ExecutorRegistry.get_instance().get(flow.id)
-        if _already is not None:
-            st.warning(f"Flow '{flow.id}' is already running. Select it from the list above.")
-        elif st.button(f"▶️ {t('runtime.continuous.start')}", type="primary", width="stretch"):
-            # Apply service config overrides (skip empty values not in original config
-            # to avoid overriding provider-preset defaults like scope, authorize_url)
+        if st.button(f"🚀 {t('runtime.deploy_and_start')}", type="primary", width="stretch"):
+            flow, tmpl_path = flow_map[selected]
+
+            # Deploy via DeploymentRegistry
+            from gui.services.deployment_registry import DeploymentRegistry
+            dep_reg = DeploymentRegistry.get_instance()
+            # Collect local service configs for persistence
+            svc_ovr = st.session_state.get("_cont_svc_overrides", {})
+            svc_configs_to_save = {}
+            for svc_id, svc_def in svc_ovr.items():
+                cfg = svc_def.get("config", {})
+                if cfg:
+                    svc_configs_to_save[svc_id] = cfg
+
+            instance_id = dep_reg.deploy(
+                template_path=tmpl_path,
+                owner=owner,
+                parameters=cont_params if cont_params else None,
+                max_workers=max_workers,
+                max_retries=max_retries,
+                source="gui",
+                service_overrides=service_overrides if service_overrides else None,
+                service_configs=svc_configs_to_save if svc_configs_to_save else None,
+            )
+
+            # Re-parse flow for executor (fresh copy)
+            flow = flow_service.parse_from_file(tmpl_path)
+
+            # Apply service config overrides (local services)
             svc_ovr = st.session_state.get("_cont_svc_overrides", {})
             if svc_ovr and hasattr(flow, 'services'):
                 for svc_id, svc_def in svc_ovr.items():
                     if svc_id in flow.services:
                         svc_obj = flow.services[svc_id]
                         for k, v in svc_def.get("config", {}).items():
-                            # Only apply if value is non-empty or key already exists in config
                             if v or v == 0 or v is False or k in svc_obj.config:
                                 svc_obj.config[k] = v
+
+            # Apply global service forwards
+            _apply_global_service_forwards(flow, service_overrides)
+
             ex = ContinuousFlowExecutor(
                 flow, max_workers=max_workers, max_retries=max_retries,
                 parameters=cont_params if cont_params else None,
             )
             ex.start()
             from gui.services.executor_registry import ExecutorRegistry
-            ExecutorRegistry.get_instance().register(flow.id, ex)
+            ExecutorRegistry.get_instance().register(instance_id, ex)
+            st.session_state["rt_selected_instance"] = instance_id
             st.rerun()
     else:
-        st.button(f"▶️ {t('runtime.continuous.start')}", width="stretch", disabled=True,
+        st.button(f"🚀 {t('runtime.deploy_and_start')}", width="stretch", disabled=True,
                   help=t("auth.no_permission"))
+
+
+def _render_stopped_snapshot(inst):
+    """Show flow view, task states and queue stats — from checkpoint or template."""
+    from engine.checkpoint import CheckpointManager
+
+    mgr = CheckpointManager(inst.flow_id)
+    data = mgr.load_latest_checkpoint() or {}
+
+    task_states = data.get("task_states", {})
+    queue_data = data.get("queues", [])
+
+    # Build queue_stats in the format the visualizer expects
+    queue_stats = []
+    for qd in queue_data:
+        queue_stats.append({
+            "source": qd["source"],
+            "target": qd["target"],
+            "relationship": qd.get("relationship", "success"),
+            "queue_size": len(qd.get("flowfiles", [])),
+            "max_queue_size": 10000,
+            "backpressured": False,
+            "flowfiles_in": 0,
+            "flowfiles_out": 0,
+            "total_bytes": sum(ff.get("size", 0) for ff in qd.get("flowfiles", [])),
+        })
+
+    # Load tasks and relations from template to fill gaps
+    known_edges = {(qd["source"], qd["target"]) for qd in queue_data}
+    if inst.flow_path and Path(inst.flow_path).exists():
+        try:
+            raw = _json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
+            # Add missing edges from template
+            for rel in raw.get("relations", []):
+                key = (rel["from"], rel["to"])
+                if key not in known_edges:
+                    queue_stats.append({
+                        "source": rel["from"],
+                        "target": rel["to"],
+                        "relationship": rel.get("type", "success"),
+                        "queue_size": 0,
+                        "max_queue_size": 10000,
+                        "backpressured": False,
+                        "flowfiles_in": 0,
+                        "flowfiles_out": 0,
+                        "total_bytes": 0,
+                    })
+            # Add missing tasks from template
+            for tid, tconf in raw.get("tasks", {}).items():
+                if tid not in task_states:
+                    task_states[tid] = {
+                        "task_id": tid,
+                        "task_type": tconf.get("type", "?"),
+                        "state": "stopped",
+                        "run_count": 0,
+                        "error_count": 0,
+                        "flowfiles_in": 0,
+                        "flowfiles_out": 0,
+                        "bytes_in": 0,
+                        "bytes_out": 0,
+                    }
+        except Exception:
+            pass
+
+    if not task_states:
+        return
+
+    # -- KPIs --
+    st.markdown("---")
+    snap_ts = data.get("timestamp")
+    if snap_ts:
+        st.caption(f"📸 {t('runtime.last_run_snapshot')} ({snap_ts})")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric(t("dashboard.total_tasks"), len(task_states))
+    with col2:
+        total_runs = sum(ts.get("run_count", 0) for ts in task_states.values())
+        st.metric(t("runtime.performance.runs"), total_runs)
+    with col3:
+        total_errors = sum(ts.get("error_count", 0) for ts in task_states.values())
+        st.metric(t("runtime.performance.errors"), total_errors)
+    with col4:
+        total_queued = sum(qs["queue_size"] for qs in queue_stats)
+        st.metric(t("runtime.continuous.queue_stats"), total_queued)
+
+    # -- Flow View --
+    _fid = inst.instance_id
+    _frozen_key = f"_rt_frozen_{_fid}"
+
+    if _frozen_key not in st.session_state:
+        st.session_state[_frozen_key] = True
+
+    is_frozen = st.session_state[_frozen_key]
+
+    # Toolbar placeholder — rendered visually above, filled after canvas
+    # so dirty detection uses up-to-date positions.
+    toolbar_placeholder = st.empty()
+
+    from gui.components.runtime_visualizer import (
+        render_runtime_flow_static, save_layout_to_disk,
+        reload_positions_from_disk, is_layout_dirty, _pos_key as viz_pos_key,
+        _disk_key as viz_disk_key,
+    )
+
+    # Check if auto-layout was requested
+    auto_key = f"_rt_do_auto_layout_static_{_fid}"
+    do_auto = st.session_state.pop(auto_key, False)
+
+    render_runtime_flow_static(task_states, queue_stats, height=400,
+                               use_auto_layout=do_auto, instance_id=_fid,
+                               frozen=is_frozen)
+
+    # Now fill toolbar with correct dirty state
+    dirty = is_layout_dirty(_fid)
+    with toolbar_placeholder.container():
+        col_title, col_auto, col_save, col_cancel, col_freeze = st.columns([3, 1, 1, 1, 1])
+        with col_title:
+            st.markdown(f"#### 🗺️ {t('runtime.flow_view')}")
+        with col_auto:
+            if st.button(f"📐 {t('runtime.auto_layout')}", key=f"auto_layout_static_{_fid}",
+                          disabled=is_frozen):
+                st.session_state[auto_key] = True
+                st.rerun()
+        with col_save:
+            if st.button(f"💾 {t('common.save')}", key=f"save_layout_static_{_fid}",
+                          disabled=(is_frozen or not dirty)):
+                cur = st.session_state.get(viz_pos_key(_fid), {})
+                if cur:
+                    save_layout_to_disk(_fid, cur)
+                    st.session_state[viz_disk_key(_fid)] = dict(cur)
+                st.session_state[_frozen_key] = True
+                st.session_state.pop("_rt_fp_stopped", None)
+                st.session_state.pop("_rt_state_stopped", None)
+                st.rerun()
+        with col_cancel:
+            if st.button(f"↩ {t('common.cancel')}", key=f"cancel_layout_static_{_fid}",
+                          disabled=(is_frozen or not dirty)):
+                reload_positions_from_disk(_fid, view_suffix="_stopped")
+                st.session_state[_frozen_key] = True
+                st.rerun()
+        with col_freeze:
+            if is_frozen:
+                if st.button(f"🔓 {t('runtime.unfreeze')}", key=f"unfreeze_static_{_fid}"):
+                    st.session_state[_frozen_key] = False
+                    st.rerun()
+            else:
+                if st.button(f"🔒 {t('runtime.freeze')}", key=f"freeze_static_{_fid}"):
+                    st.session_state[_frozen_key] = True
+                    st.rerun()
+
+    # -- Task Performance --
+    with st.expander(f"📊 {t('runtime.performance.title')}", expanded=False):
+        perf_data = []
+        for task_id, state in task_states.items():
+            runs = state.get("run_count", 0)
+            errors = state.get("error_count", 0)
+            ff_in = state.get("flowfiles_in", 0)
+            ff_out = state.get("flowfiles_out", 0)
+            perf_data.append({
+                "Task": task_id,
+                t("common.type"): state.get("task_type", ""),
+                t("runtime.performance.runs"): runs,
+                t("runtime.performance.errors"): errors,
+                "FF In": ff_in,
+                "FF Out": ff_out,
+            })
+        if perf_data:
+            import pandas as pd
+            df = pd.DataFrame(perf_data)
+            st.dataframe(df, width="stretch", hide_index=True)
+
+    # -- Queue Management --
+    if queue_stats:
+        with st.expander(f"📦 {t('queue.title')}", expanded=False):
+            for idx, qs in enumerate(queue_stats):
+                q_size = qs["queue_size"]
+                src, tgt = qs["source"], qs["target"]
+                st.markdown(
+                    f"{'🟢' if q_size == 0 else '🟡'} **{src} → {tgt}** : "
+                    f"{q_size}/{qs['max_queue_size']} | {qs.get('total_bytes', 0)} bytes"
+                )
+
+            # Clear all queues button (clears checkpoint)
+            if q_size_total := sum(qs["queue_size"] for qs in queue_stats):
+                if st.button(f"🗑️ {t('queue.clear_all')}", key="clear_stopped_queues"):
+                    mgr.clear()
+                    st.success(t("queue.cleared"))
+                    st.rerun()
+
+
+def _render_stopped_instance_panel(inst):
+    """Panel for a stopped/errored deployment instance."""
+    from gui.services.deployment_registry import DeploymentRegistry
+    import time as _time
+
+    status_icon = "🔴" if inst.status == "stopped" else "🔥"
+    st.markdown(f"### {status_icon} {inst.flow_name}")
+    st.caption(f"{t('runtime.flow_stopped_info')}")
+
+    # Metadata
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown(f"**{t('runtime.template_source')}:** {inst.flow_id}")
+        st.markdown(f"**{t('common.status')}:** {inst.status}")
+    with col2:
+        st.markdown(f"**{t('runtime.assign_owner')}:** {inst.owner or t('runtime.owner_global')}")
+        st.markdown(f"**Source:** {inst.source}")
+    with col3:
+        created = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(inst.created_at))
+        st.markdown(f"**Created:** {created}")
+        if inst.last_stopped:
+            stopped = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(inst.last_stopped))
+            st.markdown(f"**Stopped:** {stopped}")
+
+    if inst.error_message:
+        st.error(f"Error: {inst.error_message}")
+
+    # Editable parameters section
+    _render_instance_parameters(inst, editable=True)
+
+    # Editable services section
+    _render_instance_services(inst, editable=True)
+
+    # -- Last run snapshot (from checkpoint) --
+    _render_stopped_snapshot(inst)
+
+    st.markdown("---")
+
+    # Actions
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if check_permission(session, "flow.execute"):
+            if st.button(f"▶️ {t('runtime.start')}", type="primary", width="stretch", key="start_stopped"):
+                # Re-parse template and start
+                try:
+                    flow_service = FlowService()
+                    flow_path = inst.flow_path
+                    if not flow_path or not Path(flow_path).exists():
+                        # Try to find it
+                        from gui.services.deployment_registry import DeploymentRegistry
+                        flow_path = DeploymentRegistry._find_flow_path(inst.flow_id)
+                    if not flow_path:
+                        st.error(t("runtime.flow_file_not_found", flow_id=inst.flow_id))
+                    else:
+                        flow = flow_service.parse_from_file(flow_path)
+                        # Apply saved service configs (local overrides)
+                        if inst.service_configs:
+                            _apply_service_configs(flow, inst.service_configs)
+                        # Apply global service forwards
+                        if inst.service_overrides:
+                            _apply_global_service_forwards(flow, inst.service_overrides)
+                        ex = ContinuousFlowExecutor(
+                            flow,
+                            max_workers=inst.max_workers,
+                            max_retries=inst.max_retries,
+                            parameters=inst.parameters if inst.parameters else None,
+                        )
+                        ex.start()
+                        from gui.services.executor_registry import ExecutorRegistry
+                        ExecutorRegistry.get_instance().register(inst.instance_id, ex)
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"{t('common.error')}: {e}")
+        else:
+            st.button(f"▶️ {t('runtime.start')}", width="stretch", disabled=True,
+                      help=t("auth.no_permission"))
+
+    with col2:
+        if check_permission(session, "flow.execute"):
+            if st.button(f"🗑️ {t('runtime.undeploy')}", width="stretch", key="undeploy_stopped"):
+                dep_reg = DeploymentRegistry.get_instance()
+                dep_reg.undeploy(inst.instance_id)
+                st.session_state.pop("rt_selected_instance", None)
+                st.rerun()
+        else:
+            st.button(f"🗑️ {t('runtime.undeploy')}", width="stretch", disabled=True,
+                      help=t("auth.no_permission"))
+
+    with col3:
+        # Reassign owner
+        owner_options = [t("runtime.owner_global")]
+        try:
+            from core.security import SecurityManager
+            sm = SecurityManager.get_instance()
+            users = sm.list_users() if hasattr(sm, 'list_users') else []
+            owner_options += [u.get("username", u) if isinstance(u, dict) else str(u) for u in users]
+        except Exception:
+            pass
+        current_user = session.get("username", "") if session else ""
+        if current_user and current_user not in owner_options:
+            owner_options.append(current_user)
+
+        current_idx = 0
+        if inst.owner and inst.owner in owner_options:
+            current_idx = owner_options.index(inst.owner)
+
+        new_owner = st.selectbox(
+            t("runtime.assign_owner"),
+            options=owner_options,
+            index=current_idx,
+            key="reassign_owner",
+        )
+        effective_owner = None if new_owner == t("runtime.owner_global") else new_owner
+        if effective_owner != inst.owner:
+            if st.button("✅ Save", key="save_owner"):
+                dep_reg = DeploymentRegistry.get_instance()
+                dep_reg.set_owner(inst.instance_id, effective_owner)
+                st.rerun()
+
+
+def _render_instance_services(inst, editable: bool = False):
+    """Show service configuration for a deployed instance.
+
+    When editable (stopped): allow choosing local config vs forward to global,
+    and editing local service parameters. Saves service_overrides to DeploymentRegistry.
+    When read-only (running): show current service config and forwarding status.
+    """
+    from gui.services.deployment_registry import DeploymentRegistry
+
+    # Load template to get service definitions
+    flow_services = {}
+    if inst.flow_path and Path(inst.flow_path).exists():
+        try:
+            raw = _json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
+            flow_services = raw.get("services", {})
+        except Exception:
+            pass
+
+    if not flow_services:
+        return
+
+    with st.expander(f"🔌 {t('settings.services')}", expanded=False):
+        if editable:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            gsvc_reg = GlobalServiceRegistry.get_instance()
+
+            current_overrides = dict(inst.service_overrides or {})
+            new_overrides = {}
+
+            # Track local config fields per service for saving
+            svc_field_keys = {}  # svc_id → {cfg_key: session_state_key}
+
+            for svc_id, svc_def in flow_services.items():
+                svc_type = svc_def.get("type", "?")
+                # Merge: template defaults < saved instance configs
+                svc_config = dict(svc_def.get("parameters", svc_def.get("config", {})))
+                saved_cfg = (inst.service_configs or {}).get(svc_id, {})
+                svc_config.update(saved_cfg)
+
+                # Build options: local + compatible globals
+                compatible = gsvc_reg.get_compatible(svc_type)
+                options = [t("runtime.svc_use_local")]
+                option_ids = [None]
+                for gs in compatible:
+                    label = f"🔌 {gs.service_id}"
+                    if gs.description:
+                        label += f" — {gs.description}"
+                    if not gs.enabled:
+                        label += f" ({t('common.disabled')})"
+                    options.append(label)
+                    option_ids.append(gs.service_id)
+
+                # Current selection
+                current_global = current_overrides.get(svc_id)
+                default_idx = 0
+                if current_global and current_global in option_ids:
+                    default_idx = option_ids.index(current_global)
+
+                choice_idx = st.selectbox(
+                    f"**{svc_id}** (`{svc_type}`)",
+                    options=range(len(options)),
+                    format_func=lambda i, opts=options: opts[i],
+                    index=default_idx,
+                    key=f"stopped_svc_mode_{inst.instance_id}_{svc_id}",
+                )
+                chosen_global = option_ids[choice_idx]
+                if chosen_global:
+                    new_overrides[svc_id] = chosen_global
+
+                # Show local config fields if not forwarding
+                if chosen_global is None:
+                    field_keys = {}
+                    schema = _get_service_schema_rt(svc_type)
+                    if schema:
+                        from gui.components.schema_form import render_schema_fields
+                        render_schema_fields(
+                            schema, svc_config,
+                            key_prefix=f"stopped_svc_{inst.instance_id}_{svc_id}",
+                        )
+                        # Collect field keys from schema (flat dict: {param_name: {type, ...}})
+                        for prop_name in schema:
+                            sk = f"stopped_svc_{inst.instance_id}_{svc_id}_{prop_name}"
+                            field_keys[prop_name] = sk
+                    else:
+                        for cfg_key, cfg_val in svc_config.items():
+                            sk = f"stopped_svc_{inst.instance_id}_{svc_id}_{cfg_key}"
+                            st.text_input(
+                                cfg_key, value=str(cfg_val), disabled=False,
+                                key=sk,
+                            )
+                            field_keys[cfg_key] = sk
+                    svc_field_keys[svc_id] = field_keys
+                else:
+                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{chosen_global}**")
+
+            # Always show save button in editable mode
+            if st.button(f"💾 {t('common.save')} {t('settings.services')}",
+                         key=f"save_svc_{inst.instance_id}", type="primary"):
+                # Collect local config values from session_state
+                new_configs = {}
+                for svc_id, field_keys in svc_field_keys.items():
+                    cfg = {}
+                    for cfg_key, sk in field_keys.items():
+                        if sk in st.session_state:
+                            cfg[cfg_key] = st.session_state[sk]
+                    if cfg:
+                        new_configs[svc_id] = cfg
+
+                dep_reg = DeploymentRegistry.get_instance()
+                with dep_reg._data_lock:
+                    live = dep_reg._instances.get(inst.instance_id)
+                    if live:
+                        live.service_overrides = new_overrides
+                        live.service_configs = new_configs
+                dep_reg._save_instance(live or inst)
+                st.success(t("common.success"))
+                st.rerun()
+        else:
+            # Read-only: show current service config and forwarding
+            current_overrides = inst.service_overrides or {}
+            for svc_id, svc_def in flow_services.items():
+                svc_type = svc_def.get("type", "?")
+                forwarded_to = current_overrides.get(svc_id)
+
+                if forwarded_to:
+                    st.markdown(f"**{svc_id}** (`{svc_type}`) → 🔌 **{forwarded_to}**")
+                else:
+                    svc_config = svc_def.get("parameters", svc_def.get("config", {}))
+                    st.markdown(f"**{svc_id}** (`{svc_type}`)")
+                    for cfg_key, cfg_val in svc_config.items():
+                        st.text_input(
+                            cfg_key, value=str(cfg_val), disabled=True,
+                            key=f"ro_svc_{inst.instance_id}_{svc_id}_{cfg_key}",
+                        )
+
+
+def _apply_service_configs(flow, service_configs: Dict[str, Dict[str, Any]]):
+    """Apply saved instance service configs to flow services (local, non-forwarded)."""
+    if not service_configs:
+        return
+    for svc_id, cfg in service_configs.items():
+        if svc_id in flow.services and cfg:
+            svc = flow.services[svc_id]
+            for k, v in cfg.items():
+                svc.config[k] = v
+            logger.info("Applied custom config to service '%s': %s", svc_id, list(cfg.keys()))
+
+
+def _apply_global_service_forwards(flow, service_overrides: Dict[str, str]):
+    """Replace flow services with global service instances where forwarded."""
+    if not service_overrides:
+        return
+    from gui.services.global_service_registry import GlobalServiceRegistry
+    gsvc_reg = GlobalServiceRegistry.get_instance()
+    for flow_svc_id, global_svc_id in service_overrides.items():
+        live = gsvc_reg.get_live_instance(global_svc_id)
+        if live is not None and flow_svc_id in flow.services:
+            flow.services[flow_svc_id] = live
+            logger.info("Forwarded service '%s' → global '%s'", flow_svc_id, global_svc_id)
+        elif live is None:
+            logger.warning("Global service '%s' not connected, using local for '%s'",
+                          global_svc_id, flow_svc_id)
+
+
+def _render_instance_parameters(inst, editable: bool = False):
+    """Show instance parameters, editable when stopped."""
+    from gui.services.deployment_registry import DeploymentRegistry
+
+    # Load template to discover all available parameter keys
+    template_params = {}
+    if inst.flow_path and Path(inst.flow_path).exists():
+        try:
+            raw = _json.loads(Path(inst.flow_path).read_text(encoding="utf-8"))
+            template_params = raw.get("parameters", {})
+        except Exception:
+            pass
+
+    # Merge: template defaults + instance overrides
+    all_keys = list(template_params.keys())
+    for k in (inst.parameters or {}):
+        if k not in all_keys:
+            all_keys.append(k)
+
+    if not all_keys and not editable:
+        return
+
+    with st.expander(f"📎 {t('runtime.instance_params')}", expanded=bool(all_keys)):
+        if not all_keys and not editable:
+            st.caption(t("runtime.no_instance_params"))
+            return
+
+        if editable:
+            edited = {}
+            to_delete = None
+            for pname in all_keys:
+                is_extra = pname not in template_params
+                current = (inst.parameters or {}).get(pname, template_params.get(pname, ""))
+                if is_extra:
+                    pcols = st.columns([8, 1])
+                    with pcols[0]:
+                        edited[pname] = st.text_input(
+                            f"📎 {pname}", value=str(current),
+                            key=f"stopped_param_{inst.instance_id}_{pname}",
+                        )
+                    with pcols[1]:
+                        st.markdown("<br>", unsafe_allow_html=True)
+                        if st.button("🗑️", key=f"delparam_{inst.instance_id}_{pname}"):
+                            to_delete = pname
+                else:
+                    edited[pname] = st.text_input(
+                        f"📎 {pname}", value=str(current),
+                        key=f"stopped_param_{inst.instance_id}_{pname}",
+                    )
+
+            # Handle deletion
+            if to_delete:
+                edited.pop(to_delete, None)
+                dep_reg = DeploymentRegistry.get_instance()
+                with dep_reg._data_lock:
+                    live = dep_reg._instances.get(inst.instance_id)
+                    if live:
+                        live.parameters = edited
+                dep_reg._save_instance(live or inst)
+                st.rerun()
+
+            # Add new parameter
+            add_cols = st.columns([4, 4, 1])
+            with add_cols[0]:
+                new_key = st.text_input(
+                    t("common.name"), key=f"stopped_newparam_key_{inst.instance_id}",
+                    placeholder="new_param",
+                )
+            with add_cols[1]:
+                new_val = st.text_input(
+                    "Value", key=f"stopped_newparam_val_{inst.instance_id}",
+                    placeholder="value",
+                )
+            with add_cols[2]:
+                st.markdown("<br>", unsafe_allow_html=True)
+                add_clicked = st.button("➕", key=f"stopped_addparam_{inst.instance_id}")
+
+            if add_clicked and new_key and new_key.strip():
+                edited[new_key.strip()] = new_val
+                # Save immediately
+                dep_reg = DeploymentRegistry.get_instance()
+                with dep_reg._data_lock:
+                    live = dep_reg._instances.get(inst.instance_id)
+                    if live:
+                        live.parameters = edited
+                dep_reg._save_instance(inst)
+                st.rerun()
+
+            # Always show save button
+            if st.button(f"💾 {t('common.save')} {t('runtime.instance_params')}",
+                         key=f"save_params_{inst.instance_id}", type="primary"):
+                dep_reg = DeploymentRegistry.get_instance()
+                with dep_reg._data_lock:
+                    live = dep_reg._instances.get(inst.instance_id)
+                    if live:
+                        live.parameters = edited
+                dep_reg._save_instance(live or inst)
+                st.success(t("common.success"))
+                st.rerun()
+        else:
+            # Read-only display
+            for pname in all_keys:
+                val = (inst.parameters or {}).get(pname, template_params.get(pname, ""))
+                st.text_input(
+                    f"📎 {pname}", value=str(val), disabled=True,
+                    key=f"ro_param_{inst.instance_id}_{pname}",
+                )
+
+
+def _render_live_kpis_and_flow(executor: ContinuousFlowExecutor, instance_id: str):
+    """Toolbar + auto-refreshing fragment for KPIs and flow view."""
+    from datetime import timedelta
+    from gui.components.runtime_visualizer import (
+        render_runtime_flow, save_layout_to_disk, reload_positions_from_disk,
+        is_layout_dirty, _pos_key as viz_pos_key, _disk_key as viz_disk_key,
+    )
+
+    _frozen_key = f"_rt_frozen_{instance_id}"
+    if _frozen_key not in st.session_state:
+        st.session_state[_frozen_key] = True
+
+    # Toolbar placeholder — filled after fragment so dirty state is correct
+    toolbar_placeholder = st.empty()
+
+    # -- Auto-refreshing fragment (KPIs + canvas + selected task info) --
+    @st.fragment(run_every=timedelta(seconds=3))
+    def _live_fragment():
+        _status = executor.get_status()
+
+        # Detect flow stop → full rerun so controls/status outside fragment update
+        _was_running_key = f"_rt_was_running_{instance_id}"
+        _is_running = _status["is_running"]
+        _was_running = st.session_state.get(_was_running_key, _is_running)
+        st.session_state[_was_running_key] = _is_running
+        if _was_running and not _is_running:
+            st.rerun(scope="app")
+
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 1])
+        with c1:
+            st.metric(t("dashboard.total_tasks"), _status["tasks_total"])
+        with c2:
+            st.metric(t("runtime.running"), _status["tasks_running"])
+        with c3:
+            st.metric(t("runtime.performance.errors"), _status["tasks_errored"])
+        with c4:
+            st.metric(t("runtime.continuous.queue_stats"), _status["total_queued_flowfiles"])
+        with c5:
+            from datetime import datetime as _dt
+            _ts = executor.get_all_task_states()
+            _inflight = [tid for tid, s in _ts.items() if s.get("in_flight")]
+            st.caption(f"🔄 {_dt.now().strftime('%H:%M:%S')} | ✈ {_inflight or 'none'}")
+
+        auto_key = f"_rt_do_auto_layout_{instance_id}"
+        do_auto = st.session_state.pop(auto_key, False)
+        _frozen = st.session_state.get(_frozen_key, True)
+
+        selected = render_runtime_flow(executor, height=450,
+                                        use_auto_layout=do_auto, frozen=_frozen,
+                                        instance_id=instance_id)
+        if selected:
+            _all = executor.get_all_task_states()
+            ts = _all.get(selected, {})
+            if ts:
+                st.info(
+                    f"**{selected}** ({ts.get('task_type', '?')}) — "
+                    f"{t('common.status')}: {ts.get('state', '?')} | "
+                    f"{t('runtime.performance.runs')}: {ts.get('run_count', 0)} | "
+                    f"{t('runtime.performance.errors')}: {ts.get('error_count', 0)} | "
+                    f"In: {ts.get('flowfiles_in', 0)} Out: {ts.get('flowfiles_out', 0)}"
+                )
+
+    _live_fragment()
+
+    # Fill toolbar now (after canvas updated session_state)
+    is_frozen = st.session_state.get(_frozen_key, True)
+    dirty = is_layout_dirty(instance_id)
+    with toolbar_placeholder.container():
+        col_title, col_auto, col_save, col_cancel, col_freeze = st.columns([3, 1, 1, 1, 1])
+        with col_title:
+            st.markdown(f"#### 🗺️ {t('runtime.flow_view')}")
+        with col_auto:
+            if st.button(f"📐 {t('runtime.auto_layout')}", key=f"auto_layout_live_{instance_id}",
+                          disabled=is_frozen):
+                st.session_state[f"_rt_do_auto_layout_{instance_id}"] = True
+                st.rerun()
+        with col_save:
+            if st.button(f"💾 {t('common.save')}", key=f"save_layout_live_{instance_id}",
+                          disabled=(is_frozen or not dirty)):
+                cur = st.session_state.get(viz_pos_key(instance_id), {})
+                if cur:
+                    save_layout_to_disk(instance_id, cur)
+                    st.session_state[viz_disk_key(instance_id)] = dict(cur)
+                st.session_state[_frozen_key] = True
+                st.session_state.pop("_rt_fp_live", None)
+                st.session_state.pop("_rt_state_live", None)
+                st.rerun()
+        with col_cancel:
+            if st.button(f"↩ {t('common.cancel')}", key=f"cancel_layout_live_{instance_id}",
+                          disabled=(is_frozen or not dirty)):
+                reload_positions_from_disk(instance_id, view_suffix="_live")
+                st.session_state[_frozen_key] = True
+                st.rerun()
+        with col_freeze:
+            if is_frozen:
+                if st.button(f"🔓 {t('runtime.unfreeze')}", key=f"unfreeze_live_{instance_id}"):
+                    st.session_state[_frozen_key] = False
+                    st.rerun()
+            else:
+                if st.button(f"🔒 {t('runtime.freeze')}", key=f"freeze_live_{instance_id}"):
+                    st.session_state[_frozen_key] = True
+                    st.rerun()
 
 
 def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
@@ -383,25 +1132,28 @@ def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
             st.button(f"🔄 {t('common.refresh')}", width="stretch", disabled=True, key=f"refresh_d_{flow_id}")
     with col4:
         if check_permission(session, "flow.execute"):
-            if st.button(f"🗑️ {t('common.delete')}", width="stretch", key=f"del_{flow_id}"):
+            if st.button(f"🗑️ {t('runtime.undeploy')}", width="stretch", key=f"del_{flow_id}"):
                 executor.stop()
                 from gui.services.executor_registry import ExecutorRegistry
                 ExecutorRegistry.get_instance().unregister(flow_id)
+                from gui.services.deployment_registry import DeploymentRegistry
+                DeploymentRegistry.get_instance().undeploy(flow_id)
+                st.session_state.pop("rt_selected_instance", None)
                 st.rerun()
         else:
-            st.button(f"🗑️ {t('common.delete')}", width="stretch", disabled=True, key=f"del_d_{flow_id}")
+            st.button(f"🗑️ {t('runtime.undeploy')}", width="stretch", disabled=True, key=f"del_d_{flow_id}")
 
-    # -- KPIs --
+    # -- Live KPIs + Flow View (auto-refreshing) --
     st.markdown("---")
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric(t("dashboard.total_tasks"), status["tasks_total"])
-    with col2:
-        st.metric(t("runtime.running"), status["tasks_running"])
-    with col3:
-        st.metric(t("runtime.performance.errors"), status["tasks_errored"])
-    with col4:
-        st.metric(t("runtime.continuous.queue_stats"), status["total_queued_flowfiles"])
+    _render_live_kpis_and_flow(executor, flow_id)  # flow_id here is actually instance_id from caller
+
+    # -- Parameters (read-only for running) --
+    from gui.services.deployment_registry import DeploymentRegistry
+    dep_reg = DeploymentRegistry.get_instance()
+    running_inst = dep_reg.get(flow_id)
+    if running_inst:
+        _render_instance_parameters(running_inst, editable=False)
+        _render_instance_services(running_inst, editable=False)
 
     # -- Services --
     if hasattr(executor, '_flow') and executor._flow.services:
@@ -440,22 +1192,7 @@ def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
                                       key=f"svc_toggle_{flow_id}_{svc_id}",
                                       disabled=True, help=t("auth.no_permission"))
 
-    # -- Live Flow Visualizer --
-    st.markdown("---")
-    st.markdown(f"#### 🗺️ {t('runtime.flow_view')}")
-    from gui.components.runtime_visualizer import render_runtime_flow
-    selected_task = render_runtime_flow(executor, height=450)
-    if selected_task:
-        task_states_all = executor.get_all_task_states()
-        ts = task_states_all.get(selected_task, {})
-        if ts:
-            st.info(
-                f"**{selected_task}** ({ts.get('task_type', '?')}) — "
-                f"{t('common.status')}: {ts.get('state', '?')} | "
-                f"{t('runtime.performance.runs')}: {ts.get('run_count', 0)} | "
-                f"{t('runtime.performance.errors')}: {ts.get('error_count', 0)} | "
-                f"In: {ts.get('flowfiles_in', 0)} Out: {ts.get('flowfiles_out', 0)}"
-            )
+    # (Live Flow Visualizer is now inside the auto-refreshing fragment above)
 
     # -- Inject FlowFile --
     st.markdown("---")
@@ -647,12 +1384,17 @@ def _render_executor_dashboard(executor: ContinuousFlowExecutor, flow_id: str,
                         st.caption(f"{len(flowfiles)} FlowFile(s) (max 50)")
                         for ff_idx, ff in enumerate(flowfiles):
                             with st.container():
-                                fc1, fc2 = st.columns([3, 1])
+                                fc1, fc2, fc3 = st.columns([3, 1, 1])
                                 with fc1:
                                     ff_id = ff.process_id[:12] if ff.process_id else "?"
                                     st.markdown(f"**#{ff_idx+1}** `{ff_id}` — {ff.size()} bytes")
                                 with fc2:
                                     st.caption(ff.get_attribute("filename") or "")
+                                with fc3:
+                                    if check_permission(session, "flow.execute"):
+                                        if st.button("🗑️", key=f"del_ff_{flow_id}_{idx}_{ff_idx}"):
+                                            conn.remove_by_index(ff_idx)
+                                            st.rerun()
 
                                 # Attributes
                                 attrs = ff.attributes
@@ -991,23 +1733,9 @@ def render_debug_panel(executor: ContinuousFlowExecutor):
 
 def main():
     """Fonction principale."""
-    menu = render_sidebar()
-
-    if menu == f"🏠 {t('nav.dashboard')}":
-        st.switch_page("pages/1_Dashboard.py")
-    elif menu == f"✏️ {t('nav.editor')}":
-        st.switch_page("pages/2_Editor.py")
-    elif menu == f"▶️ {t('nav.runtime')}":
-        initialize_state()
-
-        render_continuous_execution()
-
-    elif menu == f"📊 {t('nav.monitoring')}":
-        st.switch_page("pages/4_Monitoring.py")
-    elif menu == f"⚙️ {t('nav.settings')}":
-        st.switch_page("pages/5_Settings.py")
-    elif menu == f"📚 {t('nav.documentation')}":
-        st.switch_page("pages/6_Documentation.py")
+    render_sidebar()
+    initialize_state()
+    render_continuous_execution()
 
 
 if __name__ == "__main__":

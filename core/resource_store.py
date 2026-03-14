@@ -162,13 +162,21 @@ class ResourceStore:
 
     def get(self, resource_type: str, name: str,
             user_id: str) -> Optional[Dict[str, Any]]:
-        """Get a single resource by name."""
+        """Get a single resource by name (case-insensitive fallback)."""
         if resource_type not in VALID_TYPES:
             return None
         key = self._key(user_id, name)
         with self._store_lock:
             self._ensure_loaded(resource_type)
-            return self._data[resource_type].get(key)
+            result = self._data[resource_type].get(key)
+            if result is not None:
+                return result
+            # Case-insensitive fallback
+            name_lower = name.lower()
+            for k, v in self._data[resource_type].items():
+                if k.startswith(user_id + ".") and k[len(user_id) + 1:].lower() == name_lower:
+                    return v
+            return None
 
     def update(self, resource_type: str, name: str, user_id: str,
                data: Dict[str, Any]) -> Dict[str, Any]:

@@ -43,6 +43,8 @@ class ConversationStore:
         self._conversations: Dict[str, Dict[str, Any]] = {}
         self._deleted: set = set()  # explicitly deleted conversation IDs
         self._store_lock = threading.Lock()
+        self._write_locks: Dict[str, threading.Lock] = {}  # per-conversation write serialization
+        self._write_locks_lock = threading.Lock()  # protects _write_locks dict itself
         self._store_dir = Path(store_dir or _DEFAULT_DIR)
         self._store_dir.mkdir(parents=True, exist_ok=True)
         self._loaded = False
@@ -119,7 +121,7 @@ class ConversationStore:
                 "context": existing.get("context") if existing else None,
             }
             self._conversations[conversation_id] = entry
-        self._save_to_disk(conversation_id, entry)
+        self._save_to_disk(conversation_id)
 
     def append_messages(self, conversation_id: str,
                         new_messages: List[Dict[str, Any]],
@@ -165,19 +167,7 @@ class ConversationStore:
                 entry["status"] = status
             if ttl > 0:
                 entry["expires_at"] = time.time() + ttl
-            # Snapshot for disk write (under lock, so consistent)
-            disk_entry = {
-                "messages": list(entry["messages"]),
-                "user_id": entry["user_id"],
-                "status": entry.get("status", "idle"),
-                "created_at": entry["created_at"],
-                "updated_at": entry["updated_at"],
-                "expires_at": entry["expires_at"],
-                "context": list(entry["context"]) if entry.get("context") is not None else None,
-            }
-            if entry.get("extra"):
-                disk_entry["extra"] = entry["extra"]
-        self._save_to_disk(conversation_id, disk_entry)
+        self._save_to_disk(conversation_id)
 
     def message_count(self, conversation_id: str) -> int:
         """Return the current number of messages in a conversation."""
@@ -205,15 +195,7 @@ class ConversationStore:
                 return False
             entry["status"] = status
             entry["updated_at"] = time.time()
-            disk_entry = {
-                "messages": list(entry["messages"]),
-                "user_id": entry["user_id"],
-                "status": entry["status"],
-                "created_at": entry["created_at"],
-                "updated_at": entry["updated_at"],
-                "expires_at": entry["expires_at"],
-            }
-        self._save_to_disk(conversation_id, disk_entry)
+        self._save_to_disk(conversation_id)
         return True
 
     def get_metadata(self, conversation_id: str) -> Optional[Dict[str, Any]]:
@@ -266,9 +248,7 @@ class ConversationStore:
                 return False
             entry["context"] = list(context_messages)
             entry["updated_at"] = time.time()
-            disk_entry = dict(entry, messages=list(entry["messages"]),
-                              context=list(entry["context"]))
-        self._save_to_disk(conversation_id, disk_entry)
+        self._save_to_disk(conversation_id)
         return True
 
     def append_to_context(self, conversation_id: str,
@@ -283,9 +263,7 @@ class ConversationStore:
                 return False
             entry["context"].extend(new_messages)
             entry["updated_at"] = time.time()
-            disk_entry = dict(entry, messages=list(entry["messages"]),
-                              context=list(entry["context"]))
-        self._save_to_disk(conversation_id, disk_entry)
+        self._save_to_disk(conversation_id)
         return True
 
     def set_extra(self, conversation_id: str, key: str, value: Any) -> bool:
@@ -297,8 +275,8 @@ class ConversationStore:
                 return False
             extra = entry.setdefault("extra", {})
             extra[key] = value
-            self._save_to_disk(conversation_id, entry)
-            return True
+        self._save_to_disk(conversation_id)
+        return True
 
     def get_extra(self, conversation_id: str, key: str,
                   default: Any = None) -> Any:
@@ -325,8 +303,8 @@ class ConversationStore:
                 return False
             msgs.pop(index)
             entry["updated_at"] = time.time()
-            self._save_to_disk(conversation_id, entry)
-            return True
+        self._save_to_disk(conversation_id)
+        return True
 
     def delete(self, conversation_id: str, user_id: str = "") -> bool:
         """Delete a conversation. Returns True if deleted.
@@ -405,30 +383,62 @@ class ConversationStore:
         safe_id = "".join(c for c in conversation_id if c.isalnum() or c in "-_")
         return self._store_dir / f"{safe_id}.json"
 
-    def _save_to_disk(self, conversation_id: str, entry: Dict[str, Any]):
-        """Persist a conversation to disk."""
-        # Re-check _deleted to avoid race with concurrent delete()
+    def _get_write_lock(self, conversation_id: str) -> threading.Lock:
+        """Get or create a per-conversation write lock."""
+        with self._write_locks_lock:
+            if conversation_id not in self._write_locks:
+                self._write_locks[conversation_id] = threading.Lock()
+            return self._write_locks[conversation_id]
+
+    def _save_to_disk(self, conversation_id: str, entry: Dict[str, Any] = None):
+        """Persist a conversation to disk (serialized per conversation).
+
+        If *entry* is None, re-reads the current in-memory state under lock
+        to guarantee the latest version is written.  When *entry* is provided
+        it is used as-is (caller already holds a consistent snapshot).
+        """
         if conversation_id in self._deleted:
             return
-        try:
-            path = self._conv_path(conversation_id)
-            data = {
-                "conversation_id": conversation_id,
-                "user_id": entry.get("user_id", ""),
-                "status": entry.get("status", "idle"),
-                "created_at": entry.get("created_at", 0),
-                "updated_at": entry.get("updated_at", 0),
-                "expires_at": entry.get("expires_at", 0),
-                "messages": entry.get("messages", []),
-                "context": entry.get("context"),
-            }
-            if entry.get("extra"):
-                data["extra"] = entry["extra"]
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-            tmp.replace(path)
-        except Exception as e:
-            logger.error(f"ConversationStore: failed to save {conversation_id}: {e}")
+        write_lock = self._get_write_lock(conversation_id)
+        with write_lock:
+            if conversation_id in self._deleted:
+                return
+            # Re-snapshot from memory to guarantee latest state
+            if entry is None:
+                with self._store_lock:
+                    mem = self._conversations.get(conversation_id)
+                    if mem is None:
+                        return
+                    entry = {
+                        "messages": list(mem.get("messages", [])),
+                        "user_id": mem.get("user_id", ""),
+                        "status": mem.get("status", "idle"),
+                        "created_at": mem.get("created_at", 0),
+                        "updated_at": mem.get("updated_at", 0),
+                        "expires_at": mem.get("expires_at", 0),
+                        "context": list(mem["context"]) if mem.get("context") is not None else None,
+                    }
+                    if mem.get("extra"):
+                        entry["extra"] = dict(mem["extra"])
+            try:
+                path = self._conv_path(conversation_id)
+                data = {
+                    "conversation_id": conversation_id,
+                    "user_id": entry.get("user_id", ""),
+                    "status": entry.get("status", "idle"),
+                    "created_at": entry.get("created_at", 0),
+                    "updated_at": entry.get("updated_at", 0),
+                    "expires_at": entry.get("expires_at", 0),
+                    "messages": entry.get("messages", []),
+                    "context": entry.get("context"),
+                }
+                if entry.get("extra"):
+                    data["extra"] = entry["extra"]
+                tmp = path.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+                tmp.replace(path)
+            except Exception as e:
+                logger.error(f"ConversationStore: failed to save {conversation_id}: {e}")
 
     def _delete_from_disk(self, conversation_id: str):
         """Remove a conversation file from disk.

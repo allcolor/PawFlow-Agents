@@ -1439,6 +1439,21 @@ function connectSSE(cid) {
     }
   });
 
+  // FlowFile incoming indicator
+  eventSource.addEventListener('flowfile_in', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const parts = [];
+    if (data.agent) parts.push(data.agent);
+    if (data.reason) parts.push(data.reason);
+    else if (data.path) parts.push(data.source + ' ' + data.path);
+    if (data.size > 0) parts.push((data.size / 1024).toFixed(1) + ' KB');
+    if (parts.length) {
+      addMsg('system-compact', '\u25b6 ' + parts.join(' \u00b7 '));
+      scrollBottom();
+    }
+  });
+
   // Sub-agent visibility
   eventSource.addEventListener('sub_agent_start', (e) => {
     lastSSEActivity = Date.now();

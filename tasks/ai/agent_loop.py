@@ -3237,6 +3237,26 @@ class AgentLoopTask(BaseTask):
                 info = self._active_interactions.get(gen_key)
                 if info:
                     info.update(kwargs)
+
+        # Publish flowfile_in so the chat shows incoming activity
+        _agent_name = ctx.get("active_agent_name", "")
+        _is_poll = ctx.get("is_poll", False)
+        _is_thought = ctx.get("is_random_thought", False)
+        _scheduled_reasons = ctx.get("scheduled_reasons") or []
+        _ff_reason = ""
+        if _scheduled_reasons:
+            _ff_reason = _scheduled_reasons[0] if len(_scheduled_reasons) == 1 else f"{len(_scheduled_reasons)} triggers"
+        _ff_info = {"agent": _agent_name}
+        if _ff_reason:
+            _ff_info["reason"] = _ff_reason
+        if _is_poll:
+            _ff_info["type"] = "poll"
+        if _is_thought:
+            _ff_info["type"] = "thought"
+        if not _is_poll or _ff_reason:
+            # Don't publish for routine empty polls (no reason = nothing interesting)
+            bus.publish_event(conversation_id, "flowfile_in", _ff_info)
+
         tools_called: List[str] = []
 
         client = ctx["client"]
@@ -3292,14 +3312,20 @@ class AgentLoopTask(BaseTask):
             new_messages.append(msg)
 
         def _flush_new():
-            """Persist new messages to the canonical conversation history (and context if diverged)."""
+            """Persist new messages to the canonical conversation history (and context if diverged).
+
+            Always persists — even when generation is stale. Messages shown
+            to the user via SSE must be in the store.  ``append_messages``
+            only appends (never overwrites), so concurrent appends are safe.
+            The generation check now only gates the final ``save()`` in the
+            done path (which sets status/metadata), not message persistence.
+            """
             nonlocal new_messages
             if not (use_conv_store and conversation_id and new_messages):
                 return
             if not self._is_current_generation(gen_key, my_generation):
-                logger.info(f"[agent:{conversation_id[:8]}] skipping flush — "
-                            f"generation {my_generation} is stale")
-                return
+                logger.info(f"[agent:{conversation_id[:8]}] generation {my_generation} "
+                            f"is stale — flushing messages anyway (append-only)")
             from core.conversation_store import ConversationStore
             serialized = self._serialize_messages(new_messages, channel=channel)
             store = ConversationStore.instance()
@@ -3936,6 +3962,8 @@ class AgentLoopTask(BaseTask):
             # cancel_agent() already published the "cancelled" event and set status
         except Exception as e:
             logger.error(f"Streaming agent loop error: {e}", exc_info=True)
+            # Flush any partial messages before reporting error
+            _flush_new()
             bus.publish_event(conversation_id, "error_event", {
                 "message": str(e),
                 "conversation_id": conversation_id,

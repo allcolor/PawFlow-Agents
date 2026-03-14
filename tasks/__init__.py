@@ -38,7 +38,10 @@ def _register_all_services():
         import services.discord_bot_service   # noqa: F401
     except ImportError:
         pass  # discord.py not installed
-    import services.whatsapp_service          # noqa: F401
+    try:
+        import services.whatsapp_service      # noqa: F401
+    except Exception:
+        pass  # whatsapp service load failed
     try:
         import services.slack_bot_service     # noqa: F401
     except ImportError:

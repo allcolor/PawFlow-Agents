@@ -349,7 +349,8 @@ class TestAgentLoopStreaming(unittest.TestCase):
         writer.close()
         chunks = list(writer.iterate(timeout=0.1))
         assert len(chunks) >= 1
-        assert b"event: thinking" in chunks[0]
+        all_data = b"".join(chunks)
+        assert b"event: thinking" in all_data
 
 
 # ── AgentSSEStreamTask ──────────────────────────────────────────────

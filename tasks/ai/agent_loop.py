@@ -51,6 +51,11 @@ class AgentCancelled(Exception):
     pass
 
 
+class _InterruptComplete(Exception):
+    """Internal: raised when interrupt-synthesis is done to break out of the loop."""
+    pass
+
+
 class AgentLoopTask(BaseTask):
     """LLM agent with tool-use loop.
 
@@ -79,6 +84,9 @@ class AgentLoopTask(BaseTask):
         # generation at start and skip saves if it changed.
         self._conv_generation: Dict[str, int] = {}
         self._conv_gen_lock = threading.Lock()
+        # Interrupt signal — asks agent to conclude gracefully instead of cancelling
+        self._conv_interrupt: Dict[str, bool] = {}
+        self._interrupt_lock = threading.Lock()
 
     def initialize(self):
         """Start the poller at flow startup (not just on first request).
@@ -855,6 +863,56 @@ class AgentLoopTask(BaseTask):
             self.cancel_agent(conv_id)
             flowfile.set_content(json.dumps({
                 "cancelled": True, "conversation_id": conv_id,
+            }).encode())
+            return [flowfile]
+
+        if action == "interrupt":
+            conv_id = body.get("conversation_id", "")
+            agent_name = body.get("agent_name", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            self.interrupt_agent(conv_id, agent_name)
+            flowfile.set_content(json.dumps({
+                "interrupted": True, "conversation_id": conv_id,
+                "agent_name": agent_name or "assistant",
+            }).encode())
+            return [flowfile]
+
+        if action == "btw":
+            conv_id = body.get("conversation_id", "")
+            agent_name = body.get("agent_name", "")
+            question = body.get("message", "")
+            if not conv_id or not question:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or message"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            user_id = flowfile.get_attribute("http.auth.principal") or ""
+            # Handle ALL — spawn btw for each agent + default
+            if agent_name.upper() == "ALL":
+                from core.resource_store import ResourceStore
+                rs = ResourceStore.instance()
+                all_agents = rs.list_all("agent", user_id)
+                targets = ["assistant"] + [a["name"] for a in all_agents]
+                for t in targets:
+                    thread = threading.Thread(
+                        target=self._btw_query,
+                        args=(conv_id, t, question, user_id),
+                        daemon=True,
+                        name=f"btw-{t}-{conv_id[:8]}",
+                    )
+                    thread.start()
+            else:
+                thread = threading.Thread(
+                    target=self._btw_query,
+                    args=(conv_id, agent_name, question, user_id),
+                    daemon=True,
+                    name=f"btw-{agent_name or 'assistant'}-{conv_id[:8]}",
+                )
+                thread.start()
+            flowfile.set_content(json.dumps({
+                "ok": True, "conversation_id": conv_id,
             }).encode())
             return [flowfile]
 
@@ -2135,6 +2193,9 @@ class AgentLoopTask(BaseTask):
         final_model = ""
         finish_reason = ""
         response_content = ""
+        _need_more_retried_ns = False  # guards heuristic tool-mention retry
+
+        _client_provider_ns = getattr(client, "provider", "")
 
         while iteration < ctx["max_iterations"]:
             iteration += 1
@@ -2153,10 +2214,41 @@ class AgentLoopTask(BaseTask):
             finish_reason = response.finish_reason
 
             if not response.tool_calls:
+                _resp_text_ns = response.content or ""
+
+                # [NEED_MORE] signal: model requests another turn
+                if "[NEED_MORE]" in _resp_text_ns:
+                    _clean_ns = _resp_text_ns.replace("[NEED_MORE]", "").strip()
+                    if _clean_ns:
+                        messages.append(LLMMessage(role="assistant", content=_clean_ns))
+                    messages.append(LLMMessage(role="system", content=(
+                        "Continue. You have another turn. "
+                        "Use <tool_call> tags if you need tools, "
+                        "or provide your final answer."
+                    )))
+                    continue
+
+                # Heuristic: tool mentioned by name without <tool_call> tag
+                if _client_provider_ns in ("claude-code", "gemini-cli") and tool_defs:
+                    _tool_names_ns = [td.name for td in tool_defs]
+                    _mentioned_ns = [tn for tn in _tool_names_ns if tn in _resp_text_ns]
+                    if _mentioned_ns and not _need_more_retried_ns:
+                        _need_more_retried_ns = True
+                        messages.append(LLMMessage(role="assistant", content=_resp_text_ns))
+                        messages.append(LLMMessage(role="system", content=(
+                            f"You mentioned tool(s) {_mentioned_ns} but did not emit <tool_call> tags. "
+                            "You MUST use <tool_call> tags to invoke tools. Example:\n"
+                            '<tool_call>{"name": "' + _mentioned_ns[0] + '", "arguments": {...}}</tool_call>\n'
+                            "Please emit the correct <tool_call> tag(s) now, "
+                            "or provide your final answer without mentioning tools."
+                        )))
+                        continue
+
                 messages.append(LLMMessage(role="assistant", content=response.content))
                 response_content = response.content
                 break
 
+            _need_more_retried_ns = False  # reset on successful tool_call
             messages.append(LLMMessage(
                 role="assistant", content=response.content,
                 tool_calls=response.tool_calls,
@@ -2296,13 +2388,21 @@ class AgentLoopTask(BaseTask):
         if use_conv_store:
             _agent_name = ctx.get("active_agent_name", "")
             _llm_svc = ctx.get("active_llm_service", "")
-            _source = {"type": "agent", "name": _agent_name, "llm_service": _llm_svc} if _agent_name else (
-                {"type": "agent", "name": "assistant", "llm_service": _llm_svc} if _llm_svc else None
-            )
+            _client_prov = getattr(client, "provider", "") if client else ""
+            _client_burl = getattr(client, "base_url", "") if client else ""
+            _source = {"type": "agent", "name": _agent_name or "assistant"}
+            if _llm_svc:
+                _source["llm_service"] = _llm_svc
+            if _client_prov:
+                _source["provider"] = _client_prov
+            if _client_burl:
+                import re as _re2
+                _source["base_url"] = _re2.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_burl)
             output = json.dumps({
                 "response": response_content,
                 "conversation_id": conversation_id,
                 "model": final_model,
+                "provider": _client_prov,
                 "tokens_in": total_tokens_in,
                 "tokens_out": total_tokens_out,
                 "source": _source,
@@ -2477,6 +2577,151 @@ class AgentLoopTask(BaseTask):
         ConversationStore.instance().set_status(conversation_id, "idle")
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user")
 
+    def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
+        """Signal an agent to finish gracefully — conclude with what it has.
+
+        Unlike cancel_agent, does NOT kill the thread. Instead sets a flag
+        that the loop checks and triggers a forced synthesis response.
+        """
+        with self._interrupt_lock:
+            if agent_name and agent_name not in ("", "assistant", "default"):
+                self._conv_interrupt[f"{conversation_id}:{agent_name}"] = True
+            else:
+                # Interrupt default assistant + all per-agent threads
+                self._conv_interrupt[conversation_id] = True
+                for k in list(self._conv_interrupt):
+                    if k.startswith(conversation_id + ":"):
+                        self._conv_interrupt[k] = True
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(
+            conversation_id, "interrupting",
+            {"agent": agent_name or "assistant"},
+        )
+        logger.info(f"[agent:{conversation_id[:8]}] interrupt requested for "
+                    f"'{agent_name or 'assistant'}'")
+
+    def _check_interrupt(self, gen_key: str) -> bool:
+        """Check and consume the interrupt flag for a gen_key."""
+        with self._interrupt_lock:
+            return self._conv_interrupt.pop(gen_key, False)
+
+    def _btw_query(self, conversation_id: str, agent_name: str,
+                   question: str, user_id: str) -> None:
+        """Side-channel query — separate LLM call, no state modification.
+
+        Loads a lightweight context (system prompt + last few messages),
+        makes a single LLM call without tools, and publishes the response
+        via SSE. Does NOT persist anything to conversation history.
+        """
+        from core.conversation_event_bus import ConversationEventBus
+        from core.conversation_store import ConversationStore
+        from core.resource_store import ResourceStore
+
+        bus = ConversationEventBus.instance()
+        store = ConversationStore.instance()
+
+        try:
+            # 1. Resolve agent's system prompt + LLM client
+            if agent_name and agent_name not in ("", "assistant", "default"):
+                rs = ResourceStore.instance()
+                adef = rs.get_any("agent", agent_name, user_id)
+                if not adef:
+                    bus.publish_event(conversation_id, "btw_done", {
+                        "agent_name": agent_name,
+                        "error": f"Agent '{agent_name}' not found",
+                    })
+                    return
+                sys_prompt = adef["prompt"]
+                llm_svc = adef.get("llm_service", "")
+                if llm_svc and "${" in llm_svc:
+                    from core.expression import resolve_expression
+                    llm_svc = resolve_expression(llm_svc, owner=user_id)
+                    if "${" in llm_svc:
+                        llm_svc = ""
+                client = None
+                if llm_svc:
+                    client, _ = self._resolve_llm_service(llm_svc, user_id)
+                if not client:
+                    task_svc = self.config.get("llm_service", "default")
+                    if "${" in task_svc:
+                        task_svc = "default"
+                    client, _ = self._resolve_llm_service(task_svc, user_id)
+            else:
+                agent_name = "assistant"
+                sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+                task_svc = self.config.get("llm_service", "default")
+                if "${" in task_svc:
+                    task_svc = "default"
+                client, _ = self._resolve_llm_service(task_svc, user_id)
+
+            if not client:
+                bus.publish_event(conversation_id, "btw_done", {
+                    "agent_name": agent_name,
+                    "error": "No LLM service available",
+                })
+                return
+
+            # 2. Build lightweight context: system + last N messages (truncated)
+            raw = store.load(conversation_id) or []
+            recent = self._deserialize_messages(raw[-6:]) if len(raw) > 6 else self._deserialize_messages(raw)
+            # Truncate each message content to keep context small
+            summary_parts = []
+            for m in recent:
+                content = m.content if isinstance(m.content, str) else str(m.content)
+                role_label = m.role.upper()
+                truncated = content[:200] + ("..." if len(content) > 200 else "")
+                summary_parts.append(f"[{role_label}]: {truncated}")
+            context_summary = "\n".join(summary_parts)
+
+            btw_system = (
+                sys_prompt + "\n\n"
+                "[SIDE QUESTION: The user is asking a quick question while you are working. "
+                "Answer briefly and concisely. Do NOT use any tools. "
+                "This does not affect your current task.]"
+            )
+            btw_messages = [
+                LLMMessage(role="system", content=btw_system),
+                LLMMessage(role="user", content=(
+                    f"[Brief context of our conversation:\n{context_summary}]\n\n"
+                    f"Quick question: {question}"
+                )),
+            ]
+
+            # 3. Single LLM call, no tools, stream tokens via SSE
+            bus.publish_event(conversation_id, "btw_thinking", {
+                "agent_name": agent_name,
+            })
+
+            def on_btw_token(text):
+                bus.publish_event(conversation_id, "btw_token", {
+                    "agent_name": agent_name, "text": text,
+                })
+
+            response = client.complete_stream(
+                messages=btw_messages,
+                tools=None,
+                temperature=0.5,
+                max_tokens=1024,
+                callback=on_btw_token,
+            )
+
+            # 4. Publish done event (NOT persisted in conversation)
+            bus.publish_event(conversation_id, "btw_done", {
+                "agent_name": agent_name,
+                "question": question,
+                "response": response.content,
+                "source": {"type": "agent", "name": agent_name, "btw": True},
+            })
+            logger.info(f"[btw:{conversation_id[:8]}] {agent_name} answered "
+                        f"({len(response.content)} chars)")
+
+        except Exception as e:
+            logger.error(f"[btw:{conversation_id[:8]}] error: {e}", exc_info=True)
+            bus.publish_event(conversation_id, "btw_done", {
+                "agent_name": agent_name,
+                "error": str(e),
+            })
+
     def _streaming_agent_loop(self, ctx: Dict, conversation_id: str,
                               bus) -> None:
         """Background thread: run agent loop, publish events to EventBus.
@@ -2520,16 +2765,27 @@ class AgentLoopTask(BaseTask):
         final_model = ""
         finish_reason = ""
         response_content = ""
+        _need_more_retried = False  # guards heuristic tool-mention retry (once per response)
 
         user_id = ctx.get("user_id", "")
 
         # Source metadata for identity tracking
         _agent_name = ctx.get("active_agent_name", "")
         _agent_svc = ctx.get("active_llm_service", "")
+        # LLM client metadata for traceability
+        _client_provider = getattr(client, "provider", "")
+        _client_base_url = getattr(client, "base_url", "")
+
         def _agent_source():
             src = {"type": "agent", "name": _agent_name or "assistant"}
             if _agent_svc:
                 src["llm_service"] = _agent_svc
+            if _client_provider:
+                src["provider"] = _client_provider
+            if _client_base_url:
+                # Mask API keys in URL if present
+                import re as _re
+                src["base_url"] = _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_base_url)
             return src
 
         def _append(msg: LLMMessage):
@@ -2629,6 +2885,46 @@ class AgentLoopTask(BaseTask):
                     if not self._is_current_generation(gen_key, my_generation):
                         raise AgentCancelled()
 
+                    # Check interrupt — force synthesis instead of continuing
+                    if self._check_interrupt(gen_key):
+                        logger.info(f"[agent:{conversation_id[:8]}] interrupted — forcing synthesis")
+                        _append(LLMMessage(
+                            role="user",
+                            content=(
+                                "[System: The user has requested an immediate response. "
+                                "Stop all tool usage. Summarize your progress so far and "
+                                "provide your best answer with the information you have "
+                                "gathered. Mention what you were still working on so the "
+                                "user can ask you to continue if needed.]"
+                            ),
+                        ))
+                        bus.publish_event(conversation_id, "thinking", {
+                            "iteration": iteration, "round": "interrupt",
+                        })
+                        interrupt_resp = client.complete_stream(
+                            messages=self._compact_if_needed(
+                                list(messages), compact_client, model or ctx["model"],
+                                ctx.get("context_max_tokens", 64000), 0.6,
+                                ctx.get("context_keep_recent", 6),
+                            ),
+                            model=model or None,
+                            temperature=ctx["temperature"],
+                            max_tokens=ctx["max_tokens"],
+                            tools=None,  # No tools — just answer
+                            callback=on_token,
+                        )
+                        _append(LLMMessage(
+                            role="assistant", content=interrupt_resp.content,
+                            source=_agent_source(),
+                        ))
+                        response_content = interrupt_resp.content
+                        total_tokens_in += interrupt_resp.tokens_in
+                        total_tokens_out += interrupt_resp.tokens_out
+                        final_model = interrupt_resp.model
+                        _flush_new()
+                        # Break out of both while and for loops
+                        raise _InterruptComplete()
+
                     try:
                         response = client.complete_stream(
                             messages=llm_context,
@@ -2700,12 +2996,49 @@ class AgentLoopTask(BaseTask):
                                 f"finish={finish_reason}, content_len={len(response.content or '')}")
 
                     if not response.tool_calls:
+                        _resp_text = response.content or ""
+
+                        # [NEED_MORE] signal: model requests another turn
+                        if "[NEED_MORE]" in _resp_text:
+                            _clean = _resp_text.replace("[NEED_MORE]", "").strip()
+                            if _clean:
+                                _append(LLMMessage(role="assistant", content=_clean, source=_agent_source()))
+                                if callback:
+                                    callback(_clean)
+                            _append(LLMMessage(role="system", content=(
+                                "Continue. You have another turn. "
+                                "Use <tool_call> tags if you need tools, "
+                                "or provide your final answer."
+                            )))
+                            logger.info(f"[agent:{conversation_id[:8]}] [NEED_MORE] detected, granting extra turn")
+                            continue
+
+                        # Heuristic: model mentions a tool by name without emitting <tool_call>
+                        # Only for text-based tool providers (claude-code, gemini-cli)
+                        if _client_provider in ("claude-code", "gemini-cli") and tool_defs:
+                            _tool_names = [td.name for td in tool_defs]
+                            _mentioned = [tn for tn in _tool_names if tn in _resp_text]
+                            if _mentioned and not _need_more_retried:
+                                _need_more_retried = True
+                                _append(LLMMessage(role="assistant", content=_resp_text, source=_agent_source()))
+                                _append(LLMMessage(role="system", content=(
+                                    f"You mentioned tool(s) {_mentioned} but did not emit <tool_call> tags. "
+                                    "You MUST use <tool_call> tags to invoke tools. Example:\n"
+                                    '<tool_call>{"name": "' + _mentioned[0] + '", "arguments": {...}}</tool_call>\n'
+                                    "Please emit the correct <tool_call> tag(s) now, "
+                                    "or provide your final answer without mentioning tools."
+                                )))
+                                logger.info(f"[agent:{conversation_id[:8]}] tool mention without <tool_call> detected: "
+                                            f"{_mentioned}, injecting reminder")
+                                continue
+
                         _append(LLMMessage(role="assistant", content=response.content, source=_agent_source()))
                         response_content = response.content
                         _flush_new()
                         break
 
                     # Tool calls
+                    _need_more_retried = False  # reset on successful tool_call
                     _append(LLMMessage(
                         role="assistant", content=response.content,
                         tool_calls=response.tool_calls,
@@ -2725,35 +3058,60 @@ class AgentLoopTask(BaseTask):
                     if _sub_exec:
                         self._inject_executor(registry, _sub_exec)
 
+                    # Publish all tool_call events upfront
                     for tc in response.tool_calls:
                         tools_called.append(tc.name)
                         bus.publish_event(conversation_id, "tool_call", {
                             "tool": tc.name, "arguments": tc.arguments,
                         })
 
+                    if len(response.tool_calls) == 1:
+                        # Single tool — direct execution (no thread overhead)
+                        tc = response.tool_calls[0]
                         try:
                             result_text = registry.execute(tc.name, tc.arguments)
                         except Exception as tool_err:
                             result_text = f"Error: {tool_err}"
                             logger.error(f"Tool '{tc.name}' failed: {tool_err}")
-
-                        # Check cancellation after tool execution
-                        if not self._is_current_generation(gen_key, my_generation):
-                            raise AgentCancelled()
-
-                        # Detect continuation request
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
-
-                        _append(LLMMessage(
-                            role="tool", content=result_text, tool_call_id=tc.id,
-                        ))
-
+                        _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
                         bus.publish_event(conversation_id, "tool_result", {
-                            "tool": tc.name,
-                            "result": result_text[:2000],
+                            "tool": tc.name, "result": result_text[:2000],
                         })
+                    else:
+                        # Multiple tools — parallel execution
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                        def _exec_tool(tc):
+                            try:
+                                return tc, registry.execute(tc.name, tc.arguments)
+                            except Exception as e:
+                                logger.error(f"Tool '{tc.name}' failed: {e}")
+                                return tc, f"Error: {e}"
+
+                        with ThreadPoolExecutor(max_workers=len(response.tool_calls)) as pool:
+                            futures = {pool.submit(_exec_tool, tc): tc for tc in response.tool_calls}
+                            results_map = {}
+                            for future in as_completed(futures):
+                                tc, result_text = future.result()
+                                results_map[tc.id] = (tc, result_text)
+                                bus.publish_event(conversation_id, "tool_result", {
+                                    "tool": tc.name, "result": result_text[:2000],
+                                })
+
+                        # Append results in original order (LLM expects consistent ordering)
+                        for tc in response.tool_calls:
+                            _, result_text = results_map[tc.id]
+                            if tc.name == "schedule_continuation":
+                                continuation_plan = tc.arguments.get("plan", "Continue working")
+                                continuation_delay = int(tc.arguments.get("delay_seconds", 3))
+                            _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
+
+                    # Check cancellation after tool execution
+                    if not self._is_current_generation(gen_key, my_generation):
+                        raise AgentCancelled()
 
                     # Flush tool calls + results to disk after each iteration
                     _flush_new()
@@ -2806,6 +3164,8 @@ class AgentLoopTask(BaseTask):
                         "response": response_content,
                         "conversation_id": conversation_id,
                         "model": final_model,
+                        "provider": _client_provider,
+                        "base_url": _agent_source().get("base_url", ""),
                         "tokens_in": total_tokens_in,
                         "tokens_out": total_tokens_out,
                         "tools_called": tools_called,
@@ -2813,6 +3173,7 @@ class AgentLoopTask(BaseTask):
                         "duration_ms": round(duration_ms, 1),
                         "continuing": True,
                         "message_count": _CS2.instance().message_count(conversation_id),
+                        "source": _agent_source(),
                     })
 
                     logger.info(f"[agent:{conversation_id[:8]}] continuation scheduled: "
@@ -2962,16 +3323,13 @@ class AgentLoopTask(BaseTask):
             logger.info(f"[agent:{conversation_id[:8]}] done: response_len={len(response_content or '')}, "
                         f"tools={tools_called}")
             from core.conversation_store import ConversationStore as _CS3
-            # Build source info for badge display consistency (SSE + poll)
-            _agent_name = ctx.get("active_agent_name", "")
-            _llm_svc = ctx.get("active_llm_service", "")
-            _source = {"type": "agent", "name": _agent_name, "llm_service": _llm_svc} if _agent_name else (
-                {"type": "agent", "name": "assistant", "llm_service": _llm_svc} if _llm_svc else None
-            )
+            _source = _agent_source()
             bus.publish_event(conversation_id, "done", {
                 "response": response_content,
                 "conversation_id": conversation_id,
                 "model": final_model,
+                "provider": _client_provider,
+                "base_url": _source.get("base_url", ""),
                 "tokens_in": total_tokens_in,
                 "tokens_out": total_tokens_out,
                 "tools_called": tools_called,
@@ -3000,6 +3358,29 @@ class AgentLoopTask(BaseTask):
                 "active" if tools_called else "idle",
             )
 
+        except _InterruptComplete:
+            # Interrupt synthesis completed — fall through to normal "done" publishing
+            duration_ms = (time.time() - start_time) * 1000
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt synthesis done")
+            from core.conversation_store import ConversationStore as _CS3i
+            _source = _agent_source()
+            bus.publish_event(conversation_id, "done", {
+                "response": response_content,
+                "conversation_id": conversation_id,
+                "model": final_model,
+                "provider": _client_provider,
+                "base_url": _source.get("base_url", ""),
+                "tokens_in": total_tokens_in,
+                "tokens_out": total_tokens_out,
+                "tools_called": tools_called,
+                "iterations": iteration,
+                "duration_ms": round(duration_ms, 1),
+                "message_count": _CS3i.instance().message_count(conversation_id),
+                "source": _source,
+                "interrupted": True,
+            })
+            from core.conversation_store import ConversationStore as _CSi
+            _CSi.instance().set_status(conversation_id, "active")
         except AgentCancelled:
             logger.info(f"[agent:{conversation_id[:8]}] cancelled — stopping gracefully")
             # Flush any partial messages accumulated so far

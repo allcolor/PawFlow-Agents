@@ -112,6 +112,7 @@ class ExecuteScriptHandler(ToolHandler):
 
     def __init__(self):
         self._vfs = {}
+        self._vfs_lock = threading.Lock()
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
@@ -160,12 +161,13 @@ class ExecuteScriptHandler(ToolHandler):
             return "Error: no code provided"
 
         try:
-            output, created_files, _ = execute_sandboxed(
-                code,
-                base_url=self._base_url,
-                ttl=self._ttl,
-                vfs=self._vfs,
-            )
+            with self._vfs_lock:
+                output, created_files, _ = execute_sandboxed(
+                    code,
+                    base_url=self._base_url,
+                    ttl=self._ttl,
+                    vfs=self._vfs,
+                )
         except Exception as e:
             return f"Error: {e}"
 

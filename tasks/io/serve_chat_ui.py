@@ -75,6 +75,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .user-info { font-size: 12px; color: #8888aa; }
+.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
        white-space: pre-wrap; word-wrap: break-word; }
@@ -91,6 +92,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
 .msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
             border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
+.msg-meta { margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);
+            font-size: 11px; color: #6c6c8a; cursor: pointer; user-select: none; line-height: 1.6; }
+.msg-meta:hover { color: #8888aa; }
+.msg-meta .meta-summary::before { content: '\u25B8 '; font-size: 9px; }
+.msg-meta.expanded .meta-summary::before { content: '\u25BE '; }
+.msg-meta .meta-details { display: none; margin-top: 2px; color: #555570; font-size: 10px; }
+.msg-meta.expanded .meta-details { display: block; }
+.msg.btw { align-self: flex-start; background: #0d1b2a; color: #c0c0d0; font-size: 13px;
+           border-left: 3px solid #60a5fa; border-radius: 8px; padding: 8px 14px;
+           max-width: 85%; font-style: italic; opacity: 0.9; }
 .msg { position: relative; }
 .msg-actions { position: sticky; top: 0; float: right; display: none; gap: 2px; margin: -4px -6px 0 8px;
                z-index: 2; background: inherit; border-radius: 6px; padding: 2px; }
@@ -105,6 +116,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .typing .verb { animation: fadeIn 0.4s ease-in; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 @keyframes fadeIn { 0% { opacity: 0; transform: translateY(2px); } 100% { opacity: 1; transform: translateY(0); } }
+.scroll-nav { position: absolute; right: 20px; bottom: 10px; display: flex; flex-direction: column;
+              gap: 6px; z-index: 10; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
+.scroll-nav.visible { opacity: 1; pointer-events: auto; }
+.scroll-nav button { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #0f3460;
+                     background: #16213e; color: #a0a0c0; font-size: 16px; cursor: pointer;
+                     display: flex; align-items: center; justify-content: center;
+                     box-shadow: 0 2px 8px rgba(0,0,0,0.4); transition: background 0.2s, color 0.2s; }
+.scroll-nav button:hover { background: #0f3460; color: #fff; }
 .input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460;
                display: flex; gap: 10px; flex-direction: column; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
@@ -254,7 +273,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <div class="files-header"><strong>Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
   <div class="files-list" id="filesList"></div>
 </div>
-<div class="messages" id="messages"></div>
+<div class="messages-wrap">
+  <div class="messages" id="messages"></div>
+  <div class="scroll-nav" id="scrollNav">
+    <button onclick="document.getElementById('messages').scrollTop=0" title="Scroll to top">&#x2191;</button>
+    <button onclick="scrollBottom(true)" title="Scroll to bottom">&#x2193;</button>
+  </div>
+</div>
 <div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
@@ -589,6 +614,7 @@ async function resumeConv(cid) {
     loadResources();
     document.getElementById('status').textContent = t('ready');
     document.getElementById('sidebar').classList.remove('open');
+    scrollBottom(true);  // Auto-scroll to bottom when loading conversation
   } catch (e) {
     addMsg('error', t('connError', {msg: e.message}));
     document.getElementById('status').textContent = t('error');
@@ -762,6 +788,34 @@ function sourceBadge(source) {
   return '';
 }
 
+function buildMetaLine(extra) {
+  if (!extra) return '';
+  // Collect metadata parts: model, provider, base_url, tokens, duration
+  // Also check source object for provider/base_url (from persisted messages)
+  const src = extra.source || {};
+  const model = extra.model || src.model || '';
+  const provider = extra.provider || src.provider || '';
+  const baseUrl = extra.base_url || src.base_url || '';
+  const tokIn = extra.tokens_in || 0;
+  const tokOut = extra.tokens_out || 0;
+  const dur = extra.duration_ms || 0;
+  const parts = [];
+  if (model) parts.push(model);
+  if (provider) parts.push(provider);
+  if (!model && !provider) return '';  // nothing interesting to show
+  // Compact line
+  let line = '<span class="meta-summary">' + parts.join(' \u00b7 ') + '</span>';
+  // Build expandable details
+  const details = [];
+  if (baseUrl) details.push('endpoint: ' + escapeHtml(baseUrl));
+  if (tokIn || tokOut) details.push('tokens: ' + tokIn + ' in / ' + tokOut + ' out (' + (tokIn + tokOut) + ' total)');
+  if (dur) details.push('duration: ' + (dur / 1000).toFixed(1) + 's');
+  if (details.length) {
+    line += '<span class="meta-details">' + details.join(' \u00b7 ') + '</span>';
+  }
+  return '<div class="msg-meta" onclick="this.classList.toggle(\'expanded\')">' + line + '</div>';
+}
+
 function addMsg(role, text, extra) {
   const el = document.createElement('div');
   // Support classified types: tool_call, tool_result map to CSS class "tool"
@@ -781,7 +835,7 @@ function addMsg(role, text, extra) {
   }
 
   if (role === 'assistant') {
-    el.innerHTML = actionsHtml + badge + renderMarkdown(text);
+    el.innerHTML = actionsHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool' || role === 'tool_call') {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
@@ -836,7 +890,21 @@ function scrollBottom(force) {
     const m = document.getElementById('messages');
     m.scrollTop = m.scrollHeight;
   }
+  updateScrollNav();
 }
+
+function updateScrollNav() {
+  const nav = document.getElementById('scrollNav');
+  if (!nav) return;
+  const m = document.getElementById('messages');
+  const hasScroll = m.scrollHeight > m.clientHeight + 100;
+  const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight < 150;
+  // Show buttons when there's scrollable content and user is not at the bottom
+  nav.classList.toggle('visible', hasScroll && !atBottom);
+}
+
+// Listen for scroll events on the messages container
+document.getElementById('messages').addEventListener('scroll', updateScrollNav);
 
 const FUN_VERBS = [
   // Tech / Dev
@@ -1195,8 +1263,14 @@ function connectSSE(cid) {
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
     resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trimEnd();
-    // Show the final response (or fallback if empty), with source badge
-    const extra = data.source ? { source: data.source } : undefined;
+    // Show the final response (or fallback if empty), with source badge + metadata
+    const extra = {};
+    if (data.source) extra.source = data.source;
+    if (data.model) extra.model = data.model;
+    if (data.provider) extra.provider = data.provider;
+    if (data.base_url) extra.base_url = data.base_url;
+    if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
+    if (data.duration_ms) extra.duration_ms = data.duration_ms;
     if (resp) {
       addMsg('assistant', resp, extra);
     } else if (streamingText) {
@@ -1239,6 +1313,58 @@ function connectSSE(cid) {
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('status').textContent = t('ready');
+  });
+
+  // --- BTW (side-channel) events ---
+  let btwElements = {};  // agent_name → streaming element
+  let btwTexts = {};
+
+  eventSource.addEventListener('btw_thinking', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = data.agent_name || 'assistant';
+    const el = addMsg('btw', '');
+    el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span><em style="color:#888;">thinking...</em>';
+    btwElements[agent] = el;
+    btwTexts[agent] = '';
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('btw_token', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = data.agent_name || 'assistant';
+    btwTexts[agent] = (btwTexts[agent] || '') + data.text;
+    const el = btwElements[agent];
+    if (el) {
+      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span>' + renderMarkdown(btwTexts[agent]);
+      scrollBottom();
+    }
+  });
+
+  eventSource.addEventListener('btw_done', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = data.agent_name || 'assistant';
+    if (data.error) {
+      const el = btwElements[agent];
+      if (el) { el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + agent + ' · btw] Error: ' + data.error + '</span>'; }
+      else { addMsg('error', '[' + agent + ' · btw] ' + data.error); }
+    } else if (data.response && !btwTexts[agent]) {
+      // Non-streaming fallback
+      const el = btwElements[agent] || addMsg('btw', '');
+      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span>' + renderMarkdown(data.response);
+    }
+    delete btwElements[agent];
+    delete btwTexts[agent];
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('interrupting', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    addMsg('system', 'Interrupting ' + (data.agent || 'assistant') + ' — requesting immediate response...');
+    scrollBottom();
   });
 
   eventSource.addEventListener('discard', (e) => {
@@ -1305,7 +1431,13 @@ function connectSSE(cid) {
   eventSource.addEventListener('agent_response', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const extra = data.source ? { source: data.source } : undefined;
+    const extra = {};
+    if (data.source) extra.source = data.source;
+    if (data.model) extra.model = data.model;
+    if (data.provider) extra.provider = data.provider;
+    if (data.base_url) extra.base_url = data.base_url;
+    if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
+    if (data.duration_ms) extra.duration_ms = data.duration_ms;
     addMsg('assistant', data.response || '', extra);
     scrollBottom();
   });
@@ -1649,16 +1781,19 @@ const HELP_DATA = {
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
   '/agent': {
-    usage: '/agent list | create | select <name> | default | delete <name> | msg <name|ALL> <text>',
+    usage: '/agent list | create | select | default | delete | msg | interrupt | btw | resume',
     short: 'Manage AI agents',
-    detail: 'Create, list, select, or delete AI agents.\n\n'
-      + '  /agent list              — List all agents (user + global)\n'
-      + '  /agent create            — Create a new agent (interactive)\n'
-      + '  /agent select <name>     — Activate an agent for this conversation\n'
-      + '  /agent default           — Switch back to the default agent\n'
-      + '  /agent delete <name>     — Delete an agent by name\n'
-      + '  /agent msg <name> <text> — Send a message to a specific agent\n'
-      + '  /agent msg ALL <text>    — Broadcast to all agents in parallel\n\n'
+    detail: 'Create, list, select, message, or control AI agents.\n\n'
+      + '  /agent list                   — List all agents (user + global)\n'
+      + '  /agent create                 — Create a new agent (interactive)\n'
+      + '  /agent select <name>          — Activate an agent for this conversation\n'
+      + '  /agent default                — Switch back to the default agent\n'
+      + '  /agent delete <name>          — Delete an agent by name\n'
+      + '  /agent msg <name> <text>      — Send a message to a specific agent\n'
+      + '  /agent msg ALL <text>         — Broadcast to all agents in parallel\n'
+      + '  /agent interrupt <name|ALL>   — Force agent to stop and respond immediately\n'
+      + '  /agent btw <name|ALL> <text>  — Side-channel question (no interruption)\n'
+      + '  /agent resume <name>          — Tell agent to continue from where it stopped\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
@@ -1968,8 +2103,40 @@ async function handleSlashCommand(text) {
       else if (!msgText) { addMsg('system', 'Usage: /agent msg ' + target + ' <message>'); }
       else if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(msgText); }
       else { await cmdAgentMsg(target, msgText); }
+    } else if (sub === 'interrupt' || sub === 'int') {
+      const target = parts[2] || '';
+      await cmdAgentInterrupt(target);
+    } else if (sub === 'btw') {
+      const target = parts[2] || '';
+      const btwText = parts.slice(3).join(' ');
+      if (!btwText && !target) { addMsg('system', 'Usage: /agent btw <name|ALL> <question>'); }
+      else if (!btwText) {
+        // No agent name given — treat target as message, send to default
+        await cmdAgentBtw('', target + ' ' + parts.slice(3).join(' '));
+      } else {
+        await cmdAgentBtw(target, btwText);
+      }
+    } else if (sub === 'resume') {
+      const target = parts[2] || '';
+      const resumeMsg = parts.slice(3).join(' ') || 'Continue from where you left off.';
+      if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(resumeMsg); }
+      else if (target) { await cmdAgentMsg(target, resumeMsg); }
+      else {
+        // Resume default assistant
+        sending = true;
+        const body = { message: resumeMsg };
+        if (conversationId) body.conversation_id = conversationId;
+        addMsg('user', resumeMsg);
+        showTyping();
+        try {
+          const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
+          const data = await resp.json();
+          if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
+        } catch(e) { addMsg('error', e.message); hideTyping(); }
+        sending = false;
+      }
     } else {
-      addMsg('system', 'Usage: /agent list | create | select <name> | default | delete <name> | msg <name|ALL> <text>');
+      addMsg('system', 'Usage: /agent list | create | select | default | delete | msg | interrupt | btw | resume');
     }
     return true;
   }
@@ -2423,6 +2590,50 @@ async function cmdAgentMsgAll(text) {
     hideTyping();
     sending = false;
   }
+}
+
+async function cmdAgentInterrupt(target) {
+  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  const isAll = target.toUpperCase() === 'ALL';
+  addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'assistant') + '...'));
+  try {
+    if (isAll) {
+      // Interrupt all: fetch agent list then interrupt each
+      const listResp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+      });
+      const listData = await listResp.json();
+      const agents = (listData.agents || []).map(a => a.name);
+      // Interrupt default + each agent
+      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: '' }) });
+      for (const name of agents) {
+        await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: name }) });
+      }
+    } else {
+      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: target || '' }),
+      });
+    }
+  } catch (e) { addMsg('error', 'Interrupt failed: ' + e.message); }
+}
+
+async function cmdAgentBtw(target, question) {
+  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  const agent = target || '';
+  const isAll = agent.toUpperCase() === 'ALL';
+  addMsg('user', '[btw' + (agent ? ' → ' + agent : '') + '] ' + question);
+  try {
+    await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'btw', conversation_id: conversationId,
+        agent_name: isAll ? 'ALL' : agent, message: question,
+      }),
+    });
+    // Response comes via SSE btw_token/btw_done events
+  } catch (e) { addMsg('error', 'BTW failed: ' + e.message); }
 }
 
 async function cmdMemoryList() {

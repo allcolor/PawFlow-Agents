@@ -1211,7 +1211,7 @@ class AgentLoopTask(BaseTask):
             if agent_name:
                 from core.resource_store import ResourceStore
                 uid = user_id or "anonymous"
-                if not ResourceStore.instance().exists("agent", agent_name, uid):
+                if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
                     flowfile.set_content(json.dumps({
                         "error": f"Agent '{agent_name}' not found",
                     }).encode())

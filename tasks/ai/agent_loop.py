@@ -92,6 +92,10 @@ class AgentLoopTask(BaseTask):
         # Active interactions tracker — gen_key → metadata dict
         self._active_interactions: Dict[str, Dict] = {}
         self._interactions_lock = threading.Lock()
+        # Context operation locks — prevents FlowFile processing during context mutations
+        # conv_id -> threading.Event (set = free, cleared = blocked)
+        self._context_op_events: Dict[str, threading.Event] = {}
+        self._context_op_lock = threading.Lock()
 
     def initialize(self):
         """Start the poller at flow startup (not just on first request).
@@ -719,14 +723,85 @@ class AgentLoopTask(BaseTask):
 
 
 
+    # ── Context operation pause/resume ─────────────────────────────────
+
+    def _get_context_op_event(self, conversation_id: str) -> threading.Event:
+        """Get or create a per-conversation context-op Event (set = free)."""
+        with self._context_op_lock:
+            evt = self._context_op_events.get(conversation_id)
+            if evt is None:
+                evt = threading.Event()
+                evt.set()  # initially free
+                self._context_op_events[conversation_id] = evt
+            return evt
+
+    def _acquire_context_op(self, conversation_id: str, timeout: float = 30.0) -> bool:
+        """Acquire exclusive context-op lock.  Returns True if acquired."""
+        evt = self._get_context_op_event(conversation_id)
+        # Wait for any previous op to finish
+        if not evt.wait(timeout=timeout):
+            return False
+        evt.clear()  # mark as busy
+        return True
+
+    def _release_context_op(self, conversation_id: str):
+        """Release the context-op lock, unblocking waiting FlowFiles."""
+        evt = self._get_context_op_event(conversation_id)
+        evt.set()
+
+    def _is_context_op_free(self, conversation_id: str) -> bool:
+        """Non-blocking check: True if no context op is running."""
+        with self._context_op_lock:
+            evt = self._context_op_events.get(conversation_id)
+            if evt is None:
+                return True
+            return evt.is_set()
+
+    _CONTEXT_OPS = frozenset((
+        "compact", "rebuild", "rebuild_clean",
+        "resume_conversation", "restart_from",
+    ))
+
+    @staticmethod
+    def _extract_conversation_id(ff) -> Optional[str]:
+        """Extract conversation_id from a FlowFile's JSON body, if present."""
+        raw = ff.get_content().decode("utf-8", errors="replace")
+        if not raw.strip().startswith("{"):
+            return None
+        try:
+            return json.loads(raw).get("conversation_id")
+        except (json.JSONDecodeError, AttributeError):
+            return None
+
+    @classmethod
+    def _detect_context_op(cls, ff) -> Optional[str]:
+        """If the FlowFile is a context-mutating action, return the conversation_id."""
+        raw = ff.get_content().decode("utf-8", errors="replace")
+        if not raw.strip().startswith("{"):
+            return None
+        try:
+            body = json.loads(raw)
+        except (json.JSONDecodeError, AttributeError):
+            return None
+        if not isinstance(body, dict):
+            return None
+        if body.get("action") in cls._CONTEXT_OPS:
+            return body.get("conversation_id") or None
+        return None
+
     def select_processable(self, connections):
-        """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services.
+        """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services
+        or conversations with a context operation in progress.
 
         Called by ContinuousFlowExecutor instead of peek-first.
         Returns (FlowFile, Connection) or None if nothing is processable.
         """
         for conn in connections:
             for ff in conn.peek_all():
+                # Skip FlowFiles whose conversation has a context op in progress
+                conv_id = self._extract_conversation_id(ff)
+                if conv_id and not self._is_context_op_free(conv_id):
+                    continue
                 svc = self._get_service_for_flowfile(ff)
                 if svc is None or svc.has_capacity():
                     return ff, conn
@@ -794,7 +869,22 @@ class AgentLoopTask(BaseTask):
         # Check for action-based requests (list/load/delete conversations)
         use_conv_store = self.config.get("conversation_store", False)
         if use_conv_store:
-            action_result = self._handle_action(flowfile)
+            # Detect context-mutating operations and pause FlowFile processing
+            _ctx_op_conv_id = self._detect_context_op(flowfile)
+            if _ctx_op_conv_id:
+                self.cancel_agent(_ctx_op_conv_id)
+                if not self._acquire_context_op(_ctx_op_conv_id, timeout=30.0):
+                    flowfile.set_content(json.dumps({
+                        "error": "Timeout waiting for active agent to finish",
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "409")
+                    return [flowfile]
+                try:
+                    action_result = self._handle_action(flowfile)
+                finally:
+                    self._release_context_op(_ctx_op_conv_id)
+            else:
+                action_result = self._handle_action(flowfile)
             if action_result is not None:
                 return action_result
 
@@ -2893,6 +2983,16 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
         conversation_id = ctx["conversation_id"]
         bus = ConversationEventBus.instance()
+
+        # Wait for any context operation to complete before proceeding
+        if not self._is_context_op_free(conversation_id):
+            evt = self._get_context_op_event(conversation_id)
+            if not evt.wait(timeout=60.0):
+                flowfile.set_content(json.dumps({
+                    "error": "Context operation in progress, try again",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "409")
+                return [flowfile]
 
         # Wire sub-agent event callback to this conversation
         _sub_ref = ctx.get("_sub_conv_id_ref")

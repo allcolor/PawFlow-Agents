@@ -193,8 +193,21 @@ class GlobalServiceRegistry:
             return dict(self._definitions)
 
     def get_live_instance(self, service_id: str) -> Optional[Service]:
-        """Get a live (connected) service instance for forwarding."""
+        """Get a live (connected) service instance for forwarding.
+
+        Lazy-connects the service on first access if it is defined and enabled.
+        """
         self._ensure_loaded()
+        with self._data_lock:
+            svc = self._live_instances.get(service_id)
+            if svc is not None:
+                return svc
+            # Check if defined + enabled → lazy connect
+            svc_def = self._definitions.get(service_id)
+            if not svc_def or not svc_def.enabled:
+                return None
+        # Connect outside the lock
+        self._connect_one(service_id)
         with self._data_lock:
             return self._live_instances.get(service_id)
 

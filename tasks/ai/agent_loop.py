@@ -223,16 +223,16 @@ class AgentLoopTask(BaseTask):
             svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
             if svc and hasattr(svc, 'get_client'):
                 return svc.get_client(), svc
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("User service '%s' for '%s': %s", service_id, user_id, e)
         # 3. Global services
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
             if svc and hasattr(svc, 'get_client'):
                 return svc.get_client(), svc
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
 
     def _prepare_agent_context(self, flowfile: FlowFile):

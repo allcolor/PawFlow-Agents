@@ -221,8 +221,20 @@ class UserServiceRegistry:
             return dict(self._definitions.get(user_id, {}))
 
     def get_live_instance(self, user_id: str, service_id: str) -> Optional[Service]:
-        """Get a live (connected) service instance for forwarding."""
+        """Get a live (connected) service instance for forwarding.
+
+        Lazy-connects the service on first access if defined and enabled.
+        """
         self._ensure_user_loaded(user_id)
+        with self._data_lock:
+            svc = self._live_instances.get(user_id, {}).get(service_id)
+            if svc is not None:
+                return svc
+            svc_def = self._definitions.get(user_id, {}).get(service_id)
+            if not svc_def or not svc_def.enabled:
+                return None
+        # Connect outside the lock
+        self._connect_one(user_id, service_id)
         with self._data_lock:
             return self._live_instances.get(user_id, {}).get(service_id)
 

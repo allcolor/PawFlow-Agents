@@ -46,7 +46,7 @@ class AgentTask:
     tools: Optional[List[str]] = None  # tool name whitelist (None = all)
     max_iterations: int = 50
     max_depth: int = 1
-    timeout: int = 120
+    timeout: int = 300
     llm_service: str = ""  # service ID for LLM routing
     user_id: str = ""  # user ID for service resolution
     source_agent: str = ""  # name of the parent agent (for identity tracking)
@@ -114,7 +114,7 @@ class SubAgentExecutor:
         *,
         max_workers: int = 4,
         default_max_iterations: int = 50,
-        default_timeout: int = 120,
+        default_timeout: int = 300,
         client_resolver: Optional[Callable] = None,
         on_event: Optional[Callable] = None,
     ):
@@ -240,6 +240,16 @@ class SubAgentExecutor:
                     break
 
                 result.iterations = iteration
+                self._emit("sub_agent_iteration", {
+                    "agent_name": task.agent_name,
+                    "task_id": task.id,
+                    "iteration": iteration,
+                    "max_iterations": max_iter,
+                    "tools_called": result.tools_called[-3:],
+                    "total_tools": len(result.tools_called),
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                })
 
                 response = client.complete(
                     messages=messages,
@@ -311,7 +321,7 @@ class SubAgentExecutor:
             "agent_name": task.agent_name,
             "task_id": task.id,
             "status": result.status,
-            "response": (result.response or "")[:300],
+            "response": result.response or "",
             "error": result.error,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
@@ -552,7 +562,7 @@ def resolve_agent_task(
         tools=agent_def.get("tools") or None,
         max_iterations=agent_def.get("max_iterations", 50),
         max_depth=agent_def.get("max_depth", 1),
-        timeout=agent_def.get("timeout", 120),
+        timeout=agent_def.get("timeout", 300),
         llm_service=llm_svc,
         user_id=user_id,
     )

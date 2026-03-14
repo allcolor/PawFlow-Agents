@@ -1448,19 +1448,45 @@ function connectSSE(cid) {
     scrollBottom();
   });
 
+  eventSource.addEventListener('sub_agent_iteration', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agentName = data.agent_name || 'sub-agent';
+    if (activeInteractions[agentName]) {
+      activeInteractions[agentName].iteration = data.iteration;
+      activeInteractions[agentName].maxIterations = data.max_iterations;
+      activeInteractions[agentName].totalTools = data.total_tools;
+      if (data.tools_called && data.tools_called.length > 0) {
+        activeInteractions[agentName].lastTool = data.tools_called[data.tools_called.length - 1];
+      }
+    }
+    updateActivePanel();
+  });
+
+  eventSource.addEventListener('sub_agent_tool', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agentName = data.agent_name || 'sub-agent';
+    trackAgentTool(agentName, data.tool);
+  });
+
   eventSource.addEventListener('sub_agent_done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    trackAgentDone(data.agent_name);
-    const preview = (data.response || '').substring(0, 300);
-    if (preview) {
-      addMsg('agent-result', preview, data.agent_name);
+    const agent = data.agent_name || 'sub-agent';
+    trackAgentDone(agent);
+    // Display like btw: badge + markdown response
+    if (data.response) {
+      const el = addMsg('btw', '');
+      const dur = data.duration_s || '?';
+      const tok = (data.tokens_in || 0) + (data.tokens_out || 0);
+      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(agent) + ' \u00b7 sub] </span>'
+        + renderMarkdown(data.response)
+        + '<span style="color:#555;font-size:10px;margin-left:8px;">(' + dur + 's, ' + tok + ' tok)</span>';
+    } else if (data.error) {
+      const el = addMsg('btw', '');
+      el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(agent) + ' \u00b7 sub] Error: ' + escapeHtml(data.error) + '</span>';
     }
-    addMsg('system-compact', t('subAgentDone', {
-      agent: data.agent_name,
-      dur: data.duration_s || '?',
-      tok: (data.tokens_in || 0) + (data.tokens_out || 0),
-    }));
     scrollBottom();
   });
 
@@ -1482,6 +1508,19 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    // spawn_agents: skip verbose JSON — sub_agent_done events show the responses
+    if (data.tool === 'spawn_agents' && data.result) {
+      try {
+        const agents = JSON.parse(data.result);
+        if (Array.isArray(agents)) {
+          const summary = agents.map(a => (a.agent || '?') + ': ' + a.status).join(', ');
+          addMsg('tool', t('toolResult', {tool: 'spawn_agents', result: summary}));
+          scrollBottom();
+          showTyping();
+          return;
+        }
+      } catch(ex) { /* fall through to default */ }
+    }
     const preview = (data.result || '').substring(0, 200);
     addMsg('tool', t('toolResult', {tool: data.tool, result: preview + (data.result && data.result.length > 200 ? '...' : '')}));
     scrollBottom();

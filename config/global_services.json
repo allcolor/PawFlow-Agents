@@ -7,7 +7,7 @@
       "api_key": "${secrets.global.llm_api_key}",
       "base_url": "${global.llm_base_url}",
       "default_model": "${global.llm_model}",
-      "timeout": 60,
+      "timeout": 180,
       "max_retries": 2,
       "max_tokens": 65536,
       "max_concurrent": 0
@@ -24,7 +24,7 @@
       "api_key": "${secrets.global.grok_llm_api_key}",
       "base_url": "${global.grok_llm_base_url}",
       "default_model": "${global.grok_llm_model}",
-      "timeout": 60,
+      "timeout": 180,
       "max_retries": 2,
       "max_tokens": 65536,
       "max_concurrent": 0

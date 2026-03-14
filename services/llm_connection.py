@@ -32,7 +32,7 @@ class LLMConnectionService(BaseService):
     TYPE = "llmConnection"
     VERSION = "1.1.0"
     NAME = "LLM Connection Service"
-    DESCRIPTION = "Connector for AI inference (OpenAI, Anthropic, compatible APIs)"
+    DESCRIPTION = "Connector for AI inference (OpenAI, Anthropic, Claude Code CLI, Gemini CLI, compatible APIs)"
 
     PROVIDERS = LLMClient.PROVIDERS
 
@@ -59,6 +59,16 @@ class LLMConnectionService(BaseService):
             )
         if not self.api_key:
             raise ServiceError("api_key is required")
+        if self.provider == "claude-code":
+            import shutil
+            binary = self.config.get("claude_binary", "claude")
+            if not shutil.which(binary):
+                logger.warning("Claude CLI binary '%s' not found in PATH", binary)
+        elif self.provider == "gemini-cli":
+            import shutil
+            binary = self.config.get("gemini_binary", "gemini")
+            if not shutil.which(binary):
+                logger.warning("Gemini CLI binary '%s' not found in PATH", binary)
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
@@ -136,7 +146,7 @@ class LLMConnectionService(BaseService):
                 "type": "string",
                 "required": True,
                 "default": "openai",
-                "description": "LLM provider: openai, anthropic",
+                "description": "LLM provider: openai, anthropic, claude-code, gemini-cli",
                 "allowed_values": list(self.PROVIDERS),
             },
             "api_key": {
@@ -180,6 +190,18 @@ class LLMConnectionService(BaseService):
                 "required": False,
                 "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",
+            },
+            "claude_binary": {
+                "type": "string",
+                "required": False,
+                "default": "claude",
+                "description": "Path to Claude CLI binary (claude-code provider only)",
+            },
+            "gemini_binary": {
+                "type": "string",
+                "required": False,
+                "default": "gemini",
+                "description": "Path to Gemini CLI binary (gemini-cli provider only)",
             },
         }
 

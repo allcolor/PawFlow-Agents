@@ -3548,6 +3548,11 @@ class SpawnAgentsHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._executor = None  # type: Optional[SubAgentExecutor]
+        self._available_agents: List[str] = []
+
+    def set_available_agents(self, names: List[str]):
+        """Set the list of available agent names (for description injection)."""
+        self._available_agents = list(names)
 
     @property
     def name(self) -> str:
@@ -3555,14 +3560,19 @@ class SpawnAgentsHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return (
-            "Spawn one or more sub-agents to work on tasks in parallel. "
-            "Each agent has its own system prompt and tool access. "
+        base = (
+            "Send a message to one or more existing agents. "
+            "Each agent runs independently with its own LLM service and tools. "
             "Use 'wait: true' (default) to get results immediately, "
             "or 'wait: false' to run in background and check later "
-            "with get_agent_results.\n\n"
-            "Agents must be created first via manage_resource or /add-agent."
+            "with get_agent_results."
         )
+        if self._available_agents:
+            base += (
+                f"\n\nAvailable agents: {', '.join(self._available_agents)}. "
+                f"Use these exact names in the 'agent' field."
+            )
+        return base
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -3576,7 +3586,7 @@ class SpawnAgentsHandler(ToolHandler):
                         "properties": {
                             "agent": {
                                 "type": "string",
-                                "description": "Name of the agent to use",
+                                "description": "Exact name of an existing agent (from available agents list)",
                             },
                             "message": {
                                 "type": "string",

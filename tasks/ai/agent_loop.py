@@ -200,8 +200,8 @@ class AgentLoopTask(BaseTask):
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
             },
             "llm_service": {
-                "type": "string", "required": False, "default": "${global.llm.default.service}",
-                "description": "LLM service ID (from global/user services). Defaults to ${global.llm.default.service}.",
+                "type": "string", "required": False, "default": "${global.llm_default_service}",
+                "description": "LLM service ID (from global/user services). Defaults to ${global.llm_default_service}.",
             },
         }
 
@@ -288,9 +288,20 @@ class AgentLoopTask(BaseTask):
             client, registry, max_workers=4,
             client_resolver=_client_resolver,
         )
+        # Inject available agent names into SpawnAgentsHandler for tool description
+        _uid_for_agents = flowfile.get_attribute("http.auth.principal") or "anonymous"
+        try:
+            from core.resource_store import ResourceStore
+            _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
+            _agent_names = [a["name"] for a in _all_agents]
+        except Exception:
+            _agent_names = []
+
         for h in registry.list_tools():
             if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
                 h.set_executor(sub_executor)
+            if isinstance(h, SpawnAgentsHandler) and _agent_names:
+                h.set_available_agents(_agent_names)
 
         user_role = flowfile.get_attribute("http.auth.roles") or ""
         if user_role:
@@ -336,6 +347,7 @@ class AgentLoopTask(BaseTask):
         user_text = raw_body
         conversation_id = None
         attachments = []  # list of {"type": "image"|"document", ...}
+        body_json = None
 
         if raw_body.strip().startswith("{"):
             try:
@@ -443,6 +455,24 @@ class AgentLoopTask(BaseTask):
             from core.conversation_store import ConversationStore
             conversation_id = ConversationStore.instance().generate_id()
 
+        # Apply pending_agent from the first message (agent selected before conversation existed)
+        _pending_agent = body_json.get("pending_agent", "") if body_json else ""
+        if _pending_agent and use_conv_store and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                # Ensure conversation entry exists (save minimal data)
+                if not store.load(conversation_id):
+                    _uid = flowfile.get_attribute("http.auth.principal") or ""
+                    store.save(conversation_id, [], user_id=_uid)
+                active = store.get_extra(conversation_id, "active_resources") or {}
+                active["agent"] = _pending_agent
+                store.set_extra(conversation_id, "active_resources", active)
+                logger.info("Applied pending agent '%s' on new conversation %s",
+                            _pending_agent, conversation_id[:8])
+            except Exception as e:
+                logger.warning("Failed to apply pending agent '%s': %s", _pending_agent, e)
+
         # Store channel chat_id for cross-channel notifications
         if use_conv_store and conversation_id and getattr(self, '_pending_channel_chat_id', ''):
             try:
@@ -458,6 +488,7 @@ class AgentLoopTask(BaseTask):
             self._pending_channel_name = ""
 
         # Check for selected agent persona and active skills
+        _selected_agent_def = None
         if use_conv_store and conversation_id:
             try:
                 from core.conversation_store import ConversationStore
@@ -472,6 +503,7 @@ class AgentLoopTask(BaseTask):
                 if selected:
                     agent_def = rs.get_any("agent", selected, _uid)
                     if agent_def:
+                        _selected_agent_def = agent_def
                         system_prompt = agent_def["prompt"]
                         system_prompt += f"\n\n[You are agent '{selected}']\n"
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -484,6 +516,23 @@ class AgentLoopTask(BaseTask):
                                 f"{', '.join(others)}. Use spawn_agents or "
                                 f"manage_resource to work with them."
                             )
+                else:
+                    # No agent selected — still list available agents so default can use spawn_agents
+                    all_agents = rs.list_all("agent", _uid)
+                    if all_agents:
+                        agent_lines = []
+                        for a in all_agents:
+                            desc = a.get("description") or a.get("prompt", "")[:80]
+                            agent_lines.append(f"  - {a['name']}: {desc}")
+                        system_prompt += (
+                            f"\n\n## Available agents\n"
+                            f"You have access to the following agents via the spawn_agents tool:\n"
+                            + "\n".join(agent_lines) + "\n\n"
+                            f"When the user asks you to talk to or contact an agent, "
+                            f"you MUST use the spawn_agents tool to send them a message. "
+                            f"Example: spawn_agents(tasks=[{{\"agent\": \"grok\", \"message\": \"Hello from the default agent!\"}}])\n"
+                            f"The user can also switch to an agent directly with /agent select <name>."
+                        )
 
                 # Inject active skills into system prompt
                 active_skills = active_res.get("skills", [])
@@ -502,8 +551,8 @@ class AgentLoopTask(BaseTask):
                             "via the use_skill tool or follow their instructions "
                             "directly:\n\n" + "\n\n".join(skill_sections)
                         )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Error loading agent persona/skills: %s", e, exc_info=True)
 
         model_name = self.config.get("model", "")
         user_id = flowfile.get_attribute("http.auth.principal") or ""
@@ -523,29 +572,42 @@ class AgentLoopTask(BaseTask):
                     conversation_id, "active_resources",
                 ) or {}
                 _active_agent_name = _ares.get("agent", "")
-                if _active_agent_name and not _active_llm_service:
+                if _active_agent_name:
                     from core.resource_store import ResourceStore
                     _adef = ResourceStore.instance().get_any(
                         "agent", _active_agent_name, user_id,
                     )
-                    if _adef:
-                        _active_llm_service = _adef.get("llm_service", "")
+                    if _adef and _adef.get("llm_service", ""):
+                        _agent_llm = _adef["llm_service"]
                         # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
-                        if _active_llm_service and "${" in _active_llm_service:
+                        if "${" in _agent_llm:
                             from core.expression import resolve_expression
-                            _active_llm_service = resolve_expression(
-                                _active_llm_service, owner=user_id,
+                            _agent_llm = resolve_expression(
+                                _agent_llm, owner=user_id,
                             )
-                            if "${" in _active_llm_service:
-                                _active_llm_service = ""
+                        if _agent_llm and "${" not in _agent_llm:
+                            _active_llm_service = _agent_llm
                 # If active agent has its own LLM service, resolve it now
-                if _active_llm_service and not resolved_client:
+                if _active_llm_service and _active_llm_service != task_llm_service:
+                    logger.info("Agent '%s' uses LLM service '%s' (task default: '%s')",
+                                _active_agent_name, _active_llm_service, task_llm_service)
                     _rc, _rs = self._resolve_llm_service(_active_llm_service, user_id)
                     if _rc:
                         client = _rc
                         resolved_svc = _rs
-            except Exception:
-                pass
+                        # Use service's default model, not the task's model
+                        model_name = ""
+                        logger.info("Resolved agent LLM service '%s' successfully", _active_llm_service)
+                    else:
+                        logger.warning("Failed to resolve agent LLM service '%s' — using task default",
+                                       _active_llm_service)
+                elif _active_agent_name and not _adef:
+                    logger.warning("Agent '%s' definition not found in ResourceStore", _active_agent_name)
+                elif _active_agent_name and not _adef.get("llm_service", ""):
+                    logger.info("Agent '%s' has no llm_service — using task default '%s'",
+                                _active_agent_name, task_llm_service)
+            except Exception as e:
+                logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
 
         # Resolve max_tokens: task config → service config → default 4096
         if not max_tokens and resolved_svc:
@@ -2052,12 +2114,18 @@ class AgentLoopTask(BaseTask):
             ))
 
         if use_conv_store:
+            _agent_name = ctx.get("active_agent_name", "")
+            _llm_svc = ctx.get("active_llm_service", "")
+            _source = {"type": "agent", "name": _agent_name, "llm_service": _llm_svc} if _agent_name else (
+                {"type": "agent", "name": "assistant", "llm_service": _llm_svc} if _llm_svc else None
+            )
             output = json.dumps({
                 "response": response_content,
                 "conversation_id": conversation_id,
                 "model": final_model,
                 "tokens_in": total_tokens_in,
                 "tokens_out": total_tokens_out,
+                "source": _source,
             }, ensure_ascii=False)
             flowfile.set_content(output.encode("utf-8"))
             flowfile.set_attribute("agent.conversation_id", conversation_id)
@@ -2638,6 +2706,12 @@ class AgentLoopTask(BaseTask):
             logger.info(f"[agent:{conversation_id[:8]}] done: response_len={len(response_content or '')}, "
                         f"tools={tools_called}")
             from core.conversation_store import ConversationStore as _CS3
+            # Build source info for badge display consistency (SSE + poll)
+            _agent_name = ctx.get("active_agent_name", "")
+            _llm_svc = ctx.get("active_llm_service", "")
+            _source = {"type": "agent", "name": _agent_name, "llm_service": _llm_svc} if _agent_name else (
+                {"type": "agent", "name": "assistant", "llm_service": _llm_svc} if _llm_svc else None
+            )
             bus.publish_event(conversation_id, "done", {
                 "response": response_content,
                 "conversation_id": conversation_id,
@@ -2648,6 +2722,7 @@ class AgentLoopTask(BaseTask):
                 "iterations": iteration,
                 "duration_ms": round(duration_ms, 1),
                 "message_count": _CS3.instance().message_count(conversation_id),
+                "source": _source,
             })
 
             # Track token usage

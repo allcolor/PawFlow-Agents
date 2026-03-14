@@ -387,6 +387,7 @@ const LOGIN_URL = '{{LOGIN_URL}}';
 let conversationId = null;
 let sending = false;
 let eventSource = null;
+let pendingAgent = null;  // agent to select when first message creates a conversation
 let sseRetryCount = 0;     // for exponential backoff on reconnect
 let sseReconnectTimer = null;
 let streamingEl = null;  // current assistant message being streamed
@@ -448,6 +449,7 @@ function newChat() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   stopPollTimer();
   conversationId = null;
+  pendingAgent = null;
   serverMsgCount = 0;
   streamingEl = null;
   streamingText = '';
@@ -603,7 +605,7 @@ async function _recoverConversation(cid) {
     streamingChunks = [];
     hideTyping();
 
-    // Display the new messages, skipping user messages already shown locally
+    // Display the new messages, skipping messages already shown locally
     const msgContainer = document.getElementById('messages');
     for (const m of newMsgs) {
       const mType = m.type || m.role;
@@ -614,6 +616,18 @@ async function _recoverConversation(cid) {
         if (lastUserEl && lastUserEl.textContent.trim() === (m.content || '').trim()) {
           console.log('[poll] skipping duplicate user message');
           continue;
+        }
+      }
+      if (mType === 'assistant') {
+        // Check if this assistant message was already shown via SSE done event
+        const existing = msgContainer.querySelectorAll('.msg.assistant');
+        const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
+        if (lastEl && lastEl.dataset.rawText) {
+          const newText = (m.content || '').substring(0, 500);
+          if (lastEl.dataset.rawText === newText) {
+            console.log('[poll] skipping duplicate assistant message');
+            continue;
+          }
         }
       }
       addMsg(mType, m.content, m);
@@ -732,6 +746,7 @@ function addMsg(role, text, extra) {
   // Support classified types: tool_call, tool_result map to CSS class "tool"
   const cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
   el.className = 'msg ' + cssClass;
+  el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   if (role === 'assistant') {
     el.innerHTML = badge + renderMarkdown(text);
@@ -894,11 +909,12 @@ function connectSSE(cid) {
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
     resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trimEnd();
-    // Show the final response (or fallback if empty)
+    // Show the final response (or fallback if empty), with source badge
+    const extra = data.source ? { source: data.source } : undefined;
     if (resp) {
-      addMsg('assistant', resp);
+      addMsg('assistant', resp, extra);
     } else if (streamingText) {
-      addMsg('assistant', streamingText);
+      addMsg('assistant', streamingText, extra);
     }
     streamingEl = null;
     streamingText = '';
@@ -1305,12 +1321,13 @@ const HELP_DATA = {
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
   '/agent': {
-    usage: '/agent list | create | select <name> | delete <name>',
+    usage: '/agent list | create | select <name> | default | delete <name>',
     short: 'Manage AI agents',
     detail: 'Create, list, select, or delete AI agents.\n\n'
       + '  /agent list          — List all agents (user + global)\n'
       + '  /agent create        — Create a new agent (interactive)\n'
       + '  /agent select <name> — Activate an agent for this conversation\n'
+      + '  /agent default       — Switch back to the default agent\n'
       + '  /agent delete <name> — Delete an agent by name\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
@@ -1544,12 +1561,14 @@ async function handleSlashCommand(text) {
     } else if (sub === 'select') {
       const name = parts[2] || '';
       await cmdAgentSelect(name);
+    } else if (sub === 'default') {
+      await cmdAgentSelect('');
     } else if (sub === 'delete' || sub === 'del') {
       const name = parts[2];
       if (!name) { addMsg('system', 'Usage: /agent delete <name>'); }
       else { await cmdAgentDelete(name); }
     } else {
-      addMsg('system', 'Usage: /agent list | create | select <name> | delete <name>');
+      addMsg('system', 'Usage: /agent list | create | select <name> | default | delete <name>');
     }
     return true;
   }
@@ -1900,7 +1919,12 @@ async function cmdAgentCreate() {
 }
 
 async function cmdAgentSelect(name) {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  if (!conversationId) {
+    // No conversation yet — store pending selection, will be applied on first message
+    pendingAgent = name || null;
+    addMsg('system', name ? `Agent '${name}' selected (will activate on first message).` : 'Switched to default agent.');
+    return;
+  }
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
@@ -2405,6 +2429,7 @@ async function send() {
     const body = { message: text };
     if (conversationId) body.conversation_id = conversationId;
     if (attachments.length > 0) body.attachments = attachments;
+    if (pendingAgent) { body.pending_agent = pendingAgent; pendingAgent = null; }
     const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
     if (ttlVal > 0) body.ttl = ttlVal;
 
@@ -2472,7 +2497,8 @@ async function send() {
     // Non-streaming mode: show response directly
     hideTyping();
     conversationId = data.conversation_id || conversationId;
-    addMsg('assistant', data.response || data.content || JSON.stringify(data));
+    const nsExtra = data.source ? { source: data.source } : undefined;
+    addMsg('assistant', data.response || data.content || JSON.stringify(data), nsExtra);
     sending = false;
     document.getElementById('status').textContent = t('ready');
     loadConversations();

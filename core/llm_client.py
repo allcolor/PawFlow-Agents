@@ -10,11 +10,16 @@ Used by:
 import json
 import http.client
 import logging
+import os
+import re
 import ssl
+import subprocess
+import tempfile
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Tuple
 from urllib.parse import urlparse
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +108,7 @@ class LLMClient:
         max_retries: Number of retries on transient errors
     """
 
-    PROVIDERS = ("openai", "anthropic")
+    PROVIDERS = ("openai", "anthropic", "claude-code", "gemini-cli")
 
     DEFAULT_URLS = {
         "openai": "https://api.openai.com",
@@ -113,7 +118,12 @@ class LLMClient:
     DEFAULT_MODELS = {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-sonnet-4-20250514",
+        "claude-code": "sonnet",
+        "gemini-cli": "gemini-2.5-flash",
     }
+
+    # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
+    TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
 
     def __init__(
         self,
@@ -123,6 +133,8 @@ class LLMClient:
         default_model: str = "",
         timeout: int = 60,
         max_retries: int = 2,
+        claude_binary: str = "claude",
+        gemini_binary: str = "gemini",
     ):
         self.provider = provider
         self.api_key = api_key
@@ -130,6 +142,8 @@ class LLMClient:
         self.default_model = default_model or self.DEFAULT_MODELS.get(provider, "")
         self.timeout = timeout
         self.max_retries = max_retries
+        self.claude_binary = claude_binary
+        self.gemini_binary = gemini_binary
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
@@ -141,6 +155,8 @@ class LLMClient:
             default_model=config.get("default_model", ""),
             timeout=int(config.get("timeout", 60)),
             max_retries=int(config.get("max_retries", 2)),
+            claude_binary=config.get("claude_binary", "claude"),
+            gemini_binary=config.get("gemini_binary", "gemini"),
         )
 
     def complete(
@@ -179,6 +195,10 @@ class LLMClient:
                 start = time.time()
                 if self.provider == "openai":
                     result = self._complete_openai(messages, model, temperature, max_tokens, response_format, tools)
+                elif self.provider == "claude-code":
+                    result = self._complete_claude_code(messages, model, temperature, max_tokens, tools)
+                elif self.provider == "gemini-cli":
+                    result = self._complete_gemini_cli(messages, model, temperature, max_tokens, tools)
                 else:
                     result = self._complete_anthropic(messages, model, temperature, max_tokens, tools)
                 result.duration_ms = (time.time() - start) * 1000
@@ -216,6 +236,10 @@ class LLMClient:
 
         if self.provider == "openai":
             result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback)
+        elif self.provider == "claude-code":
+            result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
+        elif self.provider == "gemini-cli":
+            result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
         elif self.provider == "anthropic":
             result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback)
         else:
@@ -792,6 +816,503 @@ class LLMClient:
             return json.loads(response_body)
         finally:
             conn.close()
+
+
+    # ── claude-code provider (subprocess-based) ──────────────────────
+
+    def _build_tool_prompt(self, tools: List[LLMToolDefinition]) -> str:
+        """Render tool definitions as text for the system prompt."""
+        if not tools:
+            return ""
+        lines = ["<available_tools>"]
+        for t in tools:
+            lines.append(f"## {t.name}")
+            lines.append(t.description)
+            lines.append(f"Parameters: {json.dumps(t.parameters)}")
+            lines.append("")
+        lines.append("</available_tools>")
+        lines.append("")
+        lines.append("When you need to use a tool, output EXACTLY this format (multiple allowed):")
+        lines.append('<tool_call>{"name": "tool_name", "arguments": {"param": "value"}}</tool_call>')
+        lines.append("")
+        lines.append("After tool calls, wait for results. Do NOT wrap in markdown code blocks.")
+        lines.append("When no tool is needed, respond with plain text.")
+        return "\n".join(lines)
+
+    def _serialize_messages_for_cli(
+        self, messages: List[LLMMessage], tools: Optional[List[LLMToolDefinition]],
+    ) -> Tuple[str, str]:
+        """Convert messages to (system_prompt, user_text) for the CLI.
+
+        System messages + tool definitions → system_prompt.
+        Conversation history → serialized into user_text.
+        """
+        system_parts = []
+        history_lines = []
+        last_user_text = ""
+
+        for m in messages:
+            text = m.text_content if isinstance(m.content, list) else (m.content or "")
+            if m.role == "system":
+                system_parts.append(text)
+            elif m.role == "user":
+                last_user_text = text
+                history_lines.append(f"[User]: {text}")
+            elif m.role == "assistant":
+                assistant_text = text
+                if m.tool_calls:
+                    tc_strs = []
+                    for tc in m.tool_calls:
+                        tc_strs.append(
+                            f'<tool_call>{json.dumps({"name": tc.name, "arguments": tc.arguments})}</tool_call>'
+                        )
+                    assistant_text = (assistant_text + "\n" + "\n".join(tc_strs)).strip()
+                history_lines.append(f"[Assistant]: {assistant_text}")
+            elif m.role == "tool":
+                name = m.tool_call_id or "unknown"
+                history_lines.append(f"[Tool Result ({name})]: {text}")
+
+        # Build system prompt
+        tool_prompt = self._build_tool_prompt(tools) if tools else ""
+        if tool_prompt:
+            system_parts.append(tool_prompt)
+        system_prompt = "\n\n".join(system_parts)
+
+        # Build user text: full history (excluding last user) + last user message
+        if len(history_lines) > 1:
+            # Include history before the last user message
+            user_text = "\n".join(history_lines)
+        else:
+            user_text = last_user_text
+
+        return system_prompt, user_text
+
+    def _extract_tool_calls(self, text: str) -> Tuple[str, List[LLMToolCall]]:
+        """Extract <tool_call> tags from response text.
+
+        Returns (clean_text, tool_calls) where clean_text has tags removed.
+        """
+        tool_calls = []
+        for match in self.TOOL_CALL_RE.finditer(text):
+            try:
+                data = json.loads(match.group(1))
+                tool_calls.append(LLMToolCall(
+                    id=f"cc_{uuid4().hex[:12]}",
+                    name=data.get("name", ""),
+                    arguments=data.get("arguments", {}),
+                ))
+            except (json.JSONDecodeError, KeyError, TypeError):
+                logger.warning("Failed to parse tool_call: %s", match.group(1)[:200])
+        clean = self.TOOL_CALL_RE.sub("", text).strip()
+        return clean, tool_calls
+
+    def _claude_code_env(self) -> dict:
+        """Build environment for claude subprocess.
+
+        Passes api_key and base_url as env vars so each user's service
+        config is isolated (multi-user support).
+        """
+        env = os.environ.copy()
+        if self.api_key:
+            env["ANTHROPIC_API_KEY"] = self.api_key
+        if self.base_url:
+            env["ANTHROPIC_BASE_URL"] = self.base_url
+        return env
+
+    def _complete_claude_code(
+        self, messages, model, temperature, max_tokens, tools=None,
+    ) -> LLMResponse:
+        """Run claude CLI in pipe mode and parse the response."""
+        system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+
+        cmd = [
+            self.claude_binary, "-p",
+            "--output-format", "json",
+            "--model", model or "sonnet",
+            "--max-turns", "1",
+        ]
+        if system_prompt:
+            cmd += ["--system-prompt", system_prompt]
+        if max_tokens:
+            cmd += ["--max-tokens", str(max_tokens)]
+
+        logger.debug("claude-code cmd: %s", " ".join(cmd[:6]) + "...")
+        logger.debug("claude-code input length: %d chars", len(user_text))
+
+        try:
+            result = subprocess.run(
+                cmd,
+                input=user_text,
+                capture_output=True,
+                text=True,
+                timeout=self.timeout,
+                env=self._claude_code_env(),
+            )
+        except FileNotFoundError:
+            raise LLMClientError(
+                f"Claude CLI binary '{self.claude_binary}' not found. "
+                f"Install with: npm install -g @anthropic-ai/claude-code"
+            )
+        except subprocess.TimeoutExpired:
+            raise LLMClientError(
+                f"Claude CLI timed out after {self.timeout}s"
+            )
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise LLMClientError(
+                f"Claude CLI exited with code {result.returncode}: {stderr[:500]}"
+            )
+
+        # Parse JSON output
+        stdout = result.stdout.strip()
+        if not stdout:
+            raise LLMClientError("Claude CLI returned empty output")
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            # Sometimes output is plain text, not JSON
+            content = stdout
+            clean, tc = self._extract_tool_calls(content)
+            return LLMResponse(
+                content=clean, model=model, tool_calls=tc,
+                finish_reason="stop" if not tc else "tool_use",
+            )
+
+        content = data.get("result", data.get("content", ""))
+        if isinstance(content, list):
+            # Handle content blocks format
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            )
+
+        clean, tc = self._extract_tool_calls(content)
+
+        return LLMResponse(
+            content=clean,
+            model=data.get("model", model),
+            tokens_in=data.get("usage", {}).get("input_tokens", 0),
+            tokens_out=data.get("usage", {}).get("output_tokens", 0),
+            total_tokens=(
+                data.get("usage", {}).get("input_tokens", 0)
+                + data.get("usage", {}).get("output_tokens", 0)
+            ),
+            finish_reason="stop" if not tc else "tool_use",
+            tool_calls=tc,
+            raw=data,
+        )
+
+    def _stream_claude_code(
+        self, messages, model, temperature, max_tokens, tools, callback,
+    ) -> LLMResponse:
+        """Stream from claude CLI using stream-json output format."""
+        system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+
+        cmd = [
+            self.claude_binary, "-p",
+            "--output-format", "stream-json",
+            "--model", model or "sonnet",
+            "--max-turns", "1",
+        ]
+        if system_prompt:
+            cmd += ["--system-prompt", system_prompt]
+        if max_tokens:
+            cmd += ["--max-tokens", str(max_tokens)]
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=self._claude_code_env(),
+            )
+        except FileNotFoundError:
+            raise LLMClientError(
+                f"Claude CLI binary '{self.claude_binary}' not found. "
+                f"Install with: npm install -g @anthropic-ai/claude-code"
+            )
+
+        # Send input and close stdin
+        proc.stdin.write(user_text)
+        proc.stdin.close()
+
+        # Read streaming output line by line
+        content_parts = []
+        last_data = {}
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    event = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                etype = event.get("type", "")
+                if etype == "assistant":
+                    # Content message
+                    msg = event.get("message", {})
+                    for block in msg.get("content", []):
+                        if block.get("type") == "text":
+                            text = block.get("text", "")
+                            if text:
+                                content_parts.append(text)
+                                if callback:
+                                    callback(text)
+                    last_data = msg
+                elif etype == "content_block_delta":
+                    delta = event.get("delta", {})
+                    text = delta.get("text", "")
+                    if text:
+                        content_parts.append(text)
+                        if callback:
+                            callback(text)
+                elif etype == "result":
+                    # Final result
+                    result_text = event.get("result", "")
+                    if result_text and not content_parts:
+                        content_parts.append(result_text)
+                        if callback:
+                            callback(result_text)
+                    last_data = event
+        finally:
+            proc.stdout.close()
+            proc.stderr.close()
+            proc.wait(timeout=5)
+
+        if proc.returncode and proc.returncode != 0:
+            raise LLMClientError(f"Claude CLI stream exited with code {proc.returncode}")
+
+        full_content = "".join(content_parts)
+        clean, tc = self._extract_tool_calls(full_content)
+
+        usage = last_data.get("usage", {})
+        return LLMResponse(
+            content=clean,
+            model=last_data.get("model", model),
+            tokens_in=usage.get("input_tokens", 0),
+            tokens_out=usage.get("output_tokens", 0),
+            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            finish_reason="stop" if not tc else "tool_use",
+            tool_calls=tc,
+            raw=last_data,
+        )
+
+
+    # ── gemini-cli provider (subprocess-based) ───────────────────────
+
+    def _gemini_cli_env(self) -> dict:
+        """Build environment for gemini subprocess."""
+        env = os.environ.copy()
+        if self.api_key:
+            env["GEMINI_API_KEY"] = self.api_key
+        return env
+
+    def _complete_gemini_cli(
+        self, messages, model, temperature, max_tokens, tools=None,
+    ) -> LLMResponse:
+        """Run gemini CLI in prompt mode and parse the response."""
+        system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+        env = self._gemini_cli_env()
+
+        cmd = [
+            self.gemini_binary, "-p",
+            "--output-format", "json",
+            "-m", model or "gemini-2.5-flash",
+        ]
+
+        # System prompt via temp file (gemini uses GEMINI_SYSTEM_MD env var)
+        sys_file = None
+        try:
+            if system_prompt:
+                sys_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".md", delete=False, encoding="utf-8",
+                )
+                sys_file.write(system_prompt)
+                sys_file.close()
+                env["GEMINI_SYSTEM_MD"] = sys_file.name
+
+            logger.debug("gemini-cli cmd: %s", " ".join(cmd[:6]) + "...")
+
+            try:
+                result = subprocess.run(
+                    cmd, input=user_text, capture_output=True,
+                    text=True, timeout=self.timeout, env=env,
+                )
+            except FileNotFoundError:
+                raise LLMClientError(
+                    f"Gemini CLI binary '{self.gemini_binary}' not found. "
+                    f"Install with: npm install -g @google/gemini-cli"
+                )
+            except subprocess.TimeoutExpired:
+                raise LLMClientError(f"Gemini CLI timed out after {self.timeout}s")
+        finally:
+            if sys_file:
+                try:
+                    os.unlink(sys_file.name)
+                except OSError:
+                    pass
+
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()
+            raise LLMClientError(
+                f"Gemini CLI exited with code {result.returncode}: {stderr[:500]}"
+            )
+
+        stdout = result.stdout.strip()
+        if not stdout:
+            raise LLMClientError("Gemini CLI returned empty output")
+
+        try:
+            data = json.loads(stdout)
+        except json.JSONDecodeError:
+            clean, tc = self._extract_tool_calls(stdout)
+            return LLMResponse(
+                content=clean, model=model,
+                finish_reason="stop" if not tc else "tool_use", tool_calls=tc,
+            )
+
+        content = data.get("response", data.get("result", ""))
+        if isinstance(content, list):
+            content = " ".join(
+                b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+            )
+
+        clean, tc = self._extract_tool_calls(content)
+
+        # Gemini stats format: {"stats": {"models": {"model_name": {"inputTokens": N, ...}}}}
+        stats = data.get("stats", {})
+        model_stats = {}
+        for _mname, mdata in stats.get("models", {}).items():
+            model_stats = mdata
+            break
+        tokens_in = model_stats.get("inputTokens", 0)
+        tokens_out = model_stats.get("outputTokens", 0)
+
+        return LLMResponse(
+            content=clean,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            total_tokens=tokens_in + tokens_out,
+            finish_reason="stop" if not tc else "tool_use",
+            tool_calls=tc,
+            raw=data,
+        )
+
+    def _stream_gemini_cli(
+        self, messages, model, temperature, max_tokens, tools, callback,
+    ) -> LLMResponse:
+        """Stream from gemini CLI using stream-json output format."""
+        system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+        env = self._gemini_cli_env()
+
+        cmd = [
+            self.gemini_binary, "-p",
+            "--output-format", "stream-json",
+            "-m", model or "gemini-2.5-flash",
+        ]
+
+        sys_file = None
+        try:
+            if system_prompt:
+                sys_file = tempfile.NamedTemporaryFile(
+                    mode="w", suffix=".md", delete=False, encoding="utf-8",
+                )
+                sys_file.write(system_prompt)
+                sys_file.close()
+                env["GEMINI_SYSTEM_MD"] = sys_file.name
+
+            try:
+                proc = subprocess.Popen(
+                    cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE, text=True, env=env,
+                )
+            except FileNotFoundError:
+                raise LLMClientError(
+                    f"Gemini CLI binary '{self.gemini_binary}' not found. "
+                    f"Install with: npm install -g @google/gemini-cli"
+                )
+
+            proc.stdin.write(user_text)
+            proc.stdin.close()
+
+            content_parts = []
+            last_data = {}
+            try:
+                for line in proc.stdout:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    etype = event.get("type", "")
+                    if etype in ("message", "assistant"):
+                        msg = event.get("message", event)
+                        for block in msg.get("content", []):
+                            if block.get("type") == "text":
+                                text = block.get("text", "")
+                                if text:
+                                    content_parts.append(text)
+                                    if callback:
+                                        callback(text)
+                        last_data = event
+                    elif etype == "content_block_delta":
+                        delta = event.get("delta", {})
+                        text = delta.get("text", "")
+                        if text:
+                            content_parts.append(text)
+                            if callback:
+                                callback(text)
+                    elif etype == "result":
+                        result_text = event.get("response", event.get("result", ""))
+                        if result_text and not content_parts:
+                            content_parts.append(result_text)
+                            if callback:
+                                callback(result_text)
+                        last_data = event
+            finally:
+                proc.stdout.close()
+                proc.stderr.close()
+                proc.wait(timeout=5)
+
+            if proc.returncode and proc.returncode != 0:
+                raise LLMClientError(f"Gemini CLI stream exited with code {proc.returncode}")
+        finally:
+            if sys_file:
+                try:
+                    os.unlink(sys_file.name)
+                except OSError:
+                    pass
+
+        full_content = "".join(content_parts)
+        clean, tc = self._extract_tool_calls(full_content)
+
+        stats = last_data.get("stats", {})
+        model_stats = {}
+        for _mname, mdata in stats.get("models", {}).items():
+            model_stats = mdata
+            break
+        tokens_in = model_stats.get("inputTokens", 0)
+        tokens_out = model_stats.get("outputTokens", 0)
+
+        return LLMResponse(
+            content=clean,
+            model=model,
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            total_tokens=tokens_in + tokens_out,
+            finish_reason="stop" if not tc else "tool_use",
+            tool_calls=tc,
+            raw=last_data,
+        )
 
 
 class LLMClientError(Exception):

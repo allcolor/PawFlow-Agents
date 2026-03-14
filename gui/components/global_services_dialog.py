@@ -42,7 +42,12 @@ def global_services_dialog():
     if definitions:
         for sid, sdef in sorted(definitions.items()):
             connected = registry.is_connected(sid)
-            icon = "🟢" if connected else ("🔴" if sdef.enabled else "⚫")
+            if connected:
+                icon = "🟢"
+            elif not sdef.enabled:
+                icon = "⚫"
+            else:
+                icon = "🟡"  # enabled but not yet instantiated (normal for on-demand services)
             with st.container(border=True):
                 hdr_cols = st.columns([5, 1, 1, 1])
                 with hdr_cols[0]:

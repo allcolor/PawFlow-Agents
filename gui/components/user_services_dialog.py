@@ -42,7 +42,12 @@ def user_services_dialog(user_id: str):
     if definitions:
         for sid, sdef in sorted(definitions.items()):
             connected = registry.is_connected(user_id, sid)
-            icon = "\U0001f7e2" if connected else ("\U0001f534" if sdef.enabled else "\u26ab")
+            if connected:
+                icon = "\U0001f7e2"
+            elif not sdef.enabled:
+                icon = "\u26ab"
+            else:
+                icon = "\U0001f7e1"  # enabled, not yet instantiated
             with st.container(border=True):
                 hdr_cols = st.columns([5, 1, 1, 1])
                 with hdr_cols[0]:

@@ -554,9 +554,19 @@ class LLMClient:
 
     def _build_openai_messages(self, messages: List[LLMMessage]) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format."""
+        # Sanitize: collect tool_call IDs from assistant messages, drop orphan tool messages
+        valid_tc_ids: set = set()
+        for m in messages:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    valid_tc_ids.add(tc.id)
+
         api_messages = []
         for m in messages:
             if m.role == "tool":
+                # Skip orphan tool messages (no matching assistant tool_call)
+                if m.tool_call_id and m.tool_call_id not in valid_tc_ids:
+                    continue
                 api_messages.append({
                     "role": "tool",
                     "content": m.text_content if isinstance(m.content, list) else m.content,

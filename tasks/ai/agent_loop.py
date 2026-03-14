@@ -224,8 +224,11 @@ class AgentLoopTask(BaseTask):
         Always uses the task-level llm_service, never the agent-switched one.
         """
         task_llm_service = self.config.get("llm_service", "")
+        if task_llm_service and "${" in task_llm_service:
+            from core.expression import resolve_expression
+            task_llm_service = resolve_expression(task_llm_service, owner=user_id)
         if not task_llm_service or "${" in task_llm_service:
-            task_llm_service = "default"
+            task_llm_service = ""  # let _resolve_llm_service try registries
         client, _ = self._resolve_llm_service(task_llm_service, user_id)
         if not client and self.config.get("api_key"):
             client = LLMClient(
@@ -984,12 +987,12 @@ class AgentLoopTask(BaseTask):
                 content_msgs = [m for m in deserialized if m.role != "system"]
                 model = self.config.get("model", "")
                 context_max = int(self.config.get("context_max_tokens", 64000))
-                summary = self._summarize_messages(content_msgs, client, model, context_max)
+                summary = self._summarize_messages(content_msgs, client, context_max)
                 # Truncate summary to approximate token budget
                 if len(summary) > max_summary_tokens * 4:  # ~4 chars per token
                     # Re-summarize with explicit length constraint
                     summary = self._call_summarize_with_budget(
-                        client, model, summary, max_summary_tokens,
+                        client, summary, max_summary_tokens,
                     )
                 # Store summary and set offset to skip all messages
                 store.set_context_summary(conv_id, summary)
@@ -1423,7 +1426,7 @@ class AgentLoopTask(BaseTask):
                 before_count = len(msgs)
                 # Force compaction to generate a summary (persisted by _compact_if_needed)
                 compacted = self._compact_if_needed(
-                    msgs, client, mdl or "default",
+                    msgs, client,
                     int(self.config.get("context_max_tokens", 64000)),
                     0.5,  # aggressive
                     int(self.config.get("context_keep_recent", 6)),
@@ -2307,7 +2310,7 @@ class AgentLoopTask(BaseTask):
                 ),
             ))
             synth_context = self._compact_if_needed(
-                list(messages), client, model or ctx["model"],
+                list(messages), client,
                 ctx.get("context_max_tokens", 64000),
                 0.6,
                 ctx.get("context_keep_recent", 6),
@@ -2334,7 +2337,7 @@ class AgentLoopTask(BaseTask):
                     if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
                         logger.warning(f"[agent] synthesis overflow, forcing aggressive compaction...")
                         synth_context = self._compact_if_needed(
-                            synth_context, client, model or ctx["model"],
+                            synth_context, client,
                             ctx.get("context_max_tokens", 64000),
                             0.4,
                             ctx.get("context_keep_recent", 4),
@@ -2874,7 +2877,7 @@ class AgentLoopTask(BaseTask):
                     # agent-switched one which may be slow/expensive).
                     compact_client = ctx.get("default_client") or client
                     llm_context = self._compact_if_needed(
-                        list(messages), compact_client, model or ctx["model"],
+                        list(messages), compact_client,
                         ctx.get("context_max_tokens", 64000),
                         ctx.get("context_compact_threshold", 0.8),
                         ctx.get("context_keep_recent", 6),
@@ -2903,7 +2906,7 @@ class AgentLoopTask(BaseTask):
                         })
                         interrupt_resp = client.complete_stream(
                             messages=self._compact_if_needed(
-                                list(messages), compact_client, model or ctx["model"],
+                                list(messages), compact_client,
                                 ctx.get("context_max_tokens", 64000), 0.6,
                                 ctx.get("context_keep_recent", 6),
                             ),
@@ -2946,7 +2949,7 @@ class AgentLoopTask(BaseTask):
                                 "iteration": iteration, "detail": "compacting context...",
                             })
                             llm_context = self._compact_if_needed(
-                                llm_context, compact_client, model or ctx["model"],
+                                llm_context, compact_client,
                                 ctx.get("context_max_tokens", 64000),
                                 0.5,  # aggressive threshold
                                 ctx.get("context_keep_recent", 6),
@@ -3218,7 +3221,7 @@ class AgentLoopTask(BaseTask):
                 ))
                 # Compact before synthesis — context may be huge after many tool calls
                 synth_context = self._compact_if_needed(
-                    list(messages), compact_client, model or ctx["model"],
+                    list(messages), compact_client,
                     ctx.get("context_max_tokens", 64000),
                     0.6,  # aggressive threshold for synthesis
                     ctx.get("context_keep_recent", 6),
@@ -3251,7 +3254,7 @@ class AgentLoopTask(BaseTask):
                             logger.warning(f"[agent:{conversation_id[:8]}] synthesis overflow, "
                                            f"forcing aggressive compaction and retrying...")
                             synth_context = self._compact_if_needed(
-                                synth_context, compact_client, model or ctx["model"],
+                                synth_context, compact_client,
                                 ctx.get("context_max_tokens", 64000),
                                 0.4,  # very aggressive
                                 ctx.get("context_keep_recent", 4),
@@ -4259,7 +4262,6 @@ class AgentLoopTask(BaseTask):
         self,
         messages: List[LLMMessage],
         client: LLMClient,
-        model: str,
         max_tokens: int,
         threshold: float,
         keep_recent: int,
@@ -4317,7 +4319,7 @@ class AgentLoopTask(BaseTask):
 
         # Summarize old messages (chunked if too large for LLM context)
         try:
-            summary = self._summarize_messages(old_messages, client, model, max_tokens)
+            summary = self._summarize_messages(old_messages, client, max_tokens)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
             return messages  # Keep original if summarization fails
@@ -4356,7 +4358,6 @@ class AgentLoopTask(BaseTask):
         self,
         old_messages: List[LLMMessage],
         client: LLMClient,
-        model: str,
         max_tokens: int,
     ) -> str:
         """Summarize messages, chunking if the text is too large for the LLM.
@@ -4372,33 +4373,33 @@ class AgentLoopTask(BaseTask):
 
         if text_tokens <= safe_limit:
             # Fits in one call
-            return self._call_summarize(client, model, summary_text)
+            return self._call_summarize(client, summary_text)
 
         # Too large — split in half and summarize each part recursively
         mid = len(old_messages) // 2
         if mid == 0:
             # Single huge message — just hard-truncate it
             truncated = summary_text[:safe_limit * 3]  # ~safe_limit tokens at 3 chars/token
-            return self._call_summarize(client, model, truncated)
+            return self._call_summarize(client, truncated)
 
         logger.info(f"[compact] Text too large ({text_tokens} tokens > {safe_limit}), "
                     f"splitting {len(old_messages)} messages into 2 chunks of {mid} + {len(old_messages) - mid}")
 
-        summary_a = self._summarize_messages(old_messages[:mid], client, model, max_tokens)
-        summary_b = self._summarize_messages(old_messages[mid:], client, model, max_tokens)
+        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens)
+        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens)
 
         # Combine both summaries and do a final reduction pass
         combined = f"Part 1:\n{summary_a}\n\nPart 2:\n{summary_b}"
         combined_tokens = self._estimate_tokens([LLMMessage(role="user", content=combined)])
 
         if combined_tokens <= safe_limit:
-            return self._call_summarize(client, model, combined)
+            return self._call_summarize(client, combined)
         else:
             # Still too big — just concatenate (will be compacted on next cycle)
             logger.warning(f"[compact] Combined summaries still large ({combined_tokens} tokens), concatenating")
             return combined
 
-    def _call_summarize(self, client: LLMClient, model: str, text: str) -> str:
+    def _call_summarize(self, client: LLMClient, text: str) -> str:
         """Single LLM call to summarize text."""
         # Double-sanitize: the text may contain tool results with weird chars
         clean_text = self._sanitize_for_llm(text)
@@ -4413,7 +4414,6 @@ class AgentLoopTask(BaseTask):
                     )),
                     LLMMessage(role="user", content=clean_text),
                 ],
-                model=model or None,
                 temperature=0.3,
                 max_tokens=2000,
             )
@@ -4465,7 +4465,7 @@ class AgentLoopTask(BaseTask):
                     f"({self._estimate_tokens([LLMMessage(role='user', content=summary)])} tokens)")
         return summary
 
-    def _call_summarize_with_budget(self, client: LLMClient, model: str,
+    def _call_summarize_with_budget(self, client: LLMClient,
                                      text: str, max_tokens: int) -> str:
         """Re-summarize text to fit within an approximate token budget."""
         clean = self._sanitize_for_llm(text)
@@ -4478,7 +4478,6 @@ class AgentLoopTask(BaseTask):
                 )),
                 LLMMessage(role="user", content=clean),
             ],
-            model=model or None,
             temperature=0.3,
             max_tokens=min(max_tokens * 2, 4096),
         )

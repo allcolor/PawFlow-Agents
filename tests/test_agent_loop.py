@@ -118,11 +118,22 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert json.loads(func["arguments"]) == {"q": "test"}
 
     def test_openai_tool_result_message(self):
-        msg = LLMMessage(role="tool", content="result", tool_call_id="call_1")
+        # Tool message must follow an assistant message with matching tool_calls
+        assistant_msg = LLMMessage(
+            role="assistant", content="Let me search",
+            tool_calls=[LLMToolCall(id="call_1", name="search", arguments={"q": "test"})],
+        )
+        tool_msg = LLMMessage(role="tool", content="result", tool_call_id="call_1")
+        result = self.client._build_openai_messages([assistant_msg, tool_msg])
+        assert result[1]["role"] == "tool"
+        assert result[1]["content"] == "result"
+        assert result[1]["tool_call_id"] == "call_1"
+
+    def test_openai_orphan_tool_message_dropped(self):
+        # Orphan tool message (no matching assistant tool_call) should be filtered out
+        msg = LLMMessage(role="tool", content="result", tool_call_id="orphan_1")
         result = self.client._build_openai_messages([msg])
-        assert result[0]["role"] == "tool"
-        assert result[0]["content"] == "result"
-        assert result[0]["tool_call_id"] == "call_1"
+        assert len(result) == 0
 
     def test_anthropic_simple_messages(self):
         client = LLMClient(provider="anthropic", api_key="test-key")

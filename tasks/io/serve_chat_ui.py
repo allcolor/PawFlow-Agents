@@ -109,6 +109,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg-actions button { background: rgba(255,255,255,0.1); border: none; color: #aaa; cursor: pointer;
                       font-size: 12px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
 .msg-actions button:hover { background: rgba(255,255,255,0.2); color: #fff; }
+.active-panel { display: none; background: #0f1629; border: 1px solid #0f3460; border-radius: 8px;
+                margin: 0 20px 8px; padding: 8px 12px; font-size: 12px; color: #a0a0c0; }
+.active-panel.visible { display: block; }
+.active-panel-title { font-size: 11px; color: #6c6c8a; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.active-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.05); }
+.active-row:first-of-type { border-top: none; }
+.active-row .a-spinner { animation: spin 1.2s linear infinite; font-style: normal; }
+.active-row .a-name { font-weight: 600; color: #e0e0f0; min-width: 80px; }
+.active-row .a-msg { flex: 1; color: #6c6c8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+.active-row .a-status { color: #4ecdc4; min-width: 80px; }
+.active-row .a-time { color: #808090; min-width: 35px; text-align: right; }
+.active-row .a-actions { display: flex; gap: 4px; }
+.active-row .a-actions button { background: none; border: 1px solid #333; color: #aaa; cursor: pointer;
+                                 border-radius: 4px; font-size: 11px; padding: 1px 6px; line-height: 1.4; }
+.active-row .a-actions button:hover { background: rgba(255,255,255,0.1); color: #fff; }
+.active-row .a-actions button.btn-stop { border-color: #993333; color: #ff6b6b; }
+.active-row .a-actions button.btn-stop:hover { background: #993333; color: #fff; }
 .typing { align-self: flex-start; font-size: 14px; padding: 10px 14px;
          font-style: italic; display: flex; align-items: center; gap: 8px; }
 .typing .spinner { display: inline-block; animation: spin 1.2s linear infinite;
@@ -279,6 +296,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <button onclick="document.getElementById('messages').scrollTop=0" title="Scroll to top">&#x2191;</button>
     <button onclick="scrollBottom(true)" title="Scroll to bottom">&#x2193;</button>
   </div>
+</div>
+<div class="active-panel" id="activePanel">
+  <div class="active-panel-title">Active agents</div>
+  <div id="activeRows"></div>
 </div>
 <div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>
@@ -906,6 +927,84 @@ function updateScrollNav() {
 // Listen for scroll events on the messages container
 document.getElementById('messages').addEventListener('scroll', updateScrollNav);
 
+// ── Active interactions tracking ──────────────────────────────────
+let activeInteractions = {};  // agent_name → { startedAt, lastTool, status, msgPreview }
+let activeTimer = null;
+
+function trackAgentStart(agentName, msgPreview) {
+  activeInteractions[agentName] = {
+    startedAt: Date.now(), lastTool: '', status: 'thinking', msgPreview: msgPreview || '',
+  };
+  updateActivePanel();
+  if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
+}
+function trackAgentTool(agentName, toolName) {
+  if (activeInteractions[agentName]) {
+    activeInteractions[agentName].lastTool = toolName;
+    activeInteractions[agentName].status = toolName;
+  }
+  updateActivePanel();
+}
+function trackAgentDone(agentName) {
+  delete activeInteractions[agentName];
+  updateActivePanel();
+  if (Object.keys(activeInteractions).length === 0 && activeTimer) {
+    clearInterval(activeTimer); activeTimer = null;
+  }
+}
+function updateActivePanel() {
+  const panel = document.getElementById('activePanel');
+  const rows = document.getElementById('activeRows');
+  const names = Object.keys(activeInteractions);
+  if (names.length === 0) {
+    panel.classList.remove('visible');
+    return;
+  }
+  panel.classList.add('visible');
+  const now = Date.now();
+  rows.innerHTML = names.map(name => {
+    const info = activeInteractions[name];
+    const secs = Math.round((now - info.startedAt) / 1000);
+    const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
+    const statusText = info.lastTool || 'thinking...';
+    const preview = info.msgPreview ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
+    const hue = Math.abs([...name].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
+    const color = 'hsl(' + hue + ',70%,65%)';
+    return '<div class="active-row">'
+      + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'
+      + '<span class="a-name" style="color:' + color + '">' + escapeHtml(name) + '</span>'
+      + '<span class="a-msg">' + preview + '</span>'
+      + '<span class="a-status">' + escapeHtml(statusText) + '</span>'
+      + '<span class="a-time">' + timeStr + '</span>'
+      + '<span class="a-actions">'
+      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(name) + '\')">&#x23F8;</button>'
+      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(name) + '\')">&#x25A0;</button>'
+      + '</span></div>';
+  }).join('');
+}
+
+async function interruptSingle(agentName) {
+  if (!conversationId) return;
+  try {
+    await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: agentName }),
+      credentials: 'same-origin',
+    });
+  } catch(e) { console.warn('Interrupt failed:', e); }
+}
+async function stopSingle(agentName) {
+  if (!conversationId) return;
+  try {
+    await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId, agent_name: agentName }),
+      credentials: 'same-origin',
+    });
+    trackAgentDone(agentName);
+  } catch(e) { console.warn('Stop failed:', e); }
+}
+
 const FUN_VERBS = [
   // Tech / Dev
   'Refactoring','Compiling','Debugging','Deploying','Optimizing','Linting','Minifying',
@@ -1193,7 +1292,8 @@ function connectSSE(cid) {
     }
     showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
-    const iter = data.iteration || '';
+    const agentName = data.agent_name || 'assistant';
+    trackAgentStart(agentName);
     const wait = data.waiting_seconds || 0;
     const verb = randomVerb();
     let status = wait > 5 ? verb + '... (' + wait + 's)' : (data.round > 1 ? verb + '... (round ' + data.round + ')' : verb + '...');
@@ -1223,6 +1323,7 @@ function connectSSE(cid) {
       streamingText = '';
     }
     const data = JSON.parse(e.data);
+    trackAgentTool(data.agent_name || 'assistant', data.tool);
     addMsg('tool', t('callingTool', {tool: data.tool}));
     scrollBottom();
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
@@ -1253,6 +1354,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
+    trackAgentDone(data.agent_name || data.source?.name || 'assistant');
     console.log('[SSE done]', data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count to prevent poll from re-fetching these messages
     if (data.message_count) serverMsgCount = data.message_count;
@@ -1299,6 +1401,15 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('cancelled', (e) => {
     lastSSEActivity = Date.now();
+    const cancelData = e.data ? JSON.parse(e.data) : {};
+    const cancelAgent = cancelData.agent_name || 'all';
+    if (cancelAgent === 'all') {
+      // Clear all interactions
+      activeInteractions = {};
+      updateActivePanel();
+    } else {
+      trackAgentDone(cancelAgent);
+    }
     hideTyping();
     // Remove intermediate streaming chunks
     for (const chunk of streamingChunks) {
@@ -1307,7 +1418,7 @@ function connectSSE(cid) {
     streamingEl = null;
     streamingText = '';
     streamingChunks = [];
-    addMsg('system', t('cancelled'));
+    addMsg('system', cancelAgent !== 'all' ? '[' + cancelAgent + '] ' + t('cancelled') : t('cancelled'));
     scrollBottom();
     sending = false;
     document.getElementById('sendBtn').disabled = false;

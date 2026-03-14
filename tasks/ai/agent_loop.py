@@ -87,6 +87,9 @@ class AgentLoopTask(BaseTask):
         # Interrupt signal — asks agent to conclude gracefully instead of cancelling
         self._conv_interrupt: Dict[str, bool] = {}
         self._interrupt_lock = threading.Lock()
+        # Active interactions tracker — gen_key → metadata dict
+        self._active_interactions: Dict[str, Dict] = {}
+        self._interactions_lock = threading.Lock()
 
     def initialize(self):
         """Start the poller at flow startup (not just on first request).
@@ -859,14 +862,43 @@ class AgentLoopTask(BaseTask):
 
         if action == "cancel":
             conv_id = body.get("conversation_id", "")
+            agent_name = body.get("agent_name", "")
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            self.cancel_agent(conv_id)
+            self.cancel_agent(conv_id, agent_name=agent_name)
             flowfile.set_content(json.dumps({
                 "cancelled": True, "conversation_id": conv_id,
+                "agent_name": agent_name or "all",
             }).encode())
+            return [flowfile]
+
+        if action == "list_active":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            now = time.time()
+            active = []
+            with self._interactions_lock:
+                for key, info in list(self._active_interactions.items()):
+                    if info.get("conversation_id") != conv_id:
+                        continue
+                    # Auto-cleanup stale entries (>10 min)
+                    if now - info.get("started_at", now) > 600:
+                        self._active_interactions.pop(key, None)
+                        continue
+                    active.append({
+                        "agent_name": info.get("agent_name", "assistant"),
+                        "message_preview": info.get("message_preview", ""),
+                        "duration_s": round(now - info.get("started_at", now), 1),
+                        "iteration": info.get("iteration", 0),
+                        "last_tool": info.get("last_tool", ""),
+                        "status": info.get("status", "thinking"),
+                    })
+            flowfile.set_content(json.dumps({"active": active}).encode())
             return [flowfile]
 
         if action == "interrupt":
@@ -2466,14 +2498,17 @@ class AgentLoopTask(BaseTask):
                         fs_svc.set_user_id(ctx["user_id"])
                     h.set_fs_service(fs_svc)
 
-        # Publish "thinking" immediately
-        bus.publish_event(conversation_id, "thinking", {"conversation_id": conversation_id})
-
         # Bump generation counter — any older thread (e.g. poller) for this
         # conversation will see the mismatch and skip its save.
         # When target_agent is set, use a per-agent generation key so that
         # concurrent /agent msg to different agents don't cancel each other.
         _target = ctx.get("_target_agent", "")
+
+        # Publish "thinking" immediately
+        bus.publish_event(conversation_id, "thinking", {
+            "conversation_id": conversation_id,
+            "agent_name": _target or "assistant",
+        })
         _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
         with self._conv_gen_lock:
             gen = self._conv_generation.get(_gen_key, 0) + 1
@@ -2497,6 +2532,23 @@ class AgentLoopTask(BaseTask):
         # Set conversation status to active
         from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "active")
+
+        # Register active interaction for UI tracking
+        _user_msgs = [m for m in ctx["messages"] if m.role == "user"]
+        _msg_preview = ""
+        if _user_msgs:
+            _last = _user_msgs[-1].text_content if isinstance(_user_msgs[-1].content, list) else (_user_msgs[-1].content or "")
+            _msg_preview = _last[:80]
+        with self._interactions_lock:
+            self._active_interactions[_gen_key] = {
+                "agent_name": _target or "assistant",
+                "message_preview": _msg_preview,
+                "started_at": time.time(),
+                "iteration": 0,
+                "last_tool": "",
+                "status": "thinking",
+                "conversation_id": conversation_id,
+            }
 
         # Start agent loop in background thread
         thread = threading.Thread(
@@ -2557,28 +2609,47 @@ class AgentLoopTask(BaseTask):
         with self._conv_gen_lock:
             return self._conv_generation.get(conversation_id, 0) == generation
 
-    def cancel_agent(self, conversation_id: str):
+    def cancel_agent(self, conversation_id: str, agent_name: str = ""):
         """Cancel a running agent for this conversation.
+
+        If agent_name is given, only cancel that specific agent's thread.
+        Otherwise cancel ALL agents for this conversation.
 
         Increments the generation counter so the running thread detects
         staleness at the next check point and stops gracefully.
         """
         with self._conv_gen_lock:
-            self._conv_generation[conversation_id] = \
-                self._conv_generation.get(conversation_id, 0) + 1
-            # Also cancel all per-agent threads
-            for k in list(self._conv_generation):
-                if k.startswith(conversation_id + ":"):
-                    self._conv_generation[k] += 1
+            if agent_name:
+                # Cancel only this specific agent
+                key = f"{conversation_id}:{agent_name}"
+                self._conv_generation[key] = \
+                    self._conv_generation.get(key, 0) + 1
+            else:
+                # Cancel all
+                self._conv_generation[conversation_id] = \
+                    self._conv_generation.get(conversation_id, 0) + 1
+                for k in list(self._conv_generation):
+                    if k.startswith(conversation_id + ":"):
+                        self._conv_generation[k] += 1
         # Publish cancellation event for SSE listeners
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(
-            conversation_id, "cancelled", {"reason": "user_request"}
+            conversation_id, "cancelled", {
+                "reason": "user_request",
+                "agent_name": agent_name or "all",
+            }
         )
-        # Reset status
-        from core.conversation_store import ConversationStore
-        ConversationStore.instance().set_status(conversation_id, "idle")
-        logger.info(f"[agent:{conversation_id[:8]}] cancelled by user")
+        # Reset status only if cancelling all
+        if not agent_name:
+            from core.conversation_store import ConversationStore
+            ConversationStore.instance().set_status(conversation_id, "idle")
+        # Remove from interaction tracker
+        if agent_name:
+            key = f"{conversation_id}:{agent_name}"
+            with self._interactions_lock:
+                self._active_interactions.pop(key, None)
+        logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
+                    f"{f' (agent: {agent_name})' if agent_name else ' (all)'}")
 
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
         """Signal an agent to finish gracefully — conclude with what it has.
@@ -2742,6 +2813,13 @@ class AgentLoopTask(BaseTask):
         start_time = time.time()
         total_tokens_in = 0
         total_tokens_out = 0
+
+        def _update_interaction(**kwargs):
+            """Update the active interaction tracker."""
+            with self._interactions_lock:
+                info = self._active_interactions.get(gen_key)
+                if info:
+                    info.update(kwargs)
         tools_called: List[str] = []
 
         client = ctx["client"]
@@ -2851,7 +2929,10 @@ class AgentLoopTask(BaseTask):
                         last_token_time = time.time()
                         token_parts.append(text)
                         if not poll_silent:
-                            bus.publish_event(conversation_id, "token", {"text": text})
+                            bus.publish_event(conversation_id, "token", {
+                                "text": text,
+                                "agent_name": _agent_name or "assistant",
+                            })
 
                     # Heartbeat thread (suppressed during silent poll)
                     heartbeat_stop = threading.Event()
@@ -3066,7 +3147,12 @@ class AgentLoopTask(BaseTask):
                         tools_called.append(tc.name)
                         bus.publish_event(conversation_id, "tool_call", {
                             "tool": tc.name, "arguments": tc.arguments,
+                            "agent_name": _agent_name or "assistant",
                         })
+                    _update_interaction(
+                        iteration=iteration, last_tool=response.tool_calls[-1].name,
+                        status="tool_call",
+                    )
 
                     if len(response.tool_calls) == 1:
                         # Single tool — direct execution (no thread overhead)
@@ -3166,6 +3252,7 @@ class AgentLoopTask(BaseTask):
                     bus.publish_event(conversation_id, "done", {
                         "response": response_content,
                         "conversation_id": conversation_id,
+                        "agent_name": _agent_name or "assistant",
                         "model": final_model,
                         "provider": _client_provider,
                         "base_url": _agent_source().get("base_url", ""),
@@ -3330,6 +3417,7 @@ class AgentLoopTask(BaseTask):
             bus.publish_event(conversation_id, "done", {
                 "response": response_content,
                 "conversation_id": conversation_id,
+                "agent_name": _agent_name or "assistant",
                 "model": final_model,
                 "provider": _client_provider,
                 "base_url": _source.get("base_url", ""),
@@ -3370,6 +3458,7 @@ class AgentLoopTask(BaseTask):
             bus.publish_event(conversation_id, "done", {
                 "response": response_content,
                 "conversation_id": conversation_id,
+                "agent_name": _agent_name or "assistant",
                 "model": final_model,
                 "provider": _client_provider,
                 "base_url": _source.get("base_url", ""),
@@ -3398,6 +3487,10 @@ class AgentLoopTask(BaseTask):
         finally:
             with self._active_lock:
                 self._active_conversations.discard(conversation_id)
+            # Remove interaction tracking
+            gen_key = ctx.get("_gen_key", conversation_id)
+            with self._interactions_lock:
+                self._active_interactions.pop(gen_key, None)
 
     def _broadcast_agents(self, conversation_id: str, message: str,
                           user_id: str) -> None:

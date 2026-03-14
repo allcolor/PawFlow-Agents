@@ -192,7 +192,7 @@ class LLMClient:
         Returns:
             LLMResponse with content and/or tool_calls populated.
         """
-        if not self.api_key:
+        if not self.api_key and self.provider not in ("claude-code", "gemini-cli"):
             raise LLMClientError("api_key is required")
         if self.provider not in self.PROVIDERS:
             raise LLMClientError(
@@ -239,7 +239,7 @@ class LLMClient:
 
         Supports both OpenAI and Anthropic streaming.
         """
-        if not self.api_key:
+        if not self.api_key and self.provider not in ("claude-code", "gemini-cli"):
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
@@ -856,11 +856,13 @@ class LLMClient:
         """Convert messages to (system_prompt, user_text) for the CLI.
 
         System messages + tool definitions → system_prompt.
-        Conversation history → serialized into user_text.
+        Conversation history → structured XML in user_text so the model
+        understands it's a multi-turn conversation to continue.
         """
         system_parts = []
         history_lines = []
         last_user_text = ""
+        has_history = False
 
         for m in messages:
             text = m.text_content if isinstance(m.content, list) else (m.content or "")
@@ -868,8 +870,18 @@ class LLMClient:
                 system_parts.append(text)
             elif m.role == "user":
                 last_user_text = text
-                history_lines.append(f"[User]: {text}")
+                history_lines.append(f"<message role=\"user\">\n{text}\n</message>")
             elif m.role == "assistant":
+                # Include source/agent identity if available
+                source = getattr(m, "source", None) or {}
+                agent_name = source.get("name", "") if isinstance(source, dict) else ""
+                svc = source.get("llm_service", "") if isinstance(source, dict) else ""
+                attr = ' role="assistant"'
+                if agent_name:
+                    attr += f' agent="{agent_name}"'
+                if svc:
+                    attr += f' service="{svc}"'
+
                 assistant_text = text
                 if m.tool_calls:
                     tc_strs = []
@@ -878,10 +890,13 @@ class LLMClient:
                             f'<tool_call>{json.dumps({"name": tc.name, "arguments": tc.arguments})}</tool_call>'
                         )
                     assistant_text = (assistant_text + "\n" + "\n".join(tc_strs)).strip()
-                history_lines.append(f"[Assistant]: {assistant_text}")
+                history_lines.append(f"<message{attr}>\n{assistant_text}\n</message>")
+                has_history = True
             elif m.role == "tool":
                 name = m.tool_call_id or "unknown"
-                history_lines.append(f"[Tool Result ({name})]: {text}")
+                history_lines.append(
+                    f"<message role=\"tool\" name=\"{name}\">\n{text}\n</message>"
+                )
 
         # Build system prompt
         tool_prompt = self._build_tool_prompt(tools) if tools else ""
@@ -889,10 +904,18 @@ class LLMClient:
             system_parts.append(tool_prompt)
         system_prompt = "\n\n".join(system_parts)
 
-        # Build user text: full history (excluding last user) + last user message
-        if len(history_lines) > 1:
-            # Include history before the last user message
-            user_text = "\n".join(history_lines)
+        # Build user text
+        if has_history:
+            # Multi-turn: wrap in conversation tags with clear instruction
+            user_text = (
+                "<conversation_history>\n"
+                + "\n".join(history_lines)
+                + "\n</conversation_history>\n\n"
+                "Continue the conversation. Reply to the latest user message. "
+                "You are a participant in this conversation — read the full "
+                "history above and respond naturally, referencing previous "
+                "messages from any participant (user or other agents) as needed."
+            )
         else:
             user_text = last_user_text
 
@@ -1081,27 +1104,32 @@ class LLMClient:
     def _claude_code_env(self) -> dict:
         """Build environment for claude subprocess.
 
-        Passes api_key and base_url as env vars so each user's service
-        config is isolated (multi-user support).
-        Auto-refreshes OAuth token if expired.
+        Claude CLI uses its own auth (claude login). Just inherit env.
         """
-        # Auto-refresh if we have a refresh_token and token is expired/near-expiry
-        if self.refresh_token and self.token_expires_at:
-            if time.time() * 1000 >= self.token_expires_at - 60_000:
-                self._refresh_oauth_token()
+        return os.environ.copy()
 
-        env = os.environ.copy()
-        if self.api_key:
-            env["ANTHROPIC_API_KEY"] = self.api_key
-        if self.base_url:
-            env["ANTHROPIC_BASE_URL"] = self.base_url
-        return env
+    @staticmethod
+    def _build_stdin_with_system(system_prompt: str, user_text: str) -> str:
+        """Combine system prompt and user text into a single stdin payload.
+
+        Always passes everything via stdin to avoid Windows command-line
+        length limits (CreateProcess: 32,767 chars).
+        """
+        if not system_prompt:
+            return user_text
+        return (
+            "<system_instructions>\n"
+            + system_prompt
+            + "\n</system_instructions>\n\n"
+            + user_text
+        )
 
     def _complete_claude_code(
         self, messages, model, temperature, max_tokens, tools=None,
     ) -> LLMResponse:
         """Run claude CLI in pipe mode and parse the response."""
         system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+        stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
         cmd = [
             self.claude_binary, "-p",
@@ -1109,22 +1137,20 @@ class LLMClient:
             "--model", model or "sonnet",
             "--max-turns", "1",
         ]
-        if system_prompt:
-            cmd += ["--system-prompt", system_prompt]
-        if max_tokens:
-            cmd += ["--max-tokens", str(max_tokens)]
+        # Note: Claude CLI has no --max-tokens flag (only --max-budget-usd)
 
         logger.debug("claude-code cmd: %s", " ".join(cmd[:6]) + "...")
-        logger.debug("claude-code input length: %d chars", len(user_text))
+        logger.debug("claude-code input length: %d chars", len(stdin_text))
 
         try:
             result = subprocess.run(
                 cmd,
-                input=user_text,
+                input=stdin_text,
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
                 env=self._claude_code_env(),
+                encoding="utf-8",
             )
         except FileNotFoundError:
             raise LLMClientError(
@@ -1186,17 +1212,16 @@ class LLMClient:
     ) -> LLMResponse:
         """Stream from claude CLI using stream-json output format."""
         system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
+        stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
         cmd = [
             self.claude_binary, "-p",
             "--output-format", "stream-json",
+            "--verbose",
             "--model", model or "sonnet",
             "--max-turns", "1",
         ]
-        if system_prompt:
-            cmd += ["--system-prompt", system_prompt]
-        if max_tokens:
-            cmd += ["--max-tokens", str(max_tokens)]
+        # Note: Claude CLI has no --max-tokens flag (only --max-budget-usd)
 
         try:
             proc = subprocess.Popen(
@@ -1206,6 +1231,7 @@ class LLMClient:
                 stderr=subprocess.PIPE,
                 text=True,
                 env=self._claude_code_env(),
+                encoding="utf-8",
             )
         except FileNotFoundError:
             raise LLMClientError(
@@ -1214,8 +1240,20 @@ class LLMClient:
             )
 
         # Send input and close stdin
-        proc.stdin.write(user_text)
-        proc.stdin.close()
+        try:
+            proc.stdin.write(stdin_text)
+            proc.stdin.close()
+        except BrokenPipeError:
+            # CLI process died before reading input — capture stderr
+            stderr = ""
+            try:
+                stderr = proc.stderr.read().strip()
+            except Exception:
+                pass
+            proc.wait()
+            raise LLMClientError(
+                f"Claude CLI pipe broken (exit {proc.returncode}): {stderr[:500]}"
+            )
 
         # Read streaming output line by line
         content_parts = []
@@ -1320,6 +1358,7 @@ class LLMClient:
                 result = subprocess.run(
                     cmd, input=user_text, capture_output=True,
                     text=True, timeout=self.timeout, env=env,
+                    encoding="utf-8",
                 )
             except FileNotFoundError:
                 raise LLMClientError(
@@ -1409,6 +1448,7 @@ class LLMClient:
                 proc = subprocess.Popen(
                     cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE, text=True, env=env,
+                    encoding="utf-8",
                 )
             except FileNotFoundError:
                 raise LLMClientError(

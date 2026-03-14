@@ -57,8 +57,6 @@ class LLMConnectionService(BaseService):
                 f"Unknown provider '{self.provider}'. "
                 f"Supported: {', '.join(self.PROVIDERS)}"
             )
-        if not self.api_key:
-            raise ServiceError("api_key is required")
         if self.provider == "claude-code":
             import shutil
             binary = self.config.get("claude_binary", "claude")
@@ -69,6 +67,10 @@ class LLMConnectionService(BaseService):
             binary = self.config.get("gemini_binary", "gemini")
             if not shutil.which(binary):
                 logger.warning("Gemini CLI binary '%s' not found in PATH", binary)
+        else:
+            # API-based providers need an api_key
+            if not self.api_key:
+                raise ServiceError("api_key is required")
         return {"provider": self.provider, "ready": True}
 
     def _close_connection(self):
@@ -143,23 +145,25 @@ class LLMConnectionService(BaseService):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "provider": {
-                "type": "string",
+                "type": "select",
                 "required": True,
                 "default": "openai",
-                "description": "LLM provider: openai, anthropic, claude-code, gemini-cli",
-                "allowed_values": list(self.PROVIDERS),
+                "options": list(self.PROVIDERS),
+                "description": "LLM provider",
             },
             "api_key": {
                 "type": "string",
-                "required": True,
+                "required": {"provider": ["openai", "anthropic"]},
                 "sensitive": True,
                 "description": "API key for the provider",
+                "show_when": {"provider": ["openai", "anthropic", "gemini-cli"]},
             },
             "base_url": {
                 "type": "string",
-                "required": False,
+                "required": {"provider": ["openai", "anthropic"]},
                 "default": "",
                 "description": "Base URL (override for self-hosted/compatible APIs)",
+                "show_when": {"provider": ["openai", "anthropic"]},
             },
             "default_model": {
                 "type": "string",
@@ -178,12 +182,14 @@ class LLMConnectionService(BaseService):
                 "required": False,
                 "default": 2,
                 "description": "Number of retries on transient errors",
+                "show_when": {"provider": ["openai", "anthropic"]},
             },
             "max_tokens": {
                 "type": "integer",
                 "required": False,
                 "default": 0,
                 "description": "Max output tokens per request (0 = provider default)",
+                "show_when": {"provider": ["openai", "anthropic"]},
             },
             "max_concurrent": {
                 "type": "integer",
@@ -193,34 +199,17 @@ class LLMConnectionService(BaseService):
             },
             "claude_binary": {
                 "type": "string",
-                "required": False,
+                "required": {"provider": ["claude-code"]},
                 "default": "claude",
-                "description": "Path to Claude CLI binary (claude-code provider only)",
-            },
-            "refresh_token": {
-                "type": "string",
-                "required": False,
-                "sensitive": True,
-                "default": "",
-                "description": "OAuth refresh token for auto-renewal (claude-code provider)",
-            },
-            "token_expires_at": {
-                "type": "string",
-                "required": False,
-                "default": "0",
-                "description": "Token expiry timestamp in ms (auto-updated on refresh)",
-            },
-            "token_url": {
-                "type": "string",
-                "required": False,
-                "default": "https://console.anthropic.com/v1/oauth/token",
-                "description": "OAuth token endpoint for refresh (claude-code provider)",
+                "description": "Path to Claude CLI binary (uses `claude login` auth)",
+                "show_when": {"provider": ["claude-code"]},
             },
             "gemini_binary": {
                 "type": "string",
-                "required": False,
+                "required": {"provider": ["gemini-cli"]},
                 "default": "gemini",
-                "description": "Path to Gemini CLI binary (gemini-cli provider only)",
+                "description": "Path to Gemini CLI binary",
+                "show_when": {"provider": ["gemini-cli"]},
             },
         }
 

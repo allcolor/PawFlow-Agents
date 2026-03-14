@@ -31,9 +31,43 @@ def render_schema_fields(
         param_type = param_schema.get("type", "string")
         description = param_schema.get("description", "")
         default = current_values.get(param_name, param_schema.get("default"))
-        required = param_schema.get("required", False)
+        raw_required = param_schema.get("required", False)
         key = f"{key_prefix}_{param_name}"
+
+        # required can be bool or conditional dict {"field": ["val1", ...]}
+        if isinstance(raw_required, dict):
+            required = True
+            for dep_field, allowed_vals in raw_required.items():
+                actual = result.get(dep_field)
+                if actual is None:
+                    actual = current_values.get(dep_field)
+                if actual is None:
+                    dep_schema = schema.get(dep_field, {})
+                    actual = dep_schema.get("default", "")
+                if actual not in allowed_vals:
+                    required = False
+                    break
+        else:
+            required = bool(raw_required)
         label = f"{param_name}{'*' if required else ''}"
+
+        # Conditional visibility: show_when = {"field": ["val1", "val2"]}
+        show_when = param_schema.get("show_when")
+        if show_when:
+            visible = True
+            for dep_field, allowed_vals in show_when.items():
+                # Check rendered result first, then current_values, then schema default
+                actual = result.get(dep_field)
+                if actual is None:
+                    actual = current_values.get(dep_field)
+                if actual is None:
+                    dep_schema = schema.get(dep_field, {})
+                    actual = dep_schema.get("default", "")
+                if actual not in allowed_vals:
+                    visible = False
+                    break
+            if not visible:
+                continue
 
         if param_type == "select":
             options = param_schema.get("options", [])

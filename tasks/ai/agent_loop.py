@@ -46,6 +46,11 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 logger = logging.getLogger(__name__)
 
 
+class AgentCancelled(Exception):
+    """Raised when agent generation is cancelled by user."""
+    pass
+
+
 class AgentLoopTask(BaseTask):
     """LLM agent with tool-use loop.
 
@@ -204,6 +209,24 @@ class AgentLoopTask(BaseTask):
                 "description": "LLM service ID (from global/user services). Defaults to ${global.llm_default_service}.",
             },
         }
+
+    def _get_default_client(self, user_id: str = ""):
+        """Get the task's default LLM client (for compaction/summarization).
+
+        Always uses the task-level llm_service, never the agent-switched one.
+        """
+        task_llm_service = self.config.get("llm_service", "")
+        if not task_llm_service or "${" in task_llm_service:
+            task_llm_service = "default"
+        client, _ = self._resolve_llm_service(task_llm_service, user_id)
+        if not client and self.config.get("api_key"):
+            client = LLMClient(
+                provider=self.config.get("provider", "openai"),
+                api_key=self.config["api_key"],
+                base_url=self.config.get("base_url", ""),
+                timeout=int(self.config.get("timeout", 120)),
+            )
+        return client
 
     def _resolve_llm_service(self, service_id: str, user_id: str):
         """Resolve an LLM service by ID. Returns (LLMClient, service) or (None, None).
@@ -416,6 +439,12 @@ class AgentLoopTask(BaseTask):
             store = ConversationStore.instance()
             existing = store.load(conversation_id)
             if existing:
+                # Apply context_start_offset (/restart_from)
+                ctx_offset = store.get_extra(conversation_id, "context_start_offset", 0)
+                if ctx_offset and ctx_offset > 0 and ctx_offset < len(existing):
+                    existing = existing[ctx_offset:]
+                    logger.info(f"[context:{conversation_id[:8]}] applied context_start_offset={ctx_offset}, "
+                                f"using {len(existing)} of {ctx_offset + len(existing)} messages")
                 try:
                     messages = self._rebuild_context(
                         conversation_id, existing, system_prompt,
@@ -454,6 +483,9 @@ class AgentLoopTask(BaseTask):
         if use_conv_store and not conversation_id:
             from core.conversation_store import ConversationStore
             conversation_id = ConversationStore.instance().generate_id()
+
+        # target_agent: temporary agent override for /agent msg (not persisted)
+        _target_agent = body_json.get("target_agent", "") if body_json else ""
 
         # Apply pending_agent from the first message (agent selected before conversation existed)
         _pending_agent = body_json.get("pending_agent", "") if body_json else ""
@@ -498,10 +530,13 @@ class AgentLoopTask(BaseTask):
                 active_res = cstore.get_extra(conversation_id, "active_resources") or {}
                 _uid = flowfile.get_attribute("http.auth.principal") or "anonymous"
 
-                # Active agent overrides system prompt
-                selected = active_res.get("agent", "")
+                # Active agent overrides system prompt (target_agent takes priority)
+                selected = _target_agent or active_res.get("agent", "")
                 if selected:
                     agent_def = rs.get_any("agent", selected, _uid)
+                    if not agent_def and _target_agent:
+                        # /agent msg <name> with unknown agent — reject early
+                        raise ValueError(f"Agent '{_target_agent}' not found")
                     if agent_def:
                         _selected_agent_def = agent_def
                         system_prompt = agent_def["prompt"]
@@ -554,6 +589,12 @@ class AgentLoopTask(BaseTask):
             except Exception as e:
                 logger.error("Error loading agent persona/skills: %s", e, exc_info=True)
 
+        # If the system_prompt was overridden (by agent persona or skills),
+        # update messages[0] so the LLM sees the correct prompt — even when
+        # messages were loaded from conversation history.
+        if messages and messages[0].role == "system" and system_prompt != _base_system_prompt:
+            messages[0] = LLMMessage(role="system", content=system_prompt)
+
         model_name = self.config.get("model", "")
         user_id = flowfile.get_attribute("http.auth.principal") or ""
 
@@ -571,7 +612,7 @@ class AgentLoopTask(BaseTask):
                 _ares = ConversationStore.instance().get_extra(
                     conversation_id, "active_resources",
                 ) or {}
-                _active_agent_name = _ares.get("agent", "")
+                _active_agent_name = _target_agent or _ares.get("agent", "")
                 if _active_agent_name:
                     from core.resource_store import ResourceStore
                     _adef = ResourceStore.instance().get_any(
@@ -589,18 +630,24 @@ class AgentLoopTask(BaseTask):
                             _active_llm_service = _agent_llm
                 # If active agent has its own LLM service, resolve it now
                 if _active_llm_service and _active_llm_service != task_llm_service:
-                    logger.info("Agent '%s' uses LLM service '%s' (task default: '%s')",
-                                _active_agent_name, _active_llm_service, task_llm_service)
+                    logger.info("Agent '%s' switching LLM service: '%s' → '%s'",
+                                _active_agent_name, task_llm_service, _active_llm_service)
                     _rc, _rs = self._resolve_llm_service(_active_llm_service, user_id)
                     if _rc:
                         client = _rc
                         resolved_svc = _rs
                         # Use service's default model, not the task's model
                         model_name = ""
-                        logger.info("Resolved agent LLM service '%s' successfully", _active_llm_service)
+                        logger.info("Agent '%s' now using LLM service '%s' (provider: %s)",
+                                    _active_agent_name, _active_llm_service,
+                                    getattr(_rs, 'provider', '?'))
                     else:
-                        logger.warning("Failed to resolve agent LLM service '%s' — using task default",
-                                       _active_llm_service)
+                        logger.warning("Agent '%s': LLM service '%s' NOT FOUND — falling back to '%s'",
+                                       _active_agent_name, _active_llm_service, task_llm_service)
+                        _active_llm_service = task_llm_service  # Reset so badge reflects reality
+                elif _active_llm_service == task_llm_service and _active_agent_name:
+                    logger.info("Agent '%s' llm_service='%s' same as task default — no switch needed",
+                                _active_agent_name, _active_llm_service)
                 elif _active_agent_name and not _adef:
                     logger.warning("Agent '%s' definition not found in ResourceStore", _active_agent_name)
                 elif _active_agent_name and not _adef.get("llm_service", ""):
@@ -632,6 +679,9 @@ class AgentLoopTask(BaseTask):
             "active_agent_name": _active_agent_name,
             "active_llm_service": _active_llm_service,
             "resolved_svc": resolved_svc,
+            "default_client": self._get_default_client(user_id),
+            "sub_executor": sub_executor,
+            "_target_agent": _target_agent,
         }
 
     def select_processable(self, connections):
@@ -796,9 +846,134 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(result.encode("utf-8"))
             return [flowfile]
 
+        if action == "cancel":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            self.cancel_agent(conv_id)
+            flowfile.set_content(json.dumps({
+                "cancelled": True, "conversation_id": conv_id,
+            }).encode())
+            return [flowfile]
+
+        if action == "restart_from":
+            conv_id = body.get("conversation_id", "")
+            keep_last = int(body.get("keep_last", 5))
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            total = store.message_count(conv_id)
+            offset = max(0, total - keep_last)
+            store.set_extra(conv_id, "context_start_offset", offset)
+            # Clear any persisted compaction summary (stale after restart)
+            store.set_context_summary(conv_id, "")
+            flowfile.set_content(json.dumps({
+                "ok": True, "conversation_id": conv_id,
+                "context_start_offset": offset,
+                "kept_messages": total - offset,
+            }).encode())
+            return [flowfile]
+
+        if action == "delete_message":
+            conv_id = body.get("conversation_id", "")
+            msg_index = body.get("index")
+            if not conv_id or msg_index is None:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            deleted = store.delete_message(conv_id, int(msg_index), user_id=user_id)
+            flowfile.set_content(json.dumps({
+                "deleted": deleted, "conversation_id": conv_id,
+                "message_count": store.message_count(conv_id),
+            }).encode())
+            return [flowfile]
+
+        if action == "resume_conversation":
+            conv_id = body.get("conversation_id", "")
+            max_summary_tokens = int(body.get("max_tokens", 500))
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            all_msgs = store.load(conv_id, user_id=user_id)
+            if not all_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            # Resolve LLM client for summarization
+            task_llm_service = self.config.get("llm_service", "")
+            if not task_llm_service or "${" in task_llm_service:
+                task_llm_service = "default"
+            client, _ = self._resolve_llm_service(task_llm_service, user_id)
+            if not client and self.config.get("api_key"):
+                client = LLMClient(
+                    provider=self.config.get("provider", "openai"),
+                    api_key=self.config["api_key"],
+                    base_url=self.config.get("base_url", ""),
+                    timeout=int(self.config.get("timeout", 120)),
+                )
+            if not client:
+                flowfile.set_content(json.dumps({"error": "No LLM service available for summarization"}).encode())
+                flowfile.set_attribute("http.response.status", "500")
+                return [flowfile]
+            # Deserialize and summarize
+            try:
+                deserialized = self._deserialize_messages(all_msgs)
+                # Filter out system messages for summarization
+                content_msgs = [m for m in deserialized if m.role != "system"]
+                model = self.config.get("model", "")
+                context_max = int(self.config.get("context_max_tokens", 64000))
+                summary = self._summarize_messages(content_msgs, client, model, context_max)
+                # Truncate summary to approximate token budget
+                if len(summary) > max_summary_tokens * 4:  # ~4 chars per token
+                    # Re-summarize with explicit length constraint
+                    summary = self._call_summarize_with_budget(
+                        client, model, summary, max_summary_tokens,
+                    )
+                # Store summary and set offset to skip all messages
+                store.set_context_summary(conv_id, summary)
+                store.set_extra(conv_id, "context_start_offset", len(all_msgs))
+                flowfile.set_content(json.dumps({
+                    "ok": True, "conversation_id": conv_id,
+                    "summary_length": len(summary),
+                    "messages_summarized": len(all_msgs),
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                logger.error(f"Resume summarization failed: {e}", exc_info=True)
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                flowfile.set_attribute("http.response.status", "500")
+            return [flowfile]
+
         if action == "ping":
             # Keep-alive: session renewal happens in validateSessionAuth upstream
             flowfile.set_content(json.dumps({"status": "ok"}).encode())
+            return [flowfile]
+
+        if action == "broadcast_agents":
+            # Send the same message to ALL defined agents in parallel
+            conv_id = body.get("conversation_id", "")
+            message = body.get("message", "")
+            if not conv_id or not message:
+                flowfile.set_content(json.dumps({
+                    "error": "conversation_id and message are required",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            # Launch broadcast in background thread
+            thread = threading.Thread(
+                target=self._broadcast_agents,
+                args=(conv_id, message, user_id),
+                daemon=True,
+                name=f"broadcast-{conv_id[:8]}",
+            )
+            thread.start()
+            flowfile.set_content(json.dumps({
+                "status": "broadcasting",
+                "conversation_id": conv_id,
+            }).encode())
             return [flowfile]
 
         if action == "poll":
@@ -1987,6 +2162,11 @@ class AgentLoopTask(BaseTask):
                 tool_calls=response.tool_calls,
             ))
 
+            # Re-inject executor before tool calls (fixes race condition)
+            _sub_exec = ctx.get("sub_executor")
+            if _sub_exec:
+                self._inject_executor(registry, _sub_exec)
+
             for tc in response.tool_calls:
                 tools_called.append(tc.name)
                 logger.info(f"Agent calling tool '{tc.name}' with args: {tc.arguments}")
@@ -2142,7 +2322,13 @@ class AgentLoopTask(BaseTask):
         """
         from core.conversation_event_bus import ConversationEventBus
 
-        ctx = self._prepare_agent_context(flowfile)
+        try:
+            ctx = self._prepare_agent_context(flowfile)
+        except ValueError as e:
+            # Agent not found or other validation error — return error to client
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            flowfile.set_attribute("http.status.code", "400")
+            return [flowfile]
         conversation_id = ctx["conversation_id"]
         bus = ConversationEventBus.instance()
 
@@ -2182,10 +2368,22 @@ class AgentLoopTask(BaseTask):
 
         # Bump generation counter — any older thread (e.g. poller) for this
         # conversation will see the mismatch and skip its save.
+        # When target_agent is set, use a per-agent generation key so that
+        # concurrent /agent msg to different agents don't cancel each other.
+        _target = ctx.get("_target_agent", "")
+        _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
         with self._conv_gen_lock:
-            gen = self._conv_generation.get(conversation_id, 0) + 1
-            self._conv_generation[conversation_id] = gen
+            gen = self._conv_generation.get(_gen_key, 0) + 1
+            self._conv_generation[_gen_key] = gen
+            # Also bump the base conversation key for non-targeted messages
+            # so a regular message still cancels all agent threads
+            if not _target:
+                # Cancel all per-agent keys for this conversation
+                for k in list(self._conv_generation):
+                    if k.startswith(conversation_id + ":"):
+                        self._conv_generation[k] += 1
         ctx["_generation"] = gen
+        ctx["_gen_key"] = _gen_key
 
         # Mark conversation as active (prevents poller from picking it up)
         # Also clear cooldown so poller can check again after this interaction
@@ -2233,6 +2431,20 @@ class AgentLoopTask(BaseTask):
 
         return [flowfile]
 
+    @staticmethod
+    def _inject_executor(registry: ToolRegistry, sub_executor):
+        """Inject sub_executor into spawn_agents/get_agent_results/use_skill handlers.
+
+        Fixes race condition where shared handler instances lose their executor
+        reference when registry is recreated or another conversation overwrites it.
+        """
+        from core.tool_registry import (
+            SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
+        )
+        for h in registry.list_tools():
+            if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
+                h.set_executor(sub_executor)
+
     def _is_current_generation(self, conversation_id: str, generation: int) -> bool:
         """Check if this thread's generation is still current.
 
@@ -2241,6 +2453,29 @@ class AgentLoopTask(BaseTask):
         """
         with self._conv_gen_lock:
             return self._conv_generation.get(conversation_id, 0) == generation
+
+    def cancel_agent(self, conversation_id: str):
+        """Cancel a running agent for this conversation.
+
+        Increments the generation counter so the running thread detects
+        staleness at the next check point and stops gracefully.
+        """
+        with self._conv_gen_lock:
+            self._conv_generation[conversation_id] = \
+                self._conv_generation.get(conversation_id, 0) + 1
+            # Also cancel all per-agent threads
+            for k in list(self._conv_generation):
+                if k.startswith(conversation_id + ":"):
+                    self._conv_generation[k] += 1
+        # Publish cancellation event for SSE listeners
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(
+            conversation_id, "cancelled", {"reason": "user_request"}
+        )
+        # Reset status
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().set_status(conversation_id, "idle")
+        logger.info(f"[agent:{conversation_id[:8]}] cancelled by user")
 
     def _streaming_agent_loop(self, ctx: Dict, conversation_id: str,
                               bus) -> None:
@@ -2255,6 +2490,7 @@ class AgentLoopTask(BaseTask):
         from core.conversation_event_bus import ConversationEventBus
 
         my_generation = ctx.get("_generation", 0)
+        gen_key = ctx.get("_gen_key", conversation_id)
         start_time = time.time()
         total_tokens_in = 0
         total_tokens_out = 0
@@ -2306,7 +2542,7 @@ class AgentLoopTask(BaseTask):
             nonlocal new_messages
             if not (use_conv_store and conversation_id and new_messages):
                 return
-            if not self._is_current_generation(conversation_id, my_generation):
+            if not self._is_current_generation(gen_key, my_generation):
                 logger.info(f"[agent:{conversation_id[:8]}] skipping flush — "
                             f"generation {my_generation} is stale")
                 return
@@ -2351,6 +2587,8 @@ class AgentLoopTask(BaseTask):
 
                     def on_token(text: str):
                         nonlocal last_token_time
+                        if not self._is_current_generation(gen_key, my_generation):
+                            raise AgentCancelled()
                         last_token_time = time.time()
                         token_parts.append(text)
                         if not poll_silent:
@@ -2376,13 +2614,20 @@ class AgentLoopTask(BaseTask):
                     # Compact context if approaching token limit.
                     # Compaction works on a COPY — the canonical `messages` list
                     # is never modified so it stays consistent for persistence.
+                    # Always use the default LLM client for compaction (not the
+                    # agent-switched one which may be slow/expensive).
+                    compact_client = ctx.get("default_client") or client
                     llm_context = self._compact_if_needed(
-                        list(messages), client, model or ctx["model"],
+                        list(messages), compact_client, model or ctx["model"],
                         ctx.get("context_max_tokens", 64000),
                         ctx.get("context_compact_threshold", 0.8),
                         ctx.get("context_keep_recent", 6),
                         conversation_id=conversation_id,
                     )
+
+                    # Check cancellation before LLM call
+                    if not self._is_current_generation(gen_key, my_generation):
+                        raise AgentCancelled()
 
                     try:
                         response = client.complete_stream(
@@ -2393,6 +2638,8 @@ class AgentLoopTask(BaseTask):
                             tools=tool_defs if tool_defs else None,
                             callback=on_token,
                         )
+                    except AgentCancelled:
+                        raise
                     except Exception as llm_err:
                         err_str = str(llm_err)
                         # Detect context overflow — force aggressive compaction and retry once
@@ -2403,7 +2650,7 @@ class AgentLoopTask(BaseTask):
                                 "iteration": iteration, "detail": "compacting context...",
                             })
                             llm_context = self._compact_if_needed(
-                                llm_context, client, model or ctx["model"],
+                                llm_context, compact_client, model or ctx["model"],
                                 ctx.get("context_max_tokens", 64000),
                                 0.5,  # aggressive threshold
                                 ctx.get("context_keep_recent", 6),
@@ -2473,6 +2720,11 @@ class AgentLoopTask(BaseTask):
                             "iteration": iteration, "round": current_round,
                         })
 
+                    # Re-inject executor before tool calls (fixes race condition)
+                    _sub_exec = ctx.get("sub_executor")
+                    if _sub_exec:
+                        self._inject_executor(registry, _sub_exec)
+
                     for tc in response.tool_calls:
                         tools_called.append(tc.name)
                         bus.publish_event(conversation_id, "tool_call", {
@@ -2484,6 +2736,10 @@ class AgentLoopTask(BaseTask):
                         except Exception as tool_err:
                             result_text = f"Error: {tool_err}"
                             logger.error(f"Tool '{tc.name}' failed: {tool_err}")
+
+                        # Check cancellation after tool execution
+                        if not self._is_current_generation(gen_key, my_generation):
+                            raise AgentCancelled()
 
                         # Detect continuation request
                         if tc.name == "schedule_continuation":
@@ -2601,7 +2857,7 @@ class AgentLoopTask(BaseTask):
                 ))
                 # Compact before synthesis — context may be huge after many tool calls
                 synth_context = self._compact_if_needed(
-                    list(messages), client, model or ctx["model"],
+                    list(messages), compact_client, model or ctx["model"],
                     ctx.get("context_max_tokens", 64000),
                     0.6,  # aggressive threshold for synthesis
                     ctx.get("context_keep_recent", 6),
@@ -2634,7 +2890,7 @@ class AgentLoopTask(BaseTask):
                             logger.warning(f"[agent:{conversation_id[:8]}] synthesis overflow, "
                                            f"forcing aggressive compaction and retrying...")
                             synth_context = self._compact_if_needed(
-                                synth_context, client, model or ctx["model"],
+                                synth_context, compact_client, model or ctx["model"],
                                 ctx.get("context_max_tokens", 64000),
                                 0.4,  # very aggressive
                                 ctx.get("context_keep_recent", 4),
@@ -2744,6 +3000,11 @@ class AgentLoopTask(BaseTask):
                 "active" if tools_called else "idle",
             )
 
+        except AgentCancelled:
+            logger.info(f"[agent:{conversation_id[:8]}] cancelled — stopping gracefully")
+            # Flush any partial messages accumulated so far
+            _flush_new()
+            # cancel_agent() already published the "cancelled" event and set status
         except Exception as e:
             logger.error(f"Streaming agent loop error: {e}", exc_info=True)
             bus.publish_event(conversation_id, "error_event", {
@@ -2753,6 +3014,140 @@ class AgentLoopTask(BaseTask):
         finally:
             with self._active_lock:
                 self._active_conversations.discard(conversation_id)
+
+    def _broadcast_agents(self, conversation_id: str, message: str,
+                          user_id: str) -> None:
+        """Send a message to ALL defined agents in parallel.
+
+        Each response is published as an SSE 'agent_response' event,
+        and a final 'broadcast_done' is sent when all are complete.
+        """
+        from core.conversation_event_bus import ConversationEventBus
+        from core.conversation_store import ConversationStore
+        from core.resource_store import ResourceStore
+        from core.agent_executor import SubAgentExecutor, resolve_agent_task
+
+        bus = ConversationEventBus.instance()
+
+        try:
+            rs = ResourceStore.instance()
+            all_agents = rs.list_all("agent", user_id)
+            if not all_agents:
+                bus.publish_event(conversation_id, "error_event", {
+                    "message": "No agents defined. Use /agent create first.",
+                })
+                return
+
+            agent_names = [a["name"] for a in all_agents]
+            all_targets = ["assistant"] + agent_names
+            bus.publish_event(conversation_id, "thinking", {
+                "detail": f"Broadcasting to {len(all_targets)} targets: {', '.join(all_targets)}",
+            })
+
+            # Resolve default LLM client
+            task_llm_service = self.config.get("llm_service", "")
+            if not task_llm_service or "${" in task_llm_service:
+                task_llm_service = "default"
+            client, _ = self._resolve_llm_service(task_llm_service, user_id)
+            if not client and self.config.get("api_key"):
+                client = LLMClient(
+                    provider=self.config.get("provider", "openai"),
+                    api_key=self.config["api_key"],
+                    base_url=self.config.get("base_url", ""),
+                    timeout=int(self.config.get("timeout", 120)),
+                )
+            if not client:
+                bus.publish_event(conversation_id, "error_event", {
+                    "message": "No LLM service available for broadcast.",
+                })
+                return
+
+            # Build tasks
+            registry = self.get_tool_registry()
+            self._configure_tool_handlers(registry)
+
+            def _client_resolver(svc_id, uid):
+                return self._resolve_llm_service(svc_id, uid)
+
+            sub_executor = SubAgentExecutor(
+                client, registry, max_workers=len(agent_names) + 1,
+                client_resolver=_client_resolver,
+            )
+
+            tasks = []
+            # Include the default assistant as a pseudo-agent
+            from core.agent_executor import AgentTask
+            import uuid
+            default_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+            tasks.append(AgentTask(
+                id=uuid.uuid4().hex[:12],
+                agent_name="assistant",
+                message=message,
+                system_prompt=default_prompt,
+                llm_service=task_llm_service if task_llm_service != "default" else "",
+                user_id=user_id,
+            ))
+            for name in agent_names:
+                try:
+                    task = resolve_agent_task(name, message, user_id)
+                    tasks.append(task)
+                except KeyError:
+                    logger.warning("Broadcast: agent '%s' not found, skipping", name)
+
+            if not tasks:
+                bus.publish_event(conversation_id, "error_event", {
+                    "message": "No valid agents to broadcast to.",
+                })
+                return
+
+            # Spawn all agents in parallel
+            results = sub_executor.spawn(tasks, wait=True)
+
+            # Publish each result and persist in conversation
+            cstore = ConversationStore.instance()
+            for result in results:
+                source = {
+                    "type": "agent",
+                    "name": result.agent_name,
+                }
+                content = result.response if result.status == "completed" else (
+                    f"[Error: {result.error}]"
+                )
+                # Persist in conversation
+                msg = LLMMessage(
+                    role="assistant",
+                    content=content,
+                    source=source,
+                )
+                cstore.append_messages(
+                    conversation_id,
+                    self._serialize_messages([msg]),
+                    user_id=user_id,
+                )
+                # Publish SSE event
+                bus.publish_event(conversation_id, "agent_response", {
+                    "agent_name": result.agent_name,
+                    "response": content,
+                    "source": source,
+                    "status": result.status,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "duration_ms": round(result.duration_ms, 1),
+                })
+
+            # Broadcast complete
+            bus.publish_event(conversation_id, "broadcast_done", {
+                "agent_count": len(results),
+                "message_count": cstore.message_count(conversation_id),
+            })
+
+            sub_executor.shutdown()
+
+        except Exception as e:
+            logger.error("Broadcast error: %s", e, exc_info=True)
+            bus.publish_event(conversation_id, "error_event", {
+                "message": f"Broadcast failed: {e}",
+            })
 
     def _poll_conversations(self, interval: int) -> None:
         """Background poller: periodically check active conversations for pending work.
@@ -3395,12 +3790,24 @@ class AgentLoopTask(BaseTask):
         summary = ConversationStore.instance().get_context_summary(conversation_id)
         all_deserialized = self._deserialize_messages(all_messages)
 
+        # If no messages but summary exists (e.g. after /resume), rebuild from summary alone
+        if not all_deserialized and summary:
+            logger.info(f"[rebuild:{conversation_id[:8]}] no messages but summary exists — "
+                        f"rebuilding from summary only")
+            return [
+                LLMMessage(role="system", content=system_prompt),
+                LLMMessage(role="user",
+                           content=f"[Conversation summary — earlier messages compacted]\n\n{summary}"),
+                LLMMessage(role="assistant",
+                           content="Understood. I have the context from our earlier conversation. Continuing from where we left off."),
+            ]
+
         # Estimate if the full conversation fits in context
         estimated = self._estimate_tokens(all_deserialized)
         limit = int(max_tokens * 0.8)
 
-        if estimated <= limit:
-            # Everything fits — no need for summary
+        if estimated <= limit and not summary:
+            # Everything fits and no forced summary — no need for compaction
             logger.info(f"[rebuild:{conversation_id[:8]}] full history fits "
                         f"({estimated} tokens <= {limit})")
             return all_deserialized
@@ -3677,6 +4084,25 @@ class AgentLoopTask(BaseTask):
                     f"({self._estimate_tokens([LLMMessage(role='user', content=summary)])} tokens)")
         return summary
 
+    def _call_summarize_with_budget(self, client: LLMClient, model: str,
+                                     text: str, max_tokens: int) -> str:
+        """Re-summarize text to fit within an approximate token budget."""
+        clean = self._sanitize_for_llm(text)
+        response = client.complete(
+            messages=[
+                LLMMessage(role="system", content=(
+                    f"Summarize the following text in approximately {max_tokens} tokens. "
+                    "Preserve all key facts, decisions, findings, and context. "
+                    "Be concise but complete. Do NOT exceed the token budget."
+                )),
+                LLMMessage(role="user", content=clean),
+            ],
+            model=model or None,
+            temperature=0.3,
+            max_tokens=min(max_tokens * 2, 4096),
+        )
+        return response.content
+
     @staticmethod
     def _sanitize_for_llm(text: str) -> str:
         """Remove characters that break LLM API JSON parsing."""
@@ -3851,7 +4277,7 @@ class AgentLoopTask(BaseTask):
         System messages are excluded (internal to LLM context).
         """
         result = []
-        for m in raw_messages:
+        for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
             if role == "system":
                 continue  # skip system prompts
@@ -3905,7 +4331,7 @@ class AgentLoopTask(BaseTask):
                 # Skip internal system instructions injected as user messages
                 if role == "user" and content.startswith("[System:"):
                     continue
-                entry = {"type": role, "role": role, "content": content}
+                entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
                 if m.get("channel"):
                     entry["channel"] = m["channel"]
                 if m.get("source"):

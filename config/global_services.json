@@ -1,0 +1,50 @@
+{
+  "llm_default_service": {
+    "service_id": "llm_default_service",
+    "service_type": "llmConnection",
+    "config": {
+      "provider": "openai",
+      "api_key": "${secrets.global.llm_api_key}",
+      "base_url": "${global.llm_base_url}",
+      "default_model": "${global.llm_model}",
+      "timeout": 60,
+      "max_retries": 2,
+      "max_tokens": 65536,
+      "max_concurrent": 0
+    },
+    "enabled": true,
+    "description": "",
+    "created_at": 1773484624.0054524
+  },
+  "grok_llm_service": {
+    "service_id": "grok_llm_service",
+    "service_type": "llmConnection",
+    "config": {
+      "provider": "openai",
+      "api_key": "${secrets.global.grok_llm_api_key}",
+      "base_url": "${global.grok_llm_base_url}",
+      "default_model": "${global.grok_llm_model}",
+      "timeout": 60,
+      "max_retries": 2,
+      "max_tokens": 65536,
+      "max_concurrent": 0
+    },
+    "enabled": true,
+    "description": "",
+    "created_at": 1773484655.17714
+  },
+  "claude_llm_service": {
+    "service_id": "claude_llm_service",
+    "service_type": "llmConnection",
+    "config": {
+      "provider": "claude-code",
+      "default_model": "sonnet",
+      "timeout": 120,
+      "max_concurrent": 0,
+      "claude_binary": "C:/Users/quent/AppData/Roaming/npm/claude.cmd"
+    },
+    "enabled": true,
+    "description": "",
+    "created_at": 1773494646.5735512
+  }
+}

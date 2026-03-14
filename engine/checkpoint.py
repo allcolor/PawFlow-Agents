@@ -124,8 +124,12 @@ class CheckpointManager:
         filepath = self._dir / filename
 
         with self._lock:
-            with open(filepath, 'w', encoding='utf-8') as f:
-                json.dump(checkpoint, f, indent=2, ensure_ascii=False)
+            try:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    json.dump(checkpoint, f, indent=2, ensure_ascii=False)
+            except OSError as e:
+                logger.warning(f"Checkpoint write failed: {e}")
+                return ""
 
             # Trim old checkpoints
             self._trim_checkpoints()
@@ -142,19 +146,20 @@ class CheckpointManager:
         Returns:
             Checkpoint dict or None if no checkpoint exists
         """
-        checkpoints = sorted(self._dir.glob("checkpoint_*.json"))
-        if not checkpoints:
-            return None
+        with self._lock:
+            checkpoints = sorted(self._dir.glob("checkpoint_*.json"))
+            if not checkpoints:
+                return None
 
-        latest = checkpoints[-1]
-        try:
-            with open(latest, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            logger.info(f"Loaded checkpoint: {latest}")
-            return data
-        except Exception as e:
-            logger.error(f"Failed to load checkpoint {latest}: {e}")
-            return None
+            latest = checkpoints[-1]
+            try:
+                with open(latest, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                logger.info(f"Loaded checkpoint: {latest}")
+                return data
+            except Exception as e:
+                logger.error(f"Failed to load checkpoint {latest}: {e}")
+                return None
 
     def restore_flowfiles(self, checkpoint: Dict[str, Any]
                           ) -> Dict[tuple, List[FlowFile]]:
@@ -217,12 +222,19 @@ class CheckpointManager:
 
     def clear(self):
         """Remove all checkpoints."""
-        for f in self._dir.glob("checkpoint_*.json"):
-            f.unlink()
-        # Clean content files
-        for f in self._content_dir.iterdir():
-            if f.is_file():
-                f.unlink()
+        with self._lock:
+            for f in self._dir.glob("checkpoint_*.json"):
+                try:
+                    f.unlink(missing_ok=True)
+                except OSError:
+                    pass
+            # Clean content files
+            for f in self._content_dir.iterdir():
+                try:
+                    if f.is_file():
+                        f.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
     def _serialize_flowfile(self, ff: FlowFile) -> Dict[str, Any]:
         """Serialize a FlowFile for checkpointing."""
@@ -274,4 +286,7 @@ class CheckpointManager:
         checkpoints = sorted(self._dir.glob("checkpoint_*.json"))
         while len(checkpoints) > self._max_checkpoints:
             old = checkpoints.pop(0)
-            old.unlink()
+            try:
+                old.unlink(missing_ok=True)
+            except OSError:
+                pass  # File in use on Windows — skip, will be cleaned next cycle

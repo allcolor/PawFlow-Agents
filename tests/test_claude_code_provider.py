@@ -71,9 +71,12 @@ class TestSerializeMessages(unittest.TestCase):
             LLMMessage(role="user", content="Tell me more"),
         ]
         sys_prompt, user_text = self.client._serialize_messages_for_cli(msgs, None)
-        self.assertIn("[User]: Search for Python", user_text)
-        self.assertIn("[Assistant]: I'll search for that.", user_text)
-        self.assertIn("[User]: Tell me more", user_text)
+        self.assertIn("<conversation_history>", user_text)
+        self.assertIn("Search for Python", user_text)
+        self.assertIn("I'll search for that.", user_text)
+        self.assertIn("Tell me more", user_text)
+        self.assertIn('role="user"', user_text)
+        self.assertIn('role="assistant"', user_text)
 
     def test_tool_calls_in_history(self):
         msgs = [
@@ -86,9 +89,10 @@ class TestSerializeMessages(unittest.TestCase):
             LLMMessage(role="user", content="Thanks"),
         ]
         _, user_text = self.client._serialize_messages_for_cli(msgs, None)
-        self.assertIn("[Assistant]: Searching...", user_text)
+        self.assertIn("Searching...", user_text)
         self.assertIn("<tool_call>", user_text)
-        self.assertIn("[Tool Result (tc1)]: Found 5 results", user_text)
+        self.assertIn("Found 5 results", user_text)
+        self.assertIn('role="tool"', user_text)
 
     def test_system_with_tools(self):
         msgs = [
@@ -218,6 +222,7 @@ class TestCompleteClaude(unittest.TestCase):
 
     @patch("core.llm_client.subprocess.run")
     def test_env_vars_passed(self, mock_run):
+        """Claude CLI uses its own auth — no env vars injected."""
         client = LLMClient(
             provider="claude-code", api_key="my-key",
             base_url="https://custom.api.com",
@@ -230,8 +235,8 @@ class TestCompleteClaude(unittest.TestCase):
         client.complete([LLMMessage(role="user", content="test")])
         call_kwargs = mock_run.call_args[1]
         env = call_kwargs["env"]
-        self.assertEqual(env["ANTHROPIC_API_KEY"], "my-key")
-        self.assertEqual(env["ANTHROPIC_BASE_URL"], "https://custom.api.com")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("ANTHROPIC_BASE_URL", env)
 
     @patch("core.llm_client.subprocess.run")
     def test_system_prompt_passed(self, mock_run):
@@ -245,10 +250,10 @@ class TestCompleteClaude(unittest.TestCase):
             LLMMessage(role="user", content="Hi"),
         ]
         self.client.complete(msgs)
-        cmd = mock_run.call_args[0][0]
-        self.assertIn("--system-prompt", cmd)
-        idx = cmd.index("--system-prompt")
-        self.assertIn("Be helpful", cmd[idx + 1])
+        # System prompt is injected into stdin, not CLI args
+        stdin_text = mock_run.call_args[1].get("input", "")
+        self.assertIn("<system_instructions>", stdin_text)
+        self.assertIn("Be helpful", stdin_text)
 
     @patch("core.llm_client.subprocess.run")
     def test_plain_text_output(self, mock_run):
@@ -311,86 +316,15 @@ class TestStreamClaude(unittest.TestCase):
         self.assertIn("not found", str(ctx.exception))
 
 
-class TestOAuthRefresh(unittest.TestCase):
-    """Test OAuth token auto-refresh for claude-code provider."""
+class TestClaudeCodeEnv(unittest.TestCase):
+    """Test claude-code env setup — CLI uses its own auth."""
 
-    def test_no_refresh_without_token(self):
-        """No refresh attempt if refresh_token is empty."""
-        client = LLMClient(
-            provider="claude-code", api_key="old-token",
-            refresh_token="", token_expires_at=0,
-        )
-        client._refresh_oauth_token()
-        self.assertEqual(client.api_key, "old-token")
-
-    def test_no_refresh_if_not_expired(self):
-        """Don't refresh if token is still valid."""
-        import time
-        client = LLMClient(
-            provider="claude-code", api_key="valid-token",
-            refresh_token="rt-xxx",
-            token_expires_at=time.time() * 1000 + 3_600_000,  # 1h from now
-        )
-        # Should not attempt refresh
+    def test_env_is_clean(self):
+        """No ANTHROPIC_API_KEY injected — CLI handles auth via `claude login`."""
+        client = LLMClient(provider="claude-code", api_key="whatever")
         env = client._claude_code_env()
-        self.assertEqual(env["ANTHROPIC_API_KEY"], "valid-token")
-
-    @patch("core.llm_client.http.client.HTTPSConnection")
-    def test_refresh_expired_token(self, mock_conn_cls):
-        """Refresh token when expired."""
-        import time
-        mock_conn = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.status = 200
-        mock_resp.read.return_value = json.dumps({
-            "access_token": "new-fresh-token",
-            "refresh_token": "new-rt",
-            "expires_at": time.time() * 1000 + 3_600_000,
-        }).encode()
-        mock_conn.getresponse.return_value = mock_resp
-        mock_conn_cls.return_value = mock_conn
-
-        client = LLMClient(
-            provider="claude-code", api_key="expired-token",
-            refresh_token="rt-xxx",
-            token_expires_at=time.time() * 1000 - 1000,  # expired 1s ago
-        )
-        env = client._claude_code_env()
-        self.assertEqual(env["ANTHROPIC_API_KEY"], "new-fresh-token")
-        self.assertEqual(client.api_key, "new-fresh-token")
-        self.assertEqual(client.refresh_token, "new-rt")
-
-    @patch("core.llm_client.http.client.HTTPSConnection")
-    def test_refresh_failure_keeps_old_token(self, mock_conn_cls):
-        """If refresh fails, keep using the old token."""
-        import time
-        mock_conn = MagicMock()
-        mock_resp = MagicMock()
-        mock_resp.status = 401
-        mock_resp.read.return_value = b'{"error": "invalid_grant"}'
-        mock_conn.getresponse.return_value = mock_resp
-        mock_conn_cls.return_value = mock_conn
-
-        client = LLMClient(
-            provider="claude-code", api_key="old-token",
-            refresh_token="bad-rt",
-            token_expires_at=time.time() * 1000 - 1000,
-        )
-        env = client._claude_code_env()
-        # Should still use old token (refresh failed gracefully)
-        self.assertEqual(env["ANTHROPIC_API_KEY"], "old-token")
-
-    def test_from_config_with_refresh(self):
-        client = LLMClient.from_config({
-            "provider": "claude-code",
-            "api_key": "sk-ant-xxx",
-            "refresh_token": "sk-ant-rt-xxx",
-            "token_expires_at": "1773501806027",
-            "token_url": "https://custom.auth.com/token",
-        })
-        self.assertEqual(client.refresh_token, "sk-ant-rt-xxx")
-        self.assertEqual(client.token_expires_at, 1773501806027.0)
-        self.assertEqual(client.token_url, "https://custom.auth.com/token")
+        self.assertNotIn("ANTHROPIC_API_KEY", env)
+        self.assertNotIn("ANTHROPIC_BASE_URL", env)
 
 
 class TestProviderInProviders(unittest.TestCase):

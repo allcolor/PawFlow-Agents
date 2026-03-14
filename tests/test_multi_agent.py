@@ -394,7 +394,7 @@ class TestResolveAgentTask:
     def test_resolve_from_store(self):
         """resolve_agent_task loads agent definition from ResourceStore."""
         with patch("core.resource_store.ResourceStore.instance") as mock_store:
-            mock_store.return_value.get.return_value = {
+            mock_store.return_value.get_any.return_value = {
                 "prompt": "You are an analyst",
                 "model": "gpt-4",
                 "tools": ["execute_script", "web_search"],
@@ -414,7 +414,7 @@ class TestResolveAgentTask:
     def test_resolve_not_found(self):
         """resolve_agent_task raises KeyError if agent not in store."""
         with patch("core.resource_store.ResourceStore.instance") as mock_store:
-            mock_store.return_value.get.return_value = None
+            mock_store.return_value.get_any.return_value = None
             with pytest.raises(KeyError, match="not found"):
                 resolve_agent_task("nope", "Hi", "user1")
 

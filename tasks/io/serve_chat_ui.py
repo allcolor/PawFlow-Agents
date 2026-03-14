@@ -91,11 +91,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
 .msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
             border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
-.typing { align-self: flex-start; color: #6c6c8a; font-size: 13px; padding: 8px 14px; }
-.typing span { animation: blink 1.4s infinite; }
-.typing span:nth-child(2) { animation-delay: 0.2s; }
-.typing span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+.msg { position: relative; }
+.msg-actions { position: sticky; top: 0; float: right; display: none; gap: 2px; margin: -4px -6px 0 8px;
+               z-index: 2; background: inherit; border-radius: 6px; padding: 2px; }
+.msg:hover .msg-actions { display: flex; }
+.msg-actions button { background: rgba(255,255,255,0.1); border: none; color: #aaa; cursor: pointer;
+                      font-size: 12px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
+.msg-actions button:hover { background: rgba(255,255,255,0.2); color: #fff; }
+.typing { align-self: flex-start; font-size: 14px; padding: 10px 14px;
+         font-style: italic; display: flex; align-items: center; gap: 8px; }
+.typing .spinner { display: inline-block; animation: spin 1.2s linear infinite;
+                   font-size: 18px; font-style: normal; }
+.typing .verb { animation: fadeIn 0.4s ease-in; }
+@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+@keyframes fadeIn { 0% { opacity: 0; transform: translateY(2px); } 100% { opacity: 1; transform: translateY(0); } }
 .input-area { background: #16213e; padding: 14px 20px; border-top: 1px solid #0f3460;
                display: flex; gap: 10px; flex-direction: column; }
 .input-row { display: flex; gap: 10px; align-items: flex-end; }
@@ -108,6 +117,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                       white-space: nowrap; height: 44px; }
 .input-row button:hover { background: #c73a52; }
 .input-row button:disabled { background: #3a3a5a; cursor: not-allowed; }
+#stopBtn { background: #cc3333; padding: 10px 14px; font-size: 16px; min-width: 44px; }
+#stopBtn:hover { background: #aa2222; }
 .btn-attach { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
 .btn-attach:hover { background: #1a4a8a !important; }
 .btn-folder { background: #0f3460 !important; padding: 10px 12px !important; font-size: 18px !important; }
@@ -254,6 +265,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
               rows="1" onkeydown="handleKey(event)"></textarea>
     <button id="sendBtn" onclick="send()">Send</button>
+    <button id="stopBtn" onclick="cancelAgent()" style="display:none" title="Stop generation">&#9632;</button>
   </div>
 </div>
 </div>
@@ -290,6 +302,9 @@ const _i18n = {
     variableAddUsage: 'Usage: /add-variable &lt;name&gt; &lt;value&gt;',
     variableListEmpty: 'No variables stored.',
     variableListTitle: 'Your variables:',
+    cancelled: '[Cancelled]', stop: 'Stop', cancelling: 'Cancelling...',
+    noConv: 'No active conversation.', restartFrom: 'Context restarted — keeping last {n} messages.',
+    resuming: 'Summarizing conversation to ~{n} tokens...', resumed: 'Conversation summarized ({n} messages \u2192 {len} chars). Next message starts from the summary.',
   },
   fr: {
     ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
@@ -321,6 +336,9 @@ const _i18n = {
     variableAddUsage: 'Usage: /add-variable &lt;nom&gt; &lt;valeur&gt;',
     variableListEmpty: 'Aucune variable stock\u00e9e.',
     variableListTitle: 'Vos variables :',
+    cancelled: '[Annul\u00e9]', stop: 'Stop', cancelling: 'Annulation...',
+    noConv: 'Aucune conversation active.', restartFrom: 'Contexte red\u00e9marr\u00e9 \u2014 {n} derniers messages conserv\u00e9s.',
+    resuming: 'R\u00e9sum\u00e9 de la conversation en ~{n} tokens...', resumed: 'Conversation r\u00e9sum\u00e9e ({n} messages \u2192 {len} caract\u00e8res). Le prochain message repart du r\u00e9sum\u00e9.',
   },
   es: {
     ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
@@ -352,6 +370,9 @@ const _i18n = {
     variableAddUsage: 'Uso: /add-variable &lt;nombre&gt; &lt;valor&gt;',
     variableListEmpty: 'No hay variables almacenadas.',
     variableListTitle: 'Sus variables:',
+    cancelled: '[Cancelado]', stop: 'Detener', cancelling: 'Cancelando...',
+    noConv: 'No hay conversaci\u00f3n activa.', restartFrom: 'Contexto reiniciado \u2014 {n} \u00faltimos mensajes conservados.',
+    resuming: 'Resumiendo conversaci\u00f3n a ~{n} tokens...', resumed: 'Conversaci\u00f3n resumida ({n} mensajes \u2192 {len} caracteres). El pr\u00f3ximo mensaje parte del resumen.',
   },
 };
 const _lang = (navigator.language || 'en').slice(0, 2);
@@ -747,16 +768,27 @@ function addMsg(role, text, extra) {
   const cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
   el.className = 'msg ' + cssClass;
   el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
+  if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
+
+  // Action buttons (copy + delete) for user/assistant messages
+  let actionsHtml = '';
+  if (role === 'user' || role === 'assistant') {
+    actionsHtml = '<span class="msg-actions">'
+      + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
+      + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
+      + '</span>';
+  }
+
   if (role === 'assistant') {
-    el.innerHTML = badge + renderMarkdown(text);
+    el.innerHTML = actionsHtml + badge + renderMarkdown(text);
   } else if (role === 'tool' || role === 'tool_call') {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
     const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
     el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">↳ ' + escapeHtml(text) + '</span>';
   } else if (role === 'user') {
-    el.innerHTML = badge + escapeHtml(text);
+    el.innerHTML = actionsHtml + badge + escapeHtml(text);
   } else {
     el.textContent = text;
   }
@@ -806,17 +838,270 @@ function scrollBottom(force) {
   }
 }
 
+const FUN_VERBS = [
+  // Tech / Dev
+  'Refactoring','Compiling','Debugging','Deploying','Optimizing','Linting','Minifying',
+  'Transpiling','Dockerizing','Kuberneting','Microservicing','Rebasing','Merging',
+  'Cherry-picking','Hotfixing','Monkey-patching','Sharding','Indexing','Caching',
+  'Serializing','Deserializing','Tokenizing','Lexing','Parsing','Hashing','Encrypting',
+  'Decrypting','Handshaking','Pipelining','Webhooking','Load-balancing','Auto-scaling',
+  'Containerizing','Orchestrating','Provisioning','Terraforming','Ansibilizing',
+  'GitOpsing','CI/CDing','Blue-greening','Canary-deploying','Feature-flagging',
+  'A/B-testing','Stress-testing','Fuzz-testing','Benchmarking','Profiling',
+  'Flame-graphing','Heap-dumping','Thread-pooling','Garbage-collecting','JITting',
+  'AOT-compiling','Tree-shaking','Code-splitting','Lazy-loading','Prefetching',
+  'Service-meshing','API-gatewaying','Rate-limiting','Circuit-breaking','Bulkheading',
+  'Backpressuring','Dead-lettering','Event-sourcing','CQRS-ing','Saga-patterning',
+  // Science
+  'Hypothesizing','Experimenting','Calibrating','Quantifying','Synthesizing',
+  'Centrifuging','Titrating','Distilling','Crystallizing','Polymerizing',
+  'Sequencing','Splicing','Cloning','Mutating','Evolving','Spectrographing',
+  'Electron-microscoping','Carbon-dating','Peer-reviewing','Replicating',
+  'Correlating','Extrapolating','Interpolating','Normalizing','Standardizing',
+  'Ionizing','Magnetizing','Polarizing','Oscillating','Resonating',
+  'Diffracting','Refracting','Superposing','Entangling','Tunneling',
+  'Annihilating','Fissioning','Fusioning','Plasma-confining','Supercooling',
+  // Space
+  'Launching','Orbiting','Docking','Spacewalking','Terraforming','Warp-driving',
+  'Hyperjumping','Lightspeed-calculating','Asteroid-mining','Stargazing',
+  'Nebula-surfing','Black-holing','Graviton-emitting','Solar-sailing',
+  'Cryo-sleeping','Planet-scanning','Exoplanet-hunting','Comet-chasing',
+  'Satellite-deploying','Moon-landing','Mars-colonizing','Ring-surfing',
+  'Supernova-watching','Pulsar-timing','Quasar-mapping','Dark-mattering',
+  'Cosmic-raying','Redshift-measuring','Singularity-approaching','Dyson-sphering',
+  // Gaming
+  'Respawning','Looting','Crafting','Speed-running','Combo-breaking',
+  'Boss-fighting','Level-grinding','Rage-quitting','Tea-bagging','No-scoping',
+  'Wall-running','Double-jumping','Rocket-jumping','Bunny-hopping','Strafing',
+  'Camping','Ganking','Kiting','Aggro-pulling','Mana-regenerating',
+  'Buff-stacking','Debuffing','Critical-hitting','Parrying','Dodge-rolling',
+  'Inventory-managing','Quest-logging','Achievement-unlocking','Leaderboarding',
+  'Speedhacking','Glitch-exploiting','Sequence-breaking','Any-percenting',
+  'Frame-perfecting','Pixel-walking','Clipping','Noclipping','God-moding',
+  // Cuisine
+  'Sautéing','Flambéing','Caramelizing','Blanching','Braising','Julienning',
+  'Deglazing','Reducing','Emulsifying','Fermenting','Proofing','Kneading',
+  'Tempering','Sous-viding','Smoking','Curing','Pickling','Brining',
+  'Marinating','Basting','Glazing','Torching','Dehydrating','Infusing',
+  'Zesting','Chiffonading','Brunoise-cutting','Folding','Whipping',
+  'Meringue-piping','Ganache-pouring','Crème-brûlée-ing','Sourdough-feeding',
+  'Umami-boosting','Mise-en-placing','Knife-sharpening','Wok-haying',
+  // Animals
+  'Catifying','Doggoing','Penguin-waddling','Chameleon-blending','Dolphin-clicking',
+  'Owl-hooting','Squirrel-stashing','Bee-pollinating','Spider-webbing',
+  'Flamingo-posing','Sloth-hanging','Cheetah-sprinting','Whale-singing',
+  'Parrot-mimicking','Octopus-camouflaging','Peacock-displaying','Beaver-damming',
+  'Ant-marching','Butterfly-morphing','Gecko-climbing','Otter-floating',
+  'Pangolin-curling','Axolotl-regenerating','Tardigrade-surviving',
+  'Narwhal-jousting','Platypus-confusing','Capybara-chilling','Red-panda-ing',
+  // Music
+  'Beatboxing','Harmonizing','Riffing','Improvising','Crescendo-ing',
+  'Syncopating','Arpeggiating','Tremolo-picking','Shredding','Djent-ing',
+  'Dubstepping','Drum-rolling','Bass-dropping','Vinyl-scratching',
+  'Auto-tuning','Looping','Sampling','Remixing','Mastering','EQ-ing',
+  'Side-chaining','Reverb-drenching','Pitch-bending','Vocoding',
+  'Theremin-waving','Yodeling','Beatmatching','Crossfading',
+  // Magic / Fantasy
+  'Enchanting','Conjuring','Transmuting','Summoning','Banishing','Scrying',
+  'Wand-waving','Potion-brewing','Spell-casting','Rune-carving','Hexing',
+  'Shapeshifting','Teleporting','Levitating','Astral-projecting',
+  'Crystal-gazing','Alchemy-ing','Elixir-mixing','Grimoire-reading',
+  'Familiar-bonding','Mana-channeling','Portal-opening','Illusion-weaving',
+  'Necromancy-ing','Divination-ing','Abjuring','Evoking','Invoking',
+  // Sports
+  'Slam-dunking','Bicep-curling','Parkour-ing','Bouldering','Skateboarding',
+  'Snowboarding','Surfing','Hang-gliding','Base-jumping','Free-running',
+  'Cartwheeling','Backflipping','Pole-vaulting','Javelin-throwing',
+  'Hurdle-clearing','Sprint-finishing','Marathon-pacing','Triathlon-ing',
+  'CrossFit-ing','Deadlifting','Kettlebell-swinging','Yoga-posing',
+  // Absurd / Inventés
+  'Combobulating','Discombobulating','Recombobulating','Confuzzling',
+  'Flibbergibbeting','Lollygagging','Dillydallying','Shillyshallying',
+  'Skedaddling','Bamboozling','Cattywampusing','Gobsmacking','Wibble-wobbling',
+  'Fluffernuttying','Kerfuffling','Hullabaloo-ing','Rigmarole-ing',
+  'Bumblebee-ing','Malarkey-detecting','Shenanigan-foiling','Tomfoolery-ing',
+  'Razzle-dazzling','Higgledy-piggling','Topsy-turvying','Wishy-washying',
+  'Namby-pambying','Mumbo-jumboing','Hanky-pankying','Hocus-pocusing',
+  'Abracadabra-ing','Supercalifragilisting','Whatchamacalliting',
+  'Thingamajiggling','Doohickey-ing','Gizmo-fiddling','Widget-twiddling',
+  'Doodad-adjusting','Contraption-ing','Rigamarole-ing','Brouhaha-ing',
+  'Snafu-resolving','Fubar-unfubaring','Defenestrating','Discountenance-ing',
+  'Flibberflabbering','Jibberjabbering','Gobbledygooking','Bibblebopping',
+  'Rumpelstiltskin-ing','Serendipity-ing','Onomatopoeia-ing',
+  'Antidisestablishmentarian-izing','Floccinaucinihilipilificating',
+  'Pneumonoultramicroscopicsilico-ing','Hippopotomonstrosesquipedalian-ing',
+  'Llanfairpwllgwyngyll-ing','Superdupering','Mega-ultra-ing',
+  'Hyper-turbo-charging','Quantum-fluctuating','Nano-assembling',
+  'Cyber-synergizing','Techno-babbling','Retro-encabulating','Turbo-encabulating',
+  'Reverse-polarity-ing','Flux-capacitoring','Dilithium-crystaling',
+  'Unobtainium-mining','Handwavium-applying','Plotholeum-patching',
+  'Deux-ex-machina-ing','McGuffin-locating','Plot-armoring','Mary-Sue-ing',
+  'Timey-wimey-ing','Wibbly-wobbly-ing','Ding-donging','Zigzagging',
+  'Roly-polying','Teeter-tottering','Pitter-pattering','Clip-clopping',
+  'Tick-tocking','Flip-flopping','Ping-ponging','Zig-zagging',
+  'Shilly-shallying','Willy-nillying','Hokey-pokeying','Okey-dokeying',
+  'Artsy-fartsying','Boogie-woogieing','Heebie-jeebieing','Lovey-doveying',
+  'Itsy-bitsying','Teeny-weenying','Oopsie-daisy-ing','Easy-peasy-ing',
+  // Pop culture
+  'Jedi-mind-tricking','Force-pushing','Lightsaber-dueling','Kessel-running',
+  'Pokémon-catching','Pikachu-thunderbolting','Hadouken-ing','Kamehameha-ing',
+  'Falcon-punching','Shoryuken-ing','Fatality-performing','Mortal-Kombat-ing',
+  'Mario-jumping','Sonic-spinning','Zelda-puzzle-solving','Master-sword-pulling',
+  'Triforce-assembling','Portal-thinking','Cake-lying','Weighted-cube-loving',
+  'Skyrim-sweetrolling','Arrow-to-the-kneeing','Minecraft-crafting',
+  'Creeper-avoiding','Enderman-staring','Nether-portaling','Among-Us-venting',
+  'Impostor-detecting','Rickrolling','Gandalf-passing','Hobbit-walking',
+  'Precious-hunting','Infinity-stone-snapping','Vibranium-forging',
+  'Wakanda-forevering','Avengers-assembling','Bat-signaling','Kryptonite-avoiding',
+  'Web-slinging','Groot-growing','Baby-Yoda-sipping','Mandalorian-waying',
+  'Allons-y-ing','Exterminating','Regenerating','TARDIS-materializing',
+  // Philosophy / Abstract
+  'Contemplating','Ruminating','Philosophizing','Pontificating','Cogitating',
+  'Deliberating','Meditating','Introspecting','Existential-crisis-ing',
+  'Nihilism-overcoming','Absurdism-embracing','Trolley-problem-solving',
+  'Ship-of-Theseus-ing','Brain-in-a-vat-ing','Cogito-ergo-summing',
+  'Categorical-imperative-ing','Virtue-ethic-ing','Utilitarian-calculating',
+  'Dialectic-synthesizing','Phenomenology-reducing','Epistemology-ing',
+  'Ontology-questioning','Hermeneutic-circling','Deconstructing',
+  // Weather / Nature
+  'Photosynthesizing','Cloud-seeding','Lightning-conducting','Tornado-chasing',
+  'Tsunami-surfing','Earthquake-shaking','Volcano-erupting','Geyser-timing',
+  'Aurora-borealis-ing','Tidal-waving','Monsoon-weathering','Blizzard-braving',
+  'Rainbow-chasing','Dewdrop-collecting','Snowflake-crystallizing',
+  'Tectonic-shifting','Continental-drifting','Erosion-sculpting',
+  // Math
+  'Differentiating','Integrating','Fourier-transforming','Eigenvalue-decomposing',
+  'Matrix-multiplying','Gradient-descending','Backpropagating','Bayesian-updating',
+  'Monte-Carlo-simulating','Regression-fitting','Clustering','Dimensionality-reducing',
+  'Fibonacci-spiraling','Pi-calculating','Prime-sieving','Mandelbrot-zooming',
+  'Fractal-iterating','Topology-bending','Riemann-hypothesizing',
+  'P-vs-NP-wondering','Halting-problem-halting','Turing-completing',
+  // Art / Creative
+  'Watercoloring','Oil-painting','Sculpting','Chiseling','Pottery-wheeling',
+  'Glaze-firing','Origami-folding','Calligraphy-ing','Cross-hatching',
+  'Stippling','Impasto-layering','Glazing','Wet-on-wetting','Bob-Ross-ing',
+  'Happy-little-treeing','Beat-the-devil-out-of-iting','Pixel-arting',
+  'Voxel-modeling','UV-unwrapping','Rigging','Mocap-performing',
+  'Rotoscoping','Compositing','Color-grading','Storyboarding',
+  // Office / Corporate
+  'Synergizing','Leveraging','Circling-back','Touching-base','Ping-ing',
+  'Action-iteming','Deliverable-delivering','KPI-tracking','OKR-setting',
+  'Standup-standing','Retro-specting','Sprint-planning','Backlog-grooming',
+  'Story-pointing','Velocity-calculating','Burn-down-charting','Kanban-boarding',
+  'Jira-ticketing','Confluence-documenting','Slack-threading','Zoom-fatiguing',
+  'Calendar-tetris-ing','Meeting-about-meetings-ing','Email-cc-ing',
+  'Reply-all-apologizing','Out-of-office-autoreplying','TPS-reporting',
+  'Cover-sheet-attaching','Paradigm-shifting','Moving-the-needle',
+  'Boiling-the-ocean','Low-hanging-fruiting','Value-adding',
+  // AI / ML
+  'Neural-networking','Deep-learning','Attention-paying','Transformer-attending',
+  'Tokenizing','Embedding','Fine-tuning','RLHF-ing','Hallucination-avoiding',
+  'Prompt-engineering','Chain-of-thoughting','Few-shot-learning',
+  'Zero-shot-guessing','Gradient-clipping','Dropout-regularizing',
+  'Batch-normalizing','Softmax-squishing','ReLU-activating',
+  'Convolution-sliding','Pooling','Upsampling','GAN-generating',
+  'Discriminator-fooling','Diffusion-denoising','LoRA-adapting',
+  'Quantizing','Distilling','Pruning','Knowledge-graphing',
+  'Retrieval-augmenting','Vector-searching','Cosine-similaritying',
+  'Attention-is-all-you-needing','GPT-ing','BERT-masking','LLM-inferring',
+  // Construction / Craft
+  'Hammering','Nailing','Sawing','Sanding','Varnishing','Welding',
+  'Soldering','Riveting','Plumbing','Wiring','Drywalling','Tiling',
+  'Grouting','Caulking','Spackling','Priming','Basecoating','Topcoating',
+  'Dovetail-joining','Mortise-tenoning','Lathe-turning','Bandsaw-cutting',
+  // Dance
+  'Moonwalking','Breakdancing','Waltzing','Tangoing','Salsa-ing',
+  'Cha-cha-ing','Foxtrotting','Robot-dancing','Macarena-ing',
+  'Flossing','Dabbing','Nae-nae-ing','Electric-sliding',
+  'Riverdancing','Pirouetting','Voguing','Krumping','Tutting',
+  // Household
+  'Vacuum-cleaning','Dish-washing','Laundry-folding','Dust-bunnying',
+  'Decluttering','Marie-Kondo-ing','Sparking-joy','Sock-pairing',
+  'Tupperware-lid-matching','Remote-control-finding','Junk-drawer-organizing',
+  'Fridge-tetris-ing','Couch-cushion-mining','Lint-rolling',
+  // Internet
+  'Doomscrolling','Meme-crafting','Copypasta-ing','Emoji-translating',
+  'Hashtag-optimizing','Influencer-ing','Vlogging','Unboxing',
+  'Click-baiting','SEO-optimizing','Cookie-accepting','CAPTCHA-solving',
+  'Two-factor-authenticating','Password-resetting','Incognito-tabbing',
+  'Tab-hoarding','Bookmark-organizing','Cache-clearing','Ad-blocking',
+  'Dark-mode-enabling','Notification-silencing','Read-receipting',
+  // Time-related
+  'Procrastinating','Speedrunning','Time-traveling','Chrono-shifting',
+  'Temporal-looping','Groundhog-daying','Déjà-vu-ing','Future-proofing',
+  'Retro-grading','Nostalgia-tripping','Yesterday-remembering',
+  'Tomorrow-planning','Deadline-approaching','Timezone-converting',
+  // Emotions
+  'Vibing','Manifesting','Zen-achieving','Chakra-aligning',
+  'Aura-cleansing','Energy-matching','Good-vibes-only-ing',
+  'Serotonin-boosting','Dopamine-hitting','Endorphin-rushing',
+  'ASMR-tingling','Hygge-cozying','Wanderlust-ing',
+  // Misc fun
+  'Bubble-wrapping','Tetris-fitting','Rubik-cubing','Sudoku-solving',
+  'Crossword-puzzling','Jenga-pulling','Domino-toppling','Rube-Goldberging',
+  'Swiss-army-knifing','Duct-taping','Zip-tying','Bungee-cording',
+  'MacGyver-ing','Life-hacking','Percussive-maintaining','Turning-it-off-and-on-again-ing',
+  'Blowing-on-the-cartridge','Have-you-tried-restarting','Stack-overflowing',
+  'Copy-pasting-from-SO','Works-on-my-machining','RTFM-ing','LGTM-ing',
+  'Ship-it-ing','YOLO-deploying','Friday-deploying','Hotfix-on-prod-ing',
+  'Git-blame-ing','Rubber-duck-debugging','Rage-coding','Caffeine-loading',
+  'Coffee-brewing','Energy-drink-chugging','Snack-refueling','Pizza-ordering',
+  'Nap-recharging','Cat-on-keyboard-handling','Tab-explosion-managing',
+  'Infinite-loop-escaping','Segfault-investigating','Null-pointer-dereferencing',
+  'Off-by-one-correcting','Semicolon-hunting','Bracket-matching',
+  'Indentation-warring','Bikeshedding','Yak-shaving','Nerd-sniping',
+  'Scope-creeping','Feature-creeping','Gold-plating','Over-engineering',
+  'Premature-optimizing','Cargo-culting','Spaghetti-untangling',
+  'Technical-debt-paying','Legacy-code-archeology-ing','Dependency-hell-escaping',
+  'Node-modules-downloading','Left-pad-replacing','Is-it-DNS-checking',
+  'Blame-the-network-ing','Firewall-blaming','Cloud-yelling-at',
+  'Serverless-servering','NoSQL-not-only-SQLing','Blockchain-ing',
+  'Web3-pivoting','NFT-minting','Metaverse-entering','AI-bubble-riding',
+  'Buzzword-generating','Jargon-deploying','Acronym-expanding',
+  'TLA-decoding','FYI-forwarding','Per-my-last-emailing',
+  'New-phone-who-dis-ing','Rubber-stamping','Green-lighting'
+];
+
+let typingInterval = null;
+const TYPING_COLORS = [
+  '#a78bfa','#f472b6','#34d399','#fbbf24','#60a5fa',
+  '#fb923c','#e879f9','#2dd4bf','#f87171','#a3e635',
+  '#818cf8','#fb7185','#4ade80','#facc15','#38bdf8',
+  '#f97316','#c084fc','#22d3ee','#ef4444','#84cc16',
+];
+let typingColorIdx = 0;
+
+function randomVerb() {
+  return FUN_VERBS[Math.floor(Math.random() * FUN_VERBS.length)];
+}
+
+function randomColor() {
+  typingColorIdx = (typingColorIdx + 1) % TYPING_COLORS.length;
+  return TYPING_COLORS[typingColorIdx];
+}
+
 function showTyping() {
-  hideTyping();  // Remove existing typing indicator first
+  hideTyping();
   const el = document.createElement('div');
   el.className = 'typing';
   el.id = 'typing';
-  el.innerHTML = '<span>.</span><span>.</span><span>.</span>';
+  const color = randomColor();
+  el.innerHTML = '<span class="spinner" style="color:' + color + '">✻</span>'
+    + '<span class="verb" style="color:' + color + '">' + randomVerb() + '...</span>';
   document.getElementById('messages').appendChild(el);
   scrollBottom();
+  typingInterval = setInterval(() => {
+    const t = document.getElementById('typing');
+    if (t) {
+      const c = randomColor();
+      t.innerHTML = '<span class="spinner" style="color:' + c + '">✻</span>'
+        + '<span class="verb" style="color:' + c + '">' + randomVerb() + '...</span>';
+    }
+  }, 3000);
 }
 
 function hideTyping() {
+  if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
   const el = document.getElementById('typing');
   if (el) el.remove();
 }
@@ -842,7 +1127,8 @@ function connectSSE(cid) {
     const data = e.data ? JSON.parse(e.data) : {};
     const iter = data.iteration || '';
     const wait = data.waiting_seconds || 0;
-    let status = wait > 5 ? t('thinkingWait', {sec: wait}) : (data.round > 1 ? t('thinkingRound', {round: data.round}) : t('thinking'));
+    const verb = randomVerb();
+    let status = wait > 5 ? verb + '... (' + wait + 's)' : (data.round > 1 ? verb + '... (round ' + data.round + ')' : verb + '...');
     document.getElementById('status').textContent = status;
   });
 
@@ -929,11 +1215,30 @@ function connectSSE(cid) {
       // Final response
       sending = false;
       document.getElementById('sendBtn').disabled = false;
+      document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
     }
     // Refresh conversation list
     loadConversations();
     // Don't close SSE — keep listening for timer-triggered events
+  });
+
+  eventSource.addEventListener('cancelled', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    // Remove intermediate streaming chunks
+    for (const chunk of streamingChunks) {
+      if (chunk && chunk.parentNode) chunk.remove();
+    }
+    streamingEl = null;
+    streamingText = '';
+    streamingChunks = [];
+    addMsg('system', t('cancelled'));
+    scrollBottom();
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('status').textContent = t('ready');
   });
 
   eventSource.addEventListener('discard', (e) => {
@@ -993,7 +1298,30 @@ function connectSSE(cid) {
     streamingChunks = [];
     sending = false;
     document.getElementById('sendBtn').disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
     document.getElementById('status').textContent = t('error');
+  });
+
+  eventSource.addEventListener('agent_response', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const extra = data.source ? { source: data.source } : undefined;
+    addMsg('assistant', data.response || '', extra);
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('broadcast_done', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    const data = JSON.parse(e.data);
+    if (data.message_count) serverMsgCount = data.message_count;
+    sending = false;
+    document.getElementById('sendBtn').disabled = false;
+    document.getElementById('stopBtn').style.display = 'none';
+    document.getElementById('status').textContent = t('ready');
+    addMsg('system', `Broadcast complete — ${data.agent_count} agent(s) responded.`);
+    scrollBottom();
+    loadConversations();
   });
 
   let sseHadError = false;  // track any error on this EventSource
@@ -1321,14 +1649,16 @@ const HELP_DATA = {
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
   '/agent': {
-    usage: '/agent list | create | select <name> | default | delete <name>',
+    usage: '/agent list | create | select <name> | default | delete <name> | msg <name|ALL> <text>',
     short: 'Manage AI agents',
     detail: 'Create, list, select, or delete AI agents.\n\n'
-      + '  /agent list          — List all agents (user + global)\n'
-      + '  /agent create        — Create a new agent (interactive)\n'
-      + '  /agent select <name> — Activate an agent for this conversation\n'
-      + '  /agent default       — Switch back to the default agent\n'
-      + '  /agent delete <name> — Delete an agent by name\n\n'
+      + '  /agent list              — List all agents (user + global)\n'
+      + '  /agent create            — Create a new agent (interactive)\n'
+      + '  /agent select <name>     — Activate an agent for this conversation\n'
+      + '  /agent default           — Switch back to the default agent\n'
+      + '  /agent delete <name>     — Delete an agent by name\n'
+      + '  /agent msg <name> <text> — Send a message to a specific agent\n'
+      + '  /agent msg ALL <text>    — Broadcast to all agents in parallel\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
@@ -1386,6 +1716,27 @@ const HELP_DATA = {
       + '  /schedules list           — List pending schedules\n'
       + '  /schedules add <datetime> — Add a recheck (format: YYYYMMDDHHmmss)\n'
       + '  /schedules del            — Delete all schedules',
+  },
+  '/stop': {
+    usage: '/stop',
+    short: 'Stop the current agent generation',
+    detail: 'Interrupts the running agent. The agent stops gracefully and shows [Cancelled].',
+  },
+  '/restart_from': {
+    usage: '/restart_from [N]',
+    short: 'Restart context from last N messages (default 5)',
+    detail: 'Keeps only the last N messages as LLM context. Earlier messages stay in history but are ignored by the agent.\n\n'
+      + '  /restart_from      — Keep last 5 messages\n'
+      + '  /restart_from 10   — Keep last 10 messages\n\n'
+      + 'Useful when the conversation gets too long or the agent loses focus.',
+  },
+  '/resume': {
+    usage: '/resume [tokens]',
+    short: 'Summarize conversation to N tokens and restart from summary',
+    detail: 'Asks the LLM to summarize the entire conversation to approximately N tokens (default 500), then restarts from that summary.\n\n'
+      + '  /resume       — Summarize to ~500 tokens\n'
+      + '  /resume 1000  — Summarize to ~1000 tokens\n\n'
+      + 'The summary replaces all previous context. New messages build on top of it.',
   },
   '/compact': {
     usage: '/compact',
@@ -1503,6 +1854,49 @@ async function handleSlashCommand(text) {
   const parts = text.split(/\s+/);
   const cmd = parts[0].toLowerCase();
 
+  if (cmd === '/stop') {
+    await cancelAgent();
+    return true;
+  }
+
+  if (cmd === '/restart_from' || cmd === '/restart') {
+    const n = parseInt(parts[1]) || 5;
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'restart_from', conversation_id: conversationId, keep_last: n }),
+        credentials: 'same-origin',
+      });
+      const data = await resp.json();
+      if (data.ok) {
+        addMsg('system', t('restartFrom', {n: data.kept_messages}));
+      } else {
+        addMsg('error', data.error || 'Failed');
+      }
+    } catch (e) { addMsg('error', e.message); }
+    return true;
+  }
+
+  if (cmd === '/resume') {
+    const n = parseInt(parts[1]) || 500;
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    addMsg('system', t('resuming', {n: n}));
+    // Fire and forget — don't block the UI during LLM summarization
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'resume_conversation', conversation_id: conversationId, max_tokens: n }),
+      credentials: 'same-origin',
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        addMsg('system', t('resumed', {n: data.messages_summarized, len: data.summary_length}));
+      } else {
+        addMsg('error', data.error || 'Failed');
+      }
+    }).catch(e => addMsg('error', e.message));
+    return true;
+  }
+
   if (cmd === '/help') {
     cmdHelp(parts[1] || '');
     return true;
@@ -1567,8 +1961,15 @@ async function handleSlashCommand(text) {
       const name = parts[2];
       if (!name) { addMsg('system', 'Usage: /agent delete <name>'); }
       else { await cmdAgentDelete(name); }
+    } else if (sub === 'msg' || sub === 'message') {
+      const target = parts[2] || '';
+      const msgText = parts.slice(3).join(' ');
+      if (!target) { addMsg('system', 'Usage: /agent msg <name|ALL> <message>'); }
+      else if (!msgText) { addMsg('system', 'Usage: /agent msg ' + target + ' <message>'); }
+      else if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(msgText); }
+      else { await cmdAgentMsg(target, msgText); }
     } else {
-      addMsg('system', 'Usage: /agent list | create | select <name> | default | delete <name>');
+      addMsg('system', 'Usage: /agent list | create | select <name> | default | delete <name> | msg <name|ALL> <text>');
     }
     return true;
   }
@@ -1953,6 +2354,75 @@ async function cmdAgentDelete(name) {
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', data.deleted ? `Agent '${name}' deleted.` : `Agent '${name}' not found.`);
   } catch (e) { addMsg('error', 'Failed to delete agent: ' + e.message); }
+}
+
+async function cmdAgentMsg(agentName, text) {
+  // Send a message to a specific agent without changing the active agent
+  addMsg('user', '[→ ' + agentName + '] ' + text);
+  streamingEl = null;
+  streamingText = '';
+  streamingChunks = [];
+  showTyping();
+  sending = true;
+  lastSSEActivity = Date.now();
+  document.getElementById('status').textContent = t('sending');
+
+  try {
+    const body = { message: text, target_agent: agentName };
+    if (conversationId) body.conversation_id = conversationId;
+    const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
+    if (ttlVal > 0) body.ttl = ttlVal;
+
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); hideTyping(); sending = false; return; }
+    if (data.conversation_id && !conversationId) {
+      conversationId = data.conversation_id;
+      connectSSE(conversationId);
+    }
+    if (data.message_count) serverMsgCount = data.message_count;
+  } catch (e) {
+    addMsg('error', 'Failed to send to agent: ' + e.message);
+    hideTyping();
+    sending = false;
+  }
+}
+
+async function cmdAgentMsgAll(text) {
+  // Broadcast a message to ALL agents in parallel
+  if (!conversationId) {
+    // Need a conversation first — send a dummy to create one
+    addMsg('system', 'Start a conversation first before broadcasting.');
+    return;
+  }
+  addMsg('user', '[→ ALL] ' + text);
+  showTyping();
+  sending = true;
+  lastSSEActivity = Date.now();
+  document.getElementById('status').textContent = 'Broadcasting...';
+
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'broadcast_agents',
+        conversation_id: conversationId,
+        message: text,
+      }),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); hideTyping(); sending = false; return; }
+    // Responses will come via SSE agent_response events
+  } catch (e) {
+    addMsg('error', 'Broadcast failed: ' + e.message);
+    hideTyping();
+    sending = false;
+  }
 }
 
 async function cmdMemoryList() {
@@ -2388,6 +2858,67 @@ document.getElementById('input').addEventListener('paste', (e) => {
   }
 });
 
+function copyMsg(btn) {
+  const msg = btn.closest('.msg');
+  if (!msg) return;
+  // Get text content (strip action buttons text)
+  const clone = msg.cloneNode(true);
+  const actions = clone.querySelector('.msg-actions');
+  if (actions) actions.remove();
+  const text = clone.textContent || clone.innerText;
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '\u2705';
+    setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);
+  });
+}
+
+async function deleteMsg(btn) {
+  const msg = btn.closest('.msg');
+  if (!msg || !conversationId) return;
+  const rawIdx = msg.dataset.rawIndex;
+  if (rawIdx === undefined) {
+    // No raw_index — message was added live (not from history), just remove from DOM
+    msg.remove();
+    return;
+  }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'delete_message', conversation_id: conversationId,
+        index: parseInt(rawIdx),
+      }),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.deleted) {
+      msg.style.transition = 'opacity 0.3s';
+      msg.style.opacity = '0';
+      setTimeout(() => msg.remove(), 300);
+      if (data.message_count !== undefined) serverMsgCount = data.message_count;
+    }
+  } catch (e) {
+    console.error('Delete message failed:', e);
+  }
+}
+
+async function cancelAgent() {
+  if (!conversationId) return;
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('status').textContent = t('cancelling');
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId }),
+      credentials: 'same-origin',
+    });
+  } catch (e) {
+    console.warn('Cancel request failed:', e);
+  }
+  // SSE "cancelled" event will handle the rest
+}
+
 async function send() {
   const input = document.getElementById('input');
   const text = input.value.trim();
@@ -2490,6 +3021,7 @@ async function send() {
     if (data.status === 'accepted') {
       if (data.message_count) serverMsgCount = data.message_count;
       document.getElementById('status').textContent = t('thinking');
+      document.getElementById('stopBtn').style.display = '';
       // SSE will handle the rest
       return;
     }

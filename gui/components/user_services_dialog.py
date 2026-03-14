@@ -59,17 +59,17 @@ def user_services_dialog(user_id: str):
                         if st.button("\u23f8\ufe0f", key=f"usvc_dis_{user_id}_{sid}",
                                      help=t("common.disabled")):
                             registry.disable(user_id, sid)
-                            st.rerun()
+                            st.rerun(scope="fragment")
                     else:
                         if st.button("\u25b6\ufe0f", key=f"usvc_en_{user_id}_{sid}",
                                      help=t("common.enabled")):
                             registry.enable(user_id, sid)
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 with hdr_cols[2]:
                     if st.button("\u2699\ufe0f", key=f"usvc_cfg_{user_id}_{sid}",
                                  help=t("common.edit")):
                         st.session_state["_usvc_edit"] = sid
-                        st.rerun()
+                        st.rerun(scope="fragment")
                 with hdr_cols[3]:
                     if st.button("\U0001f5d1\ufe0f", key=f"usvc_del_{user_id}_{sid}",
                                  help=t("common.delete")):
@@ -118,7 +118,7 @@ def user_services_dialog(user_id: str):
     if st.button(f"\u2795 {t('runtime.global_services_install')}",
                  key="usvc_install", type="primary"):
         if not new_id or not new_id.strip():
-            st.warning(t("runtime.all_fields_required"))
+            st.warning(t("runtime.service_name_required"))
         elif new_id.strip() in definitions:
             st.warning(t("runtime.global_services_exists"))
         else:
@@ -145,6 +145,12 @@ def user_services_dialog(user_id: str):
 def _render_config_editor(registry, user_id: str, sdef):
     """Inline config editor for an existing user service."""
     st.markdown(f"--- *{t('common.edit')}: {sdef.service_id}*")
+
+    # Rename
+    new_name = st.text_input(
+        t("common.name"), value=sdef.service_id,
+        key=f"usvc_rename_{user_id}_{sdef.service_id}"
+    )
 
     schema = _get_service_schema(sdef.service_type)
     if schema:
@@ -179,13 +185,24 @@ def _render_config_editor(registry, user_id: str, sdef):
         if st.button(f"\U0001f4be {t('common.save')}",
                      key=f"usvc_save_{user_id}_{sdef.service_id}",
                      type="primary"):
-            registry.update_config(user_id, sdef.service_id, edited)
-            if new_desc != sdef.description:
-                registry.update_description(user_id, sdef.service_id, new_desc)
+            renamed_id = new_name.strip() if new_name else ""
+            if renamed_id and renamed_id != sdef.service_id:
+                try:
+                    registry.rename(user_id, sdef.service_id, renamed_id)
+                except (KeyError, ValueError) as e:
+                    st.error(str(e))
+                    return
+                registry.update_config(user_id, renamed_id, edited)
+                if new_desc != sdef.description:
+                    registry.update_description(user_id, renamed_id, new_desc)
+            else:
+                registry.update_config(user_id, sdef.service_id, edited)
+                if new_desc != sdef.description:
+                    registry.update_description(user_id, sdef.service_id, new_desc)
             st.session_state.pop("_usvc_edit", None)
-            st.rerun()
+            st.rerun(scope="fragment")
     with save_cols[1]:
         if st.button(t("common.cancel"),
                      key=f"usvc_cancel_{user_id}_{sdef.service_id}"):
             st.session_state.pop("_usvc_edit", None)
-            st.rerun()
+            st.rerun(scope="fragment")

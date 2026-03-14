@@ -295,11 +295,6 @@ class SubAgentExecutor:
         handlers = {}
         defs = []
         for h in self._registry.list_tools():
-            # Never allow sub-agents to spawn more agents by default
-            # (unless explicitly whitelisted)
-            if h.name in ("spawn_agents", "get_agent_results"):
-                if whitelist is None or h.name not in whitelist:
-                    continue
             if whitelist is not None and h.name not in whitelist:
                 continue
             handlers[h.name] = h

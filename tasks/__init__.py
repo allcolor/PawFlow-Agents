@@ -13,7 +13,7 @@ from core import FlowFile
 def _register_all_services():
     """Import all service modules to trigger ServiceFactory registration."""
     from core import ServiceFactory
-    if ServiceFactory.list_types():
+    if "llmConnection" in ServiceFactory.list_types():
         return  # Already registered
 
     # Force project root into sys.path — always, no conditional check

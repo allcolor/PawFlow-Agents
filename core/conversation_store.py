@@ -287,6 +287,24 @@ class ConversationStore:
                 return default
             return entry.get("extra", {}).get(key, default)
 
+    def delete_message(self, conversation_id: str, index: int,
+                       user_id: str = "") -> bool:
+        """Delete a single message by index. Returns True if deleted."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
+                return False
+            msgs = entry["messages"]
+            if index < 0 or index >= len(msgs):
+                return False
+            msgs.pop(index)
+            entry["updated_at"] = time.time()
+            self._save_to_disk(conversation_id, entry)
+            return True
+
     def delete(self, conversation_id: str, user_id: str = "") -> bool:
         """Delete a conversation. Returns True if deleted.
 

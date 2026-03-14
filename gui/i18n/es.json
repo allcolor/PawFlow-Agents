@@ -478,6 +478,7 @@
     "runtime.global_services_add": "Instalar nuevo servicio",
     "runtime.global_services_install": "Instalar",
     "runtime.global_services_exists": "Ya existe un servicio global con este ID.",
+    "runtime.service_name_required": "El nombre del servicio es obligatorio.",
     "runtime.global_services_no_schema": "Sin esquema de configuración disponible. Agregue parámetros manualmente después de la instalación.",
     "runtime.user_params_title": "Parámetros de usuario",
     "runtime.user_params_desc": "Parámetros para el usuario {username}, accesibles via ${{user.key}}.",

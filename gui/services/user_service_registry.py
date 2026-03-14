@@ -166,6 +166,25 @@ class UserServiceRegistry:
         if svc_def.enabled:
             self._connect_one(user_id, service_id)
 
+    def rename(self, user_id: str, old_id: str, new_id: str) -> None:
+        """Rename a user service."""
+        self._ensure_user_loaded(user_id)
+        with self._data_lock:
+            user_defs = self._definitions.get(user_id, {})
+            svc_def = user_defs.get(old_id)
+            if not svc_def:
+                raise KeyError(f"User service '{old_id}' not found for user '{user_id}'")
+            if new_id in user_defs:
+                raise ValueError(f"User service '{new_id}' already exists for user '{user_id}'")
+            if old_id in self._live_instances.get(user_id, {}):
+                self._disconnect_one(user_id, old_id)
+            user_defs.pop(old_id)
+            svc_def.service_id = new_id
+            user_defs[new_id] = svc_def
+        self._save_user_to_disk(user_id)
+        if svc_def.enabled:
+            self._connect_one(user_id, new_id)
+
     def update_description(self, user_id: str, service_id: str, description: str) -> None:
         """Update description."""
         self._ensure_user_loaded(user_id)
@@ -292,6 +311,8 @@ class UserServiceRegistry:
                 return
 
         try:
+            from tasks import _register_all_services
+            _register_all_services()
             svc_class = ServiceFactory.get(svc_def.service_type)
             # Resolve expressions in config values
             resolved_config = {}

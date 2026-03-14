@@ -1376,6 +1376,35 @@ function hideTyping() {
   if (el) el.remove();
 }
 
+let contextOpInterval = null;
+function showContextOp(label) {
+  hideContextOp();
+  const el = document.createElement('div');
+  el.className = 'typing';
+  el.id = 'contextOpTyping';
+  const c = randomColor();
+  el.innerHTML = '<span class="spinner" style="color:' + c + '">✻</span>'
+    + '<em style="color:' + c + '">' + label + '</em> '
+    + '<span class="verb" style="color:' + c + '">' + randomVerb() + '...</span>';
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
+  contextOpInterval = setInterval(() => {
+    const t = document.getElementById('contextOpTyping');
+    if (t) {
+      const c2 = randomColor();
+      t.innerHTML = '<span class="spinner" style="color:' + c2 + '">✻</span>'
+        + '<em style="color:' + c2 + '">' + label + '</em> '
+        + '<span class="verb" style="color:' + c2 + '">' + randomVerb() + '...</span>';
+    }
+  }, 3000);
+}
+
+function hideContextOp() {
+  if (contextOpInterval) { clearInterval(contextOpInterval); contextOpInterval = null; }
+  const el = document.getElementById('contextOpTyping');
+  if (el) el.remove();
+}
+
 // Connect SSE for a conversation
 function connectSSE(cid) {
   if (eventSource) eventSource.close();
@@ -2373,7 +2402,7 @@ async function handleSlashCommand(text) {
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     contextOpInProgress = true;
-    addMsg('system', n === 0 ? t('restartEmpty') + '..' : t('restartFrom', {n}) + '..');
+    showContextOp('Restarting');
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'restart_from', conversation_id: conversationId, keep_last: n }),
@@ -2385,7 +2414,7 @@ async function handleSlashCommand(text) {
         addMsg('error', data.error || 'Failed');
       }
     }).catch(e => addMsg('error', e.message))
-      .finally(() => { contextOpInProgress = false; });
+      .finally(() => { hideContextOp(); contextOpInProgress = false; });
     return true;
   }
 
@@ -2394,7 +2423,7 @@ async function handleSlashCommand(text) {
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     contextOpInProgress = true;
-    addMsg('system', t('resuming', {n: n}));
+    showContextOp('Resuming');
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'resume_conversation', conversation_id: conversationId, max_tokens: n }),
@@ -2406,7 +2435,7 @@ async function handleSlashCommand(text) {
         addMsg('error', data.error || 'Failed');
       }
     }).catch(e => addMsg('error', e.message))
-      .finally(() => { contextOpInProgress = false; });
+      .finally(() => { hideContextOp(); contextOpInProgress = false; });
     return true;
   }
 
@@ -3125,7 +3154,7 @@ async function cmdUninstallTool(toolName) {
 function cmdCompact() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
   contextOpInProgress = true;
-  addMsg('system', 'Compacting conversation...');
+  showContextOp('Compacting');
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'compact', conversation_id: conversationId }),
@@ -3133,13 +3162,13 @@ function cmdCompact() {
     if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
     addMsg('system', `Compacted: ${data.before} messages \u2192 ${data.after} messages`);
   }).catch(e => addMsg('error', 'Compaction failed: ' + e.message))
-    .finally(() => { contextOpInProgress = false; });
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
 
 function cmdRebuild() {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
   contextOpInProgress = true;
-  addMsg('system', t('rebuilding'));
+  showContextOp('Rebuilding');
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'rebuild', conversation_id: conversationId }),
@@ -3147,13 +3176,13 @@ function cmdRebuild() {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
     addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
   }).catch(e => addMsg('error', 'Rebuild failed: ' + e.message))
-    .finally(() => { contextOpInProgress = false; });
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
 
 function cmdRebuildClean() {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
   contextOpInProgress = true;
-  addMsg('system', t('rebuildingClean'));
+  showContextOp('Rebuilding');
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
@@ -3161,7 +3190,7 @@ function cmdRebuildClean() {
     if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
     addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
   }).catch(e => addMsg('error', 'Rebuild clean failed: ' + e.message))
-    .finally(() => { contextOpInProgress = false; });
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
 
 async function cmdShowContext() {

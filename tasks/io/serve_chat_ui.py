@@ -355,6 +355,8 @@ const _i18n = {
     noConv: 'No active conversation.', restartFrom: 'Context restarted — keeping last {n} messages.',
     resuming: 'Summarizing conversation to ~{n} tokens...', resumed: 'Conversation summarized ({n} messages \u2192 {len} chars). Next message starts from the summary.',
     rebuilding: 'Rebuilding context from full conversation...', rebuilt: 'Context rebuilt: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
+    rebuildingClean: 'Setting context = full conversation (no compaction)...', rebuiltClean: 'Context set to full conversation: {messages} messages, ~{tokens} tokens.',
+    restartEmpty: 'Context cleared — fresh start (system prompt only).',
     contextTitle: 'LLM Context', contextDiverged: 'diverged', contextSynced: 'synced',
     contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'No context available.',
     contextEdit: 'Edit', contextDelete: 'Delete', contextAdd: 'Add message',
@@ -409,6 +411,8 @@ const _i18n = {
     noConv: 'Aucune conversation active.', restartFrom: 'Contexte red\u00e9marr\u00e9 \u2014 {n} derniers messages conserv\u00e9s.',
     resuming: 'R\u00e9sum\u00e9 de la conversation en ~{n} tokens...', resumed: 'Conversation r\u00e9sum\u00e9e ({n} messages \u2192 {len} caract\u00e8res). Le prochain message repart du r\u00e9sum\u00e9.',
     rebuilding: 'Reconstruction du contexte depuis la conversation compl\u00e8te...', rebuilt: 'Contexte reconstruit\u00a0: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
+    rebuildingClean: 'Contexte = conversation compl\u00e8te (sans compaction)...', rebuiltClean: 'Contexte mis \u00e0 la conversation compl\u00e8te\u00a0: {messages} messages, ~{tokens} tokens.',
+    restartEmpty: 'Contexte vid\u00e9 \u2014 red\u00e9marrage \u00e0 z\u00e9ro (system prompt uniquement).',
     contextTitle: 'Contexte LLM', contextDiverged: 'diverg\u00e9', contextSynced: 'synchronis\u00e9',
     contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'Aucun contexte disponible.',
     contextEdit: 'Modifier', contextDelete: 'Supprimer', contextAdd: 'Ajouter un message',
@@ -463,6 +467,8 @@ const _i18n = {
     noConv: 'No hay conversaci\u00f3n activa.', restartFrom: 'Contexto reiniciado \u2014 {n} \u00faltimos mensajes conservados.',
     resuming: 'Resumiendo conversaci\u00f3n a ~{n} tokens...', resumed: 'Conversaci\u00f3n resumida ({n} mensajes \u2192 {len} caracteres). El pr\u00f3ximo mensaje parte del resumen.',
     rebuilding: 'Reconstruyendo contexto desde la conversaci\u00f3n completa...', rebuilt: 'Contexto reconstruido: {action} ({before} \u2192 {after} mensajes, ~{tokens} tokens)',
+    rebuildingClean: 'Contexto = conversaci\u00f3n completa (sin compactaci\u00f3n)...', rebuiltClean: 'Contexto con conversaci\u00f3n completa: {messages} mensajes, ~{tokens} tokens.',
+    restartEmpty: 'Contexto vaciado \u2014 inicio limpio (solo system prompt).',
     contextTitle: 'Contexto LLM', contextDiverged: 'divergido', contextSynced: 'sincronizado',
     contextTokens: '~{n} tokens', contextMessages: '{n} mensajes', noContext: 'Sin contexto disponible.',
     contextEdit: 'Editar', contextDelete: 'Eliminar', contextAdd: 'Añadir mensaje',
@@ -2193,10 +2199,11 @@ const HELP_DATA = {
   },
   '/restart_from': {
     usage: '/restart_from [N]',
-    short: 'Restart context from last N messages (default 5)',
+    short: 'Restart context from last N messages (default 5, 0 = empty)',
     detail: 'Keeps only the last N messages as LLM context. Earlier messages stay in history but are ignored by the agent.\n\n'
       + '  /restart_from      — Keep last 5 messages\n'
-      + '  /restart_from 10   — Keep last 10 messages\n\n'
+      + '  /restart_from 10   — Keep last 10 messages\n'
+      + '  /restart_from 0    — Empty context (fresh start, keeps system prompt)\n\n'
       + 'Useful when the conversation gets too long or the agent loses focus.',
   },
   '/resume': {
@@ -2216,6 +2223,11 @@ const HELP_DATA = {
     usage: '/rebuild',
     short: 'Rebuild context from full conversation history',
     detail: 'Reconstructs the LLM context from the complete conversation. If everything fits in the context window, restores fully; otherwise compacts.\n\nUseful after /compact or /resume to get back more context.',
+  },
+  '/rebuild_clean': {
+    usage: '/rebuild_clean',
+    short: 'Set context = full conversation (no compaction)',
+    detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.',
   },
   '/context': {
     usage: '/context',
@@ -2353,7 +2365,7 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/restart_from' || cmd === '/restart') {
-    const n = parseInt(parts[1]) || 5;
+    const n = parts[1] !== undefined ? parseInt(parts[1]) : 5;
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     try {
       const resp = await fetch(API, {
@@ -2363,7 +2375,7 @@ async function handleSlashCommand(text) {
       });
       const data = await resp.json();
       if (data.ok) {
-        addMsg('system', t('restartFrom', {n: data.kept_messages}));
+        addMsg('system', data.kept_messages === 0 ? t('restartEmpty') : t('restartFrom', {n: data.kept_messages}));
       } else {
         addMsg('error', data.error || 'Failed');
       }
@@ -2416,6 +2428,11 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/rebuild') {
     await cmdRebuild();
+    return true;
+  }
+
+  if (cmd === '/rebuild_clean') {
+    await cmdRebuildClean();
     return true;
   }
 
@@ -3120,6 +3137,20 @@ async function cmdRebuild() {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
     addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
   } catch (e) { addMsg('error', 'Rebuild failed: ' + e.message); }
+}
+
+async function cmdRebuildClean() {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  addMsg('system', t('rebuildingClean'));
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
+    addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
+  } catch (e) { addMsg('error', 'Rebuild clean failed: ' + e.message); }
 }
 
 async function cmdShowContext() {

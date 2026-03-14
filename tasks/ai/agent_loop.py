@@ -988,13 +988,17 @@ class AgentLoopTask(BaseTask):
             deserialized = self._deserialize_messages(all_msgs)
             system_msgs = [m for m in deserialized if m.role == "system"]
             non_system = [m for m in deserialized if m.role != "system"]
-            kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
-            new_context = system_msgs + kept
+            if keep_last == 0:
+                # Empty context — keep only system prompt
+                new_context = system_msgs
+            else:
+                kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
+                new_context = system_msgs + kept
             serialized_ctx = self._serialize_messages(new_context)
             store.save_context(conv_id, serialized_ctx)
             flowfile.set_content(json.dumps({
                 "ok": True, "conversation_id": conv_id,
-                "kept_messages": len(kept),
+                "kept_messages": len(new_context) - len(system_msgs),
             }).encode())
             return [flowfile]
 
@@ -1569,6 +1573,28 @@ class AgentLoopTask(BaseTask):
                     }).encode())
                 except Exception as e:
                     flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "rebuild_clean":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            all_msgs = store.load(conv_id, user_id=user_id)
+            if not all_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            # Set context = full conversation (no compaction, no LLM)
+            store.save_context(conv_id, list(all_msgs))
+            deserialized = self._deserialize_messages(all_msgs)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True, "action": "clean_restore",
+                "messages": len(all_msgs),
+                "token_estimate": estimated,
+            }).encode())
             return [flowfile]
 
         if action == "get_context":

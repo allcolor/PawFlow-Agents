@@ -18,6 +18,7 @@ Agent tool types (flow-level agent_tools section):
 import json
 import logging
 import http.client
+import re
 import ssl
 import threading
 from abc import ABC, abstractmethod
@@ -1008,6 +1009,375 @@ class LocalFilesHandler(ToolHandler):
             event = cls._pending.get(request_id)
             if event is None:
                 logger.warning(f"[local_files] resolve_request for unknown/expired id: {request_id}")
+                return False
+            cls._results[request_id] = result
+            event.set()
+        return True
+
+
+class RemoteExecutorHandler(ToolHandler):
+    """Execute commands on the user's machine through a relay.
+
+    Uses a RemoteExecutorService to communicate with pyfi2_executor_relay.py.
+    Commands are classified by risk level and may require user approval via
+    an SSE dialog in the chat UI (same pattern as LocalFilesHandler).
+    """
+
+    _conversation_id: str = ""
+    _user_id: str = ""
+    _service = None  # RemoteExecutorService instance
+    _relay_info: Dict[str, Any] = {}
+    _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
+
+    # Class-level shared state (across threads / instances)
+    _lock = threading.Lock()
+    _pending: Dict[str, threading.Event] = {}
+    _results: Dict[str, Any] = {}
+
+    # ── Risk classification ──────────────────────────────────────
+
+    _GIT_RISK = {
+        "git_status": "low", "git_diff": "low", "git_log": "low",
+        "git_branch": "low",
+        "git_add": "medium", "git_commit": "medium", "git_checkout": "medium",
+        "git_push": "high", "git_pull": "high", "git_reset": "high",
+    }
+
+    _SHELL_LOW = {
+        "ls", "dir", "cat", "type", "head", "tail", "wc", "echo", "pwd", "cd",
+        "whoami", "date", "file", "which", "where", "env", "printenv", "set",
+        "get-childitem", "get-content", "get-location", "hostname", "uname",
+        "tree", "less", "more", "sort", "uniq", "diff", "wc",
+    }
+    _SHELL_HIGH = {
+        "rm", "del", "rmdir", "sudo", "chmod", "chown", "chgrp",
+        "format", "diskpart", "invoke-expression", "start-process", "iex",
+        "remove-item", "kill", "taskkill", "shutdown", "reboot",
+        "net", "netsh", "iptables", "mkfs", "dd",
+    }
+
+    @classmethod
+    def _classify_shell(cls, command: str) -> str:
+        """Classify a shell command's risk level."""
+        cmd_lower = command.lower().strip()
+        # Check first word
+        first = cmd_lower.split()[0] if cmd_lower else ""
+        # Strip path prefix (e.g. /usr/bin/rm -> rm)
+        first_base = first.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+
+        if first_base in cls._SHELL_HIGH:
+            return "high"
+
+        # Pattern-based high risk
+        high_patterns = [
+            r"\brm\s+.*-r", r"\bgit\s+push\b", r"\bgit\s+reset\s+--hard\b",
+            r">\s*/dev/", r"curl.*\|\s*(ba)?sh", r"wget.*\|\s*(ba)?sh",
+            r"\bsudo\b", r"\b(rm|del)\b.*\s+/\s*$",
+            r"remove-item.*-recurse", r"invoke-expression",
+        ]
+        for pattern in high_patterns:
+            if re.search(pattern, cmd_lower):
+                return "high"
+
+        if first_base in cls._SHELL_LOW:
+            return "low"
+
+        # Default to medium for unknown commands
+        return "medium"
+
+    @classmethod
+    def classify_risk(cls, action: str, **kwargs) -> str:
+        """Classify the risk level of an action."""
+        if action in cls._GIT_RISK:
+            return cls._GIT_RISK[action]
+        if action == "python_exec":
+            return "medium"
+        if action == "shell":
+            return cls._classify_shell(kwargs.get("command", ""))
+        return "medium"
+
+    @classmethod
+    def needs_approval(cls, risk: str, approval_mode: str) -> bool:
+        """Determine if approval is needed based on risk and mode."""
+        if approval_mode == "strict":
+            return True
+        if approval_mode == "auto":
+            return risk == "high"
+        # "ask" (default): medium and high
+        return risk in ("medium", "high")
+
+    # ── ToolHandler interface ────────────────────────────────────
+
+    @property
+    def name(self) -> str:
+        return "remote_exec"
+
+    @property
+    def description(self) -> str:
+        info = self._relay_info
+        plat = info.get("platform", "unknown")
+        shell = info.get("shell", "unknown")
+        root = info.get("root", "unknown")
+        actions = info.get("actions", ["shell", "python_exec", "git"])
+        desc = (
+            f"Execute commands on the user's machine via a relay. "
+            f"Platform: {plat}, Shell: {shell}, Root: {root}. "
+            f"Available actions: {', '.join(actions)}. "
+            f"For shell commands, use the correct syntax for {shell} on {plat}. "
+            f"Git sub-actions: git_status, git_diff, git_log, git_add, git_commit, "
+            f"git_push, git_pull, git_checkout, git_reset, git_branch."
+        )
+        # Plan D: multi-service selection
+        if len(self._available_services) > 1:
+            svc_desc = ", ".join(
+                f"'{s['id']}' (root={s.get('root', '?')})"
+                for s in self._available_services
+            )
+            desc += f" Available services: {svc_desc}. Use 'service' parameter to choose."
+        return desc
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "shell", "python_exec",
+                        "git_status", "git_diff", "git_log", "git_add",
+                        "git_commit", "git_push", "git_pull", "git_checkout",
+                        "git_reset", "git_branch",
+                    ],
+                    "description": "The action to execute",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute (for 'shell' action)",
+                },
+                "code": {
+                    "type": "string",
+                    "description": "Python code to execute (for 'python_exec' action)",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git ref for diff/checkout/reset (optional)",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message (for 'git_commit' action)",
+                },
+                "files": {
+                    "type": "string",
+                    "description": "Space-separated file paths (for 'git_add' action)",
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Working directory relative to relay root (default: '.')",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Service ID to use (optional, default: first available)",
+                },
+            },
+            "required": ["action"],
+        }
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        self._conversation_id = conversation_id
+
+    def set_user_id(self, user_id: str) -> None:
+        self._user_id = user_id
+
+    def set_service(self, service) -> None:
+        self._service = service
+        if service:
+            self._relay_info = service.get_relay_info()
+            if hasattr(service, 'set_user_id') and self._user_id:
+                service.set_user_id(self._user_id)
+
+    def set_available_services(self, services: List[Dict[str, Any]]) -> None:
+        """Plan D: set list of available executor services for multi-service selection."""
+        self._available_services = services
+
+    def _resolve_service(self, service_id: str = ""):
+        """Resolve which service to use (Plan D: multi-service)."""
+        if service_id and self._user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc = registry.get_live_instance(self._user_id, service_id)
+                if svc:
+                    if hasattr(svc, 'set_user_id'):
+                        svc.set_user_id(self._user_id)
+                    return svc
+            except Exception:
+                pass
+        return self._service
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import uuid
+        from core.conversation_event_bus import ConversationEventBus
+
+        # Plan D: multi-service selection
+        service_id = arguments.get("service", "")
+        service = self._resolve_service(service_id) if service_id else self._service
+
+        if not service:
+            return (
+                "Error: no remote executor relay connected.\n"
+                "Run: python pyfi2_executor_relay.py --connect ws://<server>/ws/relay "
+                "--token <api_key> --secret <secret> --dir <path>"
+            )
+
+        action = arguments.get("action", "")
+        if not action:
+            return "Error: missing 'action' parameter"
+
+        # Build display command for approval dialog
+        display_cmd = self._build_display_command(action, arguments)
+        risk = self.classify_risk(action, **arguments)
+        approval_mode = getattr(service, 'approval_mode', 'ask')
+
+        # Check if approval is needed
+        if self.needs_approval(risk, approval_mode) and self._conversation_id:
+            request_id = uuid.uuid4().hex[:12]
+            event = threading.Event()
+
+            with self._lock:
+                self._pending[request_id] = event
+
+            # Send approval request via SSE
+            ConversationEventBus.instance().publish_event(
+                self._conversation_id, "exec_approval_request", {
+                    "request_id": request_id,
+                    "action": action,
+                    "command": display_cmd,
+                    "risk_level": risk,
+                    "cwd": arguments.get("cwd", "."),
+                    "editable": action == "shell",
+                },
+            )
+
+            # Block until user responds
+            if not event.wait(timeout=120):
+                with self._lock:
+                    self._pending.pop(request_id, None)
+                    self._results.pop(request_id, None)
+                return "User did not respond within 120 seconds. Command not executed."
+
+            with self._lock:
+                result = self._results.pop(request_id, None)
+                self._pending.pop(request_id, None)
+
+            if result is None:
+                return "Error: no approval result received"
+
+            if not result.get("approved"):
+                return f"User denied execution of: {display_cmd}"
+
+            # User may have edited the command
+            edited = result.get("edited_command", "")
+            if edited and action == "shell":
+                arguments = dict(arguments)
+                arguments["command"] = edited
+                display_cmd = edited
+
+        # Execute the command via the service
+        try:
+            kwargs = {}
+            if action == "shell":
+                kwargs["command"] = arguments.get("command", "")
+            elif action == "python_exec":
+                kwargs["code"] = arguments.get("code", "")
+            elif action == "git_commit":
+                kwargs["message"] = arguments.get("message", "")
+            elif action in ("git_diff", "git_checkout", "git_reset"):
+                ref = arguments.get("ref", "")
+                if ref:
+                    kwargs["ref"] = ref
+                if action == "git_reset":
+                    kwargs["mode"] = arguments.get("mode", "--mixed")
+            elif action == "git_add":
+                files = arguments.get("files", "")
+                if files:
+                    kwargs["files"] = files
+
+            cwd = arguments.get("cwd", ".")
+            if cwd != ".":
+                kwargs["cwd"] = cwd
+
+            data = service.send_command(action, **kwargs)
+
+            # Publish output event for chat UI terminal display
+            if self._conversation_id:
+                ConversationEventBus.instance().publish_event(
+                    self._conversation_id, "exec_output", {
+                        "action": action,
+                        "command": display_cmd,
+                        "exit_code": data.get("exit_code", -1),
+                        "stdout": data.get("stdout", ""),
+                        "stderr": data.get("stderr", ""),
+                        "duration_ms": data.get("duration_ms", 0),
+                    },
+                )
+
+            return self._format_result(action, data)
+
+        except Exception as e:
+            return f"Error executing {action}: {e}"
+
+    def _build_display_command(self, action: str, arguments: Dict[str, Any]) -> str:
+        """Build a human-readable command string for display."""
+        if action == "shell":
+            return arguments.get("command", "")
+        if action == "python_exec":
+            code = arguments.get("code", "")
+            if len(code) > 100:
+                return f"python -c '{code[:100]}...'"
+            return f"python -c '{code}'"
+        if action.startswith("git_"):
+            sub = action[4:]  # git_status -> status
+            extras = []
+            if action == "git_commit":
+                extras.append(f"-m \"{arguments.get('message', '')}\"")
+            elif action in ("git_diff", "git_checkout", "git_reset"):
+                ref = arguments.get("ref", "")
+                if ref:
+                    extras.append(ref)
+            elif action == "git_add":
+                files = arguments.get("files", "")
+                extras.append(files if files else "-A")
+            return f"git {sub} {' '.join(extras)}".strip()
+        return action
+
+    def _format_result(self, action: str, data: Dict[str, Any]) -> str:
+        """Format relay result for the LLM."""
+        exit_code = data.get("exit_code", -1)
+        stdout = data.get("stdout", "")
+        stderr = data.get("stderr", "")
+        duration = data.get("duration_ms", 0)
+
+        parts = []
+        if exit_code == 0:
+            parts.append(f"Command succeeded (exit code 0, {duration}ms)")
+        else:
+            parts.append(f"Command failed (exit code {exit_code}, {duration}ms)")
+
+        if stdout:
+            parts.append(f"stdout:\n{stdout}")
+        if stderr:
+            parts.append(f"stderr:\n{stderr}")
+
+        return "\n".join(parts)
+
+    @classmethod
+    def resolve_request(cls, request_id: str, result: Any) -> bool:
+        """Called when the user approves/denies a command in the chat UI."""
+        with cls._lock:
+            event = cls._pending.get(request_id)
+            if event is None:
+                logger.warning(f"[remote_exec] resolve_request for unknown/expired id: {request_id}")
                 return False
             cls._results[request_id] = result
             event.set()
@@ -3505,6 +3875,266 @@ class ShowFileHandler(ToolHandler):
         })
 
 
+class FilesystemToolHandler(ToolHandler):
+    """Agent tool for filesystem operations via a filesystem service.
+
+    Auto-detects the user's filesystem service, or uses the explicitly
+    specified service name. Supports all FilesystemBackend operations
+    including git.
+    """
+
+    _user_id: str = ""
+    _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
+
+    # Filesystem service types (checked in order for auto-detection)
+    _FS_TYPES = ("localFilesystem", "wsFilesystem", "browserFilesystem", "serverFilesystem",
+                 "googleDrive", "oneDrive")
+
+    @property
+    def name(self) -> str:
+        return "filesystem"
+
+    @property
+    def description(self) -> str:
+        desc = (
+            "Access files on the user's filesystem through a configured filesystem service. "
+            "Actions: list_dir, read_file, write_file, delete_file, mkdir, stat, exists, "
+            "search (glob), grep (regex), find_replace. "
+            "Git: git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout. "
+            "Paths are relative to the service root."
+        )
+        if len(self._available_services) > 1:
+            svc_desc = ", ".join(
+                f"'{s['id']}' ({s.get('type', '?')}, root={s.get('root', '?')})"
+                for s in self._available_services
+            )
+            desc += f" Available services: {svc_desc}. Use 'service' parameter to choose."
+        return desc
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": [
+                        "list_dir", "read_file", "write_file", "delete_file",
+                        "mkdir", "stat", "exists", "search", "grep", "find_replace",
+                        "git_status", "git_log", "git_diff", "git_commit",
+                        "git_pull", "git_push", "git_checkout",
+                    ],
+                    "description": "The filesystem operation to perform",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Relative path within the service root",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "File content for write_file (text)",
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Glob pattern for search, or regex for find_replace",
+                },
+                "regex": {
+                    "type": "string",
+                    "description": "Regex pattern for grep",
+                },
+                "replacement": {
+                    "type": "string",
+                    "description": "Replacement text for find_replace",
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "Recursive search/grep (default: true)",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Service name (optional — auto-detects if omitted)",
+                },
+                "ref": {
+                    "type": "string",
+                    "description": "Git ref for diff/checkout",
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Commit message for git_commit",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of entries for git_log (default: 10)",
+                },
+            },
+            "required": ["action", "path"],
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_available_services(self, services: List[Dict[str, Any]]) -> None:
+        """Plan D: set list of available filesystem services for multi-service selection."""
+        self._available_services = services
+
+    def _find_service(self, service_name: str = ""):
+        """Find a filesystem service for the current user."""
+        # Plan D: explicit service selection
+        if service_name and self._user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc = registry.get_live_instance(self._user_id, service_name)
+                if svc:
+                    if hasattr(svc, 'set_user_id') and self._user_id:
+                        svc.set_user_id(self._user_id)
+                    return svc
+            except Exception:
+                pass
+        try:
+            from core import ServiceFactory
+            if service_name:
+                svc_cls = ServiceFactory.get(service_name)
+                if svc_cls:
+                    return svc_cls
+            for stype in self._FS_TYPES:
+                svc_cls = ServiceFactory.get(stype)
+                if svc_cls:
+                    return svc_cls
+        except Exception:
+            pass
+        return None
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        action = arguments.get("action", "")
+        path = arguments.get("path", ".")
+        service_name = arguments.get("service", "")
+
+        # Plan D: try explicit service first, then injected, then search
+        svc = None
+        if service_name:
+            svc = self._find_service(service_name)
+        if svc is None:
+            svc = getattr(self, '_fs_service', None)
+        if svc is None:
+            return (
+                "Error: No filesystem service configured. "
+                "Install one with: /service install localFilesystem <name> "
+                "host=localhost,port=9876,secret=<secret>,mode=readwrite\n"
+                "Then run: python tools/pyfi2_fs_relay.py --port 9876 "
+                "--dir <path> --secret <secret>"
+            )
+
+        try:
+            if action == "list_dir":
+                entries = svc.list_dir(path)
+                lines = []
+                for e in entries:
+                    kind = "📁" if e.kind == "directory" else "📄"
+                    size = f" ({e.size} bytes)" if e.kind == "file" else ""
+                    lines.append(f"{kind} {e.name}{size}")
+                return "\n".join(lines) if lines else "(empty directory)"
+
+            elif action == "read_file":
+                data = svc.read_file(path)
+                try:
+                    return data.decode("utf-8")
+                except UnicodeDecodeError:
+                    import base64
+                    return f"(binary file, {len(data)} bytes, base64): {base64.b64encode(data[:1000]).decode()}"
+
+            elif action == "write_file":
+                content = arguments.get("content", "")
+                svc.write_file(path, content.encode("utf-8"))
+                return f"Written {len(content)} chars to {path}"
+
+            elif action == "delete_file":
+                svc.delete_file(path)
+                return f"Deleted: {path}"
+
+            elif action == "mkdir":
+                svc.mkdir(path)
+                return f"Created directory: {path}"
+
+            elif action == "stat":
+                from dataclasses import asdict
+                entry = svc.stat(path)
+                return json.dumps(asdict(entry), default=str, indent=2)
+
+            elif action == "exists":
+                exists = svc.exists(path)
+                return f"{'Exists' if exists else 'Does not exist'}: {path}"
+
+            elif action == "search":
+                pattern = arguments.get("pattern", "*")
+                recursive = arguments.get("recursive", True)
+                results = svc.search(path, pattern, recursive)
+                return "\n".join(results) if results else "(no matches)"
+
+            elif action == "grep":
+                regex = arguments.get("regex", "")
+                recursive = arguments.get("recursive", True)
+                results = svc.grep(path, regex, recursive)
+                lines = [f"{r['path']}:{r['line_number']}: {r['line']}" for r in results[:50]]
+                total = len(results)
+                if total > 50:
+                    lines.append(f"... and {total - 50} more matches")
+                return "\n".join(lines) if lines else "(no matches)"
+
+            elif action == "find_replace":
+                pattern = arguments.get("pattern", "")
+                replacement = arguments.get("replacement", "")
+                result = svc.find_replace(path, pattern, replacement)
+                return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
+
+            # Git operations
+            elif action == "git_status":
+                result = svc.git_status(path)
+                return json.dumps(result, indent=2)
+
+            elif action == "git_log":
+                count = arguments.get("count", 10)
+                result = svc.git_log(path, count)
+                lines = [f"{e['hash'][:8]} {e['date']} {e['message']}" for e in result]
+                return "\n".join(lines) if lines else "(no commits)"
+
+            elif action == "git_diff":
+                ref = arguments.get("ref", "")
+                return svc.git_diff(path, ref) or "(no changes)"
+
+            elif action == "git_commit":
+                message = arguments.get("message", "")
+                result = svc.git_commit(path, message)
+                return f"Committed: {result.get('hash', '')[:8]} — {result.get('message', '')}"
+
+            elif action == "git_pull":
+                result = svc.git_pull(path)
+                return json.dumps(result, indent=2)
+
+            elif action == "git_push":
+                result = svc.git_push(path)
+                return json.dumps(result, indent=2)
+
+            elif action == "git_checkout":
+                ref = arguments.get("ref", "")
+                result = svc.git_checkout(path, ref)
+                return f"Checked out: {result.get('branch', ref)}"
+
+            else:
+                return f"Unknown action: {action}"
+
+        except PermissionError as e:
+            return f"Permission denied: {e}"
+        except FileNotFoundError as e:
+            return f"Not found: {e}"
+        except Exception as e:
+            return f"Error: {e}"
+
+    def set_fs_service(self, service):
+        """Inject the filesystem service (called by agent_loop)."""
+        self._fs_service = service
+
+
 def create_default_registry() -> ToolRegistry:
     """Create a ToolRegistry with all builtin handlers registered."""
     registry = ToolRegistry()
@@ -3516,6 +4146,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ScheduleContinuationHandler())
     registry.register(ScheduleRecheckHandler())
     registry.register(LocalFilesHandler())
+    registry.register(RemoteExecutorHandler())
     registry.register(ImageGenerationHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
@@ -3545,6 +4176,9 @@ def create_default_registry() -> ToolRegistry:
 
     # Identity linking
     registry.register(LinkIdentityHandler())
+
+    # Filesystem
+    registry.register(FilesystemToolHandler())
 
     return registry
 

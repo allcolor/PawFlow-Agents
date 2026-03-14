@@ -728,6 +728,32 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps({"status": "ok"}).encode())
             return [flowfile]
 
+        if action == "exec_result":
+            # User responding to a remote_exec approval request
+            request_id = body.get("request_id", "")
+            result = body.get("result", {})
+            if not request_id:
+                flowfile.set_content(json.dumps({"error": "Missing request_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.tool_registry import RemoteExecutorHandler
+            RemoteExecutorHandler.resolve_request(request_id, result)
+            flowfile.set_content(json.dumps({"status": "ok"}).encode())
+            return [flowfile]
+
+        if action == "tool_approval_result":
+            # Plan A: User responding to a universal tool approval dialog
+            request_id = body.get("request_id", "")
+            result = body.get("result", {})
+            if not request_id:
+                flowfile.set_content(json.dumps({"error": "Missing request_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.tool_approval import ToolApprovalGate
+            ToolApprovalGate.resolve_request(request_id, result)
+            flowfile.set_content(json.dumps({"status": "ok"}).encode())
+            return [flowfile]
+
         if action == "list_schedules":
             conv_id = body.get("conversation_id", "")
             from core.poll_scheduler import PollScheduler
@@ -1450,6 +1476,115 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
+        # ── User services ─────────────────────────────────────────
+        if action == "service_list":
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                defs = registry.get_all_for_user(user_id)
+                services = []
+                for sid, sdef in sorted(defs.items()):
+                    services.append({
+                        "id": sid,
+                        "type": sdef.service_type,
+                        "enabled": sdef.enabled,
+                        "connected": registry.is_connected(user_id, sid),
+                        "description": sdef.description,
+                    })
+                flowfile.set_content(json.dumps({
+                    "services": services,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "service_install":
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc_type = body.get("service_type", "")
+                svc_name = body.get("service_name", "")
+                config_str = body.get("config_str", "")
+                if not svc_type or not svc_name:
+                    flowfile.set_content(json.dumps({
+                        "error": "Usage: /service install <type> <name> [key=val,...]",
+                    }).encode())
+                    return [flowfile]
+                # Parse config_str: "key=val,key2=val2" → dict
+                config = {}
+                if config_str:
+                    for pair in config_str.split(","):
+                        pair = pair.strip()
+                        if "=" in pair:
+                            k, v = pair.split("=", 1)
+                            config[k.strip()] = v.strip()
+                sdef = registry.install(
+                    user_id=user_id,
+                    service_id=svc_name,
+                    service_type=svc_type,
+                    config=config,
+                )
+                flowfile.set_content(json.dumps({
+                    "installed": True, "id": svc_name, "type": svc_type,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "service_uninstall":
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc_id = body.get("service_id", "")
+                if not registry.get_definition(user_id, svc_id):
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{svc_id}' not found.",
+                    }).encode())
+                    return [flowfile]
+                registry.uninstall(user_id, svc_id)
+                flowfile.set_content(json.dumps({
+                    "uninstalled": True, "id": svc_id,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "service_enable":
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc_id = body.get("service_id", "")
+                if not registry.get_definition(user_id, svc_id):
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{svc_id}' not found.",
+                    }).encode())
+                    return [flowfile]
+                registry.enable(user_id, svc_id)
+                flowfile.set_content(json.dumps({
+                    "enabled": True, "id": svc_id,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "service_disable":
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                svc_id = body.get("service_id", "")
+                if not registry.get_definition(user_id, svc_id):
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{svc_id}' not found.",
+                    }).encode())
+                    return [flowfile]
+                registry.disable(user_id, svc_id)
+                flowfile.set_content(json.dumps({
+                    "disabled": True, "id": svc_id,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
         return None  # Unknown action — treat as normal message
 
     def _handle_telegram_conv_command(
@@ -1751,7 +1886,8 @@ class AgentLoopTask(BaseTask):
 
         # Configure conversation-aware handlers with runtime context
         from core.tool_registry import (
-            AskAgentHandler, CreatePlanHandler, FlowManagerHandler,
+            AskAgentHandler, CreatePlanHandler, FilesystemToolHandler,
+            FlowManagerHandler,
             LocalFilesHandler, NotifyUserHandler, ScheduleRecheckHandler,
             UpdatePlanHandler,
         )
@@ -1771,6 +1907,13 @@ class AgentLoopTask(BaseTask):
                 h.set_conversation_id(conversation_id)
             elif isinstance(h, NotifyUserHandler):
                 h.set_conversation_id(conversation_id)
+            elif isinstance(h, FilesystemToolHandler):
+                h.set_user_id(ctx.get("user_id", ""))
+                fs_svc = self._find_filesystem_service()
+                if fs_svc:
+                    if hasattr(fs_svc, 'set_user_id') and ctx.get("user_id"):
+                        fs_svc.set_user_id(ctx["user_id"])
+                    h.set_fs_service(fs_svc)
 
         # Publish "thinking" immediately
         bus.publish_event(conversation_id, "thinking", {"conversation_id": conversation_id})
@@ -2648,11 +2791,13 @@ class AgentLoopTask(BaseTask):
         from core.tool_registry import (
             AskAgentHandler, BrowserActionHandler, CreateFileHandler,
             CreatePlanHandler,
-            CreateToolHandler, ExecuteScriptHandler, FlowManagerHandler,
+            CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
+            FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler, ImageGenerationHandler,
             LinkIdentityHandler, LocalFilesHandler, ManageResourceHandler,
             NotifyUserHandler,
-            RecallHandler, RememberHandler, SemanticRecallHandler,
+            RecallHandler, RememberHandler, RemoteExecutorHandler,
+            SemanticRecallHandler,
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
@@ -2733,6 +2878,155 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ShowFileHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+            elif isinstance(h, RemoteExecutorHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+                exec_svc = self._find_executor_service(user_id)
+                if exec_svc:
+                    h.set_service(exec_svc)
+                # Plan D: pass available services list
+                exec_services = self._list_available_services(user_id, "remoteExecutor")
+                if exec_services:
+                    h.set_available_services(exec_services)
+            elif isinstance(h, FilesystemToolHandler):
+                if user_id:
+                    h.set_user_id(user_id)
+                # Try to inject filesystem service (Plan B: cross-channel)
+                fs_svc = self._find_filesystem_service(user_id)
+                if fs_svc:
+                    if hasattr(fs_svc, 'set_user_id') and user_id:
+                        fs_svc.set_user_id(user_id)
+                    h.set_fs_service(fs_svc)
+                # Plan D: pass available services list
+                fs_services = self._list_available_services(user_id, "filesystem")
+                if fs_services:
+                    h.set_available_services(fs_services)
+
+    def _find_filesystem_service(self, user_id: str = ""):
+        """Find the first available filesystem service.
+
+        Search order: flow services → UserServiceRegistry (Plan B cross-channel).
+        """
+        services = getattr(self, '_services', {})
+        fs_types = ("localFilesystem", "wsFilesystem", "browserFilesystem",
+                     "serverFilesystem", "googleDrive", "oneDrive")
+        for svc in services.values():
+            svc_type = getattr(svc, 'TYPE', '')
+            if svc_type in fs_types:
+                return svc
+        # Plan B: fallback to user-installed services
+        if user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                for fs_type in fs_types:
+                    compatible = registry.get_compatible(fs_type, user_id)
+                    for sdef in compatible:
+                        if sdef.enabled:
+                            svc = registry.get_live_instance(user_id, sdef.service_id)
+                            if svc:
+                                return svc
+            except Exception:
+                pass
+        # Plan B: check RelayConnectionManager for WS relays
+        if user_id:
+            try:
+                from core.relay_manager import RelayConnectionManager
+                mgr = RelayConnectionManager.instance()
+                conn = mgr.get(user_id, relay_type="filesystem")
+                if conn:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    registry = UserServiceRegistry.get_instance()
+                    svc = registry.get_live_instance(user_id, conn.relay_id)
+                    if svc:
+                        return svc
+            except Exception:
+                pass
+        return None
+
+    def _find_executor_service(self, user_id: str = ""):
+        """Find the first available remote executor service.
+
+        Search order: flow services → UserServiceRegistry (Plan B cross-channel).
+        """
+        services = getattr(self, '_services', {})
+        for svc in services.values():
+            svc_type = getattr(svc, 'TYPE', '')
+            if svc_type == "remoteExecutor":
+                return svc
+        # Plan B: fallback to user-installed services
+        if user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                compatible = registry.get_compatible("remoteExecutor", user_id)
+                for sdef in compatible:
+                    if sdef.enabled:
+                        svc = registry.get_live_instance(user_id, sdef.service_id)
+                        if svc:
+                            return svc
+            except Exception:
+                pass
+        # Plan B: check RelayConnectionManager for WS relays
+        if user_id:
+            try:
+                from core.relay_manager import RelayConnectionManager
+                mgr = RelayConnectionManager.instance()
+                conn = mgr.get(user_id, relay_type="executor")
+                if conn:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    registry = UserServiceRegistry.get_instance()
+                    svc = registry.get_live_instance(user_id, conn.relay_id)
+                    if svc:
+                        return svc
+            except Exception:
+                pass
+        return None
+
+    def _list_available_services(self, user_id: str, service_type: str) -> list:
+        """Plan D: list all available services of a type for the user."""
+        result = []
+        # Flow services
+        services = getattr(self, '_services', {})
+        for sid, svc in services.items():
+            svc_type = getattr(svc, 'TYPE', '')
+            if service_type == "remoteExecutor" and svc_type == "remoteExecutor":
+                info = svc.get_relay_info() if hasattr(svc, 'get_relay_info') else {}
+                result.append({"id": sid, "type": svc_type, "root": info.get("root", "?")})
+            elif service_type == "filesystem" and svc_type in (
+                "localFilesystem", "wsFilesystem", "browserFilesystem",
+                "serverFilesystem", "googleDrive", "oneDrive",
+            ):
+                result.append({"id": sid, "type": svc_type, "root": "?"})
+        # User services
+        if user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                all_defs = registry.get_all_for_user(user_id)
+                for sid, sdef in all_defs.items():
+                    if not sdef.enabled:
+                        continue
+                    if service_type == "remoteExecutor" and sdef.service_type == "remoteExecutor":
+                        if not any(s["id"] == sid for s in result):
+                            result.append({
+                                "id": sid, "type": sdef.service_type,
+                                "root": sdef.description or "?",
+                            })
+                    elif service_type == "filesystem" and sdef.service_type in (
+                        "localFilesystem", "wsFilesystem", "browserFilesystem",
+                        "serverFilesystem", "googleDrive", "oneDrive",
+                    ):
+                        if not any(s["id"] == sid for s in result):
+                            result.append({
+                                "id": sid, "type": sdef.service_type,
+                                "root": sdef.description or "?",
+                            })
+            except Exception:
+                pass
+        return result
 
     @staticmethod
     def _cleanup_conversation_resources(conversation_id: str):

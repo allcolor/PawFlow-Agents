@@ -156,6 +156,41 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                        cursor: pointer; }
 .msg .doc-badge { display: inline-block; background: #0f3460; padding: 2px 8px; border-radius: 4px;
                    font-size: 11px; color: #8888aa; margin: 2px 0; }
+/* Exec approval dialog */
+.exec-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7);
+                 z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.exec-dialog { background: #1a1a2e; border: 1px solid #333; border-radius: 12px; padding: 24px;
+                max-width: 600px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.exec-dialog h3 { margin: 0 0 16px 0; color: #e0e0e0; font-size: 16px; }
+.exec-risk { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
+              font-weight: 600; margin-left: 8px; }
+.exec-risk.low { background: #1b4332; color: #52b788; }
+.exec-risk.medium { background: #5a3e00; color: #f4a261; }
+.exec-risk.high { background: #5c1a1a; color: #e94560; }
+.exec-cmd { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px;
+             font-family: 'Consolas', 'Monaco', monospace; font-size: 13px; color: #c9d1d9;
+             margin: 12px 0; white-space: pre-wrap; word-break: break-all; }
+.exec-cmd textarea { width: 100%; min-height: 60px; background: #0d1117; border: 1px solid #30363d;
+                      color: #c9d1d9; font-family: inherit; font-size: inherit; resize: vertical;
+                      border-radius: 4px; padding: 8px; }
+.exec-cwd { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+.exec-btns { display: flex; gap: 12px; justify-content: flex-end; }
+.exec-btns button { padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px;
+                     cursor: pointer; font-weight: 600; }
+.exec-approve { background: #238636; color: white; }
+.exec-approve:hover { background: #2ea043; }
+.exec-deny { background: #da3633; color: white; }
+.exec-deny:hover { background: #e5534b; }
+/* Terminal output in chat */
+.terminal-output { background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
+                    padding: 12px; margin: 8px 0; font-family: 'Consolas', 'Monaco', monospace;
+                    font-size: 12px; max-height: 300px; overflow-y: auto; }
+.terminal-output .term-stdout { color: #c9d1d9; white-space: pre-wrap; }
+.terminal-output .term-stderr { color: #f85149; white-space: pre-wrap; }
+.terminal-output .term-header { color: #8b949e; font-size: 11px; margin-bottom: 4px; }
+.terminal-output .term-exit { margin-top: 4px; font-size: 11px; }
+.terminal-output .term-exit.ok { color: #3fb950; }
+.terminal-output .term-exit.fail { color: #f85149; }
 </style>
 </head>
 <body>
@@ -885,6 +920,30 @@ function connectSSE(cid) {
     handleFileRequest(data);
   });
 
+  eventSource.addEventListener('exec_approval_request', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    showExecApprovalDialog(data);
+  });
+
+  eventSource.addEventListener('exec_output', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    appendExecOutput(data);
+  });
+
+  eventSource.addEventListener('tool_approval_request', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    showToolApprovalDialog(data);
+  });
+
+  eventSource.addEventListener('notification', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    showNotification(data);
+  });
+
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
     hideTyping();
@@ -1057,6 +1116,113 @@ async function handleFileRequest(data) {
       }),
     });
   } catch (e) { console.error('Failed to send file result:', e); }
+}
+
+// ── Exec approval dialog ─────────────────────────────────────────
+function showExecApprovalDialog(data) {
+  const { request_id, action, command, risk_level, cwd, editable } = data;
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  const riskLabel = risk_level.charAt(0).toUpperCase() + risk_level.slice(1);
+  const cmdHtml = editable
+    ? '<textarea id="execCmdEdit">' + escapeHtml(command) + '</textarea>'
+    : '<code>' + escapeHtml(command) + '</code>';
+  overlay.innerHTML = `
+    <div class="exec-dialog">
+      <h3>${escapeHtml(t('exec.approval_title') || 'Command Approval')}
+        <span class="exec-risk ${risk_level}">${riskLabel}</span></h3>
+      <div class="exec-cwd">${escapeHtml(t('exec.working_dir') || 'Working directory')}: ${escapeHtml(cwd || '.')}</div>
+      <div class="exec-cmd">${cmdHtml}</div>
+      <div class="exec-btns">
+        <button class="exec-deny" onclick="resolveExec('${request_id}', false, this)">${escapeHtml(t('exec.deny') || 'Deny')}</button>
+        <button class="exec-approve" onclick="resolveExec('${request_id}', true, this)">${escapeHtml(t('exec.approve') || 'Approve')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function resolveExec(requestId, approved, btn) {
+  const overlay = btn.closest('.exec-overlay');
+  const textarea = overlay.querySelector('#execCmdEdit');
+  const editedCommand = textarea ? textarea.value : '';
+  const result = { approved };
+  if (editedCommand) result.edited_command = editedCommand;
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'exec_result',
+        request_id: requestId,
+        result: result,
+        conversation_id: conversationId,
+      }),
+    });
+  } catch (e) { console.error('Failed to send exec result:', e); }
+  overlay.remove();
+}
+
+// ── Tool Approval Dialog (Plan A) ─────────────────────────────────
+function showToolApprovalDialog(data) {
+  const { request_id, tool_name, action_summary } = data;
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.innerHTML = `
+    <div class="exec-dialog">
+      <h3>${escapeHtml(t('tool_approval.title') || 'Tool Permission')}
+        <span class="exec-risk medium">${escapeHtml(tool_name)}</span></h3>
+      <div class="exec-cmd"><code>${escapeHtml(action_summary)}</code></div>
+      <div class="exec-btns" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="exec-deny" onclick="resolveToolApproval('${request_id}', 'deny', this)">${escapeHtml(t('tool_approval.deny') || 'Deny')}</button>
+        <button class="exec-approve" onclick="resolveToolApproval('${request_id}', 'allow_once', this)">${escapeHtml(t('tool_approval.allow_once') || 'Allow Once')}</button>
+        <button class="exec-approve" style="background:#1a7f37" onclick="resolveToolApproval('${request_id}', 'allow_session', this)">${escapeHtml(t('tool_approval.allow_session') || 'Allow for Session')}</button>
+        <button class="exec-approve" style="background:#0d5d20" onclick="resolveToolApproval('${request_id}', 'always_allow', this)">${escapeHtml(t('tool_approval.always_allow') || 'Always Allow')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+}
+
+async function resolveToolApproval(requestId, choice, btn) {
+  const overlay = btn.closest('.exec-overlay');
+  try {
+    await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'tool_approval_result',
+        request_id: requestId,
+        result: { choice },
+        conversation_id: conversationId,
+      }),
+    });
+  } catch (e) { console.error('Failed to send tool approval:', e); }
+  overlay.remove();
+}
+
+// ── Notification Toast ────────────────────────────────────────────
+function showNotification(data) {
+  const { message, urgency } = data;
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;top:16px;right:16px;background:#da3633;color:#fff;padding:12px 20px;border-radius:8px;z-index:10001;font-size:14px;max-width:400px;box-shadow:0 4px 12px rgba(0,0,0,0.4);cursor:pointer;';
+  if (urgency !== 'high') el.style.background = '#f0883e';
+  el.textContent = message;
+  el.onclick = () => el.remove();
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.remove(); }, 8000);
+}
+
+function appendExecOutput(data) {
+  const { action, command, exit_code, stdout, stderr, duration_ms } = data;
+  const el = document.createElement('div');
+  el.className = 'terminal-output';
+  let html = '<div class="term-header">$ ' + escapeHtml(command) + '</div>';
+  if (stdout) html += '<div class="term-stdout">' + escapeHtml(stdout) + '</div>';
+  if (stderr) html += '<div class="term-stderr">' + escapeHtml(stderr) + '</div>';
+  const exitClass = exit_code === 0 ? 'ok' : 'fail';
+  html += '<div class="term-exit ' + exitClass + '">exit ' + exit_code + ' (' + duration_ms + 'ms)</div>';
+  el.innerHTML = html;
+  document.getElementById('messages').appendChild(el);
+  scrollBottom();
 }
 
 // ── Slash commands ───────────────────────────────────────────────
@@ -1262,6 +1428,39 @@ async function handleSlashCommand(text) {
     const filename = parts.slice(1).join(' ');
     if (!filename) { addMsg('system', 'Usage: /view <filename>'); return true; }
     openFileViewer(filename);
+    return true;
+  }
+
+  if (cmd === '/service') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      await cmdServiceList();
+    } else if (sub === 'install') {
+      const svcType = parts[2];
+      const svcName = parts[3];
+      const configStr = parts.slice(4).join(' ');
+      if (!svcType || !svcName) {
+        addMsg('system', 'Usage: /service install <type> <name> [key=val,key2=val2,...]');
+        return true;
+      }
+      await cmdServiceAction('service_install', {
+        service_type: svcType, service_name: svcName, config_str: configStr
+      });
+    } else if (sub === 'uninstall') {
+      const svcName = parts[2];
+      if (!svcName) { addMsg('system', 'Usage: /service uninstall <name>'); return true; }
+      await cmdServiceAction('service_uninstall', {service_id: svcName});
+    } else if (sub === 'enable') {
+      const svcName = parts[2];
+      if (!svcName) { addMsg('system', 'Usage: /service enable <name>'); return true; }
+      await cmdServiceAction('service_enable', {service_id: svcName});
+    } else if (sub === 'disable') {
+      const svcName = parts[2];
+      if (!svcName) { addMsg('system', 'Usage: /service disable <name>'); return true; }
+      await cmdServiceAction('service_disable', {service_id: svcName});
+    } else {
+      addMsg('system', 'Usage: /service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>');
+    }
     return true;
   }
 
@@ -2053,6 +2252,42 @@ async function cmdResourceAction(action, extra) {
     else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
     else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
     else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
+    else addMsg('system', JSON.stringify(data, null, 2));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdServiceList() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'service_list', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    const svcs = data.services || [];
+    if (!svcs.length) { addMsg('system', 'No services installed. Use /service install <type> <name> [key=val,...] to add one.'); return; }
+    let lines = ['**Your services:**'];
+    svcs.forEach(s => {
+      const icon = s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB');
+      lines.push(`  ${icon} **${s.id}** (\`${s.type}\`) ${s.description || ''}`);
+    });
+    addMsg('system', lines.join('\n'));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdServiceAction(action, extra) {
+  try {
+    const payload = { action, conversation_id: conversationId, ...extra };
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    if (data.installed) addMsg('system', `Service '${data.id}' installed (${data.type}).`);
+    else if (data.uninstalled) addMsg('system', `Service '${data.id}' uninstalled.`);
+    else if (data.enabled) addMsg('system', `Service '${data.id}' enabled.`);
+    else if (data.disabled) addMsg('system', `Service '${data.id}' disabled.`);
     else addMsg('system', JSON.stringify(data, null, 2));
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }

@@ -1,9 +1,10 @@
-"""WebSocket router — real-time streaming for logs, metrics, queue stats."""
+"""WebSocket router — real-time streaming for logs, metrics, queue stats, relay connections."""
 
 import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Dict, Set
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -195,3 +196,113 @@ def _collect_metrics() -> dict:
         result["bulletin_counts"] = {}
 
     return result
+
+
+# -- Relay WebSocket endpoint (WS Reverse) --
+
+@router.websocket("/relay")
+async def ws_relay(websocket: WebSocket):
+    """WebSocket endpoint for relay connections (executor/filesystem).
+
+    Protocol:
+    1. Relay connects and sends a registration message:
+       {"type": "register", "token": "<api_key>", "secret": "...",
+        "relay_type": "executor|filesystem", "relay_id": "...", "info": {...}}
+    2. Server validates token → identifies user_id → registers relay
+    3. Server pushes commands:
+       {"type": "command", "request_id": "...", "action": "...", ...}
+    4. Relay sends results:
+       {"type": "result", "request_id": "...", "data": {...}}
+    5. Keepalive: relay sends {"type": "ping"}, server responds {"type": "pong"}
+    """
+    from core.relay_manager import RelayConnectionManager
+
+    await websocket.accept()
+
+    user_id = ""
+    relay_id = ""
+
+    try:
+        # First message must be registration
+        reg = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+
+        if reg.get("type") != "register":
+            await websocket.close(code=4000, reason="First message must be register")
+            return
+
+        # Validate token
+        token = reg.get("token", "")
+        if not token:
+            await websocket.close(code=4001, reason="Missing token")
+            return
+
+        try:
+            from core.security import SecurityManager
+            sm = SecurityManager.get_instance()
+            user = sm.validate_api_key(token)
+            if not user:
+                await websocket.close(code=4001, reason="Invalid token")
+                return
+            user_id = user.get("username", user.get("user_id", ""))
+        except Exception:
+            # Security not configured — use token as user_id for dev mode
+            user_id = token
+
+        if not user_id:
+            await websocket.close(code=4001, reason="Could not identify user")
+            return
+
+        relay_id = reg.get("relay_id", f"relay-{uuid.uuid4().hex[:8]}")
+        relay_type = reg.get("relay_type", "executor")
+        info = reg.get("info", {})
+        secret = reg.get("secret", "")
+
+        # Store secret in info for command forwarding
+        info["_secret"] = secret
+
+        mgr = RelayConnectionManager.instance()
+        conn = mgr.register(user_id, relay_id, relay_type, websocket, info)
+
+        # Confirm registration
+        await websocket.send_json({
+            "type": "registered",
+            "relay_id": relay_id,
+            "user_id": user_id,
+        })
+
+        logger.info("Relay WS connected: user=%s relay=%s type=%s",
+                     user_id, relay_id, relay_type)
+
+        # Main loop: receive results and pings from relay
+        while True:
+            msg = await websocket.receive_json()
+            msg_type = msg.get("type", "")
+
+            if msg_type == "result":
+                request_id = msg.get("request_id", "")
+                data = msg.get("data", {})
+                mgr.resolve_pending(user_id, relay_id, request_id, data)
+
+            elif msg_type == "ping":
+                await websocket.send_json({"type": "pong"})
+                conn.last_activity = time.time()
+
+            elif msg_type == "error":
+                request_id = msg.get("request_id", "")
+                error_msg = msg.get("error", "Unknown relay error")
+                mgr.resolve_pending(user_id, relay_id, request_id,
+                                    {"error": error_msg, "ok": False})
+
+    except WebSocketDisconnect:
+        logger.info("Relay WS disconnected: user=%s relay=%s", user_id, relay_id)
+    except asyncio.TimeoutError:
+        logger.warning("Relay WS registration timeout")
+        try:
+            await websocket.close(code=4002, reason="Registration timeout")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error("Relay WS error: %s", e)
+    finally:
+        if user_id and relay_id:
+            RelayConnectionManager.instance().unregister(user_id, relay_id)

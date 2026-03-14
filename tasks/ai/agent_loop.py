@@ -123,21 +123,9 @@ class AgentLoopTask(BaseTask):
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
-            "provider": {
-                "type": "string", "required": False, "default": "openai",
-                "description": "LLM provider: openai, anthropic",
-            },
-            "api_key": {
-                "type": "string", "required": True, "sensitive": True,
-                "description": "API key for the LLM provider",
-            },
-            "base_url": {
-                "type": "string", "required": False, "default": "",
-                "description": "API base URL (for self-hosted or compatible APIs)",
-            },
             "model": {
                 "type": "string", "required": False, "default": "",
-                "description": "Model name (empty = provider default)",
+                "description": "Model name override (empty = service default)",
             },
             "system_prompt": {
                 "type": "string", "required": False, "default": "You are a helpful assistant.",
@@ -211,34 +199,95 @@ class AgentLoopTask(BaseTask):
                 "type": "integer", "required": False, "default": 6,
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
             },
+            "llm_service": {
+                "type": "string", "required": False, "default": "${global.llm.default.service}",
+                "description": "LLM service ID (from global/user services). Defaults to ${global.llm.default.service}.",
+            },
         }
+
+    def _resolve_llm_service(self, service_id: str, user_id: str):
+        """Resolve an LLM service by ID. Returns (LLMClient, service) or (None, None).
+
+        Resolution order: flow services → UserServiceRegistry → GlobalServiceRegistry.
+        """
+        if not service_id:
+            return None, None
+        # 1. Flow-level services (defined in flow JSON)
+        if self._services:
+            svc = self._services.get(service_id)
+            if svc and hasattr(svc, 'get_client'):
+                return svc.get_client(), svc
+        # 2. User-scoped services
+        try:
+            from gui.services.user_service_registry import UserServiceRegistry
+            svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
+            if svc and hasattr(svc, 'get_client'):
+                return svc.get_client(), svc
+        except Exception:
+            pass
+        # 3. Global services
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
+            if svc and hasattr(svc, 'get_client'):
+                return svc.get_client(), svc
+        except Exception:
+            pass
+        return None, None
 
     def _prepare_agent_context(self, flowfile: FlowFile):
         """Extract common context from flowfile and config for both sync and streaming modes."""
-        provider = self.config.get("provider", "openai")
-        api_key = self.config.get("api_key", "")
-        llm_base_url = self.config.get("base_url", "")
         model = self.config.get("model", "")
         timeout = int(self.config.get("timeout", 120))
 
-        client = LLMClient(
-            provider=provider, api_key=api_key, base_url=llm_base_url,
-            default_model=model, timeout=timeout,
+        # LLM service routing — all LLM access goes through services
+        task_llm_service = self.config.get("llm_service", "")
+        # If expression was not resolved (no global param set), fallback to "default"
+        if not task_llm_service or "${" in task_llm_service:
+            task_llm_service = "default"
+        _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
+        resolved_client, resolved_svc = self._resolve_llm_service(
+            task_llm_service, _user_id_for_svc,
         )
+        if resolved_client:
+            client = resolved_client
+        elif self.config.get("api_key"):
+            # Legacy inline config — for flows that embed provider/api_key directly
+            client = LLMClient(
+                provider=self.config.get("provider", "openai"),
+                api_key=self.config["api_key"],
+                base_url=self.config.get("base_url", ""),
+                default_model=model,
+                timeout=int(self.config.get("timeout", 120)),
+            )
+            resolved_svc = None
+        else:
+            raise ValueError(
+                f"LLM service '{task_llm_service}' not found. "
+                f"Define it in global services or set 'llm.default.service' "
+                f"in config/global_parameters.json."
+            )
 
         registry = self.get_tool_registry()
         # conversation_id/user_id not yet known — will be set in _execute_streaming
         self._configure_tool_handlers(registry)
 
         # Wire embedding function for semantic memory handlers
-        self._wire_embed_fn(registry, provider, api_key, llm_base_url)
+        self._wire_embed_fn(registry, client)
 
         # Set up SubAgentExecutor for spawn_agents/use_skill/get_agent_results
         from core.agent_executor import SubAgentExecutor
         from core.tool_registry import (
             SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
         )
-        sub_executor = SubAgentExecutor(client, registry, max_workers=4)
+        # Create a resolver closure for per-agent LLM service routing
+        _self = self
+        def _client_resolver(svc_id, uid):
+            return _self._resolve_llm_service(svc_id, uid)
+        sub_executor = SubAgentExecutor(
+            client, registry, max_workers=4,
+            client_resolver=_client_resolver,
+        )
         for h in registry.list_tools():
             if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
                 h.set_executor(sub_executor)
@@ -421,13 +470,13 @@ class AgentLoopTask(BaseTask):
                 # Active agent overrides system prompt
                 selected = active_res.get("agent", "")
                 if selected:
-                    agent_def = rs.get("agent", selected, _uid)
+                    agent_def = rs.get_any("agent", selected, _uid)
                     if agent_def:
                         system_prompt = agent_def["prompt"]
                         system_prompt += f"\n\n[You are agent '{selected}']\n"
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                        # List other available agents
-                        all_agents = rs.list("agent", _uid)
+                        # List other available agents (user + global)
+                        all_agents = rs.list_all("agent", _uid)
                         others = [a["name"] for a in all_agents if a["name"] != selected]
                         if others:
                             system_prompt += (
@@ -441,7 +490,7 @@ class AgentLoopTask(BaseTask):
                 if active_skills:
                     skill_sections = []
                     for sname in active_skills:
-                        skill_def = rs.get("skill", sname, _uid)
+                        skill_def = rs.get_any("skill", sname, _uid)
                         if skill_def:
                             skill_sections.append(
                                 f"### Skill: {sname}\n{skill_def['prompt']}"
@@ -456,12 +505,48 @@ class AgentLoopTask(BaseTask):
             except Exception:
                 pass
 
-        if user_text.strip() or attachments:
-            user_content = self._build_user_content(user_text, attachments)
-            messages.append(LLMMessage(role="user", content=user_content))
-
         model_name = self.config.get("model", "")
         user_id = flowfile.get_attribute("http.auth.principal") or ""
+
+        if user_text.strip() or attachments:
+            user_content = self._build_user_content(user_text, attachments)
+            user_source = {"type": "user", "name": user_id or "anonymous"}
+            messages.append(LLMMessage(role="user", content=user_content, source=user_source))
+
+        # Determine active agent name and llm_service for source tracking
+        _active_agent_name = ""
+        _active_llm_service = task_llm_service
+        if use_conv_store and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                _ares = ConversationStore.instance().get_extra(
+                    conversation_id, "active_resources",
+                ) or {}
+                _active_agent_name = _ares.get("agent", "")
+                if _active_agent_name and not _active_llm_service:
+                    from core.resource_store import ResourceStore
+                    _adef = ResourceStore.instance().get_any(
+                        "agent", _active_agent_name, user_id,
+                    )
+                    if _adef:
+                        _active_llm_service = _adef.get("llm_service", "")
+                        # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
+                        if _active_llm_service and "${" in _active_llm_service:
+                            from core.expression import resolve_expression
+                            _active_llm_service = resolve_expression(
+                                _active_llm_service, owner=user_id,
+                            )
+                            if "${" in _active_llm_service:
+                                _active_llm_service = ""
+                # If active agent has its own LLM service, resolve it now
+                if _active_llm_service and not resolved_client:
+                    _rc, _rs = self._resolve_llm_service(_active_llm_service, user_id)
+                    if _rc:
+                        client = _rc
+                        resolved_svc = _rs
+            except Exception:
+                pass
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,
@@ -476,7 +561,64 @@ class AgentLoopTask(BaseTask):
             "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "channel": channel,
+            "active_agent_name": _active_agent_name,
+            "active_llm_service": _active_llm_service,
+            "resolved_svc": resolved_svc,
         }
+
+    def select_processable(self, connections):
+        """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services.
+
+        Called by ContinuousFlowExecutor instead of peek-first.
+        Returns (FlowFile, Connection) or None if nothing is processable.
+        """
+        for conn in connections:
+            for ff in conn.peek_all():
+                svc = self._get_service_for_flowfile(ff)
+                if svc is None or svc.has_capacity():
+                    return ff, conn
+        return None
+
+    def _get_service_for_flowfile(self, ff):
+        """Determine the LLM service a FlowFile would use. Returns service or None."""
+        # Check conversation → active agent → agent.llm_service
+        raw_body = ff.get_content().decode("utf-8", errors="replace")
+        conversation_id = None
+        if raw_body.strip().startswith("{"):
+            try:
+                body = json.loads(raw_body)
+                conversation_id = body.get("conversation_id")
+            except (json.JSONDecodeError, AttributeError):
+                pass
+
+        user_id = ff.get_attribute("http.auth.principal") or ""
+        service_id = self.config.get("llm_service", "")
+
+        if conversation_id and not service_id:
+            try:
+                from core.conversation_store import ConversationStore
+                from core.resource_store import ResourceStore
+                ares = ConversationStore.instance().get_extra(
+                    conversation_id, "active_resources",
+                ) or {}
+                agent_name = ares.get("agent", "")
+                if agent_name:
+                    adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
+                    if adef:
+                        service_id = adef.get("llm_service", "")
+                        if service_id and "${" in service_id:
+                            from core.expression import resolve_expression
+                            service_id = resolve_expression(service_id, owner=user_id)
+                            if "${" in service_id:
+                                service_id = ""
+            except Exception:
+                pass
+
+        if not service_id:
+            return None
+
+        _, svc = self._resolve_llm_service(service_id, user_id)
+        return svc
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         # Reject unlinked Telegram users (require identity link for security)
@@ -956,18 +1098,25 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
                 return [flowfile]
             # Run compaction
-            provider = self.config.get("provider", "openai")
-            api_key = self.config.get("api_key", "")
-            llm_base_url = self.config.get("base_url", "")
-            mdl = self.config.get("model", "")
-            timeout = int(self.config.get("timeout", 120))
-            if not api_key:
-                flowfile.set_content(json.dumps({"error": "No API key configured"}).encode())
+            svc_id = self.config.get("llm_service", "")
+            if not svc_id or "${" in svc_id:
+                svc_id = "default"
+            _uid = user_id or ""
+            _client, _ = self._resolve_llm_service(svc_id, _uid)
+            if _client:
+                client = _client
+            elif self.config.get("api_key"):
+                client = LLMClient(
+                    provider=self.config.get("provider", "openai"),
+                    api_key=self.config["api_key"],
+                    base_url=self.config.get("base_url", ""),
+                    default_model=self.config.get("model", ""),
+                    timeout=int(self.config.get("timeout", 120)),
+                )
+            else:
+                flowfile.set_content(json.dumps({"error": f"LLM service '{svc_id}' not found"}).encode())
                 return [flowfile]
-            client = LLMClient(
-                provider=provider, api_key=api_key, base_url=llm_base_url,
-                default_model=mdl, timeout=timeout,
-            )
+            mdl = self.config.get("model", "")
             try:
                 msgs = self._deserialize_messages(messages_data)
                 before_count = len(msgs)
@@ -1034,7 +1183,7 @@ class AgentLoopTask(BaseTask):
             conv_id = body.get("conversation_id", "")
             from core.resource_store import ResourceStore
             uid = user_id or "anonymous"
-            agents_list = ResourceStore.instance().list("agent", uid)
+            agents_list = ResourceStore.instance().list_all("agent", uid)
             agents = {a["name"]: a for a in agents_list}
             # Get selected agent from active_resources
             selected = ""
@@ -1158,7 +1307,7 @@ class AgentLoopTask(BaseTask):
         if action == "list_skills":
             from core.resource_store import ResourceStore
             uid = user_id or "anonymous"
-            skills = ResourceStore.instance().list("skill", uid)
+            skills = ResourceStore.instance().list_all("skill", uid)
             conv_id = body.get("conversation_id", "")
             active_skills = []
             if conv_id:
@@ -1188,17 +1337,17 @@ class AgentLoopTask(BaseTask):
                     "name": a["name"],
                     "description": a.get("description", ""),
                     "active": active.get("agent") == a["name"],
-                } for a in rs.list("agent", uid)],
+                } for a in rs.list_all("agent", uid)],
                 "skills": [{
                     "name": s["name"],
                     "description": s.get("description", ""),
                     "active": s["name"] in active.get("skills", []),
-                } for s in rs.list("skill", uid)],
+                } for s in rs.list_all("skill", uid)],
                 "mcp_servers": [{
                     "name": m["name"],
                     "url": m.get("url", ""),
                     "active": m["name"] in active.get("mcps", []),
-                } for m in rs.list("mcp", uid)],
+                } for m in rs.list_all("mcp", uid)],
             }
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
             return [flowfile]
@@ -1583,6 +1732,45 @@ class AgentLoopTask(BaseTask):
                 }, ensure_ascii=False).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "list_prompts":
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            prompts = rs.list_all("prompt", user_id)
+            items = [
+                {
+                    "name": p["name"],
+                    "title": p.get("title", p["name"]),
+                    "category": p.get("category", ""),
+                    "description": p.get("description", ""),
+                    "preview": p.get("content", "")[:100],
+                }
+                for p in prompts
+            ]
+            flowfile.set_content(json.dumps({"prompts": items}, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "get_prompt":
+            prompt_name = body.get("name", "")
+            if not prompt_name:
+                flowfile.set_content(json.dumps({"error": "Missing name"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            prompt_def = rs.get_any("prompt", prompt_name, user_id)
+            if not prompt_def:
+                flowfile.set_content(json.dumps({"error": "Prompt not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            flowfile.set_content(json.dumps({
+                "name": prompt_name,
+                "title": prompt_def.get("title", prompt_name),
+                "content": prompt_def.get("content", ""),
+                "category": prompt_def.get("category", ""),
+                "description": prompt_def.get("description", ""),
+            }, ensure_ascii=False).encode())
             return [flowfile]
 
         return None  # Unknown action — treat as normal message
@@ -2025,6 +2213,15 @@ class AgentLoopTask(BaseTask):
 
         user_id = ctx.get("user_id", "")
 
+        # Source metadata for identity tracking
+        _agent_name = ctx.get("active_agent_name", "")
+        _agent_svc = ctx.get("active_llm_service", "")
+        def _agent_source():
+            src = {"type": "agent", "name": _agent_name or "assistant"}
+            if _agent_svc:
+                src["llm_service"] = _agent_svc
+            return src
+
         def _append(msg: LLMMessage):
             """Append a message to both the LLM context and the new-messages list."""
             messages.append(msg)
@@ -2182,7 +2379,7 @@ class AgentLoopTask(BaseTask):
                                 f"finish={finish_reason}, content_len={len(response.content or '')}")
 
                     if not response.tool_calls:
-                        _append(LLMMessage(role="assistant", content=response.content))
+                        _append(LLMMessage(role="assistant", content=response.content, source=_agent_source()))
                         response_content = response.content
                         _flush_new()
                         break
@@ -2191,6 +2388,7 @@ class AgentLoopTask(BaseTask):
                     _append(LLMMessage(
                         role="assistant", content=response.content,
                         tool_calls=response.tool_calls,
+                        source=_agent_source(),
                     ))
 
                     # If poll was silent but LLM made tool calls → real work detected
@@ -2663,24 +2861,30 @@ class AgentLoopTask(BaseTask):
                             scheduled_reasons: Optional[List[str]] = None,
                             ) -> Optional[Dict]:
         """Build an agent context for a poll-triggered run."""
-        provider = self.config.get("provider", "openai")
-        api_key = self.config.get("api_key", "")
-        llm_base_url = self.config.get("base_url", "")
         model = self.config.get("model", "")
-        timeout = int(self.config.get("timeout", 120))
 
-        if not api_key:
+        svc_id = self.config.get("llm_service", "")
+        if not svc_id or "${" in svc_id:
+            svc_id = "default"
+        # Recover user_id early for service resolution
+        from core.conversation_store import ConversationStore as _CS2
+        _meta = _CS2.instance().get_metadata(conversation_id)
+        _poll_uid = _meta["user_id"] if _meta else ""
+
+        client, _ = self._resolve_llm_service(svc_id, _poll_uid)
+        if not client and self.config.get("api_key"):
+            client = LLMClient(
+                provider=self.config.get("provider", "openai"),
+                api_key=self.config["api_key"],
+                base_url=self.config.get("base_url", ""),
+                default_model=model,
+                timeout=int(self.config.get("timeout", 120)),
+            )
+        if not client:
+            logger.warning("Poll: LLM service '%s' not found", svc_id)
             return None
 
-        client = LLMClient(
-            provider=provider, api_key=api_key, base_url=llm_base_url,
-            default_model=model, timeout=timeout,
-        )
-
-        # Recover user_id from the conversation entry (never lose ownership)
-        from core.conversation_store import ConversationStore
-        meta = ConversationStore.instance().get_metadata(conversation_id)
-        poll_user_id = meta["user_id"] if meta else ""
+        poll_user_id = _poll_uid
 
         registry = self.get_tool_registry()
         self._configure_tool_handlers(
@@ -2761,19 +2965,21 @@ class AgentLoopTask(BaseTask):
         }
 
     def _wire_embed_fn(
-        self, registry: ToolRegistry,
-        provider: str, api_key: str, base_url: str,
+        self, registry: ToolRegistry, client: LLMClient,
     ) -> None:
         """Wire embedding function into RememberHandler and SemanticRecallHandler."""
         from core.tool_registry import RememberHandler, SemanticRecallHandler
 
-        if not api_key and provider == "openai":
+        if not client.api_key:
             return  # No API key, can't embed
+
+        _api_key = client.api_key
+        _base_url = client.base_url
 
         def embed_fn(text: str) -> List[float]:
             from core.embeddings import EmbeddingProvider
             results = EmbeddingProvider.instance().embed(
-                [text], provider="auto", api_key=api_key, base_url=base_url,
+                [text], provider="auto", api_key=_api_key, base_url=_base_url,
             )
             return results[0] if results else []
 
@@ -3617,6 +3823,8 @@ class AgentLoopTask(BaseTask):
                 entry = {"type": role, "role": role, "content": content}
                 if m.get("channel"):
                     entry["channel"] = m["channel"]
+                if m.get("source"):
+                    entry["source"] = m["source"]
                 result.append(entry)
         return result
 
@@ -3635,6 +3843,8 @@ class AgentLoopTask(BaseTask):
                 entry["tool_call_id"] = m.tool_call_id
             if channel and m.role in ("user", "assistant"):
                 entry["channel"] = channel
+            if m.source:
+                entry["source"] = m.source
             result.append(entry)
         return result
 
@@ -3657,6 +3867,7 @@ class AgentLoopTask(BaseTask):
                 content=entry.get("content", ""),
                 tool_calls=tool_calls,
                 tool_call_id=entry.get("tool_call_id"),
+                source=entry.get("source"),
             ))
         return messages
 

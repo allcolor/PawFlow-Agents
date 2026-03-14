@@ -301,12 +301,12 @@ def render_settings_tabs():
     """Afficher les paramètres avec onglets."""
     from tasks import register_all_tasks, get_available_tasks
 
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
         f"⚙️ {t('settings.general')}", f"📦 {t('dashboard.total_tasks')}", "📥 Import/Export",
         f"🔌 {t('settings.services')}", f"🧩 {t('settings.plugins')}", f"🔐 {t('settings.security')}",
         f"📋 {t('settings.audit')}", f"🔔 {t('settings.webhooks')}", f"🖥️ {t('settings.cluster')}",
         f"🔑 {t('secrets.title')}", f"📎 {t('params.title')}",
-        f"🔄 {t('settings.nifi_import')}",
+        f"🔄 {t('settings.nifi_import')}", f"🤖 {t('resources.title')}",
     ])
 
     with tab1:
@@ -480,6 +480,137 @@ def render_settings_tabs():
 
     with tab12:
         render_nifi_import_tab()
+
+    with tab13:
+        render_resources_tab(session)
+
+
+def render_resources_tab(session):
+    """Resource library management: agents, prompts, skills (global + user)."""
+    from core.resource_store import ResourceStore, GLOBAL_USER_ID
+
+    st.markdown(f"### 🤖 {t('resources.title')}")
+
+    store = ResourceStore.instance()
+    user_id = session.get("username", "anonymous") if session else "anonymous"
+    is_admin = check_permission(session, "settings.edit")
+
+    # Scope selector
+    scope_options = [t("resources.scope_user")]
+    if is_admin:
+        scope_options.append(t("resources.scope_global"))
+    scope = st.radio(
+        "Scope", scope_options, horizontal=True,
+        key="resources_scope",
+    )
+    target_user = GLOBAL_USER_ID if scope == t("resources.scope_global") else user_id
+
+    # Resource type selector
+    res_tabs = st.tabs([
+        f"🤖 {t('resources.agents')}",
+        f"📝 {t('resources.prompts')}",
+        f"⚡ {t('resources.skills')}",
+    ])
+
+    type_map = [
+        ("agent", {"prompt": "", "description": "", "llm_service": "", "model": ""}),
+        ("prompt", {"content": "", "title": "", "category": "", "description": ""}),
+        ("skill", {"prompt": "", "description": ""}),
+    ]
+
+    for tab_idx, (rtype, template) in enumerate(type_map):
+        with res_tabs[tab_idx]:
+            _render_resource_type(store, rtype, target_user, user_id, template, is_admin)
+
+
+def _render_resource_type(store, rtype, target_user, user_id, template, is_admin):
+    """Render CRUD for one resource type."""
+    from core.resource_store import GLOBAL_USER_ID
+
+    items = store.list(rtype, user_id=target_user)
+    scope_label = t("resources.global_badge") if target_user == GLOBAL_USER_ID else t("resources.user_badge")
+
+    # ── Create form ──
+    with st.expander(f"➕ {t('resources.create')} ({scope_label})", expanded=False):
+        name = st.text_input(t("resources.name"), key=f"new_{rtype}_{target_user}_name")
+        fields = {}
+        for field, default in template.items():
+            if field in ("prompt", "content"):
+                fields[field] = st.text_area(
+                    field.capitalize(), value=default, height=150,
+                    key=f"new_{rtype}_{target_user}_{field}",
+                )
+            else:
+                fields[field] = st.text_input(
+                    field.replace("_", " ").capitalize(), value=default,
+                    key=f"new_{rtype}_{target_user}_{field}",
+                )
+        if st.button(t("resources.create"), key=f"btn_create_{rtype}_{target_user}"):
+            if name:
+                try:
+                    store.create(rtype, name, target_user, fields)
+                    st.success(t("resources.created").replace("{name}", name))
+                    st.rerun()
+                except ValueError as e:
+                    st.error(str(e))
+            else:
+                st.warning(t("resources.name"))
+
+    # ── List + edit/delete ──
+    if not items:
+        st.info(t("resources.empty"))
+        return
+
+    # Also show global items when viewing user scope
+    if target_user != GLOBAL_USER_ID:
+        global_items = store.list(rtype, user_id=GLOBAL_USER_ID)
+        for gi in global_items:
+            gi["_global"] = True
+        seen = {i["name"] for i in items}
+        for gi in global_items:
+            if gi["name"] not in seen:
+                items.append(gi)
+
+    for item in items:
+        is_global = item.get("_global", False) or target_user == GLOBAL_USER_ID
+        badge = f"🌐 {t('resources.global_badge')}" if is_global else f"👤 {t('resources.user_badge')}"
+        item_owner = GLOBAL_USER_ID if is_global else target_user
+
+        with st.expander(f"**{item['name']}** {badge}"):
+            # Show fields
+            edited = {}
+            can_edit = is_admin if is_global else True
+            for field in template:
+                val = item.get(field, "")
+                if field in ("prompt", "content"):
+                    edited[field] = st.text_area(
+                        field.capitalize(), value=val, height=150,
+                        key=f"edit_{rtype}_{item_owner}_{item['name']}_{field}",
+                        disabled=not can_edit,
+                    )
+                else:
+                    edited[field] = st.text_input(
+                        field.replace("_", " ").capitalize(), value=val,
+                        key=f"edit_{rtype}_{item_owner}_{item['name']}_{field}",
+                        disabled=not can_edit,
+                    )
+
+            if can_edit:
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button(t("resources.edit"), key=f"btn_edit_{rtype}_{item_owner}_{item['name']}"):
+                        try:
+                            store.update(rtype, item["name"], item_owner, edited)
+                            st.success(t("resources.updated").replace("{name}", item["name"]))
+                            st.rerun()
+                        except KeyError as e:
+                            st.error(str(e))
+                with col2:
+                    if st.button(t("resources.delete"), key=f"btn_del_{rtype}_{item_owner}_{item['name']}",
+                                 type="primary"):
+                        if store.delete(rtype, item["name"], item_owner):
+                            st.success(t("resources.deleted").replace("{name}", item["name"]))
+                            st.rerun()
 
 
 def render_audit_tab():

@@ -848,6 +848,14 @@
     "agent.tool_registry": "Tool Registry",
     "agent.conversation": "Conversation",
     "agent.no_tools": "No tools configured",
+    "agent.llm_service": "LLM Service",
+    "agent.source": "Source",
+
+    "prompt.title": "Prompts",
+    "prompt.select": "Select Prompt",
+    "prompt.empty": "No prompts available",
+    "prompt.library": "Prompt Library",
+    "prompt.category": "Category",
 
     "agent_tools.title": "Agent Tools",
     "agent_tools.section": "Agent Tools Configuration",
@@ -1109,5 +1117,25 @@
     "service.heartbeat_down": "Service '{id}' disconnected — relay is no longer reachable",
     "service.auto_installed": "Service '{id}' auto-installed from relay",
     "service.auto_disabled": "Service '{id}' auto-disabled (relay disconnected)",
-    "service.multi_available": "Multiple services available. Use 'service' parameter to choose."
+    "service.multi_available": "Multiple services available. Use 'service' parameter to choose.",
+
+    "resources.title": "Resources",
+    "resources.agents": "Agents",
+    "resources.prompts": "Prompts",
+    "resources.skills": "Skills",
+    "resources.scope_global": "Global Library",
+    "resources.scope_user": "User Library",
+    "resources.name": "Name",
+    "resources.description": "Description",
+    "resources.content": "Content",
+    "resources.create": "Create",
+    "resources.edit": "Edit",
+    "resources.delete": "Delete",
+    "resources.confirm_delete": "Confirm deletion of '{name}'?",
+    "resources.created": "Resource '{name}' created successfully.",
+    "resources.updated": "Resource '{name}' updated.",
+    "resources.deleted": "Resource '{name}' deleted.",
+    "resources.empty": "No resources found.",
+    "resources.global_badge": "Global",
+    "resources.user_badge": "User"
 }

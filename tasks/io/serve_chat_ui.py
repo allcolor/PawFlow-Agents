@@ -84,6 +84,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
            margin: 8px 0; }
 .msg pre code { background: none; padding: 0; }
 .msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px; }
+.source-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 4px; vertical-align: middle; font-weight: 600; letter-spacing: 0.3px; }
 .msg.assistant { align-self: flex-start; background: #16213e; border: 1px solid #0f3460;
                   border-bottom-left-radius: 4px; }
 .msg.error { align-self: center; background: #5c1a1a; color: #ff8a80; font-size: 13px; }
@@ -246,6 +247,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 <div class="input-area">
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
+    <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" style="font-size:16px !important">&#x1F4DD;</button>
     <button class="btn-attach btn-folder" id="folderBtn" onclick="openLocalFolder()" title="Open local folder">&#x1F4C1;</button>
     <button class="btn-attach" onclick="document.getElementById('fileInput').click()" title="Attach files">&#x1F4CE;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
@@ -707,18 +709,39 @@ async function refreshCurrentConv() {
   }
 }
 
+function sourceBadge(source) {
+  if (!source) return '';
+  const name = source.name || '';
+  const svc = source.llm_service || '';
+  if (source.type === 'agent') {
+    // Hash name to color
+    let h = 0;
+    for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
+    const hue = Math.abs(h) % 360;
+    const label = svc ? name + ' via ' + svc : name;
+    return '<span class="source-badge" style="background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(label) + '</span> ';
+  }
+  if (source.type === 'user' && name && name !== 'anonymous') {
+    return '<span class="source-badge" style="background:#1a3a2a;color:#4ecdc4">' + escapeHtml(name) + '</span> ';
+  }
+  return '';
+}
+
 function addMsg(role, text, extra) {
   const el = document.createElement('div');
   // Support classified types: tool_call, tool_result map to CSS class "tool"
   const cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
   el.className = 'msg ' + cssClass;
+  const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   if (role === 'assistant') {
-    el.innerHTML = renderMarkdown(text);
+    el.innerHTML = badge + renderMarkdown(text);
   } else if (role === 'tool' || role === 'tool_call') {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
     const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
     el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">↳ ' + escapeHtml(text) + '</span>';
+  } else if (role === 'user') {
+    el.innerHTML = badge + escapeHtml(text);
   } else {
     el.textContent = text;
   }
@@ -1019,6 +1042,55 @@ function stopPollTimer() {
 let localDirHandle = null;
 let localDirName = '';
 
+async function showPrompts() {
+  try {
+    const r = await fetch(AGENT_PATH, {
+      method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
+      body: JSON.stringify({action:'list_prompts', conversation_id: conversationId})
+    });
+    const data = await r.json();
+    const prompts = data.prompts || [];
+    if (!prompts.length) { addMsg('system', 'No prompts available. Create prompts via /prompt or manage_resource.'); return; }
+    // Build a simple selection overlay
+    let overlay = document.getElementById('promptOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'promptOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+    let html = '<div style="background:#1a1a2e;border:1px solid #0f3460;border-radius:12px;max-width:500px;width:90%;max-height:70vh;overflow-y:auto;padding:20px">';
+    html += '<h3 style="margin:0 0 12px;color:#e94560">Prompt Library</h3>';
+    for (const p of prompts) {
+      html += '<div class="prompt-item" data-name="' + escapeHtml(p.name) + '" style="padding:10px;margin:4px 0;background:#16213e;border-radius:8px;cursor:pointer;border:1px solid transparent" onmouseenter="this.style.borderColor=\'#e94560\'" onmouseleave="this.style.borderColor=\'transparent\'">';
+      html += '<div style="font-weight:600;color:#fff">' + escapeHtml(p.title || p.name) + '</div>';
+      if (p.category) html += '<span style="font-size:11px;color:#888;margin-right:8px">' + escapeHtml(p.category) + '</span>';
+      if (p.description) html += '<span style="font-size:11px;color:#aaa">' + escapeHtml(p.description) + '</span>';
+      if (p.preview) html += '<div style="font-size:11px;color:#666;margin-top:4px">' + escapeHtml(p.preview) + '...</div>';
+      html += '</div>';
+    }
+    html += '<button onclick="document.getElementById(\'promptOverlay\').remove()" style="margin-top:12px;padding:6px 16px;background:#0f3460;color:#fff;border:none;border-radius:6px;cursor:pointer">Close</button>';
+    html += '</div>';
+    overlay.innerHTML = html;
+    overlay.querySelectorAll('.prompt-item').forEach(item => {
+      item.addEventListener('click', async () => {
+        const name = item.dataset.name;
+        try {
+          const r2 = await fetch(AGENT_PATH, {
+            method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
+            body: JSON.stringify({action:'get_prompt', name: name, conversation_id: conversationId})
+          });
+          const d2 = await r2.json();
+          if (d2.content) {
+            document.getElementById('input').value = d2.content;
+            document.getElementById('input').focus();
+          }
+        } catch(e) { addMsg('error', 'Failed to load prompt: ' + e.message); }
+        overlay.remove();
+      });
+    });
+    document.body.appendChild(overlay);
+  } catch (e) { addMsg('error', 'Failed to list prompts: ' + e.message); }
+}
+
 async function openLocalFolder() {
   if (!window.showDirectoryPicker) {
     alert(t('folderUnsupported'));
@@ -1226,9 +1298,198 @@ function appendExecOutput(data) {
 }
 
 // ── Slash commands ───────────────────────────────────────────────
+const HELP_DATA = {
+  '/help': {
+    usage: '/help [command]',
+    short: 'Show available commands or detailed help for a command',
+    detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
+  },
+  '/agent': {
+    usage: '/agent list | create | select <name> | delete <name>',
+    short: 'Manage AI agents',
+    detail: 'Create, list, select, or delete AI agents.\n\n'
+      + '  /agent list          — List all agents (user + global)\n'
+      + '  /agent create        — Create a new agent (interactive)\n'
+      + '  /agent select <name> — Activate an agent for this conversation\n'
+      + '  /agent delete <name> — Delete an agent by name\n\n'
+      + 'Agents define a system prompt, tools, model, and LLM service. '
+      + 'The active agent shapes the AI\'s behavior for the conversation.',
+  },
+  '/skill': {
+    usage: '/skill list | add <name> <prompt> | del <name>',
+    short: 'Manage skills (single-shot prompt templates)',
+    detail: 'Create, list, or delete skills.\n\n'
+      + '  /skill list              — List all skills with active status\n'
+      + '  /skill add <name> <prompt> — Create a skill with given prompt\n'
+      + '  /skill del <name>        — Delete a skill\n\n'
+      + 'Skills are prompt-only resources injected into the system prompt when active.',
+  },
+  '/add-skill': {
+    usage: '/add-skill <name> <prompt>',
+    short: 'Shortcut to create a skill',
+    detail: 'Same as /skill add <name> <prompt>.',
+  },
+  '/resources': {
+    usage: '/resources',
+    short: 'List all resources (agents, skills, MCP servers)',
+    detail: 'Shows all defined resources grouped by type, with activation status for the current conversation.',
+  },
+  '/activate': {
+    usage: '/activate <agent|skill|mcp> <name>',
+    short: 'Activate a resource for this conversation',
+    detail: 'Activates an agent, skill, or MCP server.\n\n'
+      + '  /activate agent researcher  — Activate the "researcher" agent\n'
+      + '  /activate skill summarizer  — Activate the "summarizer" skill\n'
+      + '  /activate mcp my_server     — Activate an MCP server',
+  },
+  '/deactivate': {
+    usage: '/deactivate <agent|skill|mcp> <name>',
+    short: 'Deactivate a resource from this conversation',
+    detail: 'Deactivates an agent, skill, or MCP server for the current conversation.',
+  },
+  '/share': {
+    usage: '/share <agent|skill|mcp> <name> <conversation_id>',
+    short: 'Share a resource to another conversation',
+    detail: 'Copies a resource activation to another conversation by ID.',
+  },
+  '/service': {
+    usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
+    short: 'Manage LLM and external services',
+    detail: 'Install, list, enable/disable, or uninstall services.\n\n'
+      + '  /service list                    — List installed services\n'
+      + '  /service install <type> <name> [key=val,...] — Install a service\n'
+      + '  /service uninstall <name>        — Remove a service\n'
+      + '  /service enable <name>           — Enable a service\n'
+      + '  /service disable <name>          — Disable a service',
+  },
+  '/schedules': {
+    usage: '/schedules list | del | add <YYYYMMDDHHmmss> [reason]',
+    short: 'Manage scheduled poll rechecks',
+    detail: 'List, add, or delete scheduled recheck times.\n\n'
+      + '  /schedules list           — List pending schedules\n'
+      + '  /schedules add <datetime> — Add a recheck (format: YYYYMMDDHHmmss)\n'
+      + '  /schedules del            — Delete all schedules',
+  },
+  '/compact': {
+    usage: '/compact',
+    short: 'Compact conversation (summarize old messages)',
+    detail: 'Summarizes older messages in the conversation to reduce context size while preserving key information.',
+  },
+  '/files': {
+    usage: '/files',
+    short: 'Toggle the files panel',
+    detail: 'Shows or hides the file browser panel for viewing and managing uploaded files.',
+  },
+  '/flows': {
+    usage: '/flows',
+    short: 'Toggle the flows panel',
+    detail: 'Shows or hides the flows panel for monitoring active data flows.',
+  },
+  '/tasks': {
+    usage: '/tasks',
+    short: 'Toggle the scheduled tasks panel',
+    detail: 'Shows or hides the panel listing scheduled background tasks.',
+  },
+  '/tools': {
+    usage: '/tools',
+    short: 'List available tools',
+    detail: 'Shows all tools available to the AI agent in the current conversation, including builtins and custom tools.',
+  },
+  '/usage': {
+    usage: '/usage',
+    short: 'Show token usage statistics',
+    detail: 'Displays token usage for the current conversation (prompt tokens, completion tokens, total).',
+  },
+  '/memory': {
+    usage: '/memory list | del <id>',
+    short: 'Manage conversation memories',
+    detail: 'List or delete persistent memories stored by the agent.\n\n'
+      + '  /memory list     — List all stored memories\n'
+      + '  /memory del <id> — Delete a memory by ID',
+  },
+  '/install': {
+    usage: '/install <filename.py>',
+    short: 'Install a custom tool',
+    detail: 'Install a custom tool from a Python file. Drag & drop a .py file into the chat or paste code.',
+  },
+  '/uninstall': {
+    usage: '/uninstall <tool_name>',
+    short: 'Uninstall a custom tool',
+    detail: 'Remove a previously installed custom tool by name.',
+  },
+  '/link': {
+    usage: '/link telegram <id> [bot_token] | unlink | status',
+    short: 'Link/unlink external accounts (Telegram)',
+    detail: 'Link your account to a Telegram user ID for cross-platform messaging.\n\n'
+      + '  /link telegram <user_id> [bot_token] — Link Telegram account\n'
+      + '  /link unlink                          — Unlink Telegram\n'
+      + '  /link status                          — Show link status',
+  },
+  '/add-secret': {
+    usage: '/add-secret <name> <value>',
+    short: 'Store an encrypted secret',
+    detail: 'Stores a secret value encrypted at rest. Available as ${secrets.key} in expressions.',
+  },
+  '/secrets': {
+    usage: '/secrets',
+    short: 'List stored secrets',
+    detail: 'Lists all stored secret names (values are not shown). Also accessible as /list-secrets.',
+  },
+  '/add-variable': {
+    usage: '/add-variable <name> <value>',
+    short: 'Store a plaintext variable',
+    detail: 'Stores a plaintext variable. Available as ${var.key} in expressions. Also: /add-var.',
+  },
+  '/variables': {
+    usage: '/variables',
+    short: 'List stored variables',
+    detail: 'Lists all stored variables with their values. Also: /vars, /list-variables.',
+  },
+  '/view': {
+    usage: '/view <filename>',
+    short: 'Preview a file (image, PDF, text, code)',
+    detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
+  },
+};
+
+function cmdHelp(topic) {
+  if (!topic) {
+    let lines = ['<b>Available commands:</b>', ''];
+    const cmds = Object.keys(HELP_DATA).sort();
+    for (const cmd of cmds) {
+      const h = HELP_DATA[cmd];
+      lines.push('<code>' + cmd + '</code> — ' + escapeHtml(h.short));
+    }
+    lines.push('', 'Type <code>/help &lt;command&gt;</code> for detailed documentation.');
+    const el = addMsg('system', '');
+    el.innerHTML = lines.join('<br>');
+  } else {
+    const key = topic.startsWith('/') ? topic : '/' + topic;
+    const h = HELP_DATA[key];
+    if (!h) {
+      addMsg('system', 'Unknown command: ' + key + '. Type /help to see available commands.');
+      return;
+    }
+    let lines = [
+      '<b>' + escapeHtml(key) + '</b>',
+      '',
+      '<b>Usage:</b> <code>' + escapeHtml(h.usage) + '</code>',
+      '',
+      '<pre style="margin:8px 0;white-space:pre-wrap;font-size:12px;background:rgba(255,255,255,0.05);padding:8px;border-radius:4px;">' + escapeHtml(h.detail) + '</pre>',
+    ];
+    const el = addMsg('system', '');
+    el.innerHTML = lines.join('<br>');
+  }
+}
+
 async function handleSlashCommand(text) {
   const parts = text.split(/\s+/);
   const cmd = parts[0].toLowerCase();
+
+  if (cmd === '/help') {
+    cmdHelp(parts[1] || '');
+    return true;
+  }
 
   if (cmd === '/schedules') {
     const sub = (parts[1] || 'list').toLowerCase();

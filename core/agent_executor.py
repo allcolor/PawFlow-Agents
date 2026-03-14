@@ -18,7 +18,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor, Future, as_completed
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from core.llm_client import (
     LLMClient, LLMMessage, LLMResponse, LLMToolDefinition, LLMToolCall,
@@ -47,6 +47,9 @@ class AgentTask:
     max_iterations: int = 50
     max_depth: int = 1
     timeout: int = 120
+    llm_service: str = ""  # service ID for LLM routing
+    user_id: str = ""  # user ID for service resolution
+    source_agent: str = ""  # name of the parent agent (for identity tracking)
 
 
 @dataclass
@@ -112,9 +115,11 @@ class SubAgentExecutor:
         max_workers: int = 4,
         default_max_iterations: int = 50,
         default_timeout: int = 120,
+        client_resolver: Optional[Callable] = None,
     ):
         self._client = client
         self._registry = registry
+        self._client_resolver = client_resolver  # (service_id, user_id) -> (LLMClient, svc)
         self._max_workers = max_workers
         self._default_max_iterations = default_max_iterations
         self._default_timeout = default_timeout
@@ -169,12 +174,47 @@ class SubAgentExecutor:
         deadline = start + (task.timeout or self._default_timeout)
         max_iter = task.max_iterations or self._default_max_iterations
 
+        # Resolve LLM client: per-agent service or default
+        client = self._client
+        resolved_svc = None
+        if task.llm_service and self._client_resolver:
+            try:
+                resolved_client, resolved_svc = self._client_resolver(
+                    task.llm_service, task.user_id,
+                )
+                if resolved_client:
+                    client = resolved_client
+            except Exception as e:
+                logger.warning("Failed to resolve LLM service '%s': %s",
+                               task.llm_service, e)
+
+        # Acquire capacity slot if service has limits
+        if resolved_svc and hasattr(resolved_svc, 'try_acquire'):
+            if not resolved_svc.try_acquire():
+                return AgentResult(
+                    task_id=task.id,
+                    agent_name=task.agent_name,
+                    error=f"LLM service '{task.llm_service}' at capacity",
+                    status="error",
+                )
+
         # Build tool definitions (filtered if agent specifies a whitelist)
         tool_defs, tool_handlers = self._build_tools(task.tools)
 
+        # Build system prompt with source context
+        sys_prompt = task.system_prompt
+        if task.source_agent:
+            sys_prompt += f"\n\n[You are talking to agent '{task.source_agent}']"
+
+        # Add source metadata to messages
+        user_source = (
+            {"type": "agent", "name": task.source_agent}
+            if task.source_agent
+            else {"type": "user", "name": task.user_id or "unknown"}
+        )
         messages = [
-            LLMMessage(role="system", content=task.system_prompt),
-            LLMMessage(role="user", content=task.message),
+            LLMMessage(role="system", content=sys_prompt),
+            LLMMessage(role="user", content=task.message, source=user_source),
         ]
 
         try:
@@ -186,7 +226,7 @@ class SubAgentExecutor:
 
                 result.iterations = iteration
 
-                response = self._client.complete(
+                response = client.complete(
                     messages=messages,
                     model=task.model or None,
                     temperature=0.7,
@@ -204,10 +244,14 @@ class SubAgentExecutor:
                     break
 
                 # Process tool calls
+                agent_source = {"type": "agent", "name": task.agent_name}
+                if task.llm_service:
+                    agent_source["llm_service"] = task.llm_service
                 messages.append(LLMMessage(
                     role="assistant",
                     content=response.content,
                     tool_calls=response.tool_calls,
+                    source=agent_source,
                 ))
 
                 for tc in response.tool_calls:
@@ -236,6 +280,10 @@ class SubAgentExecutor:
             logger.error("Sub-agent '%s' error: %s", task.agent_name, e)
             result.error = str(e)
             result.status = "error"
+        finally:
+            # Release capacity slot
+            if resolved_svc and hasattr(resolved_svc, 'release'):
+                resolved_svc.release()
 
         result.duration_ms = (time.time() - start) * 1000
         return result
@@ -455,9 +503,17 @@ def resolve_agent_task(
     """
     from core.resource_store import ResourceStore
     store = ResourceStore.instance()
-    agent_def = store.get("agent", agent_name, user_id)
+    agent_def = store.get_any("agent", agent_name, user_id)
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
+
+    # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
+    llm_svc = agent_def.get("llm_service", "")
+    if llm_svc and "${" in llm_svc:
+        from core.expression import resolve_expression
+        llm_svc = resolve_expression(llm_svc, owner=user_id)
+        if "${" in llm_svc:
+            llm_svc = ""  # unresolved → skip
 
     return AgentTask(
         id=uuid.uuid4().hex[:12],
@@ -469,4 +525,6 @@ def resolve_agent_task(
         max_iterations=agent_def.get("max_iterations", 50),
         max_depth=agent_def.get("max_depth", 1),
         timeout=agent_def.get("timeout", 120),
+        llm_service=llm_svc,
+        user_id=user_id,
     )

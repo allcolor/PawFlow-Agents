@@ -462,8 +462,17 @@ class ContinuousFlowExecutor:
             source_conn = None
             peeked_ff = None
             is_self_triggering = False
+            use_selective_dequeue = False
 
-            if incoming:
+            # Queue-aware scheduling: if task implements select_processable,
+            # let it choose which FlowFile to process (skip saturated services)
+            if incoming and hasattr(task, 'select_processable'):
+                result = task.select_processable(incoming)
+                if result is not None:
+                    peeked_ff, source_conn = result
+                    use_selective_dequeue = True
+                # else: nothing processable right now
+            elif incoming:
                 for conn in incoming:
                     ff = conn.peek()
                     if ff is not None:
@@ -512,7 +521,8 @@ class ContinuousFlowExecutor:
 
                     # SUCCESS — commit the transaction
                     self._commit(task_id, task_type, source_conn,
-                                 peeked_ff, result, duration_ms)
+                                 peeked_ff, result, duration_ms,
+                                 selective=use_selective_dequeue)
                     self._task_retry_counts[task_id] = 0
 
                     # Check for explicit stop request (from stopFlow task)
@@ -544,7 +554,8 @@ class ContinuousFlowExecutor:
 
     def _commit(self, task_id: str, task_type: str,
                 source_conn: Optional[Connection], input_ff: Optional[FlowFile],
-                results: List[FlowFile], duration_ms: float):
+                results: List[FlowFile], duration_ms: float,
+                selective: bool = False):
         """Commit a successful task execution.
 
         - Dequeue the input FlowFile (it's been processed)
@@ -558,7 +569,11 @@ class ContinuousFlowExecutor:
         """
         # Dequeue (remove from input queue) — skip for self-triggering tasks
         if source_conn is not None:
-            source_conn.dequeue()
+            if selective and input_ff is not None:
+                # Selective dequeue: remove specific FF (not necessarily head)
+                source_conn.remove(input_ff)
+            else:
+                source_conn.dequeue()
 
         # Enqueue results to output connections with relationship routing
         outgoing = self._connections.get_outgoing(task_id)

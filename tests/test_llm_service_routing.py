@@ -1,0 +1,430 @@
+"""Tests for LLM service routing, capacity management, prompt library, and agent identity.
+
+Covers:
+- Feature 1: LLM service routing per agent
+- Feature 2: Capacity management (max_concurrent, select_processable)
+- Feature 3: Prompt library (ResourceStore "prompt" type)
+- Feature 4: Agent identity/source tracking
+"""
+
+import json
+import threading
+import time
+import unittest
+from unittest.mock import MagicMock, patch
+
+from core.llm_client import LLMClient, LLMMessage, LLMResponse, LLMToolCall
+from core.connection import Connection
+from core import FlowFile
+
+
+# ── Feature 1: LLM Service Routing ──────────────────────────────────
+
+
+class TestLLMConnectionServiceCapacity(unittest.TestCase):
+    """Test LLMConnectionService get_client, complete_stream, capacity."""
+
+    def test_get_client_returns_llm_client(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._client = LLMClient(provider="openai", api_key="test")
+        svc._semaphore = None
+        svc._max_concurrent = 0
+        client = svc.get_client()
+        self.assertIsInstance(client, LLMClient)
+        self.assertEqual(client.api_key, "test")
+
+    def test_has_capacity_unlimited(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._semaphore = None
+        self.assertTrue(svc.has_capacity())
+
+    def test_has_capacity_with_limit(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._semaphore = threading.Semaphore(1)
+        self.assertTrue(svc.has_capacity())
+
+    def test_try_acquire_and_release(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._semaphore = threading.Semaphore(1)
+        self.assertTrue(svc.try_acquire())
+        self.assertFalse(svc.try_acquire())  # saturated
+        self.assertFalse(svc.has_capacity())
+        svc.release()
+        self.assertTrue(svc.has_capacity())
+
+    def test_try_acquire_unlimited(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc._semaphore = None
+        self.assertTrue(svc.try_acquire())
+        # release should not error
+        svc.release()
+
+    def test_max_concurrent_in_schema(self):
+        from services.llm_connection import LLMConnectionService
+        svc = LLMConnectionService.__new__(LLMConnectionService)
+        svc.config = {}
+        schema = svc.get_parameter_schema()
+        self.assertIn("max_concurrent", schema)
+        self.assertEqual(schema["max_concurrent"]["default"], 0)
+
+
+# ── Feature 2: Connection.remove ─────────────────────────────────────
+
+
+class TestConnectionRemove(unittest.TestCase):
+    """Test selective FlowFile removal from Connection."""
+
+    def test_remove_specific_flowfile(self):
+        conn = Connection("a", "b")
+        ff1 = FlowFile(content=b"one")
+        ff2 = FlowFile(content=b"two")
+        ff3 = FlowFile(content=b"three")
+        conn.enqueue(ff1)
+        conn.enqueue(ff2)
+        conn.enqueue(ff3)
+        self.assertEqual(conn.queue_size(), 3)
+
+        # Remove middle element
+        result = conn.remove(ff2)
+        self.assertTrue(result)
+        self.assertEqual(conn.queue_size(), 2)
+
+        # Remaining should be ff1 and ff3
+        out1 = conn.dequeue()
+        out2 = conn.dequeue()
+        self.assertIs(out1, ff1)
+        self.assertIs(out2, ff3)
+
+    def test_remove_nonexistent_returns_false(self):
+        conn = Connection("a", "b")
+        ff1 = FlowFile(content=b"one")
+        ff2 = FlowFile(content=b"two")
+        conn.enqueue(ff1)
+        result = conn.remove(ff2)
+        self.assertFalse(result)
+        self.assertEqual(conn.queue_size(), 1)
+
+
+# ── Feature 3: Prompt Library ────────────────────────────────────────
+
+
+class TestPromptResourceType(unittest.TestCase):
+    """Test ResourceStore supports 'prompt' type."""
+
+    def setUp(self):
+        from core.resource_store import ResourceStore
+        ResourceStore.reset()
+        self.store = ResourceStore.instance()
+        # Clean up test data
+        for p in self.store.list("prompt", user_id="user1"):
+            self.store.delete("prompt", p["name"], "user1")
+        for p in self.store.list("prompt", user_id="listuser"):
+            self.store.delete("prompt", p["name"], "listuser")
+
+    def tearDown(self):
+        from core.resource_store import ResourceStore
+        ResourceStore.reset()
+
+    def test_prompt_in_valid_types(self):
+        from core.resource_store import VALID_TYPES
+        self.assertIn("prompt", VALID_TYPES)
+
+    def test_create_prompt(self):
+        entry = self.store.create("prompt", "test_prompt", "user1", {
+            "content": "Summarize the following text...",
+            "title": "Summarizer",
+            "category": "productivity",
+        })
+        self.assertEqual(entry["name"], "test_prompt")
+        self.assertEqual(entry["content"], "Summarize the following text...")
+        self.assertEqual(entry["title"], "Summarizer")
+        self.assertEqual(entry["category"], "productivity")
+
+    def test_create_prompt_requires_content(self):
+        with self.assertRaises(ValueError):
+            self.store.create("prompt", "bad", "user1", {"title": "No content"})
+
+    def test_list_prompts(self):
+        self.store.create("prompt", "p1", "listuser", {"content": "prompt 1"})
+        self.store.create("prompt", "p2", "listuser", {"content": "prompt 2"})
+        prompts = self.store.list("prompt", user_id="listuser")
+        self.assertEqual(len(prompts), 2)
+
+    def test_prompt_defaults(self):
+        entry = self.store.create("prompt", "minimal", "user1", {
+            "content": "Hello",
+        })
+        self.assertEqual(entry["title"], "")
+        self.assertEqual(entry["category"], "")
+        self.assertEqual(entry["description"], "")
+
+    def test_delete_prompt(self):
+        self.store.create("prompt", "to_delete", "user1", {"content": "bye"})
+        self.assertTrue(self.store.delete("prompt", "to_delete", "user1"))
+        self.assertIsNone(self.store.get("prompt", "to_delete", "user1"))
+
+
+# ── Feature 4: Agent Identity / Source ───────────────────────────────
+
+
+class TestLLMMessageSource(unittest.TestCase):
+    """Test LLMMessage.source field."""
+
+    def test_source_default_none(self):
+        msg = LLMMessage(role="user", content="hello")
+        self.assertIsNone(msg.source)
+
+    def test_source_set(self):
+        msg = LLMMessage(
+            role="assistant", content="hi",
+            source={"type": "agent", "name": "researcher", "llm_service": "grok"},
+        )
+        self.assertEqual(msg.source["type"], "agent")
+        self.assertEqual(msg.source["name"], "researcher")
+        self.assertEqual(msg.source["llm_service"], "grok")
+
+    def test_source_user(self):
+        msg = LLMMessage(
+            role="user", content="question",
+            source={"type": "user", "name": "alice"},
+        )
+        self.assertEqual(msg.source["type"], "user")
+        self.assertEqual(msg.source["name"], "alice")
+
+
+class TestAgentTaskLLMService(unittest.TestCase):
+    """Test AgentTask has llm_service and user_id fields."""
+
+    def test_agent_task_fields(self):
+        from core.agent_executor import AgentTask
+        task = AgentTask(
+            id="t1", agent_name="test", message="hi",
+            llm_service="grok", user_id="alice",
+            source_agent="parent",
+        )
+        self.assertEqual(task.llm_service, "grok")
+        self.assertEqual(task.user_id, "alice")
+        self.assertEqual(task.source_agent, "parent")
+
+    def test_agent_task_defaults(self):
+        from core.agent_executor import AgentTask
+        task = AgentTask(id="t1", agent_name="test", message="hi")
+        self.assertEqual(task.llm_service, "")
+        self.assertEqual(task.user_id, "")
+        self.assertEqual(task.source_agent, "")
+
+
+class TestResolveAgentTask(unittest.TestCase):
+    """Test resolve_agent_task populates llm_service and user_id."""
+
+    def setUp(self):
+        from core.resource_store import ResourceStore
+        ResourceStore.reset()
+        self.store = ResourceStore.instance()
+        # Clean up test data
+        for a in self.store.list("agent", user_id="alice"):
+            self.store.delete("agent", a["name"], "alice")
+        for a in self.store.list("agent", user_id="bob"):
+            self.store.delete("agent", a["name"], "bob")
+
+    def tearDown(self):
+        from core.resource_store import ResourceStore
+        ResourceStore.reset()
+
+    def test_resolve_with_llm_service(self):
+        self.store.create("agent", "researcher", "alice", {
+            "prompt": "Research assistant",
+            "llm_service": "grok",
+        })
+        from core.agent_executor import resolve_agent_task
+        task = resolve_agent_task("researcher", "find info", "alice")
+        self.assertEqual(task.llm_service, "grok")
+        self.assertEqual(task.user_id, "alice")
+
+    def test_resolve_without_llm_service(self):
+        self.store.create("agent", "basic", "bob", {
+            "prompt": "Basic assistant",
+        })
+        from core.agent_executor import resolve_agent_task
+        task = resolve_agent_task("basic", "hello", "bob")
+        self.assertEqual(task.llm_service, "")
+
+
+class TestAgentDefaultInDefaults(unittest.TestCase):
+    """Test that agent defaults include llm_service."""
+
+    def test_llm_service_in_agent_defaults(self):
+        from core.resource_store import _DEFAULTS
+        self.assertIn("llm_service", _DEFAULTS["agent"])
+        self.assertEqual(_DEFAULTS["agent"]["llm_service"], "")
+
+
+class TestManageResourceHandlerPrompt(unittest.TestCase):
+    """Test ManageResourceHandler includes prompt type."""
+
+    def test_prompt_in_enum(self):
+        from core.tool_registry import ManageResourceHandler
+        h = ManageResourceHandler()
+        schema = h.parameters_schema
+        enum_values = schema["properties"]["resource_type"]["enum"]
+        self.assertIn("prompt", enum_values)
+
+
+class TestMessageSerializationSource(unittest.TestCase):
+    """Test that source is preserved through serialization/deserialization."""
+
+    def test_serialize_with_source(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        msgs = [
+            LLMMessage(role="user", content="hi",
+                       source={"type": "user", "name": "alice"}),
+            LLMMessage(role="assistant", content="hello",
+                       source={"type": "agent", "name": "bot", "llm_service": "gpt"}),
+        ]
+        serialized = task._serialize_messages(msgs)
+        self.assertEqual(serialized[0]["source"]["type"], "user")
+        self.assertEqual(serialized[1]["source"]["name"], "bot")
+        self.assertEqual(serialized[1]["source"]["llm_service"], "gpt")
+
+    def test_deserialize_with_source(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        data = [
+            {"role": "user", "content": "hi",
+             "source": {"type": "user", "name": "alice"}},
+            {"role": "assistant", "content": "hello",
+             "source": {"type": "agent", "name": "bot"}},
+        ]
+        msgs = task._deserialize_messages(data)
+        self.assertEqual(msgs[0].source["type"], "user")
+        self.assertEqual(msgs[1].source["name"], "bot")
+
+    def test_deserialize_without_source(self):
+        """Backward compat: old messages without source."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        data = [{"role": "user", "content": "hi"}]
+        msgs = task._deserialize_messages(data)
+        self.assertIsNone(msgs[0].source)
+
+
+class TestClassifyMessagesSource(unittest.TestCase):
+    """Test _classify_messages_for_display includes source."""
+
+    def test_source_in_classified(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [
+            {"role": "user", "content": "hi",
+             "source": {"type": "user", "name": "alice"}},
+            {"role": "assistant", "content": "hello",
+             "source": {"type": "agent", "name": "bot", "llm_service": "grok"}},
+        ]
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+        self.assertEqual(len(classified), 2)
+        self.assertEqual(classified[0]["source"]["type"], "user")
+        self.assertEqual(classified[1]["source"]["name"], "bot")
+        self.assertEqual(classified[1]["source"]["llm_service"], "grok")
+
+    def test_no_source_backward_compat(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        raw = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+        classified = AgentLoopTask._classify_messages_for_display(raw)
+        self.assertEqual(len(classified), 2)
+        self.assertNotIn("source", classified[0])
+        self.assertNotIn("source", classified[1])
+
+
+class TestAgentLoopSchema(unittest.TestCase):
+    """Test AgentLoopTask parameter schema changes."""
+
+    def test_llm_service_in_schema(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        task.config = {}
+        schema = task.get_parameter_schema()
+        self.assertIn("llm_service", schema)
+
+    def test_no_provider_in_schema(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        task.config = {}
+        schema = task.get_parameter_schema()
+        self.assertNotIn("provider", schema)
+        self.assertNotIn("api_key", schema)
+        self.assertNotIn("base_url", schema)
+
+    def test_model_still_in_schema(self):
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        task.config = {}
+        schema = task.get_parameter_schema()
+        self.assertIn("model", schema)
+
+
+class TestFlowMigration(unittest.TestCase):
+    """Verify existing flows have been migrated to llm_service."""
+
+    def _load_flow(self, name):
+        import os
+        path = os.path.join("flows", name)
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_agent_example_no_inline_llm(self):
+        flow = self._load_flow("agent_example.json")
+        params = flow.get("parameters", {})
+        self.assertNotIn("provider", params)
+        self.assertNotIn("api_key", params)
+        self.assertIn("llm_service", params)
+
+        agent_params = flow["tasks"]["agent"]["parameters"]
+        self.assertNotIn("provider", agent_params)
+        self.assertNotIn("api_key", agent_params)
+        self.assertIn("llm_service", agent_params)
+
+    def test_all_agent_flows_migrated(self):
+        for name in ["slack_agent.json", "discord_agent.json",
+                      "telegram_agent.json", "whatsapp_agent.json"]:
+            flow = self._load_flow(name)
+            params = flow.get("parameters", {})
+            self.assertNotIn("provider", params, f"{name} still has provider")
+            self.assertNotIn("api_key", params, f"{name} still has api_key")
+            self.assertIn("llm_service", params, f"{name} missing llm_service")
+
+
+class TestI18nPromptKeys(unittest.TestCase):
+    """Test i18n files have prompt keys."""
+
+    def test_en_prompt_keys(self):
+        with open("gui/i18n/en.json", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("prompt.title", data)
+        self.assertIn("prompt.select", data)
+        self.assertIn("prompt.empty", data)
+        self.assertIn("prompt.library", data)
+        self.assertIn("agent.llm_service", data)
+
+    def test_fr_prompt_keys(self):
+        with open("gui/i18n/fr.json", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("prompt.title", data)
+        self.assertIn("prompt.library", data)
+
+    def test_es_prompt_keys(self):
+        with open("gui/i18n/es.json", encoding="utf-8") as f:
+            data = json.load(f)
+        self.assertIn("prompt.title", data)
+        self.assertIn("prompt.library", data)
+
+
+if __name__ == "__main__":
+    unittest.main()

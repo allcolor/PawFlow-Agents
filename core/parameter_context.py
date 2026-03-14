@@ -38,6 +38,10 @@ class ParameterContext:
         """Récupérer un paramètre par clé."""
         return self._params.get(key, default)
 
+    def get_raw(self, key: str, default: Any = None):
+        """Get raw value (ConfigValue if large, else str). No string conversion."""
+        return self._params.get(key, default)
+
     def has(self, key: str) -> bool:
         """Vérifier si un paramètre existe."""
         return key in self._params
@@ -90,9 +94,13 @@ class ParameterContext:
         return self._resolve_dict(config)
 
     def _resolve_dict(self, d: Dict[str, Any]) -> Dict[str, Any]:
+        from core.config_value import ConfigValue
         result = {}
         for key, value in d.items():
-            if isinstance(value, str):
+            # Skip large ConfigValues — pass through without expression resolution
+            if isinstance(value, ConfigValue) and value.is_large:
+                result[key] = value
+            elif isinstance(value, str):
                 resolved = self.resolve(value)
                 # Second pass for cascading: ${flow.parameters.x} → ${global.y} → actual value
                 if isinstance(resolved, str) and '${' in resolved:
@@ -117,7 +125,15 @@ class ParameterContext:
         return resolved
 
     def __repr__(self) -> str:
-        return f"ParameterContext({self._params})"
+        from core.config_value import ConfigValue
+        display = {}
+        for k, v in self._params.items():
+            if isinstance(v, ConfigValue) and v.is_large:
+                mb = v.size / (1024 * 1024)
+                display[k] = f"<large:{mb:.1f}MB>"
+            else:
+                display[k] = v
+        return f"ParameterContext({display})"
 
     def __eq__(self, other):
         if not isinstance(other, ParameterContext):

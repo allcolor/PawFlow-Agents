@@ -61,6 +61,7 @@ class LLMMessage:
     content: Union[str, List[Dict[str, Any]]] = ""
     tool_calls: Optional[List[LLMToolCall]] = None
     tool_call_id: Optional[str] = None
+    source: Optional[Dict[str, str]] = None  # {"type": "user"|"agent", "name": "...", "llm_service": "..."}
 
     @property
     def text_content(self) -> str:

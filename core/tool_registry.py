@@ -3302,22 +3302,13 @@ class StoreSecretHandler(ToolHandler):
 
         try:
             from pathlib import Path
-            from core.secrets import get_secrets_manager
+            from core.config_store import ConfigStore
+            from core.config_value import ConfigValue
 
-            sm = get_secrets_manager()
-            encrypted = sm.encrypt(value)
-
-            # Store in user-level secrets file
             secrets_path = Path("config/users") / user_id / "secrets.json"
-            secrets_path.parent.mkdir(parents=True, exist_ok=True)
-            secrets = {}
-            if secrets_path.exists():
-                secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-            secrets[key] = encrypted
-            secrets_path.write_text(
-                json.dumps(secrets, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
+            secrets = ConfigStore.load_secrets(secrets_path)
+            secrets[key] = ConfigValue(value=value)
+            ConfigStore.save_secrets(secrets_path, secrets)
             return f"Secret '{key}' stored securely. Reference it in flows as ${{secrets.user.{key}}}"
         except Exception as e:
             return f"Error storing secret: {e}"
@@ -3355,28 +3346,25 @@ class ListSecretsHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         from pathlib import Path
+        from core.config_store import ConfigStore
 
         user_id = self._user_id or "anonymous"
         secrets_path = Path("config/users") / user_id / "secrets.json"
-        if not secrets_path.exists():
-            return "No secrets stored yet. Use store_secret tool or /add-secret in chat."
-
-        try:
-            secrets = json.loads(secrets_path.read_text(encoding="utf-8"))
-        except Exception:
-            return "Error reading secrets store."
+        secrets = ConfigStore.load_secrets(secrets_path)
 
         if not secrets:
-            return f"No secrets stored for user '{user_id}'."
+            return "No secrets stored yet. Use store_secret tool or /add-secret in chat."
 
         lines = [f"Available secrets ({len(secrets)}):"]
         for k in sorted(secrets.keys()):
-            lines.append(f"- {k}  →  ${{secrets.user.{k}}}")
+            cv = secrets[k]
+            suffix = f" (large: {cv.size / 1024:.0f}KB)" if cv.is_large else ""
+            lines.append(f"- {k}{suffix}  →  ${{secrets.user.{k}}}")
         return "\n".join(lines)
 
 
 class ManageResourceHandler(ToolHandler):
-    """CRUD for user resources: agents, skills, MCP servers.
+    """CRUD for user resources: agents, skills, MCP servers, prompts.
 
     Both users (via slash commands) and agents (via tool calls) can manage
     resources. Resources are user-scoped and persist in config/ JSON files.
@@ -3393,7 +3381,7 @@ class ManageResourceHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Manage user resources (agents, skills, MCP servers). Actions:\n"
+            "Manage user resources (agents, skills, MCP servers, prompts). Actions:\n"
             "- create: Create a new resource\n"
             "- update: Modify an existing resource\n"
             "- delete: Delete a resource\n"
@@ -3401,11 +3389,12 @@ class ManageResourceHandler(ToolHandler):
             "- get: Get details of a specific resource\n"
             "- activate: Activate a resource in the current conversation\n"
             "- deactivate: Deactivate a resource from the current conversation\n\n"
-            "Resource types: agent, skill, mcp\n\n"
+            "Resource types: agent, skill, mcp, prompt\n\n"
             "Agent fields: prompt (required), model, tools (list), "
-            "max_depth, timeout, description\n"
+            "max_depth, timeout, description, llm_service\n"
             "Skill fields: prompt (required), description\n"
-            "MCP fields: url (required), auth (dict)"
+            "MCP fields: url (required), auth (dict)\n"
+            "Prompt fields: content (required), title, category, description"
         )
 
     @property
@@ -3421,7 +3410,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["agent", "skill", "mcp"],
+                    "enum": ["agent", "skill", "mcp", "prompt"],
                     "description": "Type of resource",
                 },
                 "name": {
@@ -3476,7 +3465,7 @@ class ManageResourceHandler(ToolHandler):
                 return f"{rtype} '{name}' not found."
 
             elif action == "list":
-                items = store.list(rtype, user_id)
+                items = store.list_all(rtype, user_id)
                 if not items:
                     return f"No {rtype}s found."
                 lines = [f"Your {rtype}s ({len(items)}):"]
@@ -3488,7 +3477,7 @@ class ManageResourceHandler(ToolHandler):
             elif action == "get":
                 if not name:
                     return "Error: 'name' is required for get"
-                item = store.get(rtype, name, user_id)
+                item = store.get_any(rtype, name, user_id)
                 if not item:
                     return f"{rtype} '{name}' not found."
                 return json.dumps(item, ensure_ascii=False, indent=2)
@@ -3496,7 +3485,7 @@ class ManageResourceHandler(ToolHandler):
             elif action == "activate":
                 if not name:
                     return "Error: 'name' is required for activate"
-                if not store.exists(rtype, name, user_id):
+                if store.get_any(rtype, name, user_id) is None:
                     return f"{rtype} '{name}' not found."
                 self._activate_resource(rtype, name)
                 return f"Activated {rtype} '{name}' in this conversation."
@@ -3777,7 +3766,7 @@ class UseSkillHandler(ToolHandler):
         user_id = self._user_id or "anonymous"
 
         store = ResourceStore.instance()
-        skill_def = store.get("skill", skill_name, user_id)
+        skill_def = store.get_any("skill", skill_name, user_id)
         if skill_def is None:
             return f"Error: Skill '{skill_name}' not found."
 

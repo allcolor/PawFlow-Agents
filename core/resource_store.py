@@ -25,15 +25,18 @@ _RESOURCE_FILES = {
     "agent": _CONFIG_DIR / "agents.json",
     "skill": _CONFIG_DIR / "skills.json",
     "mcp": _CONFIG_DIR / "mcp_servers.json",
+    "prompt": _CONFIG_DIR / "prompts.json",
 }
 
 VALID_TYPES = frozenset(_RESOURCE_FILES.keys())
+GLOBAL_USER_ID = "__global__"
 
 # Required fields per type
 _REQUIRED_FIELDS = {
     "agent": ("prompt",),
     "skill": ("prompt",),
     "mcp": ("url",),
+    "prompt": ("content",),
 }
 
 # Default values per type
@@ -44,6 +47,7 @@ _DEFAULTS = {
         "max_depth": 1,
         "timeout": 120,
         "description": "",
+        "llm_service": "",
     },
     "skill": {
         "description": "",
@@ -51,6 +55,11 @@ _DEFAULTS = {
     "mcp": {
         "auth": {},
         "discovered_tools": [],
+    },
+    "prompt": {
+        "title": "",
+        "category": "",
+        "description": "",
     },
 }
 
@@ -212,6 +221,33 @@ class ResourceStore:
                 results.append(item)
         results.sort(key=lambda x: x.get("created_at", 0), reverse=True)
         return results
+
+    def list_all(self, resource_type: str,
+                 user_id: str) -> List[Dict[str, Any]]:
+        """List user resources merged with global resources.
+
+        User resources take precedence over global ones with the same name.
+        """
+        user_items = self.list(resource_type, user_id=user_id)
+        if user_id == GLOBAL_USER_ID:
+            return user_items
+        global_items = self.list(resource_type, user_id=GLOBAL_USER_ID)
+        seen = {item["name"] for item in user_items}
+        for gi in global_items:
+            if gi["name"] not in seen:
+                gi["_global"] = True
+                user_items.append(gi)
+        return user_items
+
+    def get_any(self, resource_type: str, name: str,
+                user_id: str) -> Optional[Dict[str, Any]]:
+        """Get a resource by name, trying user scope first then global."""
+        result = self.get(resource_type, name, user_id)
+        if result is not None:
+            return result
+        if user_id != GLOBAL_USER_ID:
+            return self.get(resource_type, name, GLOBAL_USER_ID)
+        return None
 
     def exists(self, resource_type: str, name: str,
                user_id: str) -> bool:

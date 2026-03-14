@@ -4,10 +4,7 @@
   "version": "1.0.0",
   "description": "LLM agent accessible via Slack. Messages are processed by the agent and responses are sent back.",
   "parameters": {
-    "provider": "openai",
-    "api_key": "",
-    "base_url": "",
-    "model": "",
+    "llm_service": "${global.llm.default.service}",
     "slack_bot_token": "",
     "slack_app_token": "",
     "conversation_ttl": 0
@@ -32,10 +29,7 @@
     "agent": {
       "type": "agentLoop",
       "parameters": {
-        "provider": "${flow.parameters.provider}",
-        "api_key": "${flow.parameters.api_key}",
-        "base_url": "${flow.parameters.base_url}",
-        "model": "${flow.parameters.model}",
+        "llm_service": "${flow.parameters.llm_service}",
         "system_prompt": "You are a helpful AI assistant on Slack. Be concise and helpful.",
         "conversation_attribute": "slack.channel_id",
         "conversation_ttl": "${flow.parameters.conversation_ttl}",

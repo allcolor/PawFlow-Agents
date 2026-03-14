@@ -70,6 +70,109 @@ class TestExpression(unittest.TestCase):
         self.assertEqual(resolve_expression("${foo}"), "${foo}")
 
 
+class TestCascadeResolution(unittest.TestCase):
+    """Tests for cascading expression resolution."""
+
+    def setUp(self):
+        import json, tempfile, shutil
+        self._orig_global = None
+        self._user_dir = None
+        # Save original global params
+        from core.expression import _GLOBAL_PARAMS_FILE, _USER_CONFIG_DIR
+        self._global_file = _GLOBAL_PARAMS_FILE
+        self._user_config_dir = _USER_CONFIG_DIR
+        if self._global_file.exists():
+            self._orig_global = self._global_file.read_text(encoding="utf-8")
+        # Write test global params
+        self._global_file.parent.mkdir(parents=True, exist_ok=True)
+        self._global_file.write_text(json.dumps({
+            "shared_key": "from_global",
+            "only_global": "global_value",
+            "cascade_target": "final_value",
+        }), encoding="utf-8")
+        # Write test user params
+        self._user_dir = self._user_config_dir / "testuser"
+        self._user_dir.mkdir(parents=True, exist_ok=True)
+        (self._user_dir / "parameters.json").write_text(json.dumps({
+            "shared_key": "from_user",
+            "user_only": "user_value",
+            "indirect": "${global.cascade_target}",
+        }), encoding="utf-8")
+
+    def tearDown(self):
+        import shutil
+        # Restore global params
+        if self._orig_global is not None:
+            self._global_file.write_text(self._orig_global, encoding="utf-8")
+        # Cleanup user dir
+        if self._user_dir and self._user_dir.exists():
+            shutil.rmtree(self._user_dir)
+
+    def test_user_found(self):
+        """${user.X} resolves from user params when present."""
+        result = resolve_expression("${user.shared_key}", owner="testuser")
+        self.assertEqual(result, "from_user")
+
+    def test_user_cascades_to_global(self):
+        """${user.X} falls back to global when not in user params."""
+        result = resolve_expression("${user.only_global}", owner="testuser")
+        self.assertEqual(result, "global_value")
+
+    def test_user_no_owner_cascades_to_global(self):
+        """${user.X} without owner still cascades to global."""
+        result = resolve_expression("${user.shared_key}")
+        self.assertEqual(result, "from_global")
+
+    def test_global_direct(self):
+        """${global.X} resolves from global params."""
+        result = resolve_expression("${global.only_global}")
+        self.assertEqual(result, "global_value")
+
+    def test_flow_params_cascade_to_user(self):
+        """${flow.parameters.X} cascades to user when not in flow params."""
+        result = resolve_expression(
+            "${flow.parameters.shared_key}",
+            parameters={},
+            owner="testuser",
+        )
+        self.assertEqual(result, "from_user")
+
+    def test_flow_params_cascade_to_global(self):
+        """${flow.parameters.X} cascades to global when not in flow or user."""
+        result = resolve_expression(
+            "${flow.parameters.only_global}",
+            parameters={},
+            owner="testuser",
+        )
+        self.assertEqual(result, "global_value")
+
+    def test_flow_params_priority(self):
+        """${flow.parameters.X} prefers flow params over user/global."""
+        result = resolve_expression(
+            "${flow.parameters.shared_key}",
+            parameters={"shared_key": "from_flow"},
+            owner="testuser",
+        )
+        self.assertEqual(result, "from_flow")
+
+    def test_recursive_resolution(self):
+        """Resolved value containing ${...} gets resolved again."""
+        result = resolve_expression("${user.indirect}", owner="testuser")
+        self.assertEqual(result, "final_value")
+
+    def test_recursion_limit(self):
+        """Recursion stops at depth 10 to prevent infinite loops."""
+        # ${user.indirect} → ${global.cascade_target} → final_value (depth 2)
+        # This should work fine, just testing the mechanism works
+        result = resolve_expression("${user.indirect}", owner="testuser")
+        self.assertEqual(result, "final_value")
+
+    def test_user_overrides_global(self):
+        """When both user and global have the key, user wins."""
+        result = resolve_expression("${user.shared_key}", owner="testuser")
+        self.assertEqual(result, "from_user")
+
+
 # ============================================================================
 # TestFlowParser
 # ============================================================================

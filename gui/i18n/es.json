@@ -848,6 +848,14 @@
     "agent.tool_registry": "Registro de herramientas",
     "agent.conversation": "Conversación",
     "agent.no_tools": "Ninguna herramienta configurada",
+    "agent.llm_service": "Servicio LLM",
+    "agent.source": "Fuente",
+
+    "prompt.title": "Prompts",
+    "prompt.select": "Seleccionar prompt",
+    "prompt.empty": "No hay prompts disponibles",
+    "prompt.library": "Biblioteca de prompts",
+    "prompt.category": "Categoría",
 
     "agent_tools.title": "Herramientas del agente",
     "agent_tools.section": "Configuración de herramientas del agente",
@@ -1109,5 +1117,25 @@
     "service.heartbeat_down": "Servicio '{id}' desconectado — el relay ya no es accesible",
     "service.auto_installed": "Servicio '{id}' instalado automáticamente desde el relay",
     "service.auto_disabled": "Servicio '{id}' desactivado (relay desconectado)",
-    "service.multi_available": "Múltiples servicios disponibles. Use el parámetro 'service' para elegir."
+    "service.multi_available": "Múltiples servicios disponibles. Use el parámetro 'service' para elegir.",
+
+    "resources.title": "Recursos",
+    "resources.agents": "Agentes",
+    "resources.prompts": "Prompts",
+    "resources.skills": "Skills",
+    "resources.scope_global": "Biblioteca global",
+    "resources.scope_user": "Biblioteca de usuario",
+    "resources.name": "Nombre",
+    "resources.description": "Descripción",
+    "resources.content": "Contenido",
+    "resources.create": "Crear",
+    "resources.edit": "Editar",
+    "resources.delete": "Eliminar",
+    "resources.confirm_delete": "¿Confirmar eliminación de '{name}'?",
+    "resources.created": "Recurso '{name}' creado con éxito.",
+    "resources.updated": "Recurso '{name}' actualizado.",
+    "resources.deleted": "Recurso '{name}' eliminado.",
+    "resources.empty": "No se encontraron recursos.",
+    "resources.global_badge": "Global",
+    "resources.user_badge": "Usuario"
 }

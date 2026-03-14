@@ -399,8 +399,8 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_parameter_schema(self):
         task = AgentLoopTask({"api_key": "test"})
         schema = task.get_parameter_schema()
-        assert "provider" in schema
-        assert "api_key" in schema
+        assert "llm_service" in schema
+        assert "model" in schema
         assert "system_prompt" in schema
         assert "max_iterations" in schema
         assert "tools" in schema

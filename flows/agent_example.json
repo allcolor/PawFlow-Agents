@@ -4,10 +4,7 @@
   "version": "1.5.0",
   "description": "LLM agent with SSE streaming, OAuth2 login, chat UI, multi-turn conversations, file generation, and per-tool permissions. Visit /chat for the web interface.",
   "parameters": {
-    "provider": "openai",
-    "api_key": "",
-    "base_url": "",
-    "model": "",
+    "llm_service": "${global.llm.default.service}",
     "file_ttl": 3600,
     "conversation_ttl": 0,
     "oauth_provider": "google",
@@ -115,10 +112,7 @@
     "agent": {
       "type": "agentLoop",
       "parameters": {
-        "provider": "${flow.parameters.provider}",
-        "api_key": "${flow.parameters.api_key}",
-        "base_url": "${flow.parameters.base_url}",
-        "model": "${flow.parameters.model}",
+        "llm_service": "${flow.parameters.llm_service}",
         "system_prompt": "You are a helpful research assistant. You have access to tools for web search, web scraping, calculations, file reading, file creation, and autonomous continuation.\n\nWhen asked to research a topic:\n- Do multiple searches with different queries to get comprehensive results\n- Scrape relevant pages to get full content (use scrape_url)\n- Cross-reference information from multiple sources\n- If you need more research rounds, call schedule_continuation with a plan of what to do next — this will deliver your current findings to the user and automatically resume your work after a short pause\n- Synthesize findings into a well-structured response\n\nWhen creating files, provide the download URL to the user.\n\nIMPORTANT: For complex research tasks, use schedule_continuation to break your work into rounds. Each round: search/scrape, synthesize intermediate findings, then schedule_continuation if there's more to investigate.",
         "max_iterations": 200,
         "max_rounds": 5,

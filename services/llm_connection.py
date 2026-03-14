@@ -5,6 +5,7 @@ Uses shared LLM client from core/llm_client.py (stdlib HTTP, zero dependencies).
 """
 
 import logging
+import threading
 from typing import Dict, Any, List, Optional
 
 from core.base_service import BaseService
@@ -44,6 +45,10 @@ class LLMConnectionService(BaseService):
         self.default_model = self._client.default_model
         self.timeout = self._client.timeout
         self.max_retries = self._client.max_retries
+        # Capacity management
+        max_conc = int(self.config.get("max_concurrent", 0))
+        self._semaphore = threading.Semaphore(max_conc) if max_conc > 0 else None
+        self._max_concurrent = max_conc
 
     def _create_connection(self):
         """Validate config and return a marker (actual HTTP is per-request)."""
@@ -84,6 +89,47 @@ class LLMConnectionService(BaseService):
         except LLMClientError as e:
             raise ServiceError(str(e))
 
+    def complete_stream(
+        self,
+        messages: List[LLMMessage],
+        model: Optional[str] = None,
+        temperature: float = 0.7,
+        max_tokens: int = 1024,
+        tools: Optional[List[LLMToolDefinition]] = None,
+        callback=None,
+    ) -> LLMResponse:
+        """Streaming completion — delegates to LLMClient.complete_stream()."""
+        self.ensure_connected()
+        try:
+            return self._client.complete_stream(messages, model, temperature, max_tokens, tools, callback)
+        except LLMClientError as e:
+            raise ServiceError(str(e))
+
+    def get_client(self) -> LLMClient:
+        """Return the underlying LLMClient instance."""
+        return self._client
+
+    def try_acquire(self) -> bool:
+        """Non-blocking acquire of a concurrency slot. Returns True if acquired."""
+        if self._semaphore is None:
+            return True
+        return self._semaphore.acquire(blocking=False)
+
+    def release(self):
+        """Release a concurrency slot."""
+        if self._semaphore is not None:
+            self._semaphore.release()
+
+    def has_capacity(self) -> bool:
+        """Check if a concurrency slot is available (non-destructive peek)."""
+        if self._semaphore is None:
+            return True
+        # Acquire + immediate release to peek
+        if self._semaphore.acquire(blocking=False):
+            self._semaphore.release()
+            return True
+        return False
+
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "provider": {
@@ -122,6 +168,12 @@ class LLMConnectionService(BaseService):
                 "required": False,
                 "default": 2,
                 "description": "Number of retries on transient errors",
+            },
+            "max_concurrent": {
+                "type": "integer",
+                "required": False,
+                "default": 0,
+                "description": "Max concurrent requests (0 = unlimited)",
             },
         }
 

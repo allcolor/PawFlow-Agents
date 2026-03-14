@@ -5,5 +5,7 @@
   "llm_base_url": "https://api.openai.com",
   "llm_model": "gpt-5.4",
   "llm_max_tokens": "65536",
-  "oauth_default_role": "operator"
+  "oauth_default_role": "operator",
+  "llm.default.service": "default",
+  "grok_llm_service": "grok"
 }

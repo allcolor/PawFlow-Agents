@@ -95,6 +95,27 @@ class SecretsManager:
             counter += 1
         return stream[:length]
 
+    def encrypt_bytes(self, data: bytes) -> bytes:
+        """Encrypt raw bytes. Returns iv + encrypted + mac (no base64 wrapping)."""
+        iv = os.urandom(16)
+        key_stream = self._derive_stream(iv, len(data))
+        encrypted = bytes(a ^ b for a, b in zip(data, key_stream))
+        mac = hmac.new(self._key, iv + encrypted, hashlib.sha256).digest()[:16]
+        return iv + encrypted + mac
+
+    def decrypt_bytes(self, data: bytes) -> bytes:
+        """Decrypt raw bytes (iv + encrypted + mac). Returns plaintext bytes."""
+        if len(data) < 32:
+            raise ValueError("Data too short to contain iv + mac")
+        iv = data[:16]
+        mac = data[-16:]
+        encrypted = data[16:-16]
+        expected_mac = hmac.new(self._key, iv + encrypted, hashlib.sha256).digest()[:16]
+        if not hmac.compare_digest(mac, expected_mac):
+            raise ValueError("Integrity check failed -- wrong key or corrupted data")
+        key_stream = self._derive_stream(iv, len(encrypted))
+        return bytes(a ^ b for a, b in zip(encrypted, key_stream))
+
     def is_encrypted(self, value: str) -> bool:
         return bool(value) and value.startswith("enc:")
 

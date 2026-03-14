@@ -75,6 +75,7 @@ class AgentLoopTask(BaseTask):
         self._poller_stop = threading.Event()
         self._active_conversations: Dict[str, int] = {}  # conv_id -> refcount
         self._user_active_conversations: set = set()  # convs with active USER interaction
+        self._active_thoughts: set = set()  # active thought keys (conv_id::thought::agent)
         self._active_lock = threading.Lock()
         # Track poll cooldown per conversation:
         # conv_id -> (updated_at_when_checked, recheck_after_timestamp)
@@ -322,9 +323,21 @@ class AgentLoopTask(BaseTask):
         _self = self
         def _client_resolver(svc_id, uid):
             return _self._resolve_llm_service(svc_id, uid)
+        # on_event callback for sub-agent visibility (SSE events)
+        # conversation_id is resolved later — use mutable ref
+        _sub_conv_id = [None]  # will be set once conversation_id is known
+        def _sub_on_event(event_type, data):
+            cid = _sub_conv_id[0]
+            if cid:
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(cid, event_type, data)
+                except Exception:
+                    pass
         sub_executor = SubAgentExecutor(
             client, registry, max_workers=4,
             client_resolver=_client_resolver,
+            on_event=_sub_on_event,
         )
         # Inject available agent names into SpawnAgentsHandler for tool description
         _uid_for_agents = flowfile.get_attribute("http.auth.principal") or "anonymous"
@@ -699,9 +712,12 @@ class AgentLoopTask(BaseTask):
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
             "sub_executor": sub_executor,
+            "_sub_conv_id_ref": _sub_conv_id,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
         }
+
+
 
     def select_processable(self, connections):
         """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services.
@@ -2504,6 +2520,9 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
 
+            # Ensure conversation exists so set_extra doesn't silently fail
+            if not store.set_extra(conv_id, extra_key, {"_probe": True}):
+                store.save(conv_id, [], user_id=user_id)
             store.set_extra(conv_id, extra_key, {
                 "enabled": True,
                 "min_interval": min_iv,
@@ -2552,15 +2571,33 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         # sub == "status" (default)
-        config = store.get_extra(conv_id, extra_key)
+        # If no specific agent requested, scan all known thought agents
+        _status_config = store.get_extra(conv_id, extra_key)
+        if not _status_config or not _status_config.get("enabled"):
+            if not body.get("agent"):
+                # Scan for any enabled thought config (try common agent names)
+                all_data = store.load(conv_id) if conv_id else None
+                if hasattr(store, '_conversations'):
+                    with store._store_lock:
+                        store._ensure_loaded()
+                        entry = store._conversations.get(conv_id, {})
+                        all_extra = entry.get("extra", {})
+                        for k, v in all_extra.items():
+                            if (k.startswith("random_thought::")
+                                    and isinstance(v, dict) and v.get("enabled")):
+                                agent_name = k.split("::", 1)[1]
+                                thought_key = f"{conv_id}::thought::{agent_name}"
+                                _status_config = v
+                                break
+
         sched = scheduler.get(thought_key)
-        if config and config.get("enabled"):
+        if _status_config and _status_config.get("enabled"):
             import time as _t
             next_at = sched["recheck_at"] if sched else None
             next_in = int(next_at - _t.time()) if next_at else None
             flowfile.set_content(json.dumps({
                 "enabled": True, "agent": agent_name,
-                "frequency": config.get("frequency", ""),
+                "frequency": _status_config.get("frequency", ""),
                 "next_at": next_at,
                 "next_in_seconds": max(0, next_in) if next_in is not None else None,
             }).encode())
@@ -2830,6 +2867,11 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
         conversation_id = ctx["conversation_id"]
         bus = ConversationEventBus.instance()
+
+        # Wire sub-agent event callback to this conversation
+        _sub_ref = ctx.get("_sub_conv_id_ref")
+        if _sub_ref:
+            _sub_ref[0] = conversation_id
 
         # Configure conversation-aware handlers with runtime context
         from core.tool_registry import (
@@ -3290,10 +3332,21 @@ class AgentLoopTask(BaseTask):
                     logger.info(f"[agent:{conversation_id[:8]}] round {current_round}/{max_rounds}, "
                                 f"iteration {iteration}/{ctx['max_iterations']}, "
                                 f"messages={len(messages)}, tools_called={len(tools_called)}")
+                    # Always publish iteration_status (even during poll_silent)
+                    bus.publish_event(conversation_id, "iteration_status", {
+                        "agent_name": _agent_name or "assistant",
+                        "iteration": iteration,
+                        "max_iterations": ctx["max_iterations"],
+                        "round": current_round,
+                        "max_rounds": max_rounds,
+                        "tools_called": tools_called[-3:],
+                        "total_tools": len(tools_called),
+                    })
                     if not poll_silent:
                         bus.publish_event(conversation_id, "thinking", {
                             "iteration": iteration,
                             "round": current_round,
+                            "agent_name": _agent_name or "",
                         })
 
                     # Use streaming LLM call with token callback
@@ -3324,6 +3377,7 @@ class AgentLoopTask(BaseTask):
                                 "iteration": iteration,
                                 "round": current_round,
                                 "waiting_seconds": elapsed,
+                                "agent_name": _agent_name or "",
                             })
 
                     hb_thread = threading.Thread(target=heartbeat, daemon=True)
@@ -3362,6 +3416,7 @@ class AgentLoopTask(BaseTask):
                         ))
                         bus.publish_event(conversation_id, "thinking", {
                             "iteration": iteration, "round": "interrupt",
+                            "agent_name": _agent_name or "",
                         })
                         interrupt_resp = client.complete_stream(
                             messages=self._compact_if_needed(
@@ -3406,6 +3461,7 @@ class AgentLoopTask(BaseTask):
                                            f"forcing aggressive compaction and retrying...")
                             bus.publish_event(conversation_id, "thinking", {
                                 "iteration": iteration, "detail": "compacting context...",
+                                "agent_name": _agent_name or "",
                             })
                             llm_context = self._compact_if_needed(
                                 llm_context, compact_client,
@@ -3513,6 +3569,7 @@ class AgentLoopTask(BaseTask):
                         poll_silent = False
                         bus.publish_event(conversation_id, "thinking", {
                             "iteration": iteration, "round": current_round,
+                            "agent_name": _agent_name or "",
                         })
 
                     # Re-inject executor before tool calls (fixes race condition)
@@ -3547,6 +3604,15 @@ class AgentLoopTask(BaseTask):
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": result_text[:2000],
                         })
+                        bus.publish_event(conversation_id, "iteration_status", {
+                            "agent_name": _agent_name or "assistant",
+                            "iteration": iteration,
+                            "max_iterations": ctx["max_iterations"],
+                            "round": current_round,
+                            "max_rounds": max_rounds,
+                            "tools_called": tools_called[-3:],
+                            "total_tools": len(tools_called),
+                        })
                     else:
                         # Multiple tools — parallel execution
                         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -3576,6 +3642,16 @@ class AgentLoopTask(BaseTask):
                                 continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                             _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
 
+                        bus.publish_event(conversation_id, "iteration_status", {
+                            "agent_name": _agent_name or "assistant",
+                            "iteration": iteration,
+                            "max_iterations": ctx["max_iterations"],
+                            "round": current_round,
+                            "max_rounds": max_rounds,
+                            "tools_called": tools_called[-3:],
+                            "total_tools": len(tools_called),
+                        })
+
                     # Check cancellation after tool execution
                     if not self._is_current_generation(gen_key, my_generation):
                         raise AgentCancelled()
@@ -3590,6 +3666,7 @@ class AgentLoopTask(BaseTask):
                     bus.publish_event(conversation_id, "thinking", {
                         "iteration": iteration + 1,
                         "round": current_round,
+                        "agent_name": _agent_name or "",
                     })
                     _append(LLMMessage(
                         role="user",
@@ -3675,6 +3752,7 @@ class AgentLoopTask(BaseTask):
                 bus.publish_event(conversation_id, "thinking", {
                     "iteration": iteration + 1,
                     "round": "synthesis",
+                    "agent_name": _agent_name or "",
                 })
                 _append(LLMMessage(
                     role="user",
@@ -3871,6 +3949,9 @@ class AgentLoopTask(BaseTask):
                     self._active_conversations[conversation_id] = rc
                 if not ctx.get("is_poll"):
                     self._user_active_conversations.discard(conversation_id)
+                _tk = ctx.get("_thought_key")
+                if _tk:
+                    self._active_thoughts.discard(_tk)
             # Remove interaction tracking
             gen_key = ctx.get("_gen_key", conversation_id)
             with self._interactions_lock:
@@ -3970,9 +4051,16 @@ class AgentLoopTask(BaseTask):
             def _client_resolver(svc_id, uid):
                 return self._resolve_llm_service(svc_id, uid)
 
+            def _bc_on_event(event_type, data):
+                try:
+                    bus.publish_event(conversation_id, event_type, data)
+                except Exception:
+                    pass
+
             sub_executor = SubAgentExecutor(
                 client, registry, max_workers=len(agent_names) + 1,
                 client_resolver=_client_resolver,
+                on_event=_bc_on_event,
             )
 
             tasks = []
@@ -4213,6 +4301,14 @@ class AgentLoopTask(BaseTask):
 
             # Extract agent name from key (conv_id::thought::agent_name)
             _thought_agent = entry_key.rsplit("::", 1)[-1] if "::" in entry_key else "default"
+
+            # Skip if this agent already has a thought running
+            with self._active_lock:
+                if entry_key in self._active_thoughts:
+                    logger.info(f"[poller] Skipping thought {entry_key} — already running")
+                    continue
+                self._active_thoughts.add(entry_key)
+
             logger.info(f"[poller] Waking thought {entry_key} (agent={_thought_agent})")
             store.set_status(cid, "active")
             bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
@@ -4235,12 +4331,15 @@ class AgentLoopTask(BaseTask):
                             self._active_conversations.pop(cid, None)
                         else:
                             self._active_conversations[cid] = rc
+                        self._active_thoughts.discard(entry_key)
                     continue
                 ctx["_generation"] = gen
+                ctx["_thought_key"] = entry_key
 
                 bus.publish_event(cid, "thinking", {
                     "iteration": 0,
                     "poll": True,
+                    "agent_name": _thought_agent if _thought_agent != "default" else "",
                 })
 
                 thread = threading.Thread(
@@ -4258,6 +4357,7 @@ class AgentLoopTask(BaseTask):
                         self._active_conversations.pop(cid, None)
                     else:
                         self._active_conversations[cid] = rc
+                    self._active_thoughts.discard(entry_key)
 
     def _is_eligible_for_poll(self, conversation_id: str,
                               messages_data: List[Dict]) -> bool:
@@ -4336,12 +4436,17 @@ class AgentLoopTask(BaseTask):
                     from core.resource_store import ResourceStore
                     rs = ResourceStore.instance()
                     uid = _poll_uid or "anonymous"
-                    agent_def = rs.get("agent", _thought_agent_name, uid)
+                    agent_def = rs.get_any("agent", _thought_agent_name, uid)
                     if agent_def:
                         agent_svc = agent_def.get("llm_service", "")
                         if agent_svc:
-                            svc_id = agent_svc
-                            logger.info(f"[poll] Using agent '{_thought_agent_name}' LLM service: {svc_id}")
+                            # Resolve expressions like ${user.grok_llm_service}
+                            if "${" in agent_svc:
+                                from core.expression import resolve_expression
+                                agent_svc = resolve_expression(agent_svc, owner=uid)
+                            if agent_svc and "${" not in agent_svc:
+                                svc_id = agent_svc
+                                logger.info(f"[poll] Using agent '{_thought_agent_name}' LLM service: {svc_id}")
                         agent_model = agent_def.get("model", "")
                         if agent_model:
                             model = agent_model
@@ -4368,6 +4473,23 @@ class AgentLoopTask(BaseTask):
             registry, conversation_id=conversation_id, user_id=poll_user_id,
         )
 
+        # Create SubAgentExecutor for poll context (enables spawn_agents tool)
+        from core.agent_executor import SubAgentExecutor
+        def _client_resolver(svc_id, uid):
+            return self._resolve_llm_service(svc_id, uid)
+        def _poll_on_event(event_type, data):
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(conversation_id, event_type, data)
+            except Exception:
+                pass
+        sub_executor = SubAgentExecutor(
+            client, registry, max_workers=4,
+            client_resolver=_client_resolver,
+            on_event=_poll_on_event,
+        )
+        self._inject_executor(registry, sub_executor)
+
         tool_defs = [
             LLMToolDefinition(
                 name=h.name, description=h.description, parameters=h.parameters_schema,
@@ -4381,7 +4503,7 @@ class AgentLoopTask(BaseTask):
         if _thought_agent_name and _thought_agent_name != "default":
             try:
                 from core.resource_store import ResourceStore as _RSp
-                _agent_def = _RSp.instance().get("agent", _thought_agent_name, _poll_uid or "anonymous")
+                _agent_def = _RSp.instance().get_any("agent", _thought_agent_name, _poll_uid or "anonymous")
                 if _agent_def and _agent_def.get("prompt"):
                     system_prompt = _agent_def["prompt"]
             except Exception:
@@ -4413,8 +4535,11 @@ class AgentLoopTask(BaseTask):
                 "- Follow up on something discussed earlier with a new angle or insight\n"
                 "- Suggest an idea or action related to the conversation topic\n"
                 "- Ask a thought-provoking question\n"
-                "- Provide a useful tip or observation\n\n"
+                "- Provide a useful tip or observation\n"
+                "- Use spawn_agents to ask another agent a question or start a discussion\n\n"
                 "Act on your thought: if you have something useful to say, say it.\n"
+                "You can also engage other agents using the spawn_agents tool if you want "
+                "to get their perspective, ask them a question, or collaborate on an idea.\n"
                 "If you have nothing relevant, respond with [NO_PENDING_WORK].\n"
                 "Be brief and natural — like a colleague sharing an afterthought."
             )
@@ -4485,6 +4610,7 @@ class AgentLoopTask(BaseTask):
             "_scheduled_reasons": scheduled_reasons or [],
             "_base_message_count": base_message_count,
             "_context_diverged": _context_diverged,
+            "sub_executor": sub_executor,
         }
 
     def _wire_embed_fn(

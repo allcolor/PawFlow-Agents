@@ -90,6 +90,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                   border-bottom-left-radius: 4px; }
 .msg.error { align-self: center; background: #5c1a1a; color: #ff8a80; font-size: 13px; }
 .msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
+.msg.system-compact { align-self: center; color: #555570; font-size: 11px; background: none; padding: 1px 8px; margin: 1px 0; opacity: 0.8; }
+.msg.agent-result { align-self: flex-start; background: #1a1a2e; color: #a0a0c0; font-size: 12px; border-left: 2px solid #6c5ce7; padding: 6px 10px; }
 .msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
             border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
 .msg-meta { margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);
@@ -368,6 +370,10 @@ const _i18n = {
     thoughtNoConv: 'No active conversation.',
     thoughtScheduled: '[{agent}] next thought in ~{delay}s',
     thoughtFiring: '[{agent}] thinking...',
+    iterStatus: '[{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
+    subAgentStarted: 'Sub-agent [{agent}] started',
+    subAgentDone: '[{agent}] finished ({dur}s, {tok} tokens)',
+    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
   },
   fr: {
     ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
@@ -418,6 +424,10 @@ const _i18n = {
     thoughtNoConv: 'Aucune conversation active.',
     thoughtScheduled: '[{agent}] prochaine pensée dans ~{delay}s',
     thoughtFiring: '[{agent}] réfléchit...',
+    iterStatus: '[{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
+    subAgentStarted: 'Sous-agent [{agent}] d\u00e9marr\u00e9',
+    subAgentDone: '[{agent}] termin\u00e9 ({dur}s, {tok} tokens)',
+    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
   },
   es: {
     ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
@@ -468,6 +478,10 @@ const _i18n = {
     thoughtNoConv: 'No hay conversación activa.',
     thoughtScheduled: '[{agent}] próximo pensamiento en ~{delay}s',
     thoughtFiring: '[{agent}] pensando...',
+    iterStatus: '[{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
+    subAgentStarted: 'Sub-agente [{agent}] iniciado',
+    subAgentDone: '[{agent}] terminado ({dur}s, {tok} tokens)',
+    iterProgress: '\u21bb [{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
   },
 };
 const _lang = (navigator.language || 'en').slice(0, 2);
@@ -513,6 +527,11 @@ let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
 let serverMsgCount = 0;    // last known message_count from server (for poll delta)
 let pollTimer = null;      // 30s fallback poll interval
+
+// ── Message history (arrow key navigation) ──
+let messageHistory = JSON.parse(localStorage.getItem('pyfi2_msg_history') || '[]');
+let historyIndex = -1;    // -1 = not navigating, 0 = most recent
+let savedDraft = '';      // text being typed before navigating
 
 // ── Watchdog: if sending and no SSE activity for 15s, try recovery ──
 setInterval(() => {
@@ -915,6 +934,9 @@ function addMsg(role, text, extra) {
     el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">↳ ' + escapeHtml(text) + '</span>';
   } else if (role === 'user') {
     el.innerHTML = actionsHtml + badge + escapeHtml(text);
+  } else if (role === 'agent-result') {
+    const agentName = (extra && typeof extra === 'string') ? extra : '';
+    el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
   } else {
     el.textContent = text;
   }
@@ -1031,8 +1053,14 @@ function updateActivePanel() {
     const info = activeInteractions[name];
     const secs = Math.round((now - info.startedAt) / 1000);
     const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
-    const statusText = info.lastTool || 'thinking...';
-    const preview = info.msgPreview ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
+    // Build rich status: iter N · round N/M · N tools · [last_tool]
+    let statusParts = [];
+    if (info.iteration) statusParts.push('iter ' + info.iteration);
+    if (info.round && info.maxRounds > 1) statusParts.push('round ' + info.round + '/' + info.maxRounds);
+    if (info.totalTools > 0) statusParts.push(info.totalTools + ' tools');
+    if (info.lastTool) statusParts.push('[' + info.lastTool + ']');
+    const statusText = statusParts.length > 0 ? statusParts.join(' \u00b7 ') : 'thinking...';
+    const preview = (!info.iteration && info.msgPreview) ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
     const hue = Math.abs([...name].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
     return '<div class="active-row">'
@@ -1377,6 +1405,63 @@ function connectSSE(cid) {
     streamingEl.innerHTML = renderMarkdown(streamingText);
     scrollBottom();
     document.getElementById('status').textContent = t('streaming');
+  });
+
+  eventSource.addEventListener('iteration_status', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agentName = data.agent_name || 'assistant';
+    if (activeInteractions[agentName]) {
+      activeInteractions[agentName].iteration = data.iteration;
+      activeInteractions[agentName].maxIterations = data.max_iterations;
+      activeInteractions[agentName].round = data.round;
+      activeInteractions[agentName].maxRounds = data.max_rounds;
+      activeInteractions[agentName].totalTools = data.total_tools;
+      if (data.tools_called && data.tools_called.length > 0) {
+        activeInteractions[agentName].lastTool = data.tools_called[data.tools_called.length - 1];
+      }
+    }
+    updateActivePanel();
+    document.getElementById('status').textContent =
+      t('iterStatus', {agent: agentName, i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
+    // Multi-tour: show compact progress message in chat when iteration advances
+    if (data.iteration > 1 || data.round > 1) {
+      const lastShown = activeInteractions[agentName] ? activeInteractions[agentName]._lastShownIter : undefined;
+      if (data.iteration !== lastShown) {
+        addMsg('system-compact', t('iterProgress', {
+          agent: agentName, i: data.iteration, r: data.round,
+          mr: data.max_rounds, t: data.total_tools
+        }));
+        if (activeInteractions[agentName]) {
+          activeInteractions[agentName]._lastShownIter = data.iteration;
+        }
+      }
+    }
+  });
+
+  // Sub-agent visibility
+  eventSource.addEventListener('sub_agent_start', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
+    addMsg('system', t('subAgentStarted', {agent: data.agent_name}));
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('sub_agent_done', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    trackAgentDone(data.agent_name);
+    const preview = (data.response || '').substring(0, 300);
+    if (preview) {
+      addMsg('agent-result', preview, data.agent_name);
+    }
+    addMsg('system-compact', t('subAgentDone', {
+      agent: data.agent_name,
+      dur: data.duration_s || '?',
+      tok: (data.tokens_in || 0) + (data.tokens_out || 0),
+    }));
+    scrollBottom();
   });
 
   eventSource.addEventListener('tool_call', (e) => {
@@ -3631,6 +3716,15 @@ async function send() {
   pendingFiles = [];
   renderAttachments();
 
+  // Save to message history
+  if (text) {
+    messageHistory.unshift(text);
+    if (messageHistory.length > 50) messageHistory.pop();
+    localStorage.setItem('pyfi2_msg_history', JSON.stringify(messageHistory.slice(0, 50)));
+  }
+  historyIndex = -1;
+  savedDraft = '';
+
   // Allow stacking: don't block on 'sending', just track pending count
   sending = true;
   lastSSEActivity = Date.now();
@@ -3739,13 +3833,38 @@ async function send() {
 }
 
 function handleKey(e) {
+  const input = e.target;
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     send();
+    return;
+  }
+  // Arrow up: navigate message history (only when cursor is at position 0)
+  if (e.key === 'ArrowUp' && input.selectionStart === 0 && messageHistory.length > 0) {
+    e.preventDefault();
+    if (historyIndex === -1) savedDraft = input.value;
+    if (historyIndex < messageHistory.length - 1) {
+      historyIndex++;
+      input.value = messageHistory[historyIndex];
+      input.setSelectionRange(0, 0);
+    }
+    return;
+  }
+  // Arrow down: navigate back toward current draft
+  if (e.key === 'ArrowDown' && historyIndex >= 0) {
+    e.preventDefault();
+    historyIndex--;
+    if (historyIndex < 0) {
+      input.value = savedDraft;
+    } else {
+      input.value = messageHistory[historyIndex];
+    }
+    input.setSelectionRange(input.value.length, input.value.length);
+    return;
   }
   setTimeout(() => {
-    e.target.style.height = 'auto';
-    e.target.style.height = Math.min(e.target.scrollHeight, 120) + 'px';
+    input.style.height = 'auto';
+    input.style.height = Math.min(input.scrollHeight, 120) + 'px';
   }, 0);
 }
 

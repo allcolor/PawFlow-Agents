@@ -116,10 +116,12 @@ class SubAgentExecutor:
         default_max_iterations: int = 50,
         default_timeout: int = 120,
         client_resolver: Optional[Callable] = None,
+        on_event: Optional[Callable] = None,
     ):
         self._client = client
         self._registry = registry
         self._client_resolver = client_resolver  # (service_id, user_id) -> (LLMClient, svc)
+        self._on_event = on_event  # (event_type, data_dict) callback
         self._max_workers = max_workers
         self._default_max_iterations = default_max_iterations
         self._default_timeout = default_timeout
@@ -163,6 +165,14 @@ class SubAgentExecutor:
         finally:
             _set_depth(current_depth)
 
+    def _emit(self, event_type: str, data: Dict[str, Any]):
+        """Emit an event via the on_event callback if set."""
+        if self._on_event:
+            try:
+                self._on_event(event_type, data)
+            except Exception:
+                logger.debug("on_event callback failed for %s", event_type)
+
     def _run_agent_loop(self, task: AgentTask) -> AgentResult:
         """Core agent loop: LLM → tool_call → execute → LLM → ..."""
         result = AgentResult(
@@ -171,6 +181,11 @@ class SubAgentExecutor:
             status="running",
         )
         start = time.time()
+        self._emit("sub_agent_start", {
+            "agent_name": task.agent_name,
+            "task_id": task.id,
+            "message": task.message,
+        })
         deadline = start + (task.timeout or self._default_timeout)
         max_iter = task.max_iterations or self._default_max_iterations
 
@@ -260,6 +275,12 @@ class SubAgentExecutor:
                         result.status = "timeout"
                         break
                     result.tools_called.append(tc.name)
+                    self._emit("sub_agent_tool", {
+                        "agent_name": task.agent_name,
+                        "task_id": task.id,
+                        "tool": tc.name,
+                        "iteration": result.iterations,
+                    })
                     tool_result = self._execute_tool(tc, tool_handlers)
                     messages.append(LLMMessage(
                         role="tool",
@@ -286,6 +307,18 @@ class SubAgentExecutor:
                 resolved_svc.release()
 
         result.duration_ms = (time.time() - start) * 1000
+        self._emit("sub_agent_done", {
+            "agent_name": task.agent_name,
+            "task_id": task.id,
+            "status": result.status,
+            "response": (result.response or "")[:300],
+            "error": result.error,
+            "tokens_in": result.tokens_in,
+            "tokens_out": result.tokens_out,
+            "duration_s": round(result.duration_ms / 1000, 1),
+            "iterations": result.iterations,
+            "tools_called": result.tools_called,
+        })
         return result
 
     def _build_tools(

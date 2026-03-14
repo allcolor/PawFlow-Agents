@@ -357,6 +357,7 @@ const _i18n = {
     rebuilding: 'Rebuilding context from full conversation...', rebuilt: 'Context rebuilt: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
     rebuildingClean: 'Setting context = full conversation (no compaction)...', rebuiltClean: 'Context set to full conversation: {messages} messages, ~{tokens} tokens.',
     restartEmpty: 'Context cleared — fresh start (system prompt only).',
+    contextOpBusy: 'A context operation is in progress, please wait...',
     contextTitle: 'LLM Context', contextDiverged: 'diverged', contextSynced: 'synced',
     contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'No context available.',
     contextEdit: 'Edit', contextDelete: 'Delete', contextAdd: 'Add message',
@@ -413,6 +414,7 @@ const _i18n = {
     rebuilding: 'Reconstruction du contexte depuis la conversation compl\u00e8te...', rebuilt: 'Contexte reconstruit\u00a0: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
     rebuildingClean: 'Contexte = conversation compl\u00e8te (sans compaction)...', rebuiltClean: 'Contexte mis \u00e0 la conversation compl\u00e8te\u00a0: {messages} messages, ~{tokens} tokens.',
     restartEmpty: 'Contexte vid\u00e9 \u2014 red\u00e9marrage \u00e0 z\u00e9ro (system prompt uniquement).',
+    contextOpBusy: 'Op\u00e9ration de contexte en cours, veuillez patienter...',
     contextTitle: 'Contexte LLM', contextDiverged: 'diverg\u00e9', contextSynced: 'synchronis\u00e9',
     contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'Aucun contexte disponible.',
     contextEdit: 'Modifier', contextDelete: 'Supprimer', contextAdd: 'Ajouter un message',
@@ -469,6 +471,7 @@ const _i18n = {
     rebuilding: 'Reconstruyendo contexto desde la conversaci\u00f3n completa...', rebuilt: 'Contexto reconstruido: {action} ({before} \u2192 {after} mensajes, ~{tokens} tokens)',
     rebuildingClean: 'Contexto = conversaci\u00f3n completa (sin compactaci\u00f3n)...', rebuiltClean: 'Contexto con conversaci\u00f3n completa: {messages} mensajes, ~{tokens} tokens.',
     restartEmpty: 'Contexto vaciado \u2014 inicio limpio (solo system prompt).',
+    contextOpBusy: 'Operaci\u00f3n de contexto en curso, por favor espere...',
     contextTitle: 'Contexto LLM', contextDiverged: 'divergido', contextSynced: 'sincronizado',
     contextTokens: '~{n} tokens', contextMessages: '{n} mensajes', noContext: 'Sin contexto disponible.',
     contextEdit: 'Editar', contextDelete: 'Eliminar', contextAdd: 'Añadir mensaje',
@@ -522,6 +525,7 @@ const SSE_URL = window.location.origin + '{{SSE_PATH}}';
 const LOGIN_URL = '{{LOGIN_URL}}';
 let conversationId = null;
 let sending = false;
+let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
 let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
 let sseRetryCount = 0;     // for exponential backoff on reconnect
@@ -2367,27 +2371,30 @@ async function handleSlashCommand(text) {
   if (cmd === '/restart_from' || cmd === '/restart') {
     const n = parts[1] !== undefined ? parseInt(parts[1]) : 5;
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'restart_from', conversation_id: conversationId, keep_last: n }),
-        credentials: 'same-origin',
-      });
-      const data = await resp.json();
+    if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+    contextOpInProgress = true;
+    addMsg('system', n === 0 ? t('restartEmpty') + '..' : t('restartFrom', {n}) + '..');
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'restart_from', conversation_id: conversationId, keep_last: n }),
+      credentials: 'same-origin',
+    }).then(r => r.json()).then(data => {
       if (data.ok) {
         addMsg('system', data.kept_messages === 0 ? t('restartEmpty') : t('restartFrom', {n: data.kept_messages}));
       } else {
         addMsg('error', data.error || 'Failed');
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message))
+      .finally(() => { contextOpInProgress = false; });
     return true;
   }
 
   if (cmd === '/resume') {
     const n = parseInt(parts[1]) || 500;
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+    contextOpInProgress = true;
     addMsg('system', t('resuming', {n: n}));
-    // Fire and forget — don't block the UI during LLM summarization
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'resume_conversation', conversation_id: conversationId, max_tokens: n }),
@@ -2398,7 +2405,8 @@ async function handleSlashCommand(text) {
       } else {
         addMsg('error', data.error || 'Failed');
       }
-    }).catch(e => addMsg('error', e.message));
+    }).catch(e => addMsg('error', e.message))
+      .finally(() => { contextOpInProgress = false; });
     return true;
   }
 
@@ -2422,17 +2430,20 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/compact') {
-    await cmdCompact();
+    if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+    cmdCompact();
     return true;
   }
 
   if (cmd === '/rebuild') {
-    await cmdRebuild();
+    if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+    cmdRebuild();
     return true;
   }
 
   if (cmd === '/rebuild_clean') {
-    await cmdRebuildClean();
+    if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+    cmdRebuildClean();
     return true;
   }
 
@@ -3111,46 +3122,46 @@ async function cmdUninstallTool(toolName) {
   } catch (e) { addMsg('error', 'Failed to uninstall tool: ' + e.message); }
 }
 
-async function cmdCompact() {
+function cmdCompact() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  contextOpInProgress = true;
   addMsg('system', 'Compacting conversation...');
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'compact', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'compact', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
     addMsg('system', `Compacted: ${data.before} messages \u2192 ${data.after} messages`);
-  } catch (e) { addMsg('error', 'Compaction failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Compaction failed: ' + e.message))
+    .finally(() => { contextOpInProgress = false; });
 }
 
-async function cmdRebuild() {
+function cmdRebuild() {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
+  contextOpInProgress = true;
   addMsg('system', t('rebuilding'));
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'rebuild', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'rebuild', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
     addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
-  } catch (e) { addMsg('error', 'Rebuild failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Rebuild failed: ' + e.message))
+    .finally(() => { contextOpInProgress = false; });
 }
 
-async function cmdRebuildClean() {
+function cmdRebuildClean() {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
+  contextOpInProgress = true;
   addMsg('system', t('rebuildingClean'));
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
     addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
-  } catch (e) { addMsg('error', 'Rebuild clean failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Rebuild clean failed: ' + e.message))
+    .finally(() => { contextOpInProgress = false; });
 }
 
 async function cmdShowContext() {
@@ -3786,6 +3797,12 @@ async function send() {
   const input = document.getElementById('input');
   const text = input.value.trim();
   if (!text && pendingFiles.length === 0) return;
+
+  // Block sends while context operation is in progress
+  if (contextOpInProgress) {
+    addMsg('system', t('contextOpBusy'));
+    return;
+  }
 
   // Intercept slash commands
   if (text.startsWith('/')) {

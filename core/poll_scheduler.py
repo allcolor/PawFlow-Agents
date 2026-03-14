@@ -57,6 +57,7 @@ class PollScheduler:
         recheck_at: float,
         user_id: str = "",
         reason: str = "",
+        key: str = "",
     ) -> None:
         """Schedule or update a recheck for a conversation.
 
@@ -65,10 +66,14 @@ class PollScheduler:
             recheck_at: Unix epoch timestamp when the recheck is due.
             user_id: Owner of the conversation.
             reason: Human-readable reason (e.g., "check stock price").
+            key: Custom key (default: conversation_id). Allows multiple
+                 schedules per conversation (e.g. ``conv::thought::agent``).
         """
+        actual_key = key or conversation_id
         with self._lock:
-            self._schedules[conversation_id] = {
+            self._schedules[actual_key] = {
                 "conversation_id": conversation_id,
+                "key": actual_key,
                 "recheck_at": recheck_at,
                 "user_id": user_id,
                 "reason": reason,
@@ -87,10 +92,11 @@ class PollScheduler:
         delay_seconds: int,
         user_id: str = "",
         reason: str = "",
+        key: str = "",
     ) -> float:
         """Schedule a recheck N seconds from now. Returns the recheck_at epoch."""
         recheck_at = time.time() + delay_seconds
-        self.schedule(conversation_id, recheck_at, user_id, reason)
+        self.schedule(conversation_id, recheck_at, user_id, reason, key=key)
         return recheck_at
 
     def cancel(self, conversation_id: str) -> bool:
@@ -138,9 +144,9 @@ class PollScheduler:
                 data = json.load(f)
             if isinstance(data, list):
                 for entry in data:
-                    cid = entry.get("conversation_id")
-                    if cid:
-                        self._schedules[cid] = entry
+                    actual_key = entry.get("key") or entry.get("conversation_id")
+                    if actual_key:
+                        self._schedules[actual_key] = entry
             logger.info(f"[poll_scheduler] Loaded {len(self._schedules)} scheduled rechecks")
         except Exception as e:
             logger.error(f"[poll_scheduler] Failed to load schedule: {e}")

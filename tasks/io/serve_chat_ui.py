@@ -273,6 +273,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
     <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" title="My Flows">&#x26A1;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
+    <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
     <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
     <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
@@ -351,6 +352,22 @@ const _i18n = {
     cancelled: '[Cancelled]', stop: 'Stop', cancelling: 'Cancelling...',
     noConv: 'No active conversation.', restartFrom: 'Context restarted — keeping last {n} messages.',
     resuming: 'Summarizing conversation to ~{n} tokens...', resumed: 'Conversation summarized ({n} messages \u2192 {len} chars). Next message starts from the summary.',
+    rebuilding: 'Rebuilding context from full conversation...', rebuilt: 'Context rebuilt: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
+    contextTitle: 'LLM Context', contextDiverged: 'diverged', contextSynced: 'synced',
+    contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'No context available.',
+    contextEdit: 'Edit', contextDelete: 'Delete', contextAdd: 'Add message',
+    contextReplaceAll: 'Replace all (JSON)', contextSave: 'Save', contextCancel: 'Cancel',
+    contextDeleteConfirm: 'Delete this message?', contextReplaceConfirm: 'Replace entire context?',
+    contextSaved: 'Context saved ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'Invalid JSON',
+    contextRole: 'Role', contextContent: 'Content',
+    thoughtEnabled: 'Random thought enabled for {agent}: {freq} (next in ~{delay}s)',
+    thoughtDisabled: 'Random thought disabled for {agent}.',
+    thoughtStatus: 'Random thought for {agent}: enabled — {freq}, next in ~{delay}s',
+    thoughtStatusOff: 'Random thought for {agent}: disabled',
+    thoughtTriggered: 'Random thought triggered for {agent}.',
+    thoughtNoConv: 'No active conversation.',
+    thoughtScheduled: '[{agent}] next thought in ~{delay}s',
+    thoughtFiring: '[{agent}] thinking...',
   },
   fr: {
     ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
@@ -385,6 +402,22 @@ const _i18n = {
     cancelled: '[Annul\u00e9]', stop: 'Stop', cancelling: 'Annulation...',
     noConv: 'Aucune conversation active.', restartFrom: 'Contexte red\u00e9marr\u00e9 \u2014 {n} derniers messages conserv\u00e9s.',
     resuming: 'R\u00e9sum\u00e9 de la conversation en ~{n} tokens...', resumed: 'Conversation r\u00e9sum\u00e9e ({n} messages \u2192 {len} caract\u00e8res). Le prochain message repart du r\u00e9sum\u00e9.',
+    rebuilding: 'Reconstruction du contexte depuis la conversation compl\u00e8te...', rebuilt: 'Contexte reconstruit\u00a0: {action} ({before} \u2192 {after} messages, ~{tokens} tokens)',
+    contextTitle: 'Contexte LLM', contextDiverged: 'diverg\u00e9', contextSynced: 'synchronis\u00e9',
+    contextTokens: '~{n} tokens', contextMessages: '{n} messages', noContext: 'Aucun contexte disponible.',
+    contextEdit: 'Modifier', contextDelete: 'Supprimer', contextAdd: 'Ajouter un message',
+    contextReplaceAll: 'Remplacer tout (JSON)', contextSave: 'Enregistrer', contextCancel: 'Annuler',
+    contextDeleteConfirm: 'Supprimer ce message ?', contextReplaceConfirm: 'Remplacer tout le contexte ?',
+    contextSaved: 'Contexte sauvegardé ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'JSON invalide',
+    contextRole: 'Rôle', contextContent: 'Contenu',
+    thoughtEnabled: 'Pens\u00e9e al\u00e9atoire activ\u00e9e pour {agent}\u00a0: {freq} (prochaine dans ~{delay}s)',
+    thoughtDisabled: 'Pens\u00e9e al\u00e9atoire d\u00e9sactiv\u00e9e pour {agent}.',
+    thoughtStatus: 'Pens\u00e9e al\u00e9atoire pour {agent}\u00a0: activ\u00e9e \u2014 {freq}, prochaine dans ~{delay}s',
+    thoughtStatusOff: 'Pens\u00e9e al\u00e9atoire pour {agent}\u00a0: d\u00e9sactiv\u00e9e',
+    thoughtTriggered: 'Pensée aléatoire déclenchée pour {agent}.',
+    thoughtNoConv: 'Aucune conversation active.',
+    thoughtScheduled: '[{agent}] prochaine pensée dans ~{delay}s',
+    thoughtFiring: '[{agent}] réfléchit...',
   },
   es: {
     ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
@@ -419,6 +452,22 @@ const _i18n = {
     cancelled: '[Cancelado]', stop: 'Detener', cancelling: 'Cancelando...',
     noConv: 'No hay conversaci\u00f3n activa.', restartFrom: 'Contexto reiniciado \u2014 {n} \u00faltimos mensajes conservados.',
     resuming: 'Resumiendo conversaci\u00f3n a ~{n} tokens...', resumed: 'Conversaci\u00f3n resumida ({n} mensajes \u2192 {len} caracteres). El pr\u00f3ximo mensaje parte del resumen.',
+    rebuilding: 'Reconstruyendo contexto desde la conversaci\u00f3n completa...', rebuilt: 'Contexto reconstruido: {action} ({before} \u2192 {after} mensajes, ~{tokens} tokens)',
+    contextTitle: 'Contexto LLM', contextDiverged: 'divergido', contextSynced: 'sincronizado',
+    contextTokens: '~{n} tokens', contextMessages: '{n} mensajes', noContext: 'Sin contexto disponible.',
+    contextEdit: 'Editar', contextDelete: 'Eliminar', contextAdd: 'Añadir mensaje',
+    contextReplaceAll: 'Reemplazar todo (JSON)', contextSave: 'Guardar', contextCancel: 'Cancelar',
+    contextDeleteConfirm: '¿Eliminar este mensaje?', contextReplaceConfirm: '¿Reemplazar todo el contexto?',
+    contextSaved: 'Contexto guardado ({n} mensajes, ~{tokens} tokens)', contextInvalidJson: 'JSON inválido',
+    contextRole: 'Rol', contextContent: 'Contenido',
+    thoughtEnabled: 'Pensamiento aleatorio activado para {agent}: {freq} (pr\u00f3ximo en ~{delay}s)',
+    thoughtDisabled: 'Pensamiento aleatorio desactivado para {agent}.',
+    thoughtStatus: 'Pensamiento aleatorio para {agent}: activado \u2014 {freq}, pr\u00f3ximo en ~{delay}s',
+    thoughtStatusOff: 'Pensamiento aleatorio para {agent}: desactivado',
+    thoughtTriggered: 'Pensamiento aleatorio activado para {agent}.',
+    thoughtNoConv: 'No hay conversación activa.',
+    thoughtScheduled: '[{agent}] próximo pensamiento en ~{delay}s',
+    thoughtFiring: '[{agent}] pensando...',
   },
 };
 const _lang = (navigator.language || 'en').slice(0, 2);
@@ -527,6 +576,7 @@ function newChat() {
   addMsg('system', t('newConv'));
   document.getElementById('status').textContent = t('ready');
   document.getElementById('deleteConvBtn').style.display = 'none';
+  document.getElementById('contextBtn').style.display = 'none';
   document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
   document.getElementById('flowsPanel').style.display = 'none';
@@ -540,6 +590,7 @@ function newChat() {
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
   document.getElementById('deleteConvBtn').style.display = show;
+  document.getElementById('contextBtn').style.display = show;
   document.getElementById('refreshConvBtn').style.display = show;
   document.getElementById('filesBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
@@ -931,10 +982,22 @@ document.getElementById('messages').addEventListener('scroll', updateScrollNav);
 let activeInteractions = {};  // agent_name → { startedAt, lastTool, status, msgPreview }
 let activeTimer = null;
 
+let _agentDoneAt = {};  // agentName → timestamp of last done (prevents ghost re-register)
 function trackAgentStart(agentName, msgPreview) {
-  activeInteractions[agentName] = {
-    startedAt: Date.now(), lastTool: '', status: 'thinking', msgPreview: msgPreview || '',
-  };
+  // Ignore thinking events that arrive within 500ms after a done (race condition guard)
+  const doneTs = _agentDoneAt[agentName];
+  if (doneTs && Date.now() - doneTs < 500) {
+    console.log('[trackAgentStart] IGNORED (too close to done)', agentName);
+    return;
+  }
+  if (activeInteractions[agentName]) {
+    // Already tracked — just update status (don't reset startedAt/preview)
+    activeInteractions[agentName].status = 'thinking';
+  } else {
+    activeInteractions[agentName] = {
+      startedAt: Date.now(), lastTool: '', status: 'thinking', msgPreview: msgPreview || '',
+    };
+  }
   updateActivePanel();
   if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
 }
@@ -946,6 +1009,8 @@ function trackAgentTool(agentName, toolName) {
   updateActivePanel();
 }
 function trackAgentDone(agentName) {
+  console.log('[trackAgentDone]', agentName, 'keys before:', Object.keys(activeInteractions));
+  _agentDoneAt[agentName] = Date.now();
   delete activeInteractions[agentName];
   updateActivePanel();
   if (Object.keys(activeInteractions).length === 0 && activeTimer) {
@@ -1354,7 +1419,8 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
-    trackAgentDone(data.agent_name || data.source?.name || 'assistant');
+    const doneAgent = data.agent_name || data.source?.name || 'assistant';
+    trackAgentDone(doneAgent);
     console.log('[SSE done]', data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count to prevent poll from re-fetching these messages
     if (data.message_count) serverMsgCount = data.message_count;
@@ -1388,11 +1454,15 @@ function connectSSE(cid) {
       document.getElementById('status').textContent = t('continuing');
       showTyping();
     } else {
-      // Final response
+      // Final response — ensure active panel is cleaned up
       sending = false;
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
+      // Belt-and-suspenders: if no more active interactions, clear timer
+      if (Object.keys(activeInteractions).length === 0 && activeTimer) {
+        clearInterval(activeTimer); activeTimer = null;
+      }
     }
     // Refresh conversation list
     loadConversations();
@@ -1565,6 +1635,20 @@ function connectSSE(cid) {
     addMsg('system', `Broadcast complete — ${data.agent_count} agent(s) responded.`);
     scrollBottom();
     loadConversations();
+  });
+
+  eventSource.addEventListener('thought_scheduled', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    addMsg('system', t('thoughtScheduled', { agent: data.agent || 'default', delay: data.delay || '?' }));
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('thought_firing', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    addMsg('system', t('thoughtFiring', { agent: data.agent || 'default' }));
+    scrollBottom();
   });
 
   let sseHadError = false;  // track any error on this EventSource
@@ -1989,6 +2073,16 @@ const HELP_DATA = {
     short: 'Compact conversation (summarize old messages)',
     detail: 'Summarizes older messages in the conversation to reduce context size while preserving key information.',
   },
+  '/rebuild': {
+    usage: '/rebuild',
+    short: 'Rebuild context from full conversation history',
+    detail: 'Reconstructs the LLM context from the complete conversation. If everything fits in the context window, restores fully; otherwise compacts.\n\nUseful after /compact or /resume to get back more context.',
+  },
+  '/context': {
+    usage: '/context',
+    short: 'View the current LLM context',
+    detail: 'Shows what the LLM actually sees: the list of messages in the current context, token estimate, and whether the context has diverged from the conversation.',
+  },
   '/files': {
     usage: '/files',
     short: 'Toggle the files panel',
@@ -2063,6 +2157,20 @@ const HELP_DATA = {
     usage: '/view <filename>',
     short: 'Preview a file (image, PDF, text, code)',
     detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
+  },
+  '/thought': {
+    usage: '/thought on [agent] [freq] | off [agent] | status [agent] | now [agent]',
+    short: 'Random thought — agent thinks spontaneously',
+    detail: 'Enable random spontaneous thoughts from an agent.\n\n'
+      + '  /thought on 2-3/h         — Default agent, 2-3 times per hour\n'
+      + '  /thought on researcher 1/2h — "researcher" agent, once per 2h\n'
+      + '  /thought on 5-10/d        — 5-10 times per day\n'
+      + '  /thought off              — Disable for default agent\n'
+      + '  /thought off researcher   — Disable for "researcher"\n'
+      + '  /thought status           — Show config and next trigger\n'
+      + '  /thought now              — Trigger a thought immediately\n\n'
+      + 'Frequency format: <min>[-<max>]/<duration>. Units: s, m, h, d.\n'
+      + 'Thoughts only fire when the conversation is idle (no active interaction).',
   },
 };
 
@@ -2164,6 +2272,16 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/compact') {
     await cmdCompact();
+    return true;
+  }
+
+  if (cmd === '/rebuild') {
+    await cmdRebuild();
+    return true;
+  }
+
+  if (cmd === '/context') {
+    await cmdShowContext();
     return true;
   }
 
@@ -2420,6 +2538,33 @@ async function handleSlashCommand(text) {
     } else {
       addMsg('system', 'Usage: /service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>');
     }
+    return true;
+  }
+
+  if (cmd === '/thought') {
+    if (!conversationId) { addMsg('system', t('thoughtNoConv')); return true; }
+    const sub = (parts[1] || 'status').toLowerCase();
+    const body = { action: 'random_thought', conversation_id: conversationId, sub };
+    const freqPattern = /^\d+(-\d+)?\/\d*[smhd]$/;
+    if (sub === 'on') {
+      if (parts[2] && !freqPattern.test(parts[2])) {
+        body.agent = parts[2];
+        body.frequency = parts[3] || '2-3/h';
+      } else {
+        body.frequency = parts[2] || '2-3/h';
+      }
+    } else if (sub === 'off' || sub === 'status' || sub === 'now') {
+      if (parts[2]) body.agent = parts[2];
+    }
+    try {
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else if (sub === 'on') { addMsg('system', t('thoughtEnabled', { agent: data.agent, freq: data.frequency, delay: data.next_in_seconds })); }
+      else if (sub === 'off') { addMsg('system', t('thoughtDisabled', { agent: data.agent })); }
+      else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: data.agent })); }
+      else { addMsg('system', data.enabled ? t('thoughtStatus', { agent: data.agent, freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: data.agent })); }
+    } catch (e) { addMsg('error', 'Failed: ' + e.message); }
     return true;
   }
 
@@ -2822,6 +2967,232 @@ async function cmdCompact() {
     if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
     addMsg('system', `Compacted: ${data.before} messages \u2192 ${data.after} messages`);
   } catch (e) { addMsg('error', 'Compaction failed: ' + e.message); }
+}
+
+async function cmdRebuild() {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  addMsg('system', t('rebuilding'));
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'rebuild', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
+    addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
+  } catch (e) { addMsg('error', 'Rebuild failed: ' + e.message); }
+}
+
+async function cmdShowContext() {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_context', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    showContextOverlay(data);
+  } catch (e) { addMsg('error', 'Failed to load context: ' + e.message); }
+}
+
+let _ctxFullData = null;
+
+async function ctxLoadFull() {
+  if (_ctxFullData) return _ctxFullData;
+  const resp = await fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'get_context_full', conversation_id: conversationId }),
+  });
+  _ctxFullData = await resp.json();
+  return _ctxFullData;
+}
+
+async function ctxRefresh() {
+  _ctxFullData = null;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_context', conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    showContextOverlay(data);
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function ctxEditMessage(index) {
+  const full = await ctxLoadFull();
+  if (full.error) { addMsg('error', full.error); return; }
+  const msg = full.context[index];
+  if (!msg) return;
+  const row = document.getElementById('ctx-row-' + index);
+  if (!row) return;
+  const content = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content);
+  row.innerHTML = '<div style="padding:8px">'
+    + '<div style="margin-bottom:6px"><label style="color:#808090;font-size:11px;margin-right:6px">' + t('contextRole') + ':</label>'
+    + '<select id="ctx-edit-role-' + index + '" style="background:#0d1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:12px">'
+    + '<option value="system"' + (msg.role==='system'?' selected':'') + '>system</option>'
+    + '<option value="user"' + (msg.role==='user'?' selected':'') + '>user</option>'
+    + '<option value="assistant"' + (msg.role==='assistant'?' selected':'') + '>assistant</option>'
+    + '<option value="tool"' + (msg.role==='tool'?' selected':'') + '>tool</option>'
+    + '</select></div>'
+    + '<textarea id="ctx-edit-ta-' + index + '" style="width:100%;min-height:120px;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical">' + content.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
+    + '<div style="display:flex;gap:6px;margin-top:6px">'
+    + '<button onclick="ctxSaveEdit(' + index + ')" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextSave') + '</button>'
+    + '<button onclick="ctxRefresh()" style="background:#333;color:#ccc;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextCancel') + '</button>'
+    + '</div></div>';
+}
+
+async function ctxSaveEdit(index) {
+  const ta = document.getElementById('ctx-edit-ta-' + index);
+  const roleEl = document.getElementById('ctx-edit-role-' + index);
+  if (!ta) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'edit_context', conversation_id: conversationId, index: index, content: ta.value, role: roleEl ? roleEl.value : undefined }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
+    _ctxFullData = null;
+    ctxRefresh();
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function ctxDeleteMessage(index) {
+  if (!confirm(t('contextDeleteConfirm'))) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_context_message', conversation_id: conversationId, index: index }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
+    _ctxFullData = null;
+    ctxRefresh();
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function ctxAddMessage() {
+  const container = document.getElementById('ctx-add-form');
+  if (container) { container.remove(); return; }
+  const list = document.getElementById('ctx-msg-list');
+  if (!list) return;
+  const form = document.createElement('div');
+  form.id = 'ctx-add-form';
+  form.style.cssText = 'padding:10px;border-top:1px solid #333';
+  form.innerHTML = '<div style="margin-bottom:6px"><label style="color:#808090;font-size:11px;margin-right:6px">' + t('contextRole') + ':</label>'
+    + '<select id="ctx-add-role" style="background:#0d1117;color:#e0e0e0;border:1px solid #333;border-radius:4px;padding:2px 6px;font-size:12px">'
+    + '<option value="system">system</option><option value="user" selected>user</option><option value="assistant">assistant</option></select></div>'
+    + '<textarea id="ctx-add-content" style="width:100%;min-height:80px;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:8px;font-size:12px;font-family:monospace;resize:vertical" placeholder="' + t('contextContent') + '..."></textarea>'
+    + '<div style="display:flex;gap:6px;margin-top:6px">'
+    + '<button onclick="ctxSaveNewMessage()" style="background:#2563eb;color:#fff;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextSave') + '</button>'
+    + '<button onclick="document.getElementById(\'ctx-add-form\').remove()" style="background:#333;color:#ccc;border:none;border-radius:6px;padding:4px 12px;cursor:pointer;font-size:12px">' + t('contextCancel') + '</button>'
+    + '</div>';
+  list.parentNode.appendChild(form);
+}
+
+async function ctxSaveNewMessage() {
+  const role = document.getElementById('ctx-add-role')?.value || 'user';
+  const content = document.getElementById('ctx-add-content')?.value || '';
+  if (!content.trim()) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'add_context_message', conversation_id: conversationId, role: role, content: content }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
+    _ctxFullData = null;
+    ctxRefresh();
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function ctxReplaceAll() {
+  const full = await ctxLoadFull();
+  if (full.error) { addMsg('error', full.error); return; }
+  const overlay = document.getElementById('contextOverlay');
+  if (!overlay) return;
+  const inner = overlay.querySelector('div');
+  inner.innerHTML = '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('contextReplaceAll') + '</h3>'
+    + '<button onclick="ctxRefresh()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:auto">&times;</button>'
+    + '</div>'
+    + '<textarea id="ctx-replace-ta" style="flex:1;width:100%;background:#0d1117;color:#c0c0d0;border:1px solid #333;border-radius:6px;padding:10px;font-size:12px;font-family:monospace;resize:none">' + JSON.stringify(full.context, null, 2).replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</textarea>'
+    + '<div style="display:flex;gap:6px;margin-top:10px">'
+    + '<button onclick="ctxSaveReplaceAll()" style="background:#dc2626;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">' + t('contextSave') + '</button>'
+    + '<button onclick="ctxRefresh()" style="background:#333;color:#ccc;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">' + t('contextCancel') + '</button>'
+    + '</div>';
+}
+
+async function ctxSaveReplaceAll() {
+  const ta = document.getElementById('ctx-replace-ta');
+  if (!ta) return;
+  let parsed;
+  try { parsed = JSON.parse(ta.value); } catch (e) { addMsg('error', t('contextInvalidJson') + ': ' + e.message); return; }
+  if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': expected array'); return; }
+  if (!confirm(t('contextReplaceConfirm'))) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'replace_context', conversation_id: conversationId, context: parsed }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
+    _ctxFullData = null;
+    ctxRefresh();
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+function showContextOverlay(data) {
+  let overlay = document.getElementById('contextOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'contextOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+  const statusBadge = data.diverged
+    ? '<span style="background:#5a3e00;color:#f4a261;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextDiverged') + '</span>'
+    : '<span style="background:#1b4332;color:#52b788;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextSynced') + '</span>';
+  const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
+  let msgsHtml = '';
+  if (!data.context || data.context.length === 0) {
+    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noContext') + '</div>';
+  } else {
+    data.context.forEach((m, i) => {
+      const color = roleColors[m.role] || '#808090';
+      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
+      const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
+      const src = m.source ? '<span style="color:#808090;font-size:10px;margin-left:4px">[' + (m.source.name||'') + ']</span>' : '';
+      const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + i + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
+      msgsHtml += '<div id="ctx-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')">'
+        + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
+        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
+        + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'
+        + '</div>';
+    });
+  }
+  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('contextTitle') + '</h3>'
+    + statusBadge
+    + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
+    + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
+    + '<button onclick="document.getElementById(\'contextOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
+    + '</div>'
+    + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
+    + '<div style="padding:8px 0 0 0;text-align:center">'
+    + '<button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button>'
+    + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
 // ── Secrets & Variables ──────────────────────────────────────────

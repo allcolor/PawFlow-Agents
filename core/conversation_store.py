@@ -116,7 +116,7 @@ class ConversationStore:
                 "created_at": existing["created_at"] if existing else time.time(),
                 "expires_at": time.time() + ttl if ttl > 0 else 0,
                 "updated_at": time.time(),
-                "context_summary": existing.get("context_summary", "") if existing else "",
+                "context": existing.get("context") if existing else None,
             }
             self._conversations[conversation_id] = entry
         self._save_to_disk(conversation_id, entry)
@@ -154,7 +154,7 @@ class ConversationStore:
                     "created_at": time.time(),
                     "expires_at": time.time() + ttl if ttl > 0 else 0,
                     "updated_at": time.time(),
-                    "context_summary": "",
+                    "context": None,
                 }
                 self._conversations[conversation_id] = entry
             entry["messages"].extend(new_messages)
@@ -173,7 +173,7 @@ class ConversationStore:
                 "created_at": entry["created_at"],
                 "updated_at": entry["updated_at"],
                 "expires_at": entry["expires_at"],
-                "context_summary": entry.get("context_summary", ""),
+                "context": list(entry["context"]) if entry.get("context") is not None else None,
             }
             if entry.get("extra"):
                 disk_entry["extra"] = entry["extra"]
@@ -238,32 +238,55 @@ class ConversationStore:
                 "message_count": len(entry.get("messages", [])),
             }
 
-    def set_context_summary(self, conversation_id: str, summary: str) -> bool:
-        """Store the LLM context summary for a conversation.
+    def load_context(self, conversation_id: str,
+                     user_id: str = "") -> Optional[List[Dict[str, Any]]]:
+        """Return the persisted LLM context, or None if not yet diverged.
 
-        This is the compacted text that replaces old messages when the
-        context window is too large.  Persisted to disk so that after a
-        restart the context can be rebuilt without re-summarizing.
+        When context is None the caller should fall back to using messages.
         """
         with self._store_lock:
             self._ensure_loaded()
             entry = self._conversations.get(conversation_id)
             if entry is None:
-                return False
-            entry["context_summary"] = summary
-            entry["updated_at"] = time.time()
-            disk_entry = dict(entry, messages=list(entry["messages"]))
-        self._save_to_disk(conversation_id, disk_entry)
-        return True
+                return None
+            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
+                return None
+            ctx = entry.get("context")
+            if ctx is None:
+                return None
+            return list(ctx)
 
-    def get_context_summary(self, conversation_id: str) -> str:
-        """Return the stored context summary (empty string if none)."""
+    def save_context(self, conversation_id: str,
+                     context_messages: List[Dict[str, Any]]) -> bool:
+        """Overwrite the persisted LLM context (after compact/resume/restart_from/rebuild)."""
         with self._store_lock:
             self._ensure_loaded()
             entry = self._conversations.get(conversation_id)
             if entry is None:
-                return ""
-            return entry.get("context_summary", "")
+                return False
+            entry["context"] = list(context_messages)
+            entry["updated_at"] = time.time()
+            disk_entry = dict(entry, messages=list(entry["messages"]),
+                              context=list(entry["context"]))
+        self._save_to_disk(conversation_id, disk_entry)
+        return True
+
+    def append_to_context(self, conversation_id: str,
+                          new_messages: List[Dict[str, Any]]) -> bool:
+        """Append to the persisted context. No-op if context is None (not diverged)."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            if entry.get("context") is None:
+                return False
+            entry["context"].extend(new_messages)
+            entry["updated_at"] = time.time()
+            disk_entry = dict(entry, messages=list(entry["messages"]),
+                              context=list(entry["context"]))
+        self._save_to_disk(conversation_id, disk_entry)
+        return True
 
     def set_extra(self, conversation_id: str, key: str, value: Any) -> bool:
         """Store arbitrary extra data on a conversation (plan, state, etc.)."""
@@ -397,7 +420,7 @@ class ConversationStore:
                 "updated_at": entry.get("updated_at", 0),
                 "expires_at": entry.get("expires_at", 0),
                 "messages": entry.get("messages", []),
-                "context_summary": entry.get("context_summary", ""),
+                "context": entry.get("context"),
             }
             if entry.get("extra"):
                 data["extra"] = entry["extra"]
@@ -454,7 +477,7 @@ class ConversationStore:
                     "created_at": data.get("created_at", 0),
                     "updated_at": data.get("updated_at", 0),
                     "expires_at": data.get("expires_at", 0),
-                    "context_summary": data.get("context_summary", ""),
+                    "context": data.get("context"),  # None for old files = not diverged
                 }
                 if data.get("extra"):
                     entry["extra"] = data["extra"]

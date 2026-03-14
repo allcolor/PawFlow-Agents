@@ -9,6 +9,7 @@
   "grok_llm_service": "grok_llm_service",
   "grok_llm_base_url": "https://api.x.ai",
   "grok_llm_model": "grok-4-latest",
-  "claude_code_service": "claude_code_service",
-  "llm_default_service": "llm_default_service"
+  "claude_code_service": "claude_llm_service",
+  "llm_default_service": "llm_default_service",
+  "claude_llm_service": "claude_llm_service"
 }

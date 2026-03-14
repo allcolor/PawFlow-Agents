@@ -520,5 +520,103 @@ class TestConversationI18n(unittest.TestCase):
             assert key in es, f"Missing {key} in es.json"
 
 
+# ── Persistent context tests ──────────────────────────────────────
+
+
+class TestConversationStoreContext(unittest.TestCase):
+    """Tests for the persistent context field (context != messages)."""
+
+    def setUp(self):
+        ConversationStore.reset()
+        self._tmpdir = tempfile.mkdtemp()
+        store = ConversationStore.instance()
+        store._store_dir = Path(self._tmpdir)
+        store._store_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        ConversationStore.reset()
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def test_context_initially_none(self):
+        """New conversations have no diverged context."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        assert store.load_context("c1") is None
+
+    def test_save_and_load_context(self):
+        """save_context / load_context round-trip."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        ctx = [{"role": "system", "content": "summary"}]
+        assert store.save_context("c1", ctx) is True
+        loaded = store.load_context("c1")
+        assert loaded == ctx
+
+    def test_append_to_context(self):
+        """Append to a diverged context."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        store.save_context("c1", [{"role": "system", "content": "summary"}])
+        new = [{"role": "user", "content": "hello"}]
+        assert store.append_to_context("c1", new) is True
+        loaded = store.load_context("c1")
+        assert len(loaded) == 2
+        assert loaded[1]["content"] == "hello"
+
+    def test_append_to_context_when_none(self):
+        """Append is a no-op when context is None (not diverged)."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        assert store.append_to_context("c1", [{"role": "user", "content": "x"}]) is False
+        assert store.load_context("c1") is None
+
+    def test_context_persists_to_disk(self):
+        """Context survives singleton reset (disk reload)."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        ctx = [{"role": "system", "content": "compacted"}]
+        store.save_context("c1", ctx)
+        # Reset singleton — forces reload from disk
+        ConversationStore.reset()
+        store2 = ConversationStore(store_dir=self._tmpdir)
+        loaded = store2.load_context("c1")
+        assert loaded == ctx
+
+    def test_backward_compat(self):
+        """Old JSON files without 'context' field load fine (context=None)."""
+        old_data = {
+            "conversation_id": "old1",
+            "user_id": "",
+            "status": "idle",
+            "created_at": time.time(),
+            "updated_at": time.time(),
+            "expires_at": 0,
+            "messages": [{"role": "user", "content": "hello"}],
+            "context_summary": "old summary",
+        }
+        path = Path(self._tmpdir) / "old1.json"
+        path.write_text(json.dumps(old_data), encoding="utf-8")
+        ConversationStore.reset()
+        store = ConversationStore(store_dir=self._tmpdir)
+        assert store.load("old1") is not None
+        assert store.load_context("old1") is None
+
+    def test_context_independent_of_messages(self):
+        """Modifying messages (append) doesn't affect diverged context."""
+        store = ConversationStore.instance()
+        store.save("c1", [{"role": "user", "content": "hi"}])
+        ctx = [{"role": "system", "content": "compacted"}]
+        store.save_context("c1", ctx)
+        # Append to messages
+        store.append_messages("c1", [{"role": "user", "content": "new"}])
+        # Context unchanged
+        loaded_ctx = store.load_context("c1")
+        assert len(loaded_ctx) == 1
+        assert loaded_ctx[0]["content"] == "compacted"
+        # Messages have the new one
+        loaded_msgs = store.load("c1")
+        assert len(loaded_msgs) == 2
+
+
 if __name__ == "__main__":
     unittest.main()

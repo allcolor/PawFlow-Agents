@@ -1254,5 +1254,525 @@ class TestAgentToolsI18n(unittest.TestCase):
                 assert key in data, f"Missing key '{key}' in {locale}.json"
 
 
+# ── Persistent context integration ──────────────────────────────────
+
+
+class TestAgentLoopPersistentContext(unittest.TestCase):
+    """Tests for the persistent context feature in AgentLoopTask."""
+
+    def setUp(self):
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+        self._tmpdir = tempfile.mkdtemp()
+        store = ConversationStore.instance()
+        store._store_dir = Path(self._tmpdir)
+        store._store_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _make_task(self):
+        return AgentLoopTask({
+            "conversation_store": True,
+            "system_prompt": "You are helpful.",
+            "api_key": "test-key",
+            "provider": "openai",
+            "context_max_tokens": 64000,
+            "context_keep_recent": 6,
+        })
+
+    def test_get_context_action_synced(self):
+        """get_context returns messages when context is not diverged."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("cx1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ])
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "get_context",
+            "conversation_id": "cx1",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["diverged"] is False
+        assert data["message_count"] == 2
+        assert data["token_estimate"] > 0
+
+    def test_get_context_action_diverged(self):
+        """get_context returns diverged context after save_context."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("cx2", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ])
+        store.save_context("cx2", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "compacted summary"},
+        ])
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "get_context",
+            "conversation_id": "cx2",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["diverged"] is True
+        assert data["message_count"] == 2
+
+    def test_rebuild_action_full_restore(self):
+        """rebuild restores full conversation when it fits."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ]
+        store.save("cx3", msgs)
+        # Pre-diverge with a short context
+        store.save_context("cx3", [{"role": "system", "content": "short"}])
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "rebuild",
+            "conversation_id": "cx3",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["ok"] is True
+        assert data["action"] == "full_restore"
+        assert data["before"] == 3
+        # After rebuild, context should contain all messages
+        ctx = store.load_context("cx3")
+        assert ctx is not None
+        assert len(ctx) == 3
+
+    def test_restart_from_action_saves_context(self):
+        """restart_from saves a new context with last N messages."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        msgs = [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "msg1"},
+            {"role": "assistant", "content": "resp1"},
+            {"role": "user", "content": "msg2"},
+            {"role": "assistant", "content": "resp2"},
+            {"role": "user", "content": "msg3"},
+            {"role": "assistant", "content": "resp3"},
+        ]
+        store.save("cx4", msgs)
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "restart_from",
+            "conversation_id": "cx4",
+            "keep_last": 2,
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["ok"] is True
+        assert data["kept_messages"] == 2
+        # Context should be saved
+        ctx = store.load_context("cx4")
+        assert ctx is not None
+        # Should have system + 2 recent non-system messages
+        deserialized = ctx
+        assert len(deserialized) == 3  # system + 2 kept
+
+
+class TestContextEditing(unittest.TestCase):
+    """Tests for context editing actions."""
+
+    def setUp(self):
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+        self._tmpdir = tempfile.mkdtemp()
+        store = ConversationStore.instance()
+        store._store_dir = Path(self._tmpdir)
+        store._store_dir.mkdir(parents=True, exist_ok=True)
+
+    def tearDown(self):
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _make_task(self):
+        return AgentLoopTask({
+            "conversation_store": True,
+            "system_prompt": "You are helpful.",
+            "api_key": "test-key",
+            "provider": "openai",
+            "context_max_tokens": 64000,
+            "context_keep_recent": 6,
+        })
+
+    def _seed(self, conv_id, msgs):
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().save(conv_id, msgs)
+
+    def _exec(self, task, body):
+        ff = FlowFile(content=json.dumps(body).encode())
+        result = task.execute(ff)
+        return json.loads(result[0].get_content())
+
+    def test_get_context_full(self):
+        """get_context_full returns complete content (not truncated)."""
+        long_content = "A" * 1000
+        self._seed("cf1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": long_content},
+        ])
+        data = self._exec(self._make_task(), {
+            "action": "get_context_full",
+            "conversation_id": "cf1",
+        })
+        assert "error" not in data
+        assert data["message_count"] == 2
+        assert data["context"][1]["content"] == long_content
+
+    def test_edit_context_message(self):
+        """edit_context modifies a message and saves as diverged context."""
+        from core.conversation_store import ConversationStore
+        self._seed("ce1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ])
+        data = self._exec(self._make_task(), {
+            "action": "edit_context",
+            "conversation_id": "ce1",
+            "index": 1,
+            "content": "modified hello",
+        })
+        assert data["ok"] is True
+        assert data["message_count"] == 2
+        ctx = ConversationStore.instance().load_context("ce1")
+        assert ctx is not None
+        assert ctx[1]["content"] == "modified hello"
+
+    def test_edit_context_role(self):
+        """edit_context can change the role of a message."""
+        from core.conversation_store import ConversationStore
+        self._seed("ce2", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ])
+        data = self._exec(self._make_task(), {
+            "action": "edit_context",
+            "conversation_id": "ce2",
+            "index": 1,
+            "content": "hello",
+            "role": "assistant",
+        })
+        assert data["ok"] is True
+        ctx = ConversationStore.instance().load_context("ce2")
+        assert ctx[1]["role"] == "assistant"
+
+    def test_edit_context_invalid_index(self):
+        """edit_context with out-of-range index returns error."""
+        self._seed("ce3", [{"role": "user", "content": "hi"}])
+        data = self._exec(self._make_task(), {
+            "action": "edit_context",
+            "conversation_id": "ce3",
+            "index": 5,
+            "content": "x",
+        })
+        assert "error" in data
+
+    def test_delete_context_message(self):
+        """delete_context_message removes a message."""
+        from core.conversation_store import ConversationStore
+        self._seed("cd1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ])
+        data = self._exec(self._make_task(), {
+            "action": "delete_context_message",
+            "conversation_id": "cd1",
+            "index": 1,
+        })
+        assert data["ok"] is True
+        assert data["message_count"] == 2
+        ctx = ConversationStore.instance().load_context("cd1")
+        assert len(ctx) == 2
+        assert ctx[1]["role"] == "assistant"
+
+    def test_replace_context(self):
+        """replace_context replaces the entire context."""
+        from core.conversation_store import ConversationStore
+        self._seed("cr1", [{"role": "user", "content": "old"}])
+        new_ctx = [
+            {"role": "system", "content": "new sys"},
+            {"role": "user", "content": "new msg"},
+        ]
+        data = self._exec(self._make_task(), {
+            "action": "replace_context",
+            "conversation_id": "cr1",
+            "context": new_ctx,
+        })
+        assert data["ok"] is True
+        assert data["message_count"] == 2
+        ctx = ConversationStore.instance().load_context("cr1")
+        assert ctx == new_ctx
+
+    def test_replace_context_invalid(self):
+        """replace_context rejects messages without role."""
+        self._seed("cr2", [{"role": "user", "content": "old"}])
+        data = self._exec(self._make_task(), {
+            "action": "replace_context",
+            "conversation_id": "cr2",
+            "context": [{"content": "no role"}],
+        })
+        assert "error" in data
+
+    def test_add_context_message(self):
+        """add_context_message appends a message."""
+        from core.conversation_store import ConversationStore
+        self._seed("ca1", [{"role": "system", "content": "sys"}])
+        data = self._exec(self._make_task(), {
+            "action": "add_context_message",
+            "conversation_id": "ca1",
+            "role": "user",
+            "content": "new message",
+        })
+        assert data["ok"] is True
+        assert data["message_count"] == 2
+        ctx = ConversationStore.instance().load_context("ca1")
+        assert ctx[1]["content"] == "new message"
+
+    def test_add_context_message_at_index(self):
+        """add_context_message inserts at specific index."""
+        from core.conversation_store import ConversationStore
+        self._seed("ca2", [
+            {"role": "system", "content": "sys"},
+            {"role": "assistant", "content": "reply"},
+        ])
+        data = self._exec(self._make_task(), {
+            "action": "add_context_message",
+            "conversation_id": "ca2",
+            "role": "user",
+            "content": "inserted",
+            "index": 1,
+        })
+        assert data["ok"] is True
+        assert data["message_count"] == 3
+        ctx = ConversationStore.instance().load_context("ca2")
+        assert ctx[1]["content"] == "inserted"
+        assert ctx[1]["role"] == "user"
+        assert ctx[2]["role"] == "assistant"
+
+
+class TestRandomThought(unittest.TestCase):
+    """Tests for the random thought feature."""
+
+    def setUp(self):
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        ConversationStore.reset()
+        PollScheduler.reset()
+        self._tmpdir = tempfile.mkdtemp()
+        store = ConversationStore.instance()
+        store._store_dir = Path(self._tmpdir)
+        store._store_dir.mkdir(parents=True, exist_ok=True)
+        # Point PollScheduler to temp dir
+        import core.poll_scheduler as ps
+        self._orig_data_dir = ps._DATA_DIR
+        self._orig_schedule_file = ps._SCHEDULE_FILE
+        ps._DATA_DIR = str(Path(self._tmpdir) / "poll")
+        ps._SCHEDULE_FILE = str(Path(self._tmpdir) / "poll" / "schedule.json")
+
+    def tearDown(self):
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import core.poll_scheduler as ps
+        ConversationStore.reset()
+        PollScheduler.reset()
+        ps._DATA_DIR = self._orig_data_dir
+        ps._SCHEDULE_FILE = self._orig_schedule_file
+        import shutil
+        shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _make_task(self):
+        return AgentLoopTask({
+            "conversation_store": True,
+            "system_prompt": "You are helpful.",
+            "api_key": "test-key",
+            "provider": "openai",
+        })
+
+    def test_parse_frequency_simple(self):
+        """2-3/h → (1200, 1800)"""
+        mn, mx = AgentLoopTask._parse_thought_frequency("2-3/h")
+        assert mn == 1200
+        assert mx == 1800
+
+    def test_parse_frequency_single(self):
+        """1/30m → (1800, 1800)"""
+        mn, mx = AgentLoopTask._parse_thought_frequency("1/30m")
+        assert mn == 1800
+        assert mx == 1800
+
+    def test_parse_frequency_daily(self):
+        """5-10/d → (8640, 17280)"""
+        mn, mx = AgentLoopTask._parse_thought_frequency("5-10/d")
+        assert mn == 8640
+        assert mx == 17280
+
+    def test_parse_frequency_invalid(self):
+        """Invalid spec raises ValueError."""
+        with self.assertRaises(ValueError):
+            AgentLoopTask._parse_thought_frequency("bad")
+
+    def test_poll_scheduler_compound_key(self):
+        """PollScheduler supports compound keys."""
+        from core.poll_scheduler import PollScheduler
+        import time
+        sched = PollScheduler.instance()
+        sched.schedule("conv1", time.time() + 3600, key="conv1::thought::default",
+                       reason="test thought")
+        # Can retrieve by compound key
+        entry = sched.get("conv1::thought::default")
+        assert entry is not None
+        assert entry["conversation_id"] == "conv1"
+        assert entry["key"] == "conv1::thought::default"
+        # Regular key still works
+        sched.schedule("conv2", time.time() + 3600, reason="normal")
+        assert sched.get("conv2") is not None
+        # Cancel compound key
+        assert sched.cancel("conv1::thought::default") is True
+        assert sched.get("conv1::thought::default") is None
+
+    def test_random_thought_on(self):
+        """Action 'on' stores config and creates schedule."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        store = ConversationStore.instance()
+        store.save("rt1", [{"role": "user", "content": "hi"}])
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "random_thought",
+            "conversation_id": "rt1",
+            "sub": "on",
+            "frequency": "2-3/h",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["ok"] is True
+        assert data["agent"] == "default"
+        assert data["frequency"] == "2-3/h"
+        assert data["next_in_seconds"] > 0
+        # Config stored in extras
+        cfg = store.get_extra("rt1", "random_thought::default")
+        assert cfg["enabled"] is True
+        assert cfg["min_interval"] == 1200
+        # Schedule created
+        sched = PollScheduler.instance().get("rt1::thought::default")
+        assert sched is not None
+
+    def test_random_thought_off(self):
+        """Action 'off' disables config and cancels schedule."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        store = ConversationStore.instance()
+        store.save("rt2", [{"role": "user", "content": "hi"}])
+        task = self._make_task()
+        # Turn on first
+        ff_on = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt2",
+            "sub": "on", "frequency": "1/h",
+        }).encode())
+        task.execute(ff_on)
+        # Turn off
+        ff_off = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt2",
+            "sub": "off",
+        }).encode())
+        result = task.execute(ff_off)
+        data = json.loads(result[0].get_content())
+        assert data["ok"] is True
+        assert data["disabled"] is True
+        cfg = store.get_extra("rt2", "random_thought::default")
+        assert cfg["enabled"] is False
+        assert PollScheduler.instance().get("rt2::thought::default") is None
+
+    def test_random_thought_status(self):
+        """Action 'status' returns config and next trigger."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("rt3", [{"role": "user", "content": "hi"}])
+        task = self._make_task()
+        # Status when not configured
+        ff = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt3",
+            "sub": "status",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["enabled"] is False
+        # Turn on, then status
+        ff_on = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt3",
+            "sub": "on", "frequency": "1/h",
+        }).encode())
+        task.execute(ff_on)
+        ff2 = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt3",
+            "sub": "status",
+        }).encode())
+        result2 = task.execute(ff2)
+        data2 = json.loads(result2[0].get_content())
+        assert data2["enabled"] is True
+        assert data2["next_in_seconds"] is not None
+
+    def test_random_thought_now(self):
+        """Action 'now' creates an immediate schedule."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        store = ConversationStore.instance()
+        store.save("rt4", [{"role": "user", "content": "hi"}])
+        task = self._make_task()
+        ff = FlowFile(content=json.dumps({
+            "action": "random_thought", "conversation_id": "rt4",
+            "sub": "now",
+        }).encode())
+        result = task.execute(ff)
+        data = json.loads(result[0].get_content())
+        assert data["ok"] is True
+        assert data["triggered"] is True
+        sched = PollScheduler.instance().get("rt4::thought::default")
+        assert sched is not None
+
+    def test_random_thought_not_blocked_by_active(self):
+        """Thoughts are never blocked — they fire even when conversation is active."""
+        from core.poll_scheduler import PollScheduler
+        import time
+        sched = PollScheduler.instance()
+        # Create a thought schedule that's already due
+        sched.schedule("rt5", time.time() - 10, key="rt5::thought::default",
+                       reason="[random_thought] test", user_id="u1")
+        task = self._make_task()
+        # Mark conversation as user-active
+        with task._active_lock:
+            task._active_conversations["rt5"] = 1
+            task._user_active_conversations.add("rt5")
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("rt5", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+        ])
+        task._poll_once()
+        # Thought should have been consumed from scheduler (not deferred)
+        new_sched = sched.get("rt5::thought::default")
+        assert new_sched is None
+
+
 if __name__ == "__main__":
     unittest.main()

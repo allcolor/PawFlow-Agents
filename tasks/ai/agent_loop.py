@@ -73,7 +73,8 @@ class AgentLoopTask(BaseTask):
         self._tool_registry: Optional[ToolRegistry] = None
         self._poller_started = False
         self._poller_stop = threading.Event()
-        self._active_conversations: set = set()  # convs currently being processed
+        self._active_conversations: Dict[str, int] = {}  # conv_id -> refcount
+        self._user_active_conversations: set = set()  # convs with active USER interaction
         self._active_lock = threading.Lock()
         # Track poll cooldown per conversation:
         # conv_id -> (updated_at_when_checked, recheck_after_timestamp)
@@ -448,30 +449,33 @@ class AgentLoopTask(BaseTask):
 
         messages: List[LLMMessage] = []
 
+        _context_diverged = False
         if use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
-            existing = store.load(conversation_id)
-            if existing:
-                # Apply context_start_offset (/restart_from)
-                ctx_offset = store.get_extra(conversation_id, "context_start_offset", 0)
-                if ctx_offset and ctx_offset > 0 and ctx_offset < len(existing):
-                    existing = existing[ctx_offset:]
-                    logger.info(f"[context:{conversation_id[:8]}] applied context_start_offset={ctx_offset}, "
-                                f"using {len(existing)} of {ctx_offset + len(existing)} messages")
+            context_data = store.load_context(conversation_id)
+            if context_data is not None:
+                # Context has diverged — use it directly
                 try:
-                    messages = self._rebuild_context(
-                        conversation_id, existing, system_prompt,
-                        int(self.config.get("context_max_tokens", 64000)),
-                        int(self.config.get("context_keep_recent", 6)),
-                    )
-                    logger.info(f"[context:{conversation_id[:8]}] rebuilt context: "
-                                f"{len(messages)} messages from {len(existing)} total")
+                    messages = self._deserialize_messages(context_data)
+                    _context_diverged = True
+                    logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
+                                f"{len(messages)} messages")
                 except (KeyError, TypeError) as deser_err:
-                    logger.error(f"[context:{conversation_id[:8]}] context rebuild failed: {deser_err}")
+                    logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
             else:
-                logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
-                               f"starting fresh conversation")
+                # No divergence — use messages as context
+                existing = store.load(conversation_id)
+                if existing:
+                    try:
+                        messages = self._deserialize_messages(existing)
+                        logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
+                                    f"{len(messages)} messages")
+                    except (KeyError, TypeError) as deser_err:
+                        logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
+                else:
+                    logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
+                                   f"starting fresh conversation")
         elif conv_attr:
             existing = flowfile.get_attribute(conv_attr)
             if existing:
@@ -696,6 +700,7 @@ class AgentLoopTask(BaseTask):
             "default_client": self._get_default_client(user_id),
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
+            "_context_diverged": _context_diverged,
         }
 
     def select_processable(self, connections):
@@ -958,15 +963,22 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            total = store.message_count(conv_id)
-            offset = max(0, total - keep_last)
-            store.set_extra(conv_id, "context_start_offset", offset)
-            # Clear any persisted compaction summary (stale after restart)
-            store.set_context_summary(conv_id, "")
+            all_msgs = store.load(conv_id, user_id=user_id)
+            if not all_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            # Take last N messages + system prompt as new context
+            deserialized = self._deserialize_messages(all_msgs)
+            system_msgs = [m for m in deserialized if m.role == "system"]
+            non_system = [m for m in deserialized if m.role != "system"]
+            kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
+            new_context = system_msgs + kept
+            serialized_ctx = self._serialize_messages(new_context)
+            store.save_context(conv_id, serialized_ctx)
             flowfile.set_content(json.dumps({
                 "ok": True, "conversation_id": conv_id,
-                "context_start_offset": offset,
-                "kept_messages": total - offset,
+                "kept_messages": len(kept),
             }).encode())
             return [flowfile]
 
@@ -1026,9 +1038,18 @@ class AgentLoopTask(BaseTask):
                     summary = self._call_summarize_with_budget(
                         client, summary, max_summary_tokens,
                     )
-                # Store summary and set offset to skip all messages
-                store.set_context_summary(conv_id, summary)
-                store.set_extra(conv_id, "context_start_offset", len(all_msgs))
+                # Build new context: system + summary pair
+                sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+                from datetime import datetime
+                sys_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                new_context = [
+                    LLMMessage(role="system", content=sys_prompt),
+                    LLMMessage(role="user",
+                               content=f"[Conversation summary — earlier messages compacted]\n\n{summary}"),
+                    LLMMessage(role="assistant",
+                               content="Understood. I have the context from our earlier conversation. Continuing from where we left off."),
+                ]
+                store.save_context(conv_id, self._serialize_messages(new_context))
                 flowfile.set_content(json.dumps({
                     "ok": True, "conversation_id": conv_id,
                     "summary_length": len(summary),
@@ -1429,8 +1450,13 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            messages_data = store.load(conv_id, user_id=user_id)
-            if not messages_data or len(messages_data) < 4:
+            # Load current context (or messages if not diverged)
+            context_data = store.load_context(conv_id, user_id=user_id)
+            if context_data is not None:
+                source_data = context_data
+            else:
+                source_data = store.load(conv_id, user_id=user_id)
+            if not source_data or len(source_data) < 4:
                 flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
                 return [flowfile]
             # Run compaction
@@ -1452,11 +1478,10 @@ class AgentLoopTask(BaseTask):
             else:
                 flowfile.set_content(json.dumps({"error": f"LLM service '{svc_id}' not found"}).encode())
                 return [flowfile]
-            mdl = self.config.get("model", "")
             try:
-                msgs = self._deserialize_messages(messages_data)
+                msgs = self._deserialize_messages(source_data)
                 before_count = len(msgs)
-                # Force compaction to generate a summary (persisted by _compact_if_needed)
+                # Force compaction (persisted by _compact_if_needed via save_context)
                 compacted = self._compact_if_needed(
                     msgs, client,
                     int(self.config.get("context_max_tokens", 64000)),
@@ -1465,14 +1490,224 @@ class AgentLoopTask(BaseTask):
                     conversation_id=conv_id,
                 )
                 after_count = len(compacted)
-                # Conversation messages stay intact — only the context_summary is updated
-                summary = store.get_context_summary(conv_id)
                 flowfile.set_content(json.dumps({
                     "compacted": True, "before": before_count, "after": after_count,
-                    "summary_chars": len(summary),
                 }).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "rebuild":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            all_msgs = store.load(conv_id, user_id=user_id)
+            if not all_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            deserialized = self._deserialize_messages(all_msgs)
+            estimated = self._estimate_tokens(deserialized)
+            context_max = int(self.config.get("context_max_tokens", 64000))
+            limit = int(context_max * 0.8)
+            if estimated <= limit:
+                # Full restore — everything fits
+                store.save_context(conv_id, all_msgs)
+                flowfile.set_content(json.dumps({
+                    "ok": True, "action": "full_restore",
+                    "before": len(all_msgs), "after": len(all_msgs),
+                    "token_estimate": estimated,
+                }).encode())
+            else:
+                # Need compaction — resolve LLM client
+                svc_id = self.config.get("llm_service", "")
+                if not svc_id or "${" in svc_id:
+                    svc_id = "default"
+                _client, _ = self._resolve_llm_service(svc_id, user_id or "")
+                if _client:
+                    client = _client
+                elif self.config.get("api_key"):
+                    client = LLMClient(
+                        provider=self.config.get("provider", "openai"),
+                        api_key=self.config["api_key"],
+                        base_url=self.config.get("base_url", ""),
+                        default_model=self.config.get("model", ""),
+                        timeout=int(self.config.get("timeout", 120)),
+                    )
+                else:
+                    flowfile.set_content(json.dumps({"error": f"LLM service '{svc_id}' not found"}).encode())
+                    return [flowfile]
+                try:
+                    compacted = self._compact_if_needed(
+                        deserialized, client, context_max, 0.5,
+                        int(self.config.get("context_keep_recent", 6)),
+                        conversation_id=conv_id,
+                    )
+                    new_estimate = self._estimate_tokens(compacted)
+                    flowfile.set_content(json.dumps({
+                        "ok": True, "action": "compacted",
+                        "before": len(all_msgs), "after": len(compacted),
+                        "token_estimate": new_estimate,
+                    }).encode())
+                except Exception as e:
+                    flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "get_context":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data = store.load_context(conv_id, user_id=user_id)
+            diverged = context_data is not None
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
+            # Classify messages for display
+            display_msgs = []
+            for m in context_data:
+                role = m.get("role", "unknown")
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+                    content = "\n".join(text_parts) if text_parts else str(content)
+                has_tool_calls = bool(m.get("tool_calls"))
+                display_msgs.append({
+                    "role": role,
+                    "content": content[:300] if isinstance(content, str) else str(content)[:300],
+                    "has_tool_calls": has_tool_calls,
+                    "source": m.get("source"),
+                })
+            flowfile.set_content(json.dumps({
+                "context": display_msgs,
+                "message_count": len(context_data),
+                "token_estimate": estimated,
+                "diverged": diverged,
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "get_context_full":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data = store.load_context(conv_id, user_id=user_id)
+            diverged = context_data is not None
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            flowfile.set_content(json.dumps({
+                "context": context_data,
+                "message_count": len(context_data),
+                "diverged": diverged,
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "edit_context":
+            conv_id = body.get("conversation_id", "")
+            index = body.get("index")
+            new_content = body.get("content", "")
+            new_role = body.get("role")
+            if not conv_id or index is None:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data = store.load_context(conv_id, user_id=user_id)
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            if index < 0 or index >= len(context_data):
+                flowfile.set_content(json.dumps({"error": f"Index {index} out of range (0-{len(context_data)-1})"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data[index]["content"] = new_content
+            if new_role:
+                context_data[index]["role"] = new_role
+            store.save_context(conv_id, context_data)
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message_count": len(context_data),
+                "token_estimate": estimated,
+            }).encode())
+            return [flowfile]
+
+        if action == "delete_context_message":
+            conv_id = body.get("conversation_id", "")
+            index = body.get("index")
+            if not conv_id or index is None:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data = store.load_context(conv_id, user_id=user_id)
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            if index < 0 or index >= len(context_data):
+                flowfile.set_content(json.dumps({"error": f"Index {index} out of range (0-{len(context_data)-1})"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data.pop(index)
+            store.save_context(conv_id, context_data)
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message_count": len(context_data),
+                "token_estimate": estimated,
+            }).encode())
+            return [flowfile]
+
+        if action == "replace_context":
+            conv_id = body.get("conversation_id", "")
+            new_context = body.get("context", [])
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            for msg in new_context:
+                if "role" not in msg or "content" not in msg:
+                    flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
+                    flowfile.set_attribute("http.response.status", "400")
+                    return [flowfile]
+            store.save_context(conv_id, new_context)
+            deserialized = self._deserialize_messages(new_context)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message_count": len(new_context),
+                "token_estimate": estimated,
+            }).encode())
+            return [flowfile]
+
+        if action == "add_context_message":
+            conv_id = body.get("conversation_id", "")
+            role = body.get("role", "user")
+            content = body.get("content", "")
+            index = body.get("index")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            context_data = store.load_context(conv_id, user_id=user_id)
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            msg = {"role": role, "content": content}
+            if index is not None:
+                context_data.insert(index, msg)
+            else:
+                context_data.append(msg)
+            store.save_context(conv_id, context_data)
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message_count": len(context_data),
+                "token_estimate": estimated,
+            }).encode())
             return [flowfile]
 
         if action == "create_agent":
@@ -2109,6 +2344,9 @@ class AgentLoopTask(BaseTask):
             }, ensure_ascii=False).encode())
             return [flowfile]
 
+        if action == "random_thought":
+            return self._handle_random_thought(body, body.get("conversation_id", ""), user_id, flowfile)
+
         return None  # Unknown action — treat as normal message
 
     def _handle_telegram_conv_command(
@@ -2204,6 +2442,132 @@ class AgentLoopTask(BaseTask):
                 f"No active conversation. Use /conv new or /conv select ID.\n"
                 f"User: {resolved_user}".encode("utf-8")
             )
+        return [flowfile]
+
+    # ── Random Thought ────────────────────────────────────────────
+
+    @staticmethod
+    def _parse_thought_frequency(spec: str):
+        """Parse frequency spec like '2-3/h' → (min_interval, max_interval) in seconds.
+
+        Format: ``<count_min>[-<count_max>]/<number?><unit>``
+        Units: s=1, m=60, h=3600, d=86400.
+
+        Returns ``(min_interval_sec, max_interval_sec)`` or raises ValueError.
+        """
+        import re
+        m = re.match(r'^(\d+)(?:-(\d+))?/(\d*)([smhd])$', spec)
+        if not m:
+            raise ValueError(f"Invalid frequency: {spec}")
+        count_min = int(m.group(1))
+        count_max = int(m.group(2) or count_min)
+        if count_min <= 0 or count_max < count_min:
+            raise ValueError(f"Invalid frequency counts: {spec}")
+        duration_num = int(m.group(3) or 1)
+        unit = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(4)]
+        period = duration_num * unit
+        # More counts → shorter intervals
+        max_interval = period // count_min
+        min_interval = period // count_max
+        return (min_interval, max_interval)
+
+    def _handle_random_thought(self, body: Dict, conv_id: str,
+                               user_id: str, flowfile: FlowFile) -> List[FlowFile]:
+        """Handle the ``random_thought`` action (on/off/status/now)."""
+        import random as _rng
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+
+        sub = body.get("sub", "status")
+        agent_name = body.get("agent", "")
+        store = ConversationStore.instance()
+        # If no agent specified, use the currently selected agent for this conversation
+        if not agent_name and conv_id:
+            active_res = store.get_extra(conv_id, "active_resources") or {}
+            agent_name = active_res.get("agent", "") or "default"
+        agent_name = agent_name or "default"
+        thought_key = f"{conv_id}::thought::{agent_name}"
+        extra_key = f"random_thought::{agent_name}"
+        scheduler = PollScheduler.instance()
+
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+
+        if sub == "on":
+            freq = body.get("frequency", "2-3/h")
+            try:
+                min_iv, max_iv = self._parse_thought_frequency(freq)
+            except ValueError as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+
+            store.set_extra(conv_id, extra_key, {
+                "enabled": True,
+                "min_interval": min_iv,
+                "max_interval": max_iv,
+                "agent": agent_name,
+                "frequency": freq,
+            })
+            delay = _rng.randint(min_iv, max_iv)
+            scheduler.schedule_delay(
+                conv_id, delay, key=thought_key,
+                reason=f"[random_thought] spontaneous thought ({agent_name})",
+                user_id=user_id,
+            )
+            # Notify via SSE so the chat shows the schedule
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(conv_id, "thought_scheduled", {
+                    "agent": agent_name, "delay": delay, "frequency": freq,
+                })
+            except Exception:
+                pass
+            flowfile.set_content(json.dumps({
+                "ok": True, "agent": agent_name, "frequency": freq,
+                "next_in_seconds": delay,
+            }).encode())
+            return [flowfile]
+
+        if sub == "off":
+            store.set_extra(conv_id, extra_key, {"enabled": False})
+            scheduler.cancel(thought_key)
+            flowfile.set_content(json.dumps({
+                "ok": True, "agent": agent_name, "disabled": True,
+            }).encode())
+            return [flowfile]
+
+        if sub == "now":
+            scheduler.schedule_delay(
+                conv_id, 1, key=thought_key,
+                reason=f"[random_thought] manual trigger ({agent_name})",
+                user_id=user_id,
+            )
+            store.set_status(conv_id, "active")
+            flowfile.set_content(json.dumps({
+                "ok": True, "agent": agent_name, "triggered": True,
+            }).encode())
+            return [flowfile]
+
+        # sub == "status" (default)
+        config = store.get_extra(conv_id, extra_key)
+        sched = scheduler.get(thought_key)
+        if config and config.get("enabled"):
+            import time as _t
+            next_at = sched["recheck_at"] if sched else None
+            next_in = int(next_at - _t.time()) if next_at else None
+            flowfile.set_content(json.dumps({
+                "enabled": True, "agent": agent_name,
+                "frequency": config.get("frequency", ""),
+                "next_at": next_at,
+                "next_in_seconds": max(0, next_in) if next_in is not None else None,
+            }).encode())
+        else:
+            flowfile.set_content(json.dumps({
+                "enabled": False, "agent": agent_name,
+            }).encode())
         return [flowfile]
 
     def _execute_sync(self, flowfile: FlowFile) -> List[FlowFile]:
@@ -2526,7 +2890,8 @@ class AgentLoopTask(BaseTask):
         # Mark conversation as active (prevents poller from picking it up)
         # Also clear cooldown so poller can check again after this interaction
         with self._active_lock:
-            self._active_conversations.add(conversation_id)
+            self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
+            self._user_active_conversations.add(conversation_id)
             self._poll_cooldown.pop(conversation_id, None)
 
         # Set conversation status to active
@@ -2612,20 +2977,24 @@ class AgentLoopTask(BaseTask):
     def cancel_agent(self, conversation_id: str, agent_name: str = ""):
         """Cancel a running agent for this conversation.
 
-        If agent_name is given, only cancel that specific agent's thread.
+        If agent_name is a named sub-agent (not "assistant"/"default"/""),
+        only cancel that specific agent's thread.
         Otherwise cancel ALL agents for this conversation.
 
         Increments the generation counter so the running thread detects
         staleness at the next check point and stops gracefully.
         """
+        # "assistant" and "default" refer to the main (unnamed) agent
+        # whose gen_key is just conversation_id, not conversation_id:assistant
+        _is_named = agent_name and agent_name not in ("", "assistant", "default")
         with self._conv_gen_lock:
-            if agent_name:
-                # Cancel only this specific agent
+            if _is_named:
+                # Cancel only this specific sub-agent
                 key = f"{conversation_id}:{agent_name}"
                 self._conv_generation[key] = \
                     self._conv_generation.get(key, 0) + 1
             else:
-                # Cancel all
+                # Cancel default assistant + all per-agent threads
                 self._conv_generation[conversation_id] = \
                     self._conv_generation.get(conversation_id, 0) + 1
                 for k in list(self._conv_generation):
@@ -2636,20 +3005,26 @@ class AgentLoopTask(BaseTask):
         ConversationEventBus.instance().publish_event(
             conversation_id, "cancelled", {
                 "reason": "user_request",
-                "agent_name": agent_name or "all",
+                "agent_name": agent_name if _is_named else "all",
             }
         )
-        # Reset status only if cancelling all
-        if not agent_name:
-            from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_status(conversation_id, "idle")
+        # Reset status
+        from core.conversation_store import ConversationStore
+        ConversationStore.instance().set_status(conversation_id, "idle")
         # Remove from interaction tracker
-        if agent_name:
+        if _is_named:
             key = f"{conversation_id}:{agent_name}"
-            with self._interactions_lock:
-                self._active_interactions.pop(key, None)
+        else:
+            key = conversation_id
+        with self._interactions_lock:
+            self._active_interactions.pop(key, None)
+            if not _is_named:
+                # Also clear any per-agent interactions for this conversation
+                for k in list(self._active_interactions):
+                    if k.startswith(conversation_id + ":"):
+                        self._active_interactions.pop(k, None)
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
-                    f"{f' (agent: {agent_name})' if agent_name else ' (all)'}")
+                    f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
         """Signal an agent to finish gracefully — conclude with what it has.
@@ -2875,7 +3250,7 @@ class AgentLoopTask(BaseTask):
             new_messages.append(msg)
 
         def _flush_new():
-            """Persist new messages to the canonical conversation history."""
+            """Persist new messages to the canonical conversation history (and context if diverged)."""
             nonlocal new_messages
             if not (use_conv_store and conversation_id and new_messages):
                 return
@@ -2884,11 +3259,14 @@ class AgentLoopTask(BaseTask):
                             f"generation {my_generation} is stale")
                 return
             from core.conversation_store import ConversationStore
-            ConversationStore.instance().append_messages(
-                conversation_id,
-                self._serialize_messages(new_messages, channel=channel),
+            serialized = self._serialize_messages(new_messages, channel=channel)
+            store = ConversationStore.instance()
+            store.append_messages(
+                conversation_id, serialized,
                 ttl=conv_ttl, user_id=user_id,
             )
+            if ctx.get("_context_diverged"):
+                store.append_to_context(conversation_id, serialized)
             new_messages = []
 
         # Persist the user message immediately so it's never lost
@@ -3486,11 +3864,57 @@ class AgentLoopTask(BaseTask):
             })
         finally:
             with self._active_lock:
-                self._active_conversations.discard(conversation_id)
+                rc = self._active_conversations.get(conversation_id, 1) - 1
+                if rc <= 0:
+                    self._active_conversations.pop(conversation_id, None)
+                else:
+                    self._active_conversations[conversation_id] = rc
+                if not ctx.get("is_poll"):
+                    self._user_active_conversations.discard(conversation_id)
             # Remove interaction tracking
             gen_key = ctx.get("_gen_key", conversation_id)
             with self._interactions_lock:
                 self._active_interactions.pop(gen_key, None)
+
+            # Auto-reschedule random thought if still enabled
+            if ctx.get("is_random_thought"):
+                try:
+                    from core.conversation_store import ConversationStore as _CSrt
+                    from core.poll_scheduler import PollScheduler as _PSrt
+                    import random as _rng_rt
+                    # Extract ALL agent names from scheduled reasons (not just first)
+                    _rt_reasons = ctx.get("_scheduled_reasons", [])
+                    _rt_agents = set()
+                    for _rr in _rt_reasons:
+                        if "[random_thought]" in _rr and "(" in _rr:
+                            _rt_agents.add(_rr.rsplit("(", 1)[-1].rstrip(")"))
+                    if not _rt_agents:
+                        _rt_agents = {"default"}
+                    from core.conversation_event_bus import ConversationEventBus as _EBrt
+                    _rt_bus = _EBrt.instance()
+                    _rt_store = _CSrt.instance()
+                    for _rt_agent in _rt_agents:
+                        _rt_extra_key = f"random_thought::{_rt_agent}"
+                        _rt_config = _rt_store.get_extra(conversation_id, _rt_extra_key)
+                        if _rt_config and _rt_config.get("enabled"):
+                            _rt_delay = _rng_rt.randint(
+                                _rt_config["min_interval"], _rt_config["max_interval"],
+                            )
+                            _PSrt.instance().schedule_delay(
+                                conversation_id, _rt_delay,
+                                key=f"{conversation_id}::thought::{_rt_agent}",
+                                reason=f"[random_thought] spontaneous thought ({_rt_agent})",
+                                user_id=ctx.get("user_id", ""),
+                            )
+                            _rt_bus.publish_event(conversation_id, "thought_scheduled", {
+                                "agent": _rt_agent,
+                                "delay": _rt_delay,
+                                "frequency": _rt_config.get("frequency", ""),
+                            })
+                    # Set idle after thought
+                    _rt_store.set_status(conversation_id, "idle")
+                except Exception as _rt_err:
+                    logger.warning(f"[agent] Failed to reschedule thought: {_rt_err}")
 
     def _broadcast_agents(self, conversation_id: str, message: str,
                           user_id: str) -> None:
@@ -3662,12 +4086,21 @@ class AgentLoopTask(BaseTask):
         scheduled_ids: set[str] = set()
 
         # Source 1: PollScheduler — persistent scheduled rechecks
-        # Map cid -> list of reasons for scheduled wakeups
+        # Map cid -> list of reasons for scheduled wakeups (non-thought)
         scheduled_reasons: Dict[str, List[str]] = {}
+        # Thought entries are processed individually (each agent gets its own loop)
+        thought_entries: List[Dict] = []
         due_entries = scheduler.get_due()
         for entry in due_entries:
             cid = entry["conversation_id"]
+            entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
+
+            if "::thought::" in entry_key:
+                # Thoughts are never blocked — they can arrive anytime
+                thought_entries.append(entry)
+                continue
+
             logger.info(f"[poller] Scheduled recheck due for {cid[:8]}: {reason}")
             # Set status to active so the poll runs
             store.set_status(cid, "active")
@@ -3701,9 +4134,10 @@ class AgentLoopTask(BaseTask):
                 continue
             to_poll.add(conversation_id)
 
-        if not to_poll:
+        if not to_poll and not thought_entries:
             return
 
+        # Process non-thought polls (grouped by conversation, one at a time)
         for conversation_id in to_poll:
             # Skip if already being processed
             with self._active_lock:
@@ -3729,7 +4163,7 @@ class AgentLoopTask(BaseTask):
 
             # Mark as active
             with self._active_lock:
-                self._active_conversations.add(conversation_id)
+                self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
 
             # Build context and run agent loop
             try:
@@ -3738,7 +4172,11 @@ class AgentLoopTask(BaseTask):
                                                scheduled_reasons=reasons)
                 if ctx is None:
                     with self._active_lock:
-                        self._active_conversations.discard(conversation_id)
+                        rc = self._active_conversations.get(conversation_id, 1) - 1
+                        if rc <= 0:
+                            self._active_conversations.pop(conversation_id, None)
+                        else:
+                            self._active_conversations[conversation_id] = rc
                     continue
                 ctx["_generation"] = gen
 
@@ -3757,7 +4195,69 @@ class AgentLoopTask(BaseTask):
             except Exception as e:
                 logger.error(f"[poller] Failed to wake {conversation_id[:8]}: {e}")
                 with self._active_lock:
-                    self._active_conversations.discard(conversation_id)
+                    rc = self._active_conversations.get(conversation_id, 1) - 1
+                    if rc <= 0:
+                        self._active_conversations.pop(conversation_id, None)
+                    else:
+                        self._active_conversations[conversation_id] = rc
+
+        # Process thought entries individually (each agent gets its own loop)
+        for entry in thought_entries:
+            cid = entry["conversation_id"]
+            entry_key = entry.get("key", cid)
+            reason = entry.get("reason", "scheduled recheck")
+
+            messages_data = store.load(cid)
+            if not messages_data:
+                continue
+
+            # Extract agent name from key (conv_id::thought::agent_name)
+            _thought_agent = entry_key.rsplit("::", 1)[-1] if "::" in entry_key else "default"
+            logger.info(f"[poller] Waking thought {entry_key} (agent={_thought_agent})")
+            store.set_status(cid, "active")
+            bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
+
+            with self._conv_gen_lock:
+                gen = self._conv_generation.get(cid, 0) + 1
+                self._conv_generation[cid] = gen
+
+            # Mark as active (but NOT user-active — won't block other thoughts)
+            with self._active_lock:
+                self._active_conversations[cid] = self._active_conversations.get(cid, 0) + 1
+
+            try:
+                ctx = self._build_poll_context(cid, messages_data,
+                                               scheduled_reasons=[reason])
+                if ctx is None:
+                    with self._active_lock:
+                        rc = self._active_conversations.get(cid, 1) - 1
+                        if rc <= 0:
+                            self._active_conversations.pop(cid, None)
+                        else:
+                            self._active_conversations[cid] = rc
+                    continue
+                ctx["_generation"] = gen
+
+                bus.publish_event(cid, "thinking", {
+                    "iteration": 0,
+                    "poll": True,
+                })
+
+                thread = threading.Thread(
+                    target=self._streaming_agent_loop,
+                    args=(ctx, cid, bus),
+                    daemon=True,
+                    name=f"agent-thought-{entry_key[-16:]}",
+                )
+                thread.start()
+            except Exception as e:
+                logger.error(f"[poller] Failed thought {entry_key}: {e}")
+                with self._active_lock:
+                    rc = self._active_conversations.get(cid, 1) - 1
+                    if rc <= 0:
+                        self._active_conversations.pop(cid, None)
+                    else:
+                        self._active_conversations[cid] = rc
 
     def _is_eligible_for_poll(self, conversation_id: str,
                               messages_data: List[Dict]) -> bool:
@@ -3824,6 +4324,30 @@ class AgentLoopTask(BaseTask):
         _meta = _CS2.instance().get_metadata(conversation_id)
         _poll_uid = _meta["user_id"] if _meta else ""
 
+        # For random thoughts: resolve agent-specific LLM service if available
+        _thought_agent_name = None
+        if scheduled_reasons:
+            for _sr in scheduled_reasons:
+                if "[random_thought]" in _sr and "(" in _sr:
+                    _thought_agent_name = _sr.rsplit("(", 1)[-1].rstrip(")")
+                    break
+            if _thought_agent_name and _thought_agent_name != "default":
+                try:
+                    from core.resource_store import ResourceStore
+                    rs = ResourceStore.instance()
+                    uid = _poll_uid or "anonymous"
+                    agent_def = rs.get("agent", _thought_agent_name, uid)
+                    if agent_def:
+                        agent_svc = agent_def.get("llm_service", "")
+                        if agent_svc:
+                            svc_id = agent_svc
+                            logger.info(f"[poll] Using agent '{_thought_agent_name}' LLM service: {svc_id}")
+                        agent_model = agent_def.get("model", "")
+                        if agent_model:
+                            model = agent_model
+                except Exception as _e:
+                    logger.debug(f"[poll] Could not resolve agent '{_thought_agent_name}': {_e}")
+
         client, _poll_svc = self._resolve_llm_service(svc_id, _poll_uid)
         if not client and self.config.get("api_key"):
             client = LLMClient(
@@ -3851,21 +4375,50 @@ class AgentLoopTask(BaseTask):
             for h in registry.list_tools()
         ]
 
-        # Rebuild context from summary + recent (avoids re-summarizing)
+        # Load context (diverged) or fall back to messages
         system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+        # Use agent-specific prompt for non-default thought agents
+        if _thought_agent_name and _thought_agent_name != "default":
+            try:
+                from core.resource_store import ResourceStore as _RSp
+                _agent_def = _RSp.instance().get("agent", _thought_agent_name, _poll_uid or "anonymous")
+                if _agent_def and _agent_def.get("prompt"):
+                    system_prompt = _agent_def["prompt"]
+            except Exception:
+                pass
         from datetime import datetime
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        from core.conversation_store import ConversationStore as _CS3
+        _context_data = _CS3.instance().load_context(conversation_id)
+        _context_diverged = False
         try:
-            messages = self._rebuild_context(
-                conversation_id, messages_data, system_prompt,
-                int(self.config.get("context_max_tokens", 64000)),
-                int(self.config.get("context_keep_recent", 6)),
-            )
+            if _context_data is not None:
+                messages = self._deserialize_messages(_context_data)
+                _context_diverged = True
+            else:
+                messages = self._deserialize_messages(messages_data)
         except (KeyError, TypeError):
             return None
 
         # Inject poll check-in prompt (not persisted unless real work happens)
-        if scheduled_reasons:
+        is_random_thought = any(
+            r.startswith("[random_thought]") for r in (scheduled_reasons or [])
+        )
+        if is_random_thought:
+            checkin_content = (
+                "[System: Random thought — spontaneous wake-up]\n"
+                "You are waking up randomly — this is NOT a user request or a scheduled task.\n"
+                "Review the conversation context and share a spontaneous thought worth acting on.\n"
+                "You might:\n"
+                "- Follow up on something discussed earlier with a new angle or insight\n"
+                "- Suggest an idea or action related to the conversation topic\n"
+                "- Ask a thought-provoking question\n"
+                "- Provide a useful tip or observation\n\n"
+                "Act on your thought: if you have something useful to say, say it.\n"
+                "If you have nothing relevant, respond with [NO_PENDING_WORK].\n"
+                "Be brief and natural — like a colleague sharing an afterthought."
+            )
+        elif scheduled_reasons:
             # This wake-up was explicitly scheduled — tell the agent why
             reasons_text = "\n".join(f"- {r}" for r in scheduled_reasons)
             checkin_content = (
@@ -3908,6 +4461,14 @@ class AgentLoopTask(BaseTask):
             if isinstance(h, (CreateFileHandler, ExecuteScriptHandler)):
                 h.set_ttl(conv_ttl)
 
+        # Resolve agent name and LLM service for source tracking
+        _poll_agent_name = ""
+        _poll_agent_svc = svc_id if svc_id != "default" else ""
+        if _thought_agent_name and _thought_agent_name != "default":
+            _poll_agent_name = _thought_agent_name
+        elif _thought_agent_name == "default":
+            _poll_agent_name = ""  # will show as "assistant"
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model,
@@ -3917,8 +4478,13 @@ class AgentLoopTask(BaseTask):
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
             "user_id": poll_user_id,
+            "active_agent_name": _poll_agent_name,
+            "active_llm_service": _poll_agent_svc,
             "is_poll": True,
+            "is_random_thought": is_random_thought,
+            "_scheduled_reasons": scheduled_reasons or [],
             "_base_message_count": base_message_count,
+            "_context_diverged": _context_diverged,
         }
 
     def _wire_embed_fn(
@@ -4245,84 +4811,6 @@ class AgentLoopTask(BaseTask):
 
     # ── Context rebuild ─────────────────────────────────────────────
 
-    def _rebuild_context(
-        self,
-        conversation_id: str,
-        all_messages: List[Dict[str, Any]],
-        system_prompt: str,
-        max_tokens: int,
-        keep_recent: int,
-    ) -> List[LLMMessage]:
-        """Rebuild the LLM context from the conversation history.
-
-        If a persisted context_summary exists, uses it instead of re-summarizing.
-        Otherwise falls back to loading all messages (which will be compacted
-        before the LLM call by ``_compact_if_needed``).
-
-        Returns a list of LLMMessage ready for the LLM, structured as:
-        ``[system_prompt, summary_user, summary_ack, ...recent_messages]``
-        """
-        from core.conversation_store import ConversationStore
-
-        summary = ConversationStore.instance().get_context_summary(conversation_id)
-        all_deserialized = self._deserialize_messages(all_messages)
-
-        # If no messages but summary exists (e.g. after /resume), rebuild from summary alone
-        if not all_deserialized and summary:
-            logger.info(f"[rebuild:{conversation_id[:8]}] no messages but summary exists — "
-                        f"rebuilding from summary only")
-            return [
-                LLMMessage(role="system", content=system_prompt),
-                LLMMessage(role="user",
-                           content=f"[Conversation summary — earlier messages compacted]\n\n{summary}"),
-                LLMMessage(role="assistant",
-                           content="Understood. I have the context from our earlier conversation. Continuing from where we left off."),
-            ]
-
-        # Estimate if the full conversation fits in context
-        estimated = self._estimate_tokens(all_deserialized)
-        limit = int(max_tokens * 0.8)
-
-        if estimated <= limit and not summary:
-            # Everything fits and no forced summary — no need for compaction
-            logger.info(f"[rebuild:{conversation_id[:8]}] full history fits "
-                        f"({estimated} tokens <= {limit})")
-            return all_deserialized
-
-        if not summary:
-            # No summary available — load everything and let _compact_if_needed handle it
-            logger.info(f"[rebuild:{conversation_id[:8]}] no summary available, "
-                        f"loading all {len(all_deserialized)} messages for compaction")
-            return all_deserialized
-
-        # Rebuild from summary + recent messages
-        # Find system prompt in the existing messages (or use the config one)
-        if all_deserialized and all_deserialized[0].role == "system":
-            sys_msg = all_deserialized[0]
-        else:
-            sys_msg = LLMMessage(role="system", content=system_prompt)
-
-        # Take the last keep_recent messages (user/assistant/tool only, not system)
-        non_system = [m for m in all_deserialized if m.role != "system"]
-        recent = non_system[-keep_recent:] if len(non_system) > keep_recent else non_system
-
-        context = [sys_msg]
-        context.append(LLMMessage(
-            role="user",
-            content=f"[Conversation summary — earlier messages compacted]\n\n{summary}",
-        ))
-        context.append(LLMMessage(
-            role="assistant",
-            content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
-        ))
-        context.extend(recent)
-
-        rebuilt_estimate = self._estimate_tokens(context)
-        logger.info(f"[rebuild:{conversation_id[:8]}] rebuilt from summary + "
-                    f"{len(recent)} recent = {rebuilt_estimate} tokens "
-                    f"(full was {estimated} tokens, {len(all_deserialized)} msgs)")
-        return context
-
     # ── Context compaction ────────────────────────────────────────────
 
     @staticmethod
@@ -4435,15 +4923,16 @@ class AgentLoopTask(BaseTask):
         logger.info(f"[compact] Final: {new_estimate} tokens (was {estimated}), "
                     f"{len(compacted)} messages (was {len(messages)})")
 
-        # Persist the summary so it survives restarts
-        if conversation_id and summary:
+        # Persist the compacted context so it survives restarts
+        if conversation_id:
             try:
                 from core.conversation_store import ConversationStore
-                ConversationStore.instance().set_context_summary(conversation_id, summary)
-                logger.info(f"[compact] Persisted context summary for {conversation_id[:8]} "
-                            f"({len(summary)} chars)")
+                serialized = self._serialize_messages(compacted)
+                ConversationStore.instance().save_context(conversation_id, serialized)
+                logger.info(f"[compact] Persisted context for {conversation_id[:8]} "
+                            f"({len(compacted)} messages)")
             except Exception as e:
-                logger.warning(f"[compact] Failed to persist summary: {e}")
+                logger.warning(f"[compact] Failed to persist context: {e}")
 
         return compacted
 

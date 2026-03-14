@@ -325,7 +325,7 @@ class AgentLoopTask(BaseTask):
         # Will be overridden below if a persona is selected (after conversation_id is known)
         _base_system_prompt = system_prompt
         temperature = float(self.config.get("temperature", 0.7))
-        max_tokens = int(self.config.get("max_tokens", 4096))
+        max_tokens = int(self.config.get("max_tokens", 0))
         max_iterations = int(self.config.get("max_iterations", 200))
 
         use_conv_store = self.config.get("conversation_store", False)
@@ -546,6 +546,12 @@ class AgentLoopTask(BaseTask):
                         resolved_svc = _rs
             except Exception:
                 pass
+
+        # Resolve max_tokens: task config → service config → default 4096
+        if not max_tokens and resolved_svc:
+            max_tokens = int(getattr(resolved_svc, 'config', {}).get("max_tokens", 0))
+        if not max_tokens:
+            max_tokens = 4096
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
@@ -2871,7 +2877,7 @@ class AgentLoopTask(BaseTask):
         _meta = _CS2.instance().get_metadata(conversation_id)
         _poll_uid = _meta["user_id"] if _meta else ""
 
-        client, _ = self._resolve_llm_service(svc_id, _poll_uid)
+        client, _poll_svc = self._resolve_llm_service(svc_id, _poll_uid)
         if not client and self.config.get("api_key"):
             client = LLMClient(
                 provider=self.config.get("provider", "openai"),
@@ -2941,7 +2947,11 @@ class AgentLoopTask(BaseTask):
         base_message_count = len(messages)
 
         temperature = float(self.config.get("temperature", 0.7))
-        max_tokens = int(self.config.get("max_tokens", 4096))
+        max_tokens = int(self.config.get("max_tokens", 0))
+        if not max_tokens and _poll_svc:
+            max_tokens = int(getattr(_poll_svc, 'config', {}).get("max_tokens", 0))
+        if not max_tokens:
+            max_tokens = 4096
         max_iterations = int(self.config.get("max_iterations", 200))
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 

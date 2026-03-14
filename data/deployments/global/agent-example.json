@@ -6,10 +6,7 @@
   "status": "stopped",
   "source": "gui",
   "parameters": {
-    "provider": "${global.llm_provider}",
-    "api_key": "${secrets.global.llm_api_key}",
-    "base_url": "${global.llm_base_url}",
-    "model": "${global.llm_model}",
+    "llm_service": "${global.llm.default.service}",
     "file_ttl": "3600",
     "conversation_ttl": "0",
     "oauth_provider": "${global.oauth_provider}",
@@ -19,8 +16,7 @@
     "oauth_default_role": "${global.oauth_default_role}",
     "pixazo_api_key": "${global.pixazo_api_key}",
     "poll_interval": "30",
-    "poll_recheck_delay": "7200",
-    "max_tokens": "${global.llm_max_tokens}"
+    "poll_recheck_delay": "7200"
   },
   "created_at": 1773401348.7520242,
   "last_started": 1773445495.0976858,

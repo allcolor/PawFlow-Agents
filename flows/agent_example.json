@@ -14,8 +14,7 @@
     "oauth_default_role": "operator",
     "pixazo_api_key": "",
     "poll_interval": 30,
-    "poll_recheck_delay": 7200,
-    "max_tokens": 262144
+    "poll_recheck_delay": 7200
   },
   "services": {
     "http_listener": {
@@ -118,7 +117,6 @@
         "max_rounds": 5,
         "poll_interval": "${flow.parameters.poll_interval}",
         "poll_recheck_delay": "${flow.parameters.poll_recheck_delay}",
-        "max_tokens": "${flow.parameters.max_tokens}",
         "temperature": 0.7,
         "timeout": 600,
         "conversation_store": true,

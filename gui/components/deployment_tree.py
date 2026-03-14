@@ -89,62 +89,60 @@ def render_deployment_tree(on_select_key: str = "rt_selected_instance") -> Optio
         st.session_state[on_select_key] = "__new__"
         st.rerun()
 
-    # Trigger dialogs — only one dialog can be open at a time (Streamlit limitation)
-    if st.session_state.get("_show_global_params", False):
+    # Trigger dialog — single flag, only one at a time, auto-clears on next render
+    _dlg = st.session_state.pop("_tree_dialog", None)
+    if _dlg == "global_params":
         from gui.components.global_config_dialogs import global_params_dialog
         global_params_dialog()
-    elif st.session_state.get("_show_global_secrets", False):
+    elif _dlg == "global_secrets":
         from gui.components.global_config_dialogs import global_secrets_dialog
         global_secrets_dialog()
-    elif st.session_state.get("_show_global_services", False):
+    elif _dlg == "global_services":
         from gui.components.global_services_dialog import global_services_dialog
         global_services_dialog()
-    elif st.session_state.get("_show_user_params", None):
+    elif _dlg and _dlg.startswith("user_params:"):
         from gui.components.global_config_dialogs import user_params_dialog
-        user_params_dialog(st.session_state["_show_user_params"])
-    elif st.session_state.get("_show_user_secrets", None):
+        user_params_dialog(_dlg.split(":", 1)[1])
+    elif _dlg and _dlg.startswith("user_secrets:"):
         from gui.components.global_config_dialogs import user_secrets_dialog
-        user_secrets_dialog(st.session_state["_show_user_secrets"])
-    elif st.session_state.get("_show_user_services", None):
+        user_secrets_dialog(_dlg.split(":", 1)[1])
+    elif _dlg and _dlg.startswith("user_services:"):
         from gui.components.user_services_dialog import user_services_dialog
-        user_services_dialog(st.session_state["_show_user_services"])
+        user_services_dialog(_dlg.split(":", 1)[1])
 
     return st.session_state.get(on_select_key)
 
 
 def _render_config_buttons(group_key: str, is_global: bool):
     """Render compact icon-only config buttons via st.button inside a styled container."""
-    # We use a unique container key approach: render buttons, then wrap with JS/CSS
-    # Since Streamlit doesn't support custom containers easily, we use columns
-    # with the CSS above targeting .tree-cfg-btns buttons
     if is_global:
         cols = st.columns([1, 1, 1, 4], gap="small")
         with cols[0]:
             if st.button("⚙️", key="tree_global_params",
                          help=t("runtime.global_params_title")):
-                st.session_state["_show_global_params"] = True
+                st.session_state["_tree_dialog"] = "global_params"
         with cols[1]:
             if st.button("🔑", key="tree_global_secrets",
                          help=t("runtime.global_secrets_title")):
-                st.session_state["_show_global_secrets"] = True
+                st.session_state["_tree_dialog"] = "global_secrets"
         with cols[2]:
             if st.button("🔌", key="tree_global_services",
                          help=t("runtime.global_services_title")):
-                st.session_state["_show_global_services"] = True
+                st.session_state["_tree_dialog"] = "global_services"
     else:
         cols = st.columns([1, 1, 1, 4], gap="small")
         with cols[0]:
             if st.button("⚙️", key=f"tree_{group_key}_params",
                          help=t("runtime.user_params_title")):
-                st.session_state["_show_user_params"] = group_key
+                st.session_state["_tree_dialog"] = f"user_params:{group_key}"
         with cols[1]:
             if st.button("🔑", key=f"tree_{group_key}_secrets",
                          help=t("runtime.user_secrets_title")):
-                st.session_state["_show_user_secrets"] = group_key
+                st.session_state["_tree_dialog"] = f"user_secrets:{group_key}"
         with cols[2]:
             if st.button("🔌", key=f"tree_{group_key}_services",
                          help=t("runtime.user_services_title")):
-                st.session_state["_show_user_services"] = group_key
+                st.session_state["_tree_dialog"] = f"user_services:{group_key}"
 
 
 def _status_icon(status: str) -> str:

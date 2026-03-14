@@ -169,6 +169,12 @@ class LLMConnectionService(BaseService):
                 "default": 2,
                 "description": "Number of retries on transient errors",
             },
+            "max_tokens": {
+                "type": "integer",
+                "required": False,
+                "default": 0,
+                "description": "Max output tokens per request (0 = provider default)",
+            },
             "max_concurrent": {
                 "type": "integer",
                 "required": False,

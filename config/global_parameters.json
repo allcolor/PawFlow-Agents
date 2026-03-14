@@ -6,6 +6,9 @@
   "llm_model": "gpt-5.4",
   "llm_max_tokens": "65536",
   "oauth_default_role": "operator",
-  "llm.default.service": "default",
-  "grok_llm_service": "grok"
+  "grok_llm_service": "grok_llm_service",
+  "grok_llm_base_url": "https://api.x.ai",
+  "grok_llm_model": "grok-4-latest",
+  "claude_code_service": "claude_code_service",
+  "llm_default_service": "llm_default_service"
 }

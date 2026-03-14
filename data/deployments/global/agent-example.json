@@ -3,10 +3,10 @@
   "flow_id": "agent-example",
   "flow_name": "Agent LLM Example",
   "flow_path": "flows\\agent_example.json",
-  "status": "stopped",
+  "status": "running",
   "source": "gui",
   "parameters": {
-    "llm_service": "${global.llm.default.service}",
+    "llm_service": "${global.llm_default_service}",
     "file_ttl": "3600",
     "conversation_ttl": "0",
     "oauth_provider": "${global.oauth_provider}",
@@ -19,8 +19,8 @@
     "poll_recheck_delay": "7200"
   },
   "created_at": 1773401348.7520242,
-  "last_started": 1773445495.0976858,
-  "last_stopped": 1773452137.6323478,
+  "last_started": 1773493312.434611,
+  "last_stopped": 1773493312.3578331,
   "max_workers": 4,
   "max_retries": 3,
   "service_overrides": {},

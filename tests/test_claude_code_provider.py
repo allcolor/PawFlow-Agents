@@ -311,6 +311,88 @@ class TestStreamClaude(unittest.TestCase):
         self.assertIn("not found", str(ctx.exception))
 
 
+class TestOAuthRefresh(unittest.TestCase):
+    """Test OAuth token auto-refresh for claude-code provider."""
+
+    def test_no_refresh_without_token(self):
+        """No refresh attempt if refresh_token is empty."""
+        client = LLMClient(
+            provider="claude-code", api_key="old-token",
+            refresh_token="", token_expires_at=0,
+        )
+        client._refresh_oauth_token()
+        self.assertEqual(client.api_key, "old-token")
+
+    def test_no_refresh_if_not_expired(self):
+        """Don't refresh if token is still valid."""
+        import time
+        client = LLMClient(
+            provider="claude-code", api_key="valid-token",
+            refresh_token="rt-xxx",
+            token_expires_at=time.time() * 1000 + 3_600_000,  # 1h from now
+        )
+        # Should not attempt refresh
+        env = client._claude_code_env()
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "valid-token")
+
+    @patch("core.llm_client.http.client.HTTPSConnection")
+    def test_refresh_expired_token(self, mock_conn_cls):
+        """Refresh token when expired."""
+        import time
+        mock_conn = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.read.return_value = json.dumps({
+            "access_token": "new-fresh-token",
+            "refresh_token": "new-rt",
+            "expires_at": time.time() * 1000 + 3_600_000,
+        }).encode()
+        mock_conn.getresponse.return_value = mock_resp
+        mock_conn_cls.return_value = mock_conn
+
+        client = LLMClient(
+            provider="claude-code", api_key="expired-token",
+            refresh_token="rt-xxx",
+            token_expires_at=time.time() * 1000 - 1000,  # expired 1s ago
+        )
+        env = client._claude_code_env()
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "new-fresh-token")
+        self.assertEqual(client.api_key, "new-fresh-token")
+        self.assertEqual(client.refresh_token, "new-rt")
+
+    @patch("core.llm_client.http.client.HTTPSConnection")
+    def test_refresh_failure_keeps_old_token(self, mock_conn_cls):
+        """If refresh fails, keep using the old token."""
+        import time
+        mock_conn = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 401
+        mock_resp.read.return_value = b'{"error": "invalid_grant"}'
+        mock_conn.getresponse.return_value = mock_resp
+        mock_conn_cls.return_value = mock_conn
+
+        client = LLMClient(
+            provider="claude-code", api_key="old-token",
+            refresh_token="bad-rt",
+            token_expires_at=time.time() * 1000 - 1000,
+        )
+        env = client._claude_code_env()
+        # Should still use old token (refresh failed gracefully)
+        self.assertEqual(env["ANTHROPIC_API_KEY"], "old-token")
+
+    def test_from_config_with_refresh(self):
+        client = LLMClient.from_config({
+            "provider": "claude-code",
+            "api_key": "sk-ant-xxx",
+            "refresh_token": "sk-ant-rt-xxx",
+            "token_expires_at": "1773501806027",
+            "token_url": "https://custom.auth.com/token",
+        })
+        self.assertEqual(client.refresh_token, "sk-ant-rt-xxx")
+        self.assertEqual(client.token_expires_at, 1773501806027.0)
+        self.assertEqual(client.token_url, "https://custom.auth.com/token")
+
+
 class TestProviderInProviders(unittest.TestCase):
     """Test that claude-code and gemini-cli are in PROVIDERS."""
 

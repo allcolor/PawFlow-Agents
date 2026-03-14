@@ -414,7 +414,9 @@ def render_settings_tabs():
                     st.caption(sclass.DESCRIPTION)
                     st.markdown(f"**{t('common.version')}:** {sclass.VERSION}")
 
-                    schema = sclass.get_parameter_schema()
+                    instance = object.__new__(sclass)
+                    instance.config = {}
+                    schema = instance.get_parameter_schema()
                     if schema:
                         st.markdown(f"**{t('runtime.parameters')}:**")
                         for param_name, param_info in schema.items():

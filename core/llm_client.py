@@ -15,6 +15,7 @@ import re
 import ssl
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Union, Tuple
@@ -135,6 +136,9 @@ class LLMClient:
         max_retries: int = 2,
         claude_binary: str = "claude",
         gemini_binary: str = "gemini",
+        refresh_token: str = "",
+        token_expires_at: float = 0.0,
+        token_url: str = "",
     ):
         self.provider = provider
         self.api_key = api_key
@@ -144,6 +148,10 @@ class LLMClient:
         self.max_retries = max_retries
         self.claude_binary = claude_binary
         self.gemini_binary = gemini_binary
+        self.refresh_token = refresh_token
+        self.token_expires_at = token_expires_at
+        self.token_url = token_url or "https://console.anthropic.com/v1/oauth/token"
+        self._token_lock = threading.Lock() if refresh_token else None
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
@@ -157,6 +165,9 @@ class LLMClient:
             max_retries=int(config.get("max_retries", 2)),
             claude_binary=config.get("claude_binary", "claude"),
             gemini_binary=config.get("gemini_binary", "gemini"),
+            refresh_token=config.get("refresh_token", ""),
+            token_expires_at=float(config.get("token_expires_at", 0)),
+            token_url=config.get("token_url", ""),
         )
 
     def complete(
@@ -906,12 +917,179 @@ class LLMClient:
         clean = self.TOOL_CALL_RE.sub("", text).strip()
         return clean, tool_calls
 
+    def _refresh_oauth_token(self) -> None:
+        """Refresh the OAuth access token using the refresh_token.
+
+        Thread-safe: only one refresh happens at a time. Updates
+        self.api_key and self.token_expires_at in place.
+        """
+        if not self.refresh_token or not self._token_lock:
+            return
+        with self._token_lock:
+            # Double-check after acquiring lock (another thread may have refreshed)
+            if self.token_expires_at and time.time() * 1000 < self.token_expires_at - 60_000:
+                return  # still valid
+
+            logger.info("Refreshing OAuth token via %s", self.token_url)
+            parsed = urlparse(self.token_url)
+            body = json.dumps({
+                "grant_type": "refresh_token",
+                "refresh_token": self.refresh_token,
+            }).encode("utf-8")
+
+            try:
+                if parsed.scheme == "https":
+                    ctx = ssl.create_default_context()
+                    conn = http.client.HTTPSConnection(
+                        parsed.hostname, parsed.port, timeout=30, context=ctx,
+                    )
+                else:
+                    conn = http.client.HTTPConnection(
+                        parsed.hostname, parsed.port, timeout=30,
+                    )
+                conn.request("POST", parsed.path or "/v1/oauth/token", body=body, headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(body)),
+                })
+                resp = conn.getresponse()
+                resp_body = resp.read().decode("utf-8")
+                conn.close()
+
+                if resp.status >= 400:
+                    logger.error("OAuth refresh failed (%d): %s", resp.status, resp_body[:300])
+                    return
+
+                data = json.loads(resp_body)
+                new_token = data.get("access_token", data.get("accessToken", ""))
+                new_refresh = data.get("refresh_token", data.get("refreshToken", ""))
+                expires_at = data.get("expires_at", data.get("expiresAt", 0))
+                # Some endpoints return expires_in (seconds) instead of expires_at
+                if not expires_at and data.get("expires_in"):
+                    expires_at = time.time() * 1000 + data["expires_in"] * 1000
+
+                if new_token:
+                    self.api_key = new_token
+                    self.token_expires_at = float(expires_at)
+                    logger.info("OAuth token refreshed, expires at %s",
+                                time.strftime("%Y-%m-%d %H:%M:%S",
+                                              time.localtime(expires_at / 1000)) if expires_at else "unknown")
+                    # Update refresh token if rotated
+                    if new_refresh:
+                        self.refresh_token = new_refresh
+                    # Persist updated tokens back to service config
+                    self._persist_refreshed_tokens()
+                else:
+                    logger.error("OAuth refresh returned no access_token: %s", resp_body[:300])
+            except Exception as e:
+                logger.error("OAuth token refresh error: %s", e)
+
+    def _persist_refreshed_tokens(self) -> None:
+        """Persist refreshed tokens back to secrets/params/config.
+
+        Detects ${secrets.global.*} and ${global.*} expressions in the
+        service config and updates the underlying store accordingly.
+        Best-effort — if it fails, tokens are still valid in memory.
+        """
+        try:
+            self._update_secret_or_config("api_key", self.api_key)
+            self._update_secret_or_config("refresh_token", self.refresh_token)
+            self._update_secret_or_config("token_expires_at", str(int(self.token_expires_at)))
+        except Exception as e:
+            logger.debug("Failed to persist refreshed tokens: %s", e)
+
+    def _update_secret_or_config(self, field: str, value: str) -> None:
+        """Update a value behind an expression reference, or direct config.
+
+        Detects expression patterns in the service config and writes
+        to the appropriate backing store:
+        - ${secrets.global.KEY}       → config/global_secrets.json (encrypted)
+        - ${secrets.user.KEY}         → config/users/<user>/secrets.json (encrypted)
+        - ${global.KEY} / ${user.KEY} → config/global_parameters.json or user params (plaintext)
+        - raw value                   → service config directly
+        """
+        if not value:
+            return
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            registry = GlobalServiceRegistry.get_instance()
+            for svc_id, svc in registry._services.items():
+                if not (hasattr(svc, '_client') and svc._client is self):
+                    continue
+                raw_val = str(svc.config.get(field, ""))
+                if "${" in raw_val:
+                    self._write_expression_value(raw_val, value)
+                    logger.debug("Updated expression '%s' for field '%s'", raw_val, field)
+                else:
+                    svc.config[field] = value
+                    registry.save()
+                    logger.debug("Updated config field '%s' for service '%s'", field, svc_id)
+                return
+        except Exception as e:
+            logger.debug("Failed to update %s: %s", field, e)
+
+    @staticmethod
+    def _write_expression_value(expression: str, value: str) -> None:
+        """Write a value to the backing store referenced by an expression.
+
+        Supports: ${secrets.global.KEY}, ${secrets.user.KEY},
+                  ${global.KEY}, ${user.KEY}
+        """
+        from pathlib import Path
+
+        m = re.search(r'\$\{([^}]+)\}', expression)
+        if not m:
+            return
+        ref = m.group(1)  # e.g. "secrets.global.claude_api_key"
+        parts = ref.split(".")
+
+        if parts[0] == "secrets" and len(parts) >= 3:
+            # ${secrets.global.KEY} or ${secrets.user.KEY}
+            scope = parts[1]  # "global" or username
+            key = ".".join(parts[2:])
+            if scope == "global":
+                path = Path("config/global_secrets.json")
+            else:
+                path = Path("config/users") / scope / "secrets.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            existing = {}
+            if path.exists():
+                existing = json.loads(path.read_text(encoding="utf-8"))
+            from core.secrets import get_secrets_manager
+            existing[key] = get_secrets_manager().encrypt(value)
+            path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        elif parts[0] == "global" and len(parts) >= 2:
+            # ${global.KEY}
+            key = ".".join(parts[1:])
+            path = Path("config/global_parameters.json")
+            existing = {}
+            if path.exists():
+                existing = json.loads(path.read_text(encoding="utf-8"))
+            existing[key] = value
+            path.write_text(json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        elif parts[0] == "user" and len(parts) >= 2:
+            # ${user.KEY} — needs owner context, best-effort
+            key = ".".join(parts[1:])
+            # Try to find the user from config/users/*/parameters.json
+            # For now, log a warning — user-scoped write needs owner info
+            logger.warning("Cannot auto-update user-scoped expression '%s' — "
+                           "user context not available during token refresh", expression)
+        else:
+            logger.debug("Unknown expression pattern '%s', skipping", expression)
+
     def _claude_code_env(self) -> dict:
         """Build environment for claude subprocess.
 
         Passes api_key and base_url as env vars so each user's service
         config is isolated (multi-user support).
+        Auto-refreshes OAuth token if expired.
         """
+        # Auto-refresh if we have a refresh_token and token is expired/near-expiry
+        if self.refresh_token and self.token_expires_at:
+            if time.time() * 1000 >= self.token_expires_at - 60_000:
+                self._refresh_oauth_token()
+
         env = os.environ.copy()
         if self.api_key:
             env["ANTHROPIC_API_KEY"] = self.api_key

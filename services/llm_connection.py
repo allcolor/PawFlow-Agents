@@ -197,6 +197,25 @@ class LLMConnectionService(BaseService):
                 "default": "claude",
                 "description": "Path to Claude CLI binary (claude-code provider only)",
             },
+            "refresh_token": {
+                "type": "string",
+                "required": False,
+                "sensitive": True,
+                "default": "",
+                "description": "OAuth refresh token for auto-renewal (claude-code provider)",
+            },
+            "token_expires_at": {
+                "type": "string",
+                "required": False,
+                "default": "0",
+                "description": "Token expiry timestamp in ms (auto-updated on refresh)",
+            },
+            "token_url": {
+                "type": "string",
+                "required": False,
+                "default": "https://console.anthropic.com/v1/oauth/token",
+                "description": "OAuth token endpoint for refresh (claude-code provider)",
+            },
             "gemini_binary": {
                 "type": "string",
                 "required": False,

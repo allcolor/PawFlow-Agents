@@ -4,7 +4,7 @@
   "version": "1.5.0",
   "description": "LLM agent with SSE streaming, OAuth2 login, chat UI, multi-turn conversations, file generation, and per-tool permissions. Visit /chat for the web interface.",
   "parameters": {
-    "llm_service": "${global.llm.default.service}",
+    "llm_service": "${global.llm_default_service}",
     "file_ttl": 3600,
     "conversation_ttl": 0,
     "oauth_provider": "google",

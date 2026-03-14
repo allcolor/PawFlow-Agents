@@ -26,34 +26,46 @@ class PutFileTask(BaseTask):
         self.create_dirs = self.config.get('create_dirs', True)
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Écrire le FlowFile sur disque."""
+        """Write FlowFile — via filesystem service if configured, else sandbox FileStore."""
+        service_id = self.config.get('service_id')
+
+        if service_id:
+            return self._execute_via_service(service_id, flowfile)
+        else:
+            return self._execute_sandbox(flowfile)
+
+    def _execute_via_service(self, service_id: str, flowfile: FlowFile) -> List[FlowFile]:
+        """Write through a filesystem service."""
+        svc = self.get_service(service_id)
+        if svc is None:
+            raise TaskError(f"Filesystem service not found: {service_id}")
+
         filename = flowfile.get_attribute('filename') or flowfile.process_id[:8]
+        path = f"{self.output_directory}/{filename}".replace("\\", "/")
 
         if self.create_dirs:
-            os.makedirs(self.output_directory, exist_ok=True)
+            svc.mkdir(self.output_directory)
 
-        filepath = os.path.join(self.output_directory, filename)
-
-        # Gestion des conflits
-        if os.path.exists(filepath):
+        # Conflict resolution via exists check
+        if self.conflict_resolution != 'replace' and svc.exists(path):
             if self.conflict_resolution == 'fail':
-                raise TaskError(f"Fichier existe déjà: {filepath}")
+                raise TaskError(f"File already exists: {path}")
             elif self.conflict_resolution == 'ignore':
                 return [flowfile]
-            elif self.conflict_resolution == 'rename':
-                base, ext = os.path.splitext(filepath)
-                counter = 1
-                while os.path.exists(filepath):
-                    filepath = f"{base}_{counter}{ext}"
-                    counter += 1
 
-        with open(filepath, 'wb') as f:
-            f.write(flowfile.get_content())
+        svc.write_file(path, flowfile.get_content())
+        flowfile.set_attribute('output.path', path)
+        flowfile.set_attribute('output.filename', filename)
+        return [flowfile]
 
-        # Mettre à jour les attributs
-        flowfile.set_attribute('output.path', os.path.abspath(filepath))
-        flowfile.set_attribute('output.filename', os.path.basename(filepath))
-
+    def _execute_sandbox(self, flowfile: FlowFile) -> List[FlowFile]:
+        """Write to FileStore sandbox (no server disk access)."""
+        from core.file_store import FileStore
+        store = FileStore.instance()
+        filename = flowfile.get_attribute('filename') or flowfile.process_id[:8]
+        file_id = store.store(filename, flowfile.get_content(), ttl=3600)
+        flowfile.set_attribute('output.file_id', file_id)
+        flowfile.set_attribute('output.filename', filename)
         return [flowfile]
 
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -70,6 +82,10 @@ class PutFileTask(BaseTask):
             'create_dirs': {
                 'type': 'boolean', 'required': False, 'default': True,
                 'description': 'Créer le répertoire si inexistant',
+            },
+            'service_id': {
+                'type': 'string', 'required': False,
+                'description': 'Filesystem service ID (without: uses sandbox FileStore)',
             },
         }
 

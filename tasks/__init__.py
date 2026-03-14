@@ -44,6 +44,17 @@ def _register_all_services():
     except ImportError:
         pass  # slack_sdk not installed
 
+    # Executor service
+    import services.remote_executor_service   # noqa: F401
+
+    # Filesystem services
+    import services.local_filesystem_service  # noqa: F401
+    import services.ws_filesystem_service     # noqa: F401
+    import services.browser_filesystem_service  # noqa: F401
+    import services.server_filesystem_service   # noqa: F401
+    import services.gdrive_filesystem_service    # noqa: F401
+    import services.onedrive_filesystem_service  # noqa: F401
+
 
 def register_all_tasks():
     """Enregistrer toutes les tâches et services disponibles."""
@@ -159,6 +170,9 @@ def register_all_tasks():
 
     # SSE streaming
     from tasks.io.agent_sse_stream import AgentSSEStreamTask
+
+    # Filesystem operations
+    from tasks.io.filesystem_ops import FilesystemOpsTask
 
     # Tâches AI
     from tasks.ai.agent_loop import AgentLoopTask

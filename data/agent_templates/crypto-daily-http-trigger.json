@@ -1,0 +1,88 @@
+{
+  "id": "crypto-daily-http-trigger",
+  "name": "Crypto Daily - HTTP Trigger",
+  "version": "1.0.0",
+  "description": "Flux crypto déclenché par HTTP",
+  "tasks": {
+    "httpReceiver": {
+      "type": "httpReceiver",
+      "parameters": {
+        "path": "/crypto-report"
+      }
+    },
+    "fetchCrypto": {
+      "type": "fetchHTTP",
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/coins/markets?vs_currency=eur&ids=bitcoin,ethereum,binancecoin,palm-ai,spectre-ai&order=market_cap_desc&per_page=5",
+        "method": "GET"
+      }
+    },
+    "generateReport": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "import json\nimport datetime\n\ntry:\n    data = json.loads(flow_file.content.decode())\n    now = datetime.datetime.now()\n    \n    report = f\"\"\"📊 RÉSUMÉ QUOTIDIEN CRYPTO\n{'='*50}\n\n📅 Date: {now.strftime('%d/%m/%Y')}\n⏰ Heure: {now.strftime('%H:%M')} CET\n\n{'─'*50}\n💰 COURS ACTUELS (en EUR)\n{'─'*50}\n\n\"\"\"\n    \n    for coin in data:\n        symbol = coin['symbol'].upper()\n        name = coin['name']\n        price = coin['current_price']\n        change = coin.get('price_change_percentage_24h', 0)\n        \n        if change >= 0:\n            change_str = f\"+{change:.2f}% 📈\"\n        else:\n            change_str = f\"{change:.2f}% 📉\"\n        \n        report += f\"{symbol} {name}\\n\"\n        report += f\"   💶 Prix: €{price:,.2f}\\n\"\n        report += f\"   {change_str}\\n\\n\"\n    \n    report += f\"{'═'*50}\\nℹ️ Données: CoinGecko API\\n📧 Généré à {now.strftime('%H:%M')} CET\\n{'═'*50}\\n\"\n    \n    flow_file.content = report.encode('utf-8')\n    flow_file.attributes['report'] = report\n    print('Report generated successfully')\n    \nexcept Exception as e:\n    flow_file.content = f'Erreur: {str(e)}'.encode('utf-8')\n    print(f'Error: {e}')\n"
+      }
+    },
+    "sendEmail": {
+      "type": "sendEmail",
+      "parameters": {
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": "587",
+        "use_tls": "true",
+        "auth_type": "oauth2",
+        "oauth2_provider": "gmail",
+        "oauth2_client_id": "233903897030-e3sph4d1glr8ejpfu30vap8t8s9hllig.apps.googleusercontent.com",
+        "oauth2_client_secret": "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",
+        "oauth2_refresh_token": "***REMOVED_GOOGLE_OAUTH_REFRESH_TOKEN***",
+        "from": "quentin.anciaux@allcolor.org",
+        "to": "quentin.anciaux@allcolor.org",
+        "subject": "📊 Résumé Crypto Quotidien",
+        "content": "${generateReport.content}",
+        "content_type": "text/plain; charset=utf-8"
+      }
+    },
+    "logSuccess": {
+      "type": "log",
+      "parameters": {
+        "message": "✅ Email crypto envoyé avec succès"
+      }
+    },
+    "logError": {
+      "type": "log",
+      "parameters": {
+        "message": "❌ Échec de l'envoi: ${error.message}"
+      }
+    },
+    "connections": [
+      {
+        "source": "httpReceiver",
+        "destination": "fetchCrypto",
+        "type": "success"
+      },
+      {
+        "source": "fetchCrypto",
+        "destination": "generateReport",
+        "type": "success"
+      },
+      {
+        "source": "generateReport",
+        "destination": "sendEmail",
+        "type": "success"
+      },
+      {
+        "source": "sendEmail",
+        "destination": "logSuccess",
+        "type": "success"
+      },
+      {
+        "source": "sendEmail",
+        "destination": "logError",
+        "type": "failure"
+      }
+    ],
+    "services": {},
+    "_owner": "anonymous",
+    "_conversation_id": "",
+    "_status": "stopped"
+  }
+}

@@ -246,8 +246,16 @@ class GlobalServiceRegistry:
                 return
 
         try:
+            from core.expression import resolve_expression
             svc_class = ServiceFactory.get(svc_def.service_type)
-            svc_instance = svc_class(dict(svc_def.config))
+            # Resolve expressions in config values
+            resolved_config = {}
+            for k, v in svc_def.config.items():
+                if isinstance(v, str) and "${" in v:
+                    resolved_config[k] = resolve_expression(v)
+                else:
+                    resolved_config[k] = v
+            svc_instance = svc_class(resolved_config)
             svc_instance.connect()
             with self._data_lock:
                 self._live_instances[service_id] = svc_instance

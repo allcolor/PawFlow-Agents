@@ -108,6 +108,10 @@ def render_deployment_tree(on_select_key: str = "rt_selected_instance") -> Optio
     if user_secrets:
         from gui.components.global_config_dialogs import user_secrets_dialog
         user_secrets_dialog(user_secrets)
+    user_services = st.session_state.get("_show_user_services", None)
+    if user_services:
+        from gui.components.user_services_dialog import user_services_dialog
+        user_services_dialog(user_services)
 
     return st.session_state.get(on_select_key)
 
@@ -132,7 +136,7 @@ def _render_config_buttons(group_key: str, is_global: bool):
                          help=t("runtime.global_services_title")):
                 st.session_state["_show_global_services"] = True
     else:
-        cols = st.columns([1, 1, 5], gap="small")
+        cols = st.columns([1, 1, 1, 4], gap="small")
         with cols[0]:
             if st.button("⚙️", key=f"tree_{group_key}_params",
                          help=t("runtime.user_params_title")):
@@ -141,6 +145,10 @@ def _render_config_buttons(group_key: str, is_global: bool):
             if st.button("🔑", key=f"tree_{group_key}_secrets",
                          help=t("runtime.user_secrets_title")):
                 st.session_state["_show_user_secrets"] = group_key
+        with cols[2]:
+            if st.button("🔌", key=f"tree_{group_key}_services",
+                         help=t("runtime.user_services_title")):
+                st.session_state["_show_user_services"] = group_key
 
 
 def _status_icon(status: str) -> str:

@@ -859,8 +859,47 @@ CMD ["streamlit", "run", "gui/runtime/app.py"]
 
 ---
 
+## 18. Services Filesystem
+
+PyFi2 fournit une couche d'abstraction filesystem unifiée. Voir `docs/filesystem.md` pour le guide complet.
+
+### 18.1. Types de services
+
+| Type | Description | Git | Requis |
+|------|-------------|-----|--------|
+| `localFilesystem` | Relay HTTP vers machine user | Oui | Script `pyfi2_fs_relay.py` |
+| `wsFilesystem` | Relay WebSocket | Oui | Script `pyfi2_fs_relay_ws.py` |
+| `browserFilesystem` | File System Access API | Non | Chrome/Edge |
+| `serverFilesystem` | Disque serveur (admin only) | Oui | Rôle admin |
+| `googleDrive` | Google Drive REST API v3 | Non | OAuth2 |
+| `oneDrive` | OneDrive Graph API | Non | OAuth2 |
+
+### 18.2. Task `filesystemOps`
+
+| Paramètre | Type | Requis | Description |
+|-----------|------|--------|-------------|
+| `service_id` | string | Oui | ID du service filesystem |
+| `action` | string | Oui | list_dir, read_file, write_file, delete_file, mkdir, stat, exists, search, grep, find_replace, git_* |
+| `path` | string | Non | Chemin relatif (défaut: ".") |
+| `pattern` | string | Non | Pattern glob (search) ou regex (find_replace) |
+| `regex` | string | Non | Pattern regex (grep) |
+| `replacement` | string | Non | Texte de remplacement (find_replace) |
+| `recursive` | boolean | Non | Récursif (search/grep, défaut: true) |
+
+### 18.3. Permissions
+
+- **Modes**: `read` (lecture seule), `readwrite` (lecture + écriture), `full` (+ suppression)
+- **allowed_paths**: Préfixes autorisés (vide = tout)
+- **denied_paths**: Préfixes interdits (prioritaire sur allowed)
+
+### 18.4. Stockage OAuth tokens
+
+`core/oauth_token_store.py` — Stockage chiffré des tokens OAuth par user/provider. Auto-refresh des access tokens expirés. Persistance dans `config/users/{user_id}/oauth_tokens.json`.
+
+---
+
 **Fin de la Documentation Technique**
 
-*Version: 2.0.0*
-*Date: 2026-03-08*
-*68 tasks, 5 services, 758 tests, API REST, RBAC, Plugins, Docker*
+*Version: 2.1.0*
+*Date: 2026-03-14*
+*70+ tasks, 11 services, 76+ filesystem tests, API REST, RBAC, Plugins, Docker*

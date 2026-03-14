@@ -50,6 +50,13 @@ class ExecuteScriptTask(BaseTask):
                 'flow_file': flowfile,  # alias for compat
             }
 
+            # Inject filesystem service if configured
+            fs_service_id = self.config.get('filesystem_service_id')
+            if fs_service_id:
+                fs_svc = self.get_service(fs_service_id)
+                if fs_svc:
+                    local_ns['fs'] = fs_svc
+
             exec(self.script, globals_dict, local_ns)
 
             if 'result' in local_ns:
@@ -92,6 +99,10 @@ class ExecuteScriptTask(BaseTask):
                 'description': 'Moteur de script',
                 'options': ['python'],
                 'default': 'python',
+            },
+            'filesystem_service_id': {
+                'type': 'string', 'required': False,
+                'description': 'Filesystem service ID for file access (fs.read_file(), fs.write_file(), etc.)',
             },
         }
 

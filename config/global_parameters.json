@@ -1,0 +1,9 @@
+{
+  "oauth_provider": "google",
+  "oauth_redirect_uri": "http://localhost:9090/auth/callback",
+  "llm_provider": "openai",
+  "llm_base_url": "https://api.openai.com",
+  "llm_model": "gpt-5.4",
+  "llm_max_tokens": "65536",
+  "oauth_default_role": "operator"
+}

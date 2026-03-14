@@ -1,0 +1,10 @@
+{
+  "id": "fb",
+  "name": "Bob's flow",
+  "tasks": {
+    "t1": {
+      "type": "generateFlowFile"
+    }
+  },
+  "relations": []
+}

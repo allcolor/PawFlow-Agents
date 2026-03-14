@@ -1,0 +1,13 @@
+.git
+.pytest_cache
+__pycache__
+*.pyc
+.env
+config/secret.key
+config/users.json
+config/security.json
+cluster_state/
+*.egg-info
+.mypy_cache
+.vscode
+.idea

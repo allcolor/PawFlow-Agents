@@ -298,11 +298,13 @@ def _render_new_executor_form():
     except Exception:
         pass
 
-    svc_forwards = {}  # flow_svc_id → global_svc_id (or None for local)
+    svc_forwards = {}  # flow_svc_id → prefixed ref (or None for local)
     if flow_services:
         from gui.components.schema_form import render_schema_fields as _render_fields
         from gui.services.global_service_registry import GlobalServiceRegistry
+        from gui.services.user_service_registry import UserServiceRegistry
         gsvc_reg = GlobalServiceRegistry.get_instance()
+        usvc_reg = UserServiceRegistry.get_instance()
 
         with st.expander(f"🔌 {t('settings.services')}", expanded=True):
             svc_overrides = {}
@@ -310,18 +312,28 @@ def _render_new_executor_form():
                 svc_type = svc_def.get("type", "?")
                 svc_config = svc_def.get("parameters", svc_def.get("config", {}))
 
-                # Check for compatible global services
-                compatible = gsvc_reg.get_compatible(svc_type)
+                # Build options: local + global + user services
                 options = [t("runtime.svc_use_local")]
                 option_ids = [None]
-                for gs in compatible:
-                    label = f"🔌 {gs.service_id}"
+                # Global services
+                for gs in gsvc_reg.get_compatible(svc_type):
+                    label = f"🌐 {gs.service_id}"
                     if gs.description:
                         label += f" — {gs.description}"
                     if not gs.enabled:
                         label += f" ({t('common.disabled')})"
                     options.append(label)
-                    option_ids.append(gs.service_id)
+                    option_ids.append(f"global:{gs.service_id}")
+                # User services (owner's)
+                if owner:
+                    for us in usvc_reg.get_compatible(svc_type, owner):
+                        label = f"👤 {us.service_id}"
+                        if us.description:
+                            label += f" — {us.description}"
+                        if not us.enabled:
+                            label += f" ({t('common.disabled')})"
+                        options.append(label)
+                        option_ids.append(f"user:{owner}:{us.service_id}")
 
                 choice_idx = st.selectbox(
                     f"**{svc_id}** (`{svc_type}`)",
@@ -329,11 +341,11 @@ def _render_new_executor_form():
                     format_func=lambda i, opts=options: opts[i],
                     key=f"rt_svc_mode_{svc_id}",
                 )
-                chosen_global = option_ids[choice_idx]
-                svc_forwards[svc_id] = chosen_global
+                chosen_ref = option_ids[choice_idx]
+                svc_forwards[svc_id] = chosen_ref
 
                 # Only show local config if not forwarding
-                if chosen_global is None:
+                if chosen_ref is None:
                     schema = _get_service_schema_rt(svc_type)
                     if schema:
                         edited_config = _render_fields(schema, svc_config, key_prefix=f"rt_svc_{svc_id}")
@@ -351,7 +363,8 @@ def _render_new_executor_form():
                                     cfg_key, value=str(cfg_val), key=f"rt_svc_{svc_id}_{cfg_key}")
                     svc_overrides[svc_id] = {"type": svc_type, "config": edited_config}
                 else:
-                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{chosen_global}**")
+                    display_ref = chosen_ref.replace("global:", "🌐 ").replace(f"user:{owner}:", "👤 ")
+                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{display_ref}**")
 
             st.session_state._cont_svc_overrides = svc_overrides
 
@@ -398,7 +411,7 @@ def _render_new_executor_form():
                                 svc_obj.config[k] = v
 
             # Apply global service forwards
-            _apply_global_service_forwards(flow, service_overrides)
+            _apply_service_forwards(flow, service_overrides)
 
             ex = ContinuousFlowExecutor(
                 flow, max_workers=max_workers, max_retries=max_retries,
@@ -662,7 +675,7 @@ def _render_stopped_instance_panel(inst):
                             _apply_service_configs(flow, inst.service_configs)
                         # Apply global service forwards
                         if inst.service_overrides:
-                            _apply_global_service_forwards(flow, inst.service_overrides)
+                            _apply_service_forwards(flow, inst.service_overrides)
                         ex = ContinuousFlowExecutor(
                             flow,
                             max_workers=inst.max_workers,
@@ -746,13 +759,18 @@ def _render_instance_services(inst, editable: bool = False):
     with st.expander(f"🔌 {t('settings.services')}", expanded=False):
         if editable:
             from gui.services.global_service_registry import GlobalServiceRegistry
+            from gui.services.user_service_registry import UserServiceRegistry
             gsvc_reg = GlobalServiceRegistry.get_instance()
+            usvc_reg = UserServiceRegistry.get_instance()
 
-            current_overrides = dict(inst.service_overrides or {})
+            current_overrides = _migrate_service_overrides(inst.service_overrides)
             new_overrides = {}
 
             # Track local config fields per service for saving
             svc_field_keys = {}  # svc_id → {cfg_key: session_state_key}
+
+            # Determine owner for user service lookup
+            inst_owner = getattr(inst, 'owner', None) or ""
 
             for svc_id, svc_def in flow_services.items():
                 svc_type = svc_def.get("type", "?")
@@ -761,24 +779,32 @@ def _render_instance_services(inst, editable: bool = False):
                 saved_cfg = (inst.service_configs or {}).get(svc_id, {})
                 svc_config.update(saved_cfg)
 
-                # Build options: local + compatible globals
-                compatible = gsvc_reg.get_compatible(svc_type)
+                # Build options: local + compatible globals + user services
                 options = [t("runtime.svc_use_local")]
                 option_ids = [None]
-                for gs in compatible:
-                    label = f"🔌 {gs.service_id}"
+                for gs in gsvc_reg.get_compatible(svc_type):
+                    label = f"🌐 {gs.service_id}"
                     if gs.description:
                         label += f" — {gs.description}"
                     if not gs.enabled:
                         label += f" ({t('common.disabled')})"
                     options.append(label)
-                    option_ids.append(gs.service_id)
+                    option_ids.append(f"global:{gs.service_id}")
+                if inst_owner:
+                    for us in usvc_reg.get_compatible(svc_type, inst_owner):
+                        label = f"👤 {us.service_id}"
+                        if us.description:
+                            label += f" — {us.description}"
+                        if not us.enabled:
+                            label += f" ({t('common.disabled')})"
+                        options.append(label)
+                        option_ids.append(f"user:{inst_owner}:{us.service_id}")
 
                 # Current selection
-                current_global = current_overrides.get(svc_id)
+                current_ref = current_overrides.get(svc_id)
                 default_idx = 0
-                if current_global and current_global in option_ids:
-                    default_idx = option_ids.index(current_global)
+                if current_ref and current_ref in option_ids:
+                    default_idx = option_ids.index(current_ref)
 
                 choice_idx = st.selectbox(
                     f"**{svc_id}** (`{svc_type}`)",
@@ -787,12 +813,12 @@ def _render_instance_services(inst, editable: bool = False):
                     index=default_idx,
                     key=f"stopped_svc_mode_{inst.instance_id}_{svc_id}",
                 )
-                chosen_global = option_ids[choice_idx]
-                if chosen_global:
-                    new_overrides[svc_id] = chosen_global
+                chosen_ref = option_ids[choice_idx]
+                if chosen_ref:
+                    new_overrides[svc_id] = chosen_ref
 
                 # Show local config fields if not forwarding
-                if chosen_global is None:
+                if chosen_ref is None:
                     field_keys = {}
                     schema = _get_service_schema_rt(svc_type)
                     if schema:
@@ -815,7 +841,7 @@ def _render_instance_services(inst, editable: bool = False):
                             field_keys[cfg_key] = sk
                     svc_field_keys[svc_id] = field_keys
                 else:
-                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{chosen_global}**")
+                    st.caption(f"→ {t('runtime.svc_forwarded_to')} **{chosen_ref}**")
 
             # Always show save button in editable mode
             if st.button(f"💾 {t('common.save')} {t('settings.services')}",
@@ -841,13 +867,17 @@ def _render_instance_services(inst, editable: bool = False):
                 st.rerun()
         else:
             # Read-only: show current service config and forwarding
-            current_overrides = inst.service_overrides or {}
+            current_overrides = _migrate_service_overrides(inst.service_overrides)
             for svc_id, svc_def in flow_services.items():
                 svc_type = svc_def.get("type", "?")
                 forwarded_to = current_overrides.get(svc_id)
 
                 if forwarded_to:
-                    st.markdown(f"**{svc_id}** (`{svc_type}`) → 🔌 **{forwarded_to}**")
+                    if forwarded_to.startswith("user:"):
+                        icon = "👤"
+                    else:
+                        icon = "🌐"
+                    st.markdown(f"**{svc_id}** (`{svc_type}`) → {icon} **{forwarded_to}**")
                 else:
                     svc_config = svc_def.get("parameters", svc_def.get("config", {}))
                     st.markdown(f"**{svc_id}** (`{svc_type}`)")
@@ -870,20 +900,61 @@ def _apply_service_configs(flow, service_configs: Dict[str, Dict[str, Any]]):
             logger.info("Applied custom config to service '%s': %s", svc_id, list(cfg.keys()))
 
 
-def _apply_global_service_forwards(flow, service_overrides: Dict[str, str]):
-    """Replace flow services with global service instances where forwarded."""
+def _migrate_service_overrides(overrides: Optional[Dict[str, str]]) -> Dict[str, str]:
+    """Migrate legacy bare IDs to prefixed format (global:)."""
+    if not overrides:
+        return {}
+    result = {}
+    for k, v in overrides.items():
+        if v and not v.startswith("global:") and not v.startswith("user:"):
+            result[k] = f"global:{v}"
+        else:
+            result[k] = v
+    return result
+
+
+def _apply_service_forwards(flow, service_overrides: Dict[str, str]):
+    """Replace flow services with global or user service instances where forwarded.
+
+    Override format (prefixed):
+      "global:{svc_id}" → global service
+      "user:{user_id}:{svc_id}" → user service
+    Legacy bare IDs (no prefix) are treated as global.
+    """
     if not service_overrides:
         return
     from gui.services.global_service_registry import GlobalServiceRegistry
+    from gui.services.user_service_registry import UserServiceRegistry
     gsvc_reg = GlobalServiceRegistry.get_instance()
-    for flow_svc_id, global_svc_id in service_overrides.items():
-        live = gsvc_reg.get_live_instance(global_svc_id)
+    usvc_reg = UserServiceRegistry.get_instance()
+
+    for flow_svc_id, ref in service_overrides.items():
+        live = None
+        label = ref
+        if ref.startswith("user:"):
+            parts = ref.split(":", 2)
+            if len(parts) == 3:
+                _, uid, sid = parts
+                live = usvc_reg.get_live_instance(uid, sid)
+                label = f"user:{uid}:{sid}"
+            else:
+                logger.warning("Invalid user service override format: %s", ref)
+                continue
+        elif ref.startswith("global:"):
+            sid = ref.split(":", 1)[1]
+            live = gsvc_reg.get_live_instance(sid)
+            label = f"global:{sid}"
+        else:
+            # Legacy bare ID — treat as global
+            live = gsvc_reg.get_live_instance(ref)
+            label = f"global:{ref}"
+
         if live is not None and flow_svc_id in flow.services:
             flow.services[flow_svc_id] = live
-            logger.info("Forwarded service '%s' → global '%s'", flow_svc_id, global_svc_id)
+            logger.info("Forwarded service '%s' → %s", flow_svc_id, label)
         elif live is None:
-            logger.warning("Global service '%s' not connected, using local for '%s'",
-                          global_svc_id, flow_svc_id)
+            logger.warning("Service '%s' not connected, using local for '%s'",
+                          label, flow_svc_id)
 
 
 def _render_instance_parameters(inst, editable: bool = False):

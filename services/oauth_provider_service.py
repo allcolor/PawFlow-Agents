@@ -45,6 +45,18 @@ _PROVIDER_PRESETS = {
         "userinfo_url": "https://graph.microsoft.com/v1.0/me",
         "scope": "openid email profile",
     },
+    "google_drive": {
+        "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+        "token_url": "https://oauth2.googleapis.com/token",
+        "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
+        "scope": "https://www.googleapis.com/auth/drive",
+    },
+    "microsoft_onedrive": {
+        "authorize_url": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+        "token_url": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+        "userinfo_url": "https://graph.microsoft.com/v1.0/me",
+        "scope": "Files.ReadWrite.All offline_access",
+    },
 }
 
 
@@ -57,7 +69,7 @@ class OAuthProviderService(BaseService):
         return {
             "provider": {
                 "type": "select", "required": False, "default": "google",
-                "options": ["google", "github", "microsoft", "custom"],
+                "options": ["google", "github", "microsoft", "google_drive", "microsoft_onedrive", "custom"],
                 "description": "OAuth2 provider (preset or custom)",
             },
             "client_id": {

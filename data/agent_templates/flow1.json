@@ -1,0 +1,10 @@
+{
+  "id": "flow1",
+  "name": "Test Flow",
+  "tasks": {
+    "t1": {
+      "type": "generateFlowFile"
+    }
+  },
+  "relations": []
+}

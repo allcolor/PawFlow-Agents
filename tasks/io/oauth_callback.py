@@ -128,6 +128,25 @@ class OAuthCallbackTask(BaseTask):
             logger.error(f"OAuth token exchange returned error: {error}")
             return [self._error_response(flowfile, 502, f"No access token: {error}")]
 
+        # Persist tokens (including refresh_token) for filesystem services
+        refresh_token = token_data.get("refresh_token", "")
+        expires_in = int(token_data.get("expires_in", 3600))
+        if refresh_token:
+            try:
+                from core.oauth_token_store import OAuthTokenStore
+                # user_id will be determined after userinfo fetch;
+                # save with provider for now, re-save with proper user below
+                self._pending_token_data = {
+                    "access_token": access_token,
+                    "refresh_token": refresh_token,
+                    "expires_in": expires_in,
+                    "token_url": service.token_url,
+                    "client_id": service.client_id,
+                    "client_secret": service.client_secret,
+                }
+            except ImportError:
+                pass
+
         # Fetch user info
         try:
             if service.provider == "github":
@@ -193,6 +212,20 @@ class OAuthCallbackTask(BaseTask):
 
         logger.info(f"OAuth2 login successful: {session.username} "
                     f"(provider={service.provider}, role={session.role.value})")
+
+        # Save OAuth tokens with resolved username
+        pending = getattr(self, "_pending_token_data", None)
+        if pending:
+            try:
+                from core.oauth_token_store import OAuthTokenStore
+                OAuthTokenStore.instance().save_tokens(
+                    user_id=session.username,
+                    provider=service.provider,
+                    **pending,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist OAuth tokens: {e}")
+            self._pending_token_data = None
 
         # Build redirect response with session cookie
         cookie_name = self.config.get("cookie_name", "pyfi2_token")

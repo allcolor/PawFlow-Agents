@@ -1593,6 +1593,18 @@ function connectSSE(cid) {
     }
   });
 
+  eventSource.addEventListener('discard', (e) => {
+    lastSSEActivity = Date.now();
+    hideTyping();
+    const data = JSON.parse(e.data);
+    const agentName = data.agent_name || 'assistant';
+    trackAgentDone(agentName);
+    if (Object.keys(activeInteractions).length === 0) {
+      sending = false;
+      document.getElementById('status').textContent = t('ready');
+    }
+  });
+
   eventSource.addEventListener('done', (e) => {
     lastSSEActivity = Date.now();
     hideTyping();

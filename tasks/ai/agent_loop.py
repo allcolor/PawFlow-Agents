@@ -3995,7 +3995,9 @@ class AgentLoopTask(BaseTask):
                     # Pure poll check-in with nothing to say — discard entirely
                     logger.info(f"[agent:{conversation_id[:8]}] poll check-in: no pending work, "
                                 f"recheck in {recheck_delay}s (discarded)")
-                    bus.publish_event(conversation_id, "discard", {})
+                    bus.publish_event(conversation_id, "discard", {
+                        "agent_name": _agent_name or "assistant",
+                    })
                     new_messages.clear()
                     # Mark conversation idle — agent has no pending work
                     ConversationStore.instance().set_status(conversation_id, "idle")
@@ -4421,6 +4423,7 @@ class AgentLoopTask(BaseTask):
                             self._active_conversations[conversation_id] = rc
                     continue
                 ctx["_generation"] = gen
+                ctx["_gen_key"] = conversation_id
 
                 bus.publish_event(conversation_id, "thinking", {
                     "iteration": 0,
@@ -4488,6 +4491,7 @@ class AgentLoopTask(BaseTask):
                         self._active_thoughts.discard(entry_key)
                     continue
                 ctx["_generation"] = gen
+                ctx["_gen_key"] = cid
                 ctx["_thought_key"] = entry_key
 
                 bus.publish_event(cid, "thinking", {

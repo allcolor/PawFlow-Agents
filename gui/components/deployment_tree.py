@@ -89,29 +89,25 @@ def render_deployment_tree(on_select_key: str = "rt_selected_instance") -> Optio
         st.session_state[on_select_key] = "__new__"
         st.rerun()
 
-    # Trigger dialogs — keep flag alive until dialog closes (don't pop before opening)
+    # Trigger dialogs — only one dialog can be open at a time (Streamlit limitation)
     if st.session_state.get("_show_global_params", False):
         from gui.components.global_config_dialogs import global_params_dialog
         global_params_dialog()
-    if st.session_state.get("_show_global_secrets", False):
+    elif st.session_state.get("_show_global_secrets", False):
         from gui.components.global_config_dialogs import global_secrets_dialog
         global_secrets_dialog()
-    if st.session_state.get("_show_global_services", False):
+    elif st.session_state.get("_show_global_services", False):
         from gui.components.global_services_dialog import global_services_dialog
         global_services_dialog()
-
-    user_params = st.session_state.get("_show_user_params", None)
-    if user_params:
+    elif st.session_state.get("_show_user_params", None):
         from gui.components.global_config_dialogs import user_params_dialog
-        user_params_dialog(user_params)
-    user_secrets = st.session_state.get("_show_user_secrets", None)
-    if user_secrets:
+        user_params_dialog(st.session_state["_show_user_params"])
+    elif st.session_state.get("_show_user_secrets", None):
         from gui.components.global_config_dialogs import user_secrets_dialog
-        user_secrets_dialog(user_secrets)
-    user_services = st.session_state.get("_show_user_services", None)
-    if user_services:
+        user_secrets_dialog(st.session_state["_show_user_secrets"])
+    elif st.session_state.get("_show_user_services", None):
         from gui.components.user_services_dialog import user_services_dialog
-        user_services_dialog(user_services)
+        user_services_dialog(st.session_state["_show_user_services"])
 
     return st.session_state.get(on_select_key)
 

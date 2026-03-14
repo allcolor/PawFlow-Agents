@@ -697,6 +697,14 @@ class AgentLoopTask(BaseTask):
         if not max_tokens:
             max_tokens = 4096
 
+        # Wire agent identity into ManageResourceHandler for ownership tracking
+        from core.tool_registry import ManageResourceHandler
+        for h in registry.list_tools():
+            if isinstance(h, ManageResourceHandler):
+                h.set_agent_name(_active_agent_name)
+                h.set_llm_service(_active_llm_service)
+                break
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,

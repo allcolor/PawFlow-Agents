@@ -533,6 +533,7 @@ let sseReconnectTimer = null;
 let streamingEl = null;  // current assistant message being streamed
 let streamingText = '';
 let streamingChunks = [];  // all intermediate streaming bubbles (removed on done)
+let streamingAgent = '';   // agent name from token events (for source badge)
 let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
 let serverMsgCount = 0;    // last known message_count from server (for poll delta)
@@ -1421,6 +1422,7 @@ function connectSSE(cid) {
     if (streamingEl) {
       streamingEl = null;
       streamingText = '';
+      streamingAgent = '';
     }
     showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
@@ -1437,11 +1439,17 @@ function connectSSE(cid) {
     hideTyping();
     const data = JSON.parse(e.data);
     streamingText += data.text;
+    if (data.agent_name) streamingAgent = data.agent_name;
     if (!streamingEl) {
-      streamingEl = addMsg('assistant', '');
+      const src = streamingAgent ? {source: {type: 'agent', name: streamingAgent}} : undefined;
+      streamingEl = addMsg('assistant', '', src);
       streamingChunks.push(streamingEl);
     }
-    streamingEl.innerHTML = renderMarkdown(streamingText);
+    // Update content but preserve badge
+    const badgeEl = streamingEl.querySelector('.msg-meta, .source-badge') ? '' : null;
+    const src2 = streamingAgent ? {source: {type: 'agent', name: streamingAgent}} : {};
+    const badge = src2.source ? sourceBadge(src2.source) : '';
+    streamingEl.innerHTML = badge + renderMarkdown(streamingText);
     scrollBottom();
     document.getElementById('status').textContent = t('streaming');
   });
@@ -1637,6 +1645,7 @@ function connectSSE(cid) {
     streamingEl = null;
     streamingText = '';
     streamingChunks = [];
+    streamingAgent = '';
     scrollBottom();
 
     if (data.continuing) {
@@ -3884,6 +3893,7 @@ async function send() {
   streamingEl = null;
   streamingText = '';
   streamingChunks = [];
+  streamingAgent = '';
   showTyping();
 
   try {

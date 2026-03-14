@@ -146,10 +146,14 @@ class ResourceStore:
 
         key = self._key(user_id, name)
         entry = dict(_DEFAULTS.get(resource_type, {}))
+        # Extract system field before merging user data
+        created_by = data.pop("_created_by", "")
         entry.update(data)
         entry["name"] = name
         entry["created_at"] = time.time()
         entry["updated_at"] = time.time()
+        if created_by:
+            entry["created_by"] = created_by
 
         with self._store_lock:
             self._ensure_loaded(resource_type)

@@ -291,7 +291,7 @@ class SubAgentExecutor:
                         "tool": tc.name,
                         "iteration": result.iterations,
                     })
-                    tool_result = self._execute_tool(tc, tool_handlers)
+                    tool_result = self._execute_tool(tc, tool_handlers, task.agent_name)
                     messages.append(LLMMessage(
                         role="tool",
                         content=tool_result,
@@ -350,11 +350,15 @@ class SubAgentExecutor:
 
     def _execute_tool(
         self, tc: LLMToolCall, handlers: Dict,
+        agent_name: str = "",
     ) -> str:
         """Execute a single tool call."""
         handler = handlers.get(tc.name)
         if handler is None:
             return f"Error: unknown tool '{tc.name}'"
+        # Set agent identity for ownership tracking (ManageResourceHandler)
+        if agent_name and hasattr(handler, 'set_agent_name'):
+            handler.set_agent_name(agent_name)
         try:
             return handler.execute(tc.arguments)
         except Exception as e:

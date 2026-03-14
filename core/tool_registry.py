@@ -3375,6 +3375,8 @@ class ManageResourceHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""      # which agent is calling (empty = assistant/user)
+        self._llm_service = ""     # active agent's llm_service (for inheritance)
 
     @property
     def name(self) -> str:
@@ -3433,8 +3435,14 @@ class ManageResourceHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_agent_name(self, name: str):
+        self._agent_name = name or ""
+
+    def set_llm_service(self, svc: str):
+        self._llm_service = svc or ""
+
     def execute(self, arguments: Dict[str, Any]) -> str:
-        from core.resource_store import ResourceStore
+        from core.resource_store import ResourceStore, GLOBAL_USER_ID
         from core.conversation_store import ConversationStore
 
         action = arguments.get("action", "")
@@ -3448,10 +3456,17 @@ class ManageResourceHandler(ToolHandler):
             if action == "create":
                 if not name:
                     return "Error: 'name' is required for create"
+                # Ownership tracking for agent/skill
+                if rtype in ("agent", "skill") and self._agent_name:
+                    data["_created_by"] = self._agent_name
+                # Auto-inherit llm_service for new agents
+                if rtype == "agent" and not data.get("llm_service") and self._llm_service:
+                    data["llm_service"] = self._llm_service
                 entry = store.create(rtype, name, user_id, data)
                 # Auto-activate in current conversation
                 self._activate_resource(rtype, name)
-                return f"Created {rtype} '{name}' successfully."
+                creator = f" (created by {self._agent_name})" if self._agent_name else ""
+                return f"Created {rtype} '{name}' successfully.{creator}"
 
             elif action == "update":
                 if not name:
@@ -3462,6 +3477,15 @@ class ManageResourceHandler(ToolHandler):
             elif action == "delete":
                 if not name:
                     return "Error: 'name' is required for delete"
+                # Ownership check for agent/skill deletion
+                if rtype in ("agent", "skill") and self._agent_name:
+                    existing = store.get_any(rtype, name, user_id)
+                    if existing:
+                        created_by = existing.get("created_by", "")
+                        if created_by and created_by != self._agent_name:
+                            return (f"Error: {rtype} '{name}' was created by "
+                                    f"'{created_by}' — you can only delete "
+                                    f"resources you created.")
                 if store.delete(rtype, name, user_id):
                     return f"Deleted {rtype} '{name}'."
                 return f"{rtype} '{name}' not found."
@@ -3473,7 +3497,9 @@ class ManageResourceHandler(ToolHandler):
                 lines = [f"Your {rtype}s ({len(items)}):"]
                 for item in items:
                     desc = item.get("description", "") or item.get("prompt", "")[:60]
-                    lines.append(f"- {item['name']}: {desc}")
+                    creator = item.get("created_by", "")
+                    suffix = f" [by {creator}]" if creator else ""
+                    lines.append(f"- {item['name']}: {desc}{suffix}")
                 return "\n".join(lines)
 
             elif action == "get":

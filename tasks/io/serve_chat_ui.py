@@ -658,6 +658,7 @@ function newChat() {
   highlightConv(null);
   // Close sidebar on mobile
   document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('input').focus();
 }
 
 function updateDeleteBtn() {
@@ -765,7 +766,8 @@ async function resumeConv(cid) {
     loadResources();
     document.getElementById('status').textContent = t('ready');
     document.getElementById('sidebar').classList.remove('open');
-    scrollBottom(true);  // Auto-scroll to bottom when loading conversation
+    scrollBottom(true);
+    document.getElementById('input').focus();
   } catch (e) {
     addMsg('error', t('connError', {msg: e.message}));
     document.getElementById('status').textContent = t('error');
@@ -1241,7 +1243,14 @@ function addMsg(role, text, extra) {
   }
   // Check near-bottom BEFORE appending so new element doesn't shift the threshold
   const shouldScroll = isNearBottom();
-  document.getElementById('messages').appendChild(el);
+  const container = document.getElementById('messages');
+  // Insert before typing indicator so it always stays at the bottom
+  const typingEl = document.getElementById('typing');
+  if (typingEl) {
+    container.insertBefore(el, typingEl);
+  } else {
+    container.appendChild(el);
+  }
   scrollBottom(shouldScroll);
   return el;
 }
@@ -1332,8 +1341,7 @@ function renderMarkdown(text) {
 
 function isNearBottom() {
   const m = document.getElementById('messages');
-  // Consider "near bottom" if within 150px of the bottom
-  return m.scrollHeight - m.scrollTop - m.clientHeight < 150;
+  return m.scrollHeight - m.scrollTop - m.clientHeight <= 2;
 }
 
 function scrollBottom(force) {
@@ -1380,6 +1388,7 @@ function trackAgentStart(agentName, msgPreview) {
     activeInteractions[key] = {
       name: agentName || 'assistant',
       startedAt: Date.now(), lastTool: '', activeTools: [], status: 'thinking', msgPreview: msgPreview || '',
+      updatedAt: Date.now(),
     };
   }
   updateActivePanel();
@@ -1413,21 +1422,24 @@ function trackAgentToolDone(agentName, toolName) {
 }
 function trackAgentDone(agentName) {
   const key = agentKey(agentName);
-  console.log('[trackAgentDone]', agentName, 'keys before:', Object.keys(activeInteractions));
   _agentDoneAt[key] = Date.now();
   delete activeInteractions[key];
   updateActivePanel();
-  if (Object.keys(activeInteractions).length === 0) {
-    hideTyping();
-    if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
+  if (Object.keys(activeInteractions).length === 0 && activeTimer) {
+    clearInterval(activeTimer); activeTimer = null;
   }
 }
 function updateActivePanel() {
   const panel = document.getElementById('activePanel');
   const rows = document.getElementById('activeRows');
   const names = Object.keys(activeInteractions);
+  const wasVisible = panel.classList.contains('visible');
+  const wasAtBottom = isNearBottom();
   if (names.length === 0) {
-    panel.classList.remove('visible');
+    if (wasVisible) {
+      panel.classList.remove('visible');
+      if (wasAtBottom) scrollBottom(true);
+    }
     return;
   }
   panel.classList.add('visible');
@@ -1465,6 +1477,61 @@ function updateActivePanel() {
       + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
+  if (!wasVisible && wasAtBottom) scrollBottom(true);
+}
+
+// Sync active agents from server (source of truth)
+let _syncActiveTimer = null;
+function startActiveSync() {
+  if (_syncActiveTimer) return;
+  _syncActiveTimer = setInterval(syncActiveFromServer, 2000);
+}
+function stopActiveSync() {
+  if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
+}
+async function syncActiveFromServer() {
+  if (!conversationId) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_active', conversation_id: conversationId }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) return;
+    const data = await resp.json();
+    const serverActive = data.active || [];
+    const serverKeys = new Set(serverActive.map(a => agentKey(a.agent_name)));
+    const now = Date.now();
+
+    // Remove entries the server no longer knows about
+    // BUT keep entries added by SSE less than 5s ago (race condition guard)
+    for (const key of Object.keys(activeInteractions)) {
+      if (!serverKeys.has(key) && (now - (activeInteractions[key].updatedAt || 0)) > 5000) {
+        delete activeInteractions[key];
+      }
+    }
+    // Add/update from server
+    for (const a of serverActive) {
+      const key = agentKey(a.agent_name);
+      const existing = activeInteractions[key];
+      activeInteractions[key] = {
+        name: a.agent_name,
+        startedAt: existing ? existing.startedAt : now - (a.duration_s * 1000),
+        iteration: a.iteration || (existing ? existing.iteration : 0),
+        lastTool: a.last_tool || (existing ? existing.lastTool : ''),
+        totalTools: existing ? (existing.totalTools || 0) : 0,
+        msgPreview: a.message_preview || '',
+        updatedAt: now,
+      };
+    }
+    updateActivePanel();
+    // Thinking: show if agents active, hide if none
+    if (Object.keys(activeInteractions).length > 0) {
+      if (!document.getElementById('typing')) showTyping();
+    } else {
+      hideTyping();
+    }
+  } catch(e) { /* silent */ }
 }
 
 async function interruptSingle(agentName) {
@@ -1732,7 +1799,9 @@ function randomColor() {
 }
 
 function showTyping() {
-  hideTyping();
+  if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
+  const old = document.getElementById('typing');
+  if (old) old.remove();
   const el = document.createElement('div');
   el.className = 'typing';
   el.id = 'typing';
@@ -1790,6 +1859,7 @@ function hideContextOp() {
 function connectSSE(cid) {
   if (eventSource) eventSource.close();
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  startActiveSync();
   sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
   const token = getToken();
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)
@@ -1935,7 +2005,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     // Finalize streaming for THIS agent before showing tool call
     const tcAgent = data.agent_name || 'assistant';
@@ -2231,9 +2300,8 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent || 'assistant');
-    showTyping();
     addMsg('system', t('thoughtFiring', { agent: displayAgentName(data.agent) }));
-    scrollBottom();
+    showTyping();
   });
 
   let sseHadError = false;  // track any error on this EventSource
@@ -3245,8 +3313,14 @@ async function handleSlashCommand(text) {
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
       const data = await resp.json();
       if (data.error) { addMsg('error', data.error); }
-      else if (sub === 'on') { addMsg('system', t('thoughtEnabled', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds })); }
-      else if (sub === 'off') { addMsg('system', t('thoughtDisabled', { agent: displayAgentName(data.agent) })); }
+      else if (sub === 'on') {
+        const agents = data.agents || [data.agent];
+        addMsg('system', t('thoughtEnabled', { agent: agents.map(displayAgentName).join(', '), freq: data.frequency, delay: data.next_in_seconds }));
+      }
+      else if (sub === 'off') {
+        const agents = data.agents || [data.agent];
+        addMsg('system', t('thoughtDisabled', { agent: agents.map(displayAgentName).join(', ') }));
+      }
       else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: displayAgentName(data.agent) })); }
       else { addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) })); }
     } catch (e) { addMsg('error', 'Failed: ' + e.message); }

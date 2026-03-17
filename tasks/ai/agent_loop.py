@@ -2832,6 +2832,14 @@ class AgentLoopTask(BaseTask):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
 
+        # Resolve target agents (ALL = assistant + all ResourceStore agents)
+        if agent_name.upper() == "ALL":
+            from core.resource_store import ResourceStore
+            all_agents = ResourceStore.instance().list_all("agent", user_id)
+            target_agents = ["assistant"] + [a["name"] for a in all_agents]
+        else:
+            target_agents = [agent_name]
+
         if sub == "on":
             freq = body.get("frequency", "6/1m")
             try:
@@ -2841,46 +2849,54 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
 
-            # Guard: one thought per agent — cancel any existing schedule
-            scheduler.cancel(thought_key)
+            results = []
+            for _tgt in target_agents:
+                _tgt_key = _tgt.lower()
+                _tgt_thought_key = f"{conv_id}::thought::{_tgt_key}"
+                _tgt_extra_key = f"random_thought::{_tgt_key}"
 
-            # Ensure conversation exists so set_extra doesn't silently fail
-            if not store.set_extra(conv_id, extra_key, {"_probe": True}):
-                store.save(conv_id, [], user_id=user_id)
-            store.set_extra(conv_id, extra_key, {
-                "enabled": True,
-                "min_interval": min_iv,
-                "max_interval": max_iv,
-                "agent": agent_name,
-                "frequency": freq,
-            })
-            delay = _rng.randint(min_iv, max_iv)
-            scheduler.schedule_delay(
-                conv_id, delay, key=thought_key,
-                reason=f"[random_thought] spontaneous thought ({agent_name})",
-                user_id=user_id,
-            )
-            # Notify via SSE so the chat shows the schedule
-            try:
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(conv_id, "thought_scheduled", {
-                    "agent": agent_name, "delay": delay, "frequency": freq,
+                scheduler.cancel(_tgt_thought_key)
+                if not store.set_extra(conv_id, _tgt_extra_key, {"_probe": True}):
+                    store.save(conv_id, [], user_id=user_id)
+                store.set_extra(conv_id, _tgt_extra_key, {
+                    "enabled": True,
+                    "min_interval": min_iv,
+                    "max_interval": max_iv,
+                    "agent": _tgt,
+                    "frequency": freq,
                 })
-            except Exception:
-                pass
+                delay = _rng.randint(min_iv, max_iv)
+                scheduler.schedule_delay(
+                    conv_id, delay, key=_tgt_thought_key,
+                    reason=f"[random_thought] spontaneous thought ({_tgt})",
+                    user_id=user_id,
+                )
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(conv_id, "thought_scheduled", {
+                        "agent": _tgt, "delay": delay, "frequency": freq,
+                    })
+                except Exception:
+                    pass
+                results.append({"agent": _tgt, "delay": delay})
+
             flowfile.set_content(json.dumps({
                 "ok": True, "agent": agent_name, "frequency": freq,
-                "next_in_seconds": delay,
+                "next_in_seconds": results[0]["delay"] if results else 0,
+                "agents": [r["agent"] for r in results],
             }).encode())
             return [flowfile]
 
         if sub == "off":
-            store.set_extra(conv_id, extra_key, {"enabled": False})
-            scheduler.cancel(thought_key)
-            # Don't cancel the thought in progress — let it finish naturally.
-            # It won't re-schedule because enabled=False.
+            for _tgt in target_agents:
+                _tgt_key = _tgt.lower()
+                _tgt_extra_key = f"random_thought::{_tgt_key}"
+                _tgt_thought_key = f"{conv_id}::thought::{_tgt_key}"
+                store.set_extra(conv_id, _tgt_extra_key, {"enabled": False})
+                scheduler.cancel(_tgt_thought_key)
             flowfile.set_content(json.dumps({
                 "ok": True, "agent": agent_name, "disabled": True,
+                "agents": target_agents,
             }).encode())
             return [flowfile]
 
@@ -4929,19 +4945,19 @@ class AgentLoopTask(BaseTask):
         _meta = _CS2.instance().get_metadata(conversation_id)
         _poll_uid = _meta["user_id"] if _meta else ""
 
-        # For random thoughts: resolve agent-specific LLM service if available
-        _thought_agent_name = None
+        # Resolve the agent executing this poll/thought (from scheduled reasons)
+        _active_agent = None
         if scheduled_reasons:
             for _sr in scheduled_reasons:
                 if "[random_thought]" in _sr and "(" in _sr:
-                    _thought_agent_name = _sr.rsplit("(", 1)[-1].rstrip(")")
+                    _active_agent = _sr.rsplit("(", 1)[-1].rstrip(")")
                     break
-            if _thought_agent_name and _thought_agent_name != "assistant":
+            if _active_agent and _active_agent != "assistant":
                 try:
                     from core.resource_store import ResourceStore
                     rs = ResourceStore.instance()
                     uid = _poll_uid or "anonymous"
-                    agent_def = rs.get_any("agent", _thought_agent_name, uid)
+                    agent_def = rs.get_any("agent", _active_agent, uid)
                     if agent_def:
                         agent_svc = agent_def.get("llm_service", "")
                         if agent_svc:
@@ -4951,12 +4967,12 @@ class AgentLoopTask(BaseTask):
                                 agent_svc = resolve_expression(agent_svc, owner=uid)
                             if agent_svc and "${" not in agent_svc:
                                 svc_id = agent_svc
-                                logger.info(f"[poll] Using agent '{_thought_agent_name}' LLM service: {svc_id}")
+                                logger.info(f"[poll] Using agent '{_active_agent}' LLM service: {svc_id}")
                         agent_model = agent_def.get("model", "")
                         if agent_model:
                             model = agent_model
                 except Exception as _e:
-                    logger.debug(f"[poll] Could not resolve agent '{_thought_agent_name}': {_e}")
+                    logger.debug(f"[poll] Could not resolve agent '{_active_agent}': {_e}")
 
         client, _poll_svc = self._resolve_llm_service(svc_id, _poll_uid)
         if not client and self.config.get("api_key"):
@@ -4997,7 +5013,7 @@ class AgentLoopTask(BaseTask):
 
         # Set source agent on SpawnAgentsHandler for self-call prevention
         from core.tool_registry import SpawnAgentsHandler as _SAH
-        _poll_source = _thought_agent_name or "assistant"
+        _poll_source = _active_agent or "assistant"
         for h in registry.list_tools():
             if isinstance(h, _SAH):
                 h.set_source_agent(_poll_source)
@@ -5013,10 +5029,10 @@ class AgentLoopTask(BaseTask):
         # Load context (diverged) or fall back to messages
         system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
         # Use agent-specific prompt for non-default thought agents
-        if _thought_agent_name and _thought_agent_name != "assistant":
+        if _active_agent and _active_agent != "assistant":
             try:
                 from core.resource_store import ResourceStore as _RSp
-                _agent_def = _RSp.instance().get_any("agent", _thought_agent_name, _poll_uid or "anonymous")
+                _agent_def = _RSp.instance().get_any("agent", _active_agent, _poll_uid or "anonymous")
                 if _agent_def and _agent_def.get("prompt"):
                     system_prompt = _agent_def["prompt"]
             except Exception:
@@ -5024,7 +5040,7 @@ class AgentLoopTask(BaseTask):
         from datetime import datetime
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         # Inject identity block into thought agent's system prompt
-        _thought_real = _thought_agent_name or "assistant"
+        _thought_real = _active_agent or "assistant"
         from core.conversation_store import ConversationStore as _CS3
         _nicknames = _CS3.instance().get_extra(conversation_id, "agent_nicknames") or {}
         _nick_key = _thought_real.lower()
@@ -5110,13 +5126,9 @@ class AgentLoopTask(BaseTask):
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 
 
-        # Resolve agent name and LLM service for source tracking
-        _poll_agent_name = ""
-        _poll_agent_svc = svc_id if svc_id != "default" else ""
-        if _thought_agent_name and _thought_agent_name != "assistant":
-            _poll_agent_name = _thought_agent_name
-        elif _thought_agent_name == "assistant":
-            _poll_agent_name = ""  # will show as "assistant"
+        # Source tracking
+        _agent_name = _active_agent if _active_agent and _active_agent != "assistant" else ""
+        _agent_svc = svc_id if svc_id != "default" else ""
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
@@ -5128,8 +5140,8 @@ class AgentLoopTask(BaseTask):
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
             "user_id": poll_user_id,
-            "active_agent_name": _poll_agent_name,
-            "active_llm_service": _poll_agent_svc,
+            "active_agent_name": _agent_name,
+            "active_llm_service": _agent_svc,
             "is_poll": True,
             "is_random_thought": is_random_thought,
             "_scheduled_reasons": scheduled_reasons or [],

@@ -332,6 +332,7 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(classified[1]["source"]["llm_service"], "grok")
 
     def test_no_source_backward_compat(self):
+        """Messages without explicit source get a default source for assistant."""
         from tasks.ai.agent_loop import AgentLoopTask
         raw = [
             {"role": "user", "content": "hi"},
@@ -339,8 +340,9 @@ class TestClassifyMessagesSource(unittest.TestCase):
         ]
         classified = AgentLoopTask._classify_messages_for_display(raw)
         self.assertEqual(len(classified), 2)
-        self.assertNotIn("source", classified[0])
-        self.assertNotIn("source", classified[1])
+        self.assertNotIn("source", classified[0])  # user messages without source stay without
+        # Assistant messages now always get a default source for badge display
+        self.assertEqual(classified[1]["source"], {"type": "agent", "name": "assistant"})
 
 
 class TestAgentLoopSchema(unittest.TestCase):

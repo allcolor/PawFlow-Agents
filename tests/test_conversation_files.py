@@ -26,6 +26,19 @@ from core.file_store import FileStore
 from core.tool_registry import CreateFileHandler, create_default_registry
 
 
+def _reset_filestore():
+    """Reset FileStore singleton for tests (cleanup temp files + clear instance)."""
+    import shutil
+    with FileStore._lock:
+        inst = FileStore._instance
+        if inst is not None:
+            with inst._store_lock:
+                for fid in list(inst._entries.keys()):
+                    inst._remove_entry(fid)
+                inst._save_index()
+        FileStore._instance = None
+
+
 # ── ConversationStore ────────────────────────────────────────────────
 
 
@@ -204,14 +217,14 @@ class TestConversationStore(unittest.TestCase):
 class TestFileStore(unittest.TestCase):
 
     def setUp(self):
-        FileStore.reset()
+        _reset_filestore()
         self._tmpdir = tempfile.mkdtemp()
         self.store = FileStore(base_dir=self._tmpdir)
         # Override singleton
         FileStore._instance = self.store
 
     def tearDown(self):
-        FileStore.reset()
+        _reset_filestore()
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -232,19 +245,13 @@ class TestFileStore(unittest.TestCase):
     def test_get_missing(self):
         assert self.store.get("nonexistent") is None
 
-    def test_ttl_expiry(self):
-        fid = self.store.store("test.txt", b"data", ttl=60)
-        # Force-expire
-        self.store._entries[fid]["expires_at"] = time.time() - 1
-        assert self.store.get(fid) is None
-
     def test_delete(self):
         fid = self.store.store("test.txt", b"data")
         self.store.delete(fid)
         assert self.store.get(fid) is None
 
     def test_exists(self):
-        fid = self.store.store("test.txt", b"data", ttl=60)
+        fid = self.store.store("test.txt", b"data")
         assert self.store.exists(fid) is True
         assert self.store.exists("nonexistent") is False
 
@@ -255,15 +262,6 @@ class TestFileStore(unittest.TestCase):
         names = [f["filename"] for f in files]
         assert "a.txt" in names
         assert "b.csv" in names
-
-    def test_cleanup(self):
-        old_id = self.store.store("old.txt", b"old", ttl=60)
-        self.store.store("new.txt", b"new", ttl=3600)
-        # Force the old entry to be expired
-        self.store._entries[old_id]["expires_at"] = time.time() - 1
-        removed = self.store.cleanup()
-        assert removed == 1
-        assert self.store.count() == 1
 
     def test_sanitize_filename(self):
         fid = self.store.store("../../etc/passwd", b"hack")
@@ -282,13 +280,13 @@ class TestFileStore(unittest.TestCase):
 class TestCreateFileHandler(unittest.TestCase):
 
     def setUp(self):
-        FileStore.reset()
+        _reset_filestore()
         self._tmpdir = tempfile.mkdtemp()
         store = FileStore(base_dir=self._tmpdir)
         FileStore._instance = store
 
     def tearDown(self):
-        FileStore.reset()
+        _reset_filestore()
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -326,13 +324,13 @@ class TestCreateFileHandler(unittest.TestCase):
 class TestServeFileTask(unittest.TestCase):
 
     def setUp(self):
-        FileStore.reset()
+        _reset_filestore()
         self._tmpdir = tempfile.mkdtemp()
         store = FileStore(base_dir=self._tmpdir)
         FileStore._instance = store
 
     def tearDown(self):
-        FileStore.reset()
+        _reset_filestore()
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 

@@ -430,7 +430,8 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         task = ValidateSessionAuthTask({})
         ff = FlowFile(content=b"")
         ff.set_attribute("http.header.authorization", "Bearer nonexistent-token")
-        results = task.execute(ff)
+        with patch.object(task, "_try_silent_refresh", return_value=None):
+            results = task.execute(ff)
         assert results[0].get_attribute("http.auth.valid") == "false"
 
     def test_expired_session(self):
@@ -447,7 +448,9 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         task = ValidateSessionAuthTask({})
         ff = FlowFile(content=b"")
         ff.set_attribute("http.header.authorization", "Bearer expired-session")
-        results = task.execute(ff)
+        # No tokens on disk → silent refresh fails → auth fails
+        with patch.object(task, "_try_silent_refresh", return_value=None):
+            results = task.execute(ff)
         assert results[0].get_attribute("http.auth.valid") == "false"
         # Session should be cleaned up
         assert "expired-session" not in self.sm._sessions

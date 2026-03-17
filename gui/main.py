@@ -39,6 +39,10 @@ from gui.services.storage_service import StorageService
 from tasks import register_all_tasks
 register_all_tasks()
 
+# Auto-restore deployed flows that were running before server stop
+from gui.services.executor_registry import ExecutorRegistry
+ExecutorRegistry.get_instance().restore_from_disk()
+
 # Initialize global log capture for GUI log viewer
 from gui.components.log_viewer import LogCapture
 LogCapture.get_global()

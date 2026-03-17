@@ -107,7 +107,6 @@ class ExecuteScriptHandler(ToolHandler):
     """
 
     _base_url: str = "http://localhost:9090"
-    _ttl: int = 3600
     _vfs: Dict[str, bytes]
 
     def __init__(self):
@@ -116,9 +115,6 @@ class ExecuteScriptHandler(ToolHandler):
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
-
-    def set_ttl(self, ttl: int):
-        self._ttl = ttl
 
     @property
     def name(self) -> str:
@@ -165,7 +161,6 @@ class ExecuteScriptHandler(ToolHandler):
                 output, created_files, _ = execute_sandboxed(
                     code,
                     base_url=self._base_url,
-                    ttl=self._ttl,
                     vfs=self._vfs,
                 )
         except Exception as e:
@@ -678,7 +673,6 @@ class CreateFileHandler(ToolHandler):
     """
 
     _base_url: str = "http://localhost:9090"
-    _ttl: int = 3600
 
     @property
     def name(self) -> str:
@@ -716,9 +710,6 @@ class CreateFileHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
-    def set_ttl(self, ttl: int):
-        self._ttl = ttl
-
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.file_store import FileStore
 
@@ -731,7 +722,7 @@ class CreateFileHandler(ToolHandler):
 
         store = FileStore.instance()
         file_id = store.store(filename, content.encode("utf-8"),
-                              content_type=content_type, ttl=self._ttl)
+                              content_type=content_type)
 
         url = f"{self._base_url}/files/{file_id}/{filename}"
         return f"File created: {url}"
@@ -1387,14 +1378,14 @@ class RemoteExecutorHandler(ToolHandler):
 
 
 class ImageGenerationHandler(ToolHandler):
-    """Generate images using Pixazo SDXL API.
+    """Generate images via a pluggable image generation service.
 
-    Generates images via Stable Diffusion XL, downloads from the returned URL,
-    stores in FileStore, and returns a local download URL.
+    Provider-agnostic — delegates to whichever BaseImageGenerationService
+    is injected via set_service(). Handles FileStore storage and URL creation.
     """
 
     _base_url: str = "http://localhost:9090"
-    _api_key: str = ""
+    _service = None  # BaseImageGenerationService instance
 
     @property
     def name(self) -> str:
@@ -1403,7 +1394,7 @@ class ImageGenerationHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Generate an image from a text prompt using Stable Diffusion XL. "
+            "Generate an image from a text prompt. "
             "Returns a download URL for the generated image. "
             "Be descriptive in your prompt for best results. "
             "You can also provide a negative_prompt to exclude unwanted elements."
@@ -1424,15 +1415,11 @@ class ImageGenerationHandler(ToolHandler):
                 },
                 "width": {
                     "type": "integer",
-                    "description": "Image width in pixels (default: 1024, max: 1024)",
+                    "description": "Image width in pixels (optional)",
                 },
                 "height": {
                     "type": "integer",
-                    "description": "Image height in pixels (default: 1024, max: 1024)",
-                },
-                "steps": {
-                    "type": "integer",
-                    "description": "Number of diffusion steps (default: 20, max: 20)",
+                    "description": "Image height in pixels (optional)",
                 },
             },
             "required": ["prompt"],
@@ -1441,90 +1428,37 @@ class ImageGenerationHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
-    def set_api_key(self, api_key: str):
-        self._api_key = api_key
+    def set_service(self, service):
+        """Inject the resolved image generation service."""
+        self._service = service
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        import os
-        import urllib.request
+        import time as _time
+
+        if not self._service:
+            return ("Error: no image generation service configured. "
+                    "Create an image generation service and set image_service "
+                    "in flow parameters.")
 
         prompt = arguments.get("prompt", "")
         if not prompt:
             return "Error: no prompt provided"
 
-        negative_prompt = arguments.get("negative_prompt", "")
-        width = max(256, min(1024, int(arguments.get("width", 1024))))
-        height = max(256, min(1024, int(arguments.get("height", 1024))))
-        steps = max(1, min(20, int(arguments.get("steps", 20))))
-
-        api_key = self._api_key or os.environ.get("PIXAZO_API_KEY", "")
-        if not api_key:
-            return "Error: PIXAZO_API_KEY not set. Set it as an environment variable or in flow parameters."
-
         try:
-            body = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "width": width,
-                "height": height,
-                "num_steps": steps,
-                "guidance_scale": 5,
-                "seed": int(__import__("time").time()) % 1000000,
-            }
-
-            logger.info(f"[PIXAZO] Request: prompt={prompt[:80]}..., "
-                        f"w={width}, h={height}, steps={steps}")
-            json_body = json.dumps(body).encode("utf-8")
-            headers = {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-cache",
-                "Ocp-Apim-Subscription-Key": api_key,
-                "Content-Length": str(len(json_body)),
-            }
-
-            # Retry up to 5 times on 500 errors (cold start can take 15-20s)
-            ctx = ssl.create_default_context()
-            resp_body = ""
-            max_retries = 5
-            for attempt in range(max_retries):
-                conn = http.client.HTTPSConnection("gateway.pixazo.ai", timeout=120, context=ctx)
-                conn.request("POST", "/getImage/v1/getSDXLImage", body=json_body, headers=headers)
-                resp = conn.getresponse()
-                resp_body = resp.read().decode("utf-8", errors="replace")
-                conn.close()
-                if resp.status < 500:
-                    break
-                delay = [3, 5, 8, 10][min(attempt, 3)]
-                logger.warning(f"[PIXAZO] Attempt {attempt+1}/{max_retries} got {resp.status}: "
-                               f"{resp_body[:200]}, retrying in {delay}s...")
-                __import__("time").sleep(delay)
-
-            if resp.status >= 400:
-                return f"Error from Pixazo API ({resp.status}): {resp_body[:300]}"
-
-            data = json.loads(resp_body)
-            image_url = data.get("imageUrl", "") if isinstance(data, dict) else ""
-            if not image_url:
-                return f"Error: no imageUrl in response: {resp_body[:300]}"
-
-            # Download the generated image
-            req = urllib.request.Request(image_url, headers={"User-Agent": "PyFi2-Agent/1.0"})
-            with urllib.request.urlopen(req, timeout=60) as img_resp:
-                image_bytes = img_resp.read()
-                content_type = img_resp.headers.get("Content-Type", "image/png")
-
-            # Store in FileStore
-            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
-                content_type.split(";")[0].strip(), "png"
-            )
-            filename = f"generated_{int(__import__('time').time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+            result = self._service.generate(**arguments)
+            # result = {"image_bytes": bytes, "content_type": str}
 
             from core.file_store import FileStore
-            store = FileStore.instance()
-            file_id = store.store(filename, image_bytes, content_type=content_type)
-
+            ct = result["content_type"]
+            ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
+                ct.split(";")[0].strip(), "png"
+            )
+            filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+            file_id = FileStore.instance().store(
+                filename, result["image_bytes"], content_type=ct
+            )
             download_url = f"{self._base_url}/files/{file_id}/{filename}"
-            return f"Image generated ({width}x{height}, {steps} steps): {download_url}"
+            return f"Image generated: {download_url}"
 
         except Exception as e:
             return f"Error generating image: {e}"
@@ -3478,11 +3412,11 @@ class ManageResourceHandler(ToolHandler):
                 if not name:
                     return "Error: 'name' is required for delete"
                 # Ownership check for agent/skill deletion
-                if rtype in ("agent", "skill") and self._agent_name:
+                if rtype in ("agent", "skill"):
                     existing = store.get_any(rtype, name, user_id)
                     if existing:
-                        created_by = existing.get("created_by", "")
-                        if created_by and created_by != self._agent_name:
+                        created_by = existing.get("created_by")  # None if legacy
+                        if created_by is not None and created_by != (self._agent_name or ""):
                             return (f"Error: {rtype} '{name}' was created by "
                                     f"'{created_by}' — you can only delete "
                                     f"resources you created.")
@@ -3575,8 +3509,16 @@ class SpawnAgentsHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
+        self._conversation_id = ""
+        self._source_agent = ""  # agent currently calling this tool
         self._executor = None  # type: Optional[SubAgentExecutor]
         self._available_agents: List[str] = []
+
+    def set_conversation_id(self, conversation_id: str) -> None:
+        self._conversation_id = conversation_id
+
+    def set_source_agent(self, agent_name: str) -> None:
+        self._source_agent = agent_name
 
     def set_available_agents(self, names: List[str]):
         """Set the list of available agent names (for description injection)."""
@@ -3655,14 +3597,34 @@ class SpawnAgentsHandler(ToolHandler):
         wait = arguments.get("wait", True)
         user_id = self._user_id or "anonymous"
 
+        # Resolve self-name and nicknames to detect self-calls
+        _self_names = {self._source_agent.lower()} if self._source_agent else set()
+        if self._conversation_id and self._source_agent:
+            try:
+                from core.conversation_store import ConversationStore
+                _nicks = ConversationStore.instance().get_extra(
+                    self._conversation_id, "agent_nicknames") or {}
+                # Add nickname of source agent
+                _self_nick = _nicks.get(self._source_agent, "")
+                if _self_nick:
+                    _self_names.add(_self_nick.lower())
+            except Exception:
+                pass
+
         agent_tasks = []
         for spec in tasks_spec:
             agent_name = spec.get("agent", "")
             message = spec.get("message", "")
             task_id = spec.get("id", uuid.uuid4().hex[:8])
 
+            # Prevent agent from calling itself
+            if agent_name.lower() in _self_names:
+                return (f"Error: You cannot call yourself ('{agent_name}'). "
+                        f"Use a different agent or respond directly.")
+
             try:
-                task = resolve_agent_task(agent_name, message, user_id)
+                task = resolve_agent_task(agent_name, message, user_id,
+                                         conversation_id=self._conversation_id)
                 task.id = task_id
                 agent_tasks.append(task)
             except KeyError as e:

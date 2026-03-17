@@ -84,10 +84,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;
            margin: 8px 0; }
 .msg pre code { background: none; padding: 0; }
-.msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px; }
+.msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px;
+            border-left: 3px solid #4ecdc4; }
 .source-badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 8px; margin-right: 4px; vertical-align: middle; font-weight: 600; letter-spacing: 0.3px; }
+.msg-time { float: right; font-size: 10px; color: #555570; margin-left: 8px; font-weight: normal; }
 .msg.assistant { align-self: flex-start; background: #16213e; border: 1px solid #0f3460;
-                  border-bottom-left-radius: 4px; }
+                  border-left: 3px solid #e94560; border-bottom-left-radius: 4px; }
+.msg.subagent { align-self: flex-start; background: #0d1b2a; border: 1px solid #1a3a5c;
+                border-left: 3px solid #6c5ce7; border-bottom-left-radius: 4px; }
 .msg.error { align-self: center; background: #5c1a1a; color: #ff8a80; font-size: 13px; }
 .msg.system { align-self: center; color: #6c6c8a; font-size: 12px; background: none; }
 .msg.system-compact { align-self: center; color: #555570; font-size: 11px; background: none; padding: 1px 8px; margin: 1px 0; opacity: 0.8; }
@@ -276,6 +280,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" title="My Flows">&#x26A1;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
+    <button class="btn" id="exportConvBtn" onclick="exportConversation()" style="display:none" title="Export conversation">&#x1F4E5;</button>
     <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
     <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
@@ -365,18 +370,22 @@ const _i18n = {
     contextDeleteConfirm: 'Delete this message?', contextReplaceConfirm: 'Replace entire context?',
     contextSaved: 'Context saved ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'Invalid JSON',
     contextRole: 'Role', contextContent: 'Content',
-    thoughtEnabled: 'Random thought enabled for {agent}: {freq} (next in ~{delay}s)',
-    thoughtDisabled: 'Random thought disabled for {agent}.',
-    thoughtStatus: 'Random thought for {agent}: enabled — {freq}, next in ~{delay}s',
-    thoughtStatusOff: 'Random thought for {agent}: disabled',
-    thoughtTriggered: 'Random thought triggered for {agent}.',
+    thoughtEnabled: 'Auto-conversation enabled for {agent}: {freq} (next in ~{delay}s)',
+    thoughtDisabled: 'Auto-conversation disabled for {agent}.',
+    thoughtStatus: 'Auto-conversation for {agent}: enabled — {freq}, next in ~{delay}s',
+    thoughtStatusOff: 'Auto-conversation for {agent}: disabled',
+    thoughtTriggered: 'Auto-conversation triggered for {agent}.',
     thoughtNoConv: 'No active conversation.',
-    thoughtScheduled: '[{agent}] next thought in ~{delay}s',
+    thoughtScheduled: '[{agent}] next auto-message in ~{delay}s',
     thoughtFiring: '[{agent}] thinking...',
     iterStatus: '[{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
     subAgentStarted: 'Sub-agent [{agent}] started',
     subAgentDone: '[{agent}] finished ({dur}s, {tok} tokens)',
     iterProgress: '\u21bb [{agent}] iter {i} \u00b7 round {r}/{mr} \u00b7 {t} tools',
+    agentRenamed: 'Agent "{real}" will now display as "{nick}".',
+    confirmDelete: 'Delete this conversation? This cannot be undone.',
+    exporting: 'Exporting...', exportingWithImages: 'Exporting with images...',
+    exported: 'Conversation exported.',
   },
   fr: {
     ready: 'Pr\u00eat', sending: 'Envoi...', streaming: 'R\u00e9ception...',
@@ -422,18 +431,22 @@ const _i18n = {
     contextDeleteConfirm: 'Supprimer ce message ?', contextReplaceConfirm: 'Remplacer tout le contexte ?',
     contextSaved: 'Contexte sauvegardé ({n} messages, ~{tokens} tokens)', contextInvalidJson: 'JSON invalide',
     contextRole: 'Rôle', contextContent: 'Contenu',
-    thoughtEnabled: 'Pens\u00e9e al\u00e9atoire activ\u00e9e pour {agent}\u00a0: {freq} (prochaine dans ~{delay}s)',
-    thoughtDisabled: 'Pens\u00e9e al\u00e9atoire d\u00e9sactiv\u00e9e pour {agent}.',
-    thoughtStatus: 'Pens\u00e9e al\u00e9atoire pour {agent}\u00a0: activ\u00e9e \u2014 {freq}, prochaine dans ~{delay}s',
-    thoughtStatusOff: 'Pens\u00e9e al\u00e9atoire pour {agent}\u00a0: d\u00e9sactiv\u00e9e',
-    thoughtTriggered: 'Pensée aléatoire déclenchée pour {agent}.',
+    thoughtEnabled: 'Auto-conversation activ\u00e9e pour {agent}\u00a0: {freq} (prochaine dans ~{delay}s)',
+    thoughtDisabled: 'Auto-conversation d\u00e9sactiv\u00e9e pour {agent}.',
+    thoughtStatus: 'Auto-conversation pour {agent}\u00a0: activ\u00e9e \u2014 {freq}, prochaine dans ~{delay}s',
+    thoughtStatusOff: 'Auto-conversation pour {agent}\u00a0: d\u00e9sactiv\u00e9e',
+    thoughtTriggered: 'Auto-conversation d\u00e9clench\u00e9e pour {agent}.',
     thoughtNoConv: 'Aucune conversation active.',
-    thoughtScheduled: '[{agent}] prochaine pensée dans ~{delay}s',
-    thoughtFiring: '[{agent}] réfléchit...',
+    thoughtScheduled: '[{agent}] prochain message auto dans ~{delay}s',
+    thoughtFiring: '[{agent}] r\u00e9fl\u00e9chit...',
     iterStatus: '[{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
     subAgentStarted: 'Sous-agent [{agent}] d\u00e9marr\u00e9',
     subAgentDone: '[{agent}] termin\u00e9 ({dur}s, {tok} tokens)',
     iterProgress: '\u21bb [{agent}] iter {i} \u00b7 tour {r}/{mr} \u00b7 {t} outils',
+    agentRenamed: 'L\'agent "{real}" s\'affichera d\u00e9sormais comme "{nick}".',
+    confirmDelete: 'Supprimer cette conversation\u00a0? Cette action est irr\u00e9versible.',
+    exporting: 'Export en cours...', exportingWithImages: 'Export avec images en cours...',
+    exported: 'Conversation export\u00e9e.',
   },
   es: {
     ready: 'Listo', sending: 'Enviando...', streaming: 'Recibiendo...',
@@ -479,18 +492,22 @@ const _i18n = {
     contextDeleteConfirm: '¿Eliminar este mensaje?', contextReplaceConfirm: '¿Reemplazar todo el contexto?',
     contextSaved: 'Contexto guardado ({n} mensajes, ~{tokens} tokens)', contextInvalidJson: 'JSON inválido',
     contextRole: 'Rol', contextContent: 'Contenido',
-    thoughtEnabled: 'Pensamiento aleatorio activado para {agent}: {freq} (pr\u00f3ximo en ~{delay}s)',
-    thoughtDisabled: 'Pensamiento aleatorio desactivado para {agent}.',
-    thoughtStatus: 'Pensamiento aleatorio para {agent}: activado \u2014 {freq}, pr\u00f3ximo en ~{delay}s',
-    thoughtStatusOff: 'Pensamiento aleatorio para {agent}: desactivado',
-    thoughtTriggered: 'Pensamiento aleatorio activado para {agent}.',
-    thoughtNoConv: 'No hay conversación activa.',
-    thoughtScheduled: '[{agent}] próximo pensamiento en ~{delay}s',
+    thoughtEnabled: 'Auto-conversaci\u00f3n activada para {agent}: {freq} (pr\u00f3ximo en ~{delay}s)',
+    thoughtDisabled: 'Auto-conversaci\u00f3n desactivada para {agent}.',
+    thoughtStatus: 'Auto-conversaci\u00f3n para {agent}: activada \u2014 {freq}, pr\u00f3ximo en ~{delay}s',
+    thoughtStatusOff: 'Auto-conversaci\u00f3n para {agent}: desactivada',
+    thoughtTriggered: 'Auto-conversaci\u00f3n activada para {agent}.',
+    thoughtNoConv: 'No hay conversaci\u00f3n activa.',
+    thoughtScheduled: '[{agent}] pr\u00f3ximo mensaje auto en ~{delay}s',
     thoughtFiring: '[{agent}] pensando...',
     iterStatus: '[{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
     subAgentStarted: 'Sub-agente [{agent}] iniciado',
     subAgentDone: '[{agent}] terminado ({dur}s, {tok} tokens)',
     iterProgress: '\u21bb [{agent}] iter {i} \u00b7 ronda {r}/{mr} \u00b7 {t} herram.',
+    agentRenamed: 'El agente "{real}" se mostrar\u00e1 como "{nick}".',
+    confirmDelete: '\u00bfEliminar esta conversaci\u00f3n? No se puede deshacer.',
+    exporting: 'Exportando...', exportingWithImages: 'Exportando con im\u00e1genes...',
+    exported: 'Conversaci\u00f3n exportada.',
   },
 };
 const _lang = (navigator.language || 'en').slice(0, 2);
@@ -530,10 +547,37 @@ let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
 let sseRetryCount = 0;     // for exponential backoff on reconnect
 let sseReconnectTimer = null;
-let streamingEl = null;  // current assistant message being streamed
+// Per-agent streaming state — prevents cross-agent clobbering when multiple
+// agents (random thoughts, sub-agents) stream concurrently.
+let streams = {};  // agentName → { el, text, chunks }
+// Legacy aliases for backward compat with code that reads these globals
+let streamingEl = null;
 let streamingText = '';
-let streamingChunks = [];  // all intermediate streaming bubbles (removed on done)
-let streamingAgent = '';   // agent name from token events (for source badge)
+let streamingChunks = [];
+let streamingAgent = '';
+
+function getStream(agent) {
+  const key = (agent || 'assistant').toLowerCase();
+  if (!streams[key]) streams[key] = { el: null, text: '', chunks: [] };
+  return streams[key];
+}
+function clearStream(agent) {
+  const key = (agent || 'assistant').toLowerCase();
+  delete streams[key];
+  // Sync legacy globals if this was the active stream
+  if (!streamingAgent || streamingAgent.toLowerCase() === key) {
+    streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
+  }
+}
+function clearAllStreams() {
+  for (const a of Object.keys(streams)) {
+    const s = streams[a];
+    for (const c of s.chunks) { if (c && c.parentNode) c.remove(); }
+  }
+  streams = {};
+  streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
+}
+let nicknameMap = {};      // { realName: displayName } — agent display names
 let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
 let serverMsgCount = 0;    // last known message_count from server (for poll delta)
@@ -597,15 +641,14 @@ function newChat() {
   conversationId = null;
   pendingAgent = null;
   serverMsgCount = 0;
-  streamingEl = null;
-  streamingText = '';
-  streamingChunks = [];
+  clearAllStreams();
   sending = false;
   document.getElementById('sendBtn').disabled = false;
   document.getElementById('messages').innerHTML = '';
   addMsg('system', t('newConv'));
   document.getElementById('status').textContent = t('ready');
   document.getElementById('deleteConvBtn').style.display = 'none';
+  document.getElementById('exportConvBtn').style.display = 'none';
   document.getElementById('contextBtn').style.display = 'none';
   document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
@@ -620,6 +663,7 @@ function newChat() {
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
   document.getElementById('deleteConvBtn').style.display = show;
+  document.getElementById('exportConvBtn').style.display = show;
   document.getElementById('contextBtn').style.display = show;
   document.getElementById('refreshConvBtn').style.display = show;
   document.getElementById('filesBtn').style.display = show;
@@ -698,18 +742,23 @@ async function resumeConv(cid) {
     // Switch to this conversation (previous agent thread keeps running server-side)
     if (eventSource) { eventSource.close(); eventSource = null; }
     conversationId = cid;
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
+    clearAllStreams();
     sending = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('messages').innerHTML = '';
     // Replay messages (using classified types: user/assistant/tool_call/tool_result)
     for (const m of (data.messages || [])) {
-      addMsg(m.type || m.role, m.content, m);
+      let content = m.content || '';
+      // Strip identity prefixes that may have been persisted (e.g. "[AgentName]: text")
+      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+      }
+      addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
     highlightConv(cid);
+    // Load agent nicknames if present
+    nicknameMap = data.nicknames || {};
     connectSSE(cid);  // subscribe to SSE — will pick up events if agent is still running
     startPollTimer();
     updateDeleteBtn();
@@ -746,12 +795,7 @@ async function _recoverConversation(cid) {
     serverMsgCount = data.message_count || serverMsgCount;
 
     // Clean up any stale streaming state
-    for (const chunk of streamingChunks) {
-      if (chunk && chunk.parentNode) chunk.remove();
-    }
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
+    clearAllStreams();
     hideTyping();
 
     // Display the new messages, skipping messages already shown locally
@@ -762,24 +806,33 @@ async function _recoverConversation(cid) {
         // Check if this user message is already displayed (sent locally by send())
         const existing = msgContainer.querySelectorAll('.msg.user');
         const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
-        if (lastUserEl && lastUserEl.textContent.trim() === (m.content || '').trim()) {
+        // Strip [→ agent] / [btw → agent] / [btw] prefix for dedup
+        const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
+        const localText = stripPrefix(lastUserEl.textContent.trim());
+        const serverText = stripPrefix((m.content || '').trim());
+        if (lastUserEl && (localText === serverText || lastUserEl.textContent.trim() === (m.content || '').trim())) {
           console.log('[poll] skipping duplicate user message');
           continue;
         }
       }
       if (mType === 'assistant') {
         // Check if this assistant message was already shown via SSE done event
-        const existing = msgContainer.querySelectorAll('.msg.assistant');
+        const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
         const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
         if (lastEl && lastEl.dataset.rawText) {
-          const newText = (m.content || '').substring(0, 500);
+          const newText = (m.content || '').replace(/^\[[^\]]+\]:\s*/, '').substring(0, 500);
           if (lastEl.dataset.rawText === newText) {
             console.log('[poll] skipping duplicate assistant message');
             continue;
           }
         }
       }
-      addMsg(mType, m.content, m);
+      let pollContent = m.content || '';
+      // Strip identity prefixes (same as history replay)
+      if (mType === 'assistant' && typeof pollContent === 'string') {
+        pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
+      }
+      addMsg(mType, pollContent, m);
     }
 
     // Check if agent is still working
@@ -816,6 +869,7 @@ async function deleteConv(event, cid) {
 
 async function deleteCurrentConv() {
   if (!conversationId) return;
+  if (!confirm(t('confirmDelete'))) return;
   const cid = conversationId;
   try {
     const resp = await fetch(API, {
@@ -828,6 +882,229 @@ async function deleteCurrentConv() {
     newChat();
     loadConversations();
   } catch (e) { console.error('Delete error:', e); }
+}
+
+async function exportConversation() {
+  if (!conversationId) return;
+  document.getElementById('status').textContent = t('exporting');
+  try {
+    // Fetch conversation messages
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'load_history', conversation_id: conversationId }),
+      credentials: 'same-origin',
+    });
+    if (!resp.ok) { addMsg('error', 'Export failed'); return; }
+    const data = await resp.json();
+    const messages = data.messages || [];
+
+    // Collect file URLs from messages
+    const fileUrls = [];
+    const fileUrlRe = /(https?:\/\/[^\s<"']*\/files\/[a-f0-9]+\/([^\s<"')]+))/g;
+    for (const m of messages) {
+      const content = m.content || '';
+      let match;
+      while ((match = fileUrlRe.exec(content)) !== null) {
+        fileUrls.push({ url: match[1], name: match[2] });
+      }
+      fileUrlRe.lastIndex = 0;
+    }
+
+    // Check if we have images — if so, create a ZIP
+    const hasImages = fileUrls.some(f => isImageFile(f.name));
+
+    // Build HTML
+    const htmlContent = buildExportHtml(messages, data.nicknames || {}, fileUrls);
+
+    if (hasImages) {
+      // Use JSZip-like approach: simple ZIP with stored entries
+      addMsg('system', t('exportingWithImages'));
+      const files = [{ name: 'conversation.html', content: new TextEncoder().encode(htmlContent) }];
+      // Fetch images
+      const token = getToken();
+      const headers = {};
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      for (const f of fileUrls) {
+        if (isImageFile(f.name)) {
+          try {
+            const imgResp = await fetch(f.url, { headers, credentials: 'same-origin' });
+            if (imgResp.ok) {
+              const blob = await imgResp.blob();
+              const buf = await blob.arrayBuffer();
+              files.push({ name: 'images/' + f.name, content: new Uint8Array(buf) });
+            }
+          } catch(e) { console.warn('Failed to fetch image for export:', f.name); }
+        }
+      }
+      // Build a simple ZIP (store method, no compression)
+      const zipBlob = buildSimpleZip(files);
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(zipBlob);
+      a.download = 'conversation_' + conversationId.substring(0, 8) + '.zip';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } else {
+      // Plain HTML download
+      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'conversation_' + conversationId.substring(0, 8) + '.html';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+    addMsg('system', t('exported'));
+    document.getElementById('status').textContent = t('ready');
+  } catch (e) {
+    console.error('Export error:', e);
+    addMsg('error', 'Export failed: ' + e.message);
+    document.getElementById('status').textContent = t('ready');
+  }
+}
+
+function buildExportHtml(messages, nicknames, fileUrls) {
+  const nicks = nicknames || {};
+  function nickLookup(name) {
+    const lk = (name || '').toLowerCase();
+    for (const k of Object.keys(nicks)) { if (k.toLowerCase() === lk) return nicks[k]; }
+    return name || '';
+  }
+  let body = '';
+  for (const m of messages) {
+    const type = m.type || m.role;
+    if (type === 'system') continue;
+    let cssClass = type;
+    let content = m.content || '';
+    let badge = '';
+    if (type === 'assistant' || type === 'user') {
+      const src = m.source || {};
+      const srcName = nickLookup(src.name);
+      if (srcName) {
+        const h = [...srcName].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0);
+        const hue = Math.abs(h) % 360;
+        badge = '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;font-weight:600;background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(srcName) + '</span>';
+      }
+      if (type === 'assistant' && src.type === 'agent' && src.name && src.name !== 'assistant') {
+        cssClass = 'subagent';
+      }
+      // Strip identity prefix
+      content = content.replace(/^\[[^\]]+\]:\s*/, '');
+    }
+    if (type === 'tool_call' || type === 'tool_result') cssClass = 'tool';
+    // Convert markdown-like formatting
+    let html = escapeHtml(content);
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    // Replace file URLs with image tags or links
+    for (const f of fileUrls) {
+      if (isImageFile(f.name)) {
+        html = html.split(escapeHtml(f.url)).join('<br><img src="images/' + f.name + '" style="max-width:512px;max-height:512px;border-radius:8px;"><br>');
+      }
+    }
+    body += '<div class="msg ' + cssClass + '">' + badge + html + '</div>\n';
+  }
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
+    + '<title>PyFi2 Conversation Export</title>'
+    + '<style>'
+    + 'body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 900px; margin: 0 auto; }'
+    + '.msg { padding: 10px 14px; border-radius: 12px; margin-bottom: 12px; line-height: 1.5; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }'
+    + '.msg a { color: #4fc3f7; }'
+    + '.msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; }'
+    + '.msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto; }'
+    + '.msg.user { background: #0f3460; color: white; margin-left: 20%; border-left: 3px solid #4ecdc4; }'
+    + '.msg.assistant { background: #16213e; border: 1px solid #0f3460; margin-right: 20%; border-left: 3px solid #e94560; }'
+    + '.msg.subagent { background: #0d1b2a; border: 1px solid #1a3a5c; margin-right: 20%; border-left: 3px solid #6c5ce7; }'
+    + '.msg.tool { background: #0f1629; color: #808090; font-size: 12px; border-left: 2px solid #0f3460; margin-right: 30%; }'
+    + '.msg.btw { background: #0d1b2a; font-size: 13px; border-left: 3px solid #60a5fa; margin-right: 20%; font-style: italic; }'
+    + 'img { display: block; margin: 8px 0; }'
+    + '</style></head><body>'
+    + '<h1 style="color:#e94560;margin-bottom:20px;">PyFi2 Conversation Export</h1>'
+    + '<p style="color:#6c6c8a;margin-bottom:20px;">Exported: ' + new Date().toLocaleString() + '</p>'
+    + body
+    + '</body></html>';
+}
+
+function buildSimpleZip(files) {
+  // Minimal ZIP builder (Store method, no compression)
+  const parts = [];
+  const directory = [];
+  let offset = 0;
+  for (const f of files) {
+    const nameBytes = new TextEncoder().encode(f.name);
+    const data = f.content;
+    // Local file header (30 bytes + name)
+    const header = new Uint8Array(30 + nameBytes.length);
+    const hv = new DataView(header.buffer);
+    hv.setUint32(0, 0x04034b50, true); // signature
+    hv.setUint16(4, 20, true);  // version needed
+    hv.setUint16(6, 0, true);   // flags
+    hv.setUint16(8, 0, true);   // compression (store)
+    hv.setUint16(10, 0, true);  // mod time
+    hv.setUint16(12, 0, true);  // mod date
+    // CRC-32
+    const crc = crc32(data);
+    hv.setUint32(14, crc, true);
+    hv.setUint32(18, data.length, true);  // compressed size
+    hv.setUint32(22, data.length, true);  // uncompressed size
+    hv.setUint16(26, nameBytes.length, true);
+    hv.setUint16(28, 0, true);  // extra field length
+    header.set(nameBytes, 30);
+    parts.push(header);
+    parts.push(data);
+    // Central directory entry
+    const cdEntry = new Uint8Array(46 + nameBytes.length);
+    const cv = new DataView(cdEntry.buffer);
+    cv.setUint32(0, 0x02014b50, true);
+    cv.setUint16(4, 20, true);
+    cv.setUint16(6, 20, true);
+    cv.setUint16(8, 0, true);
+    cv.setUint16(10, 0, true);
+    cv.setUint16(12, 0, true);
+    cv.setUint16(14, 0, true);
+    cv.setUint32(16, crc, true);
+    cv.setUint32(20, data.length, true);
+    cv.setUint32(24, data.length, true);
+    cv.setUint16(28, nameBytes.length, true);
+    cv.setUint16(30, 0, true);
+    cv.setUint16(32, 0, true);
+    cv.setUint16(34, 0, true);
+    cv.setUint16(36, 0, true);
+    cv.setUint32(38, 0, true);
+    cv.setUint32(42, offset, true);
+    cdEntry.set(nameBytes, 46);
+    directory.push(cdEntry);
+    offset += header.length + data.length;
+  }
+  // Central directory
+  const cdOffset = offset;
+  let cdSize = 0;
+  for (const d of directory) { parts.push(d); cdSize += d.length; }
+  // End of central directory (22 bytes)
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(4, 0, true);
+  ev.setUint16(6, 0, true);
+  ev.setUint16(8, files.length, true);
+  ev.setUint16(10, files.length, true);
+  ev.setUint32(12, cdSize, true);
+  ev.setUint32(16, cdOffset, true);
+  ev.setUint16(20, 0, true);
+  parts.push(eocd);
+  return new Blob(parts, { type: 'application/zip' });
+}
+
+function crc32(data) {
+  let crc = 0xFFFFFFFF;
+  for (let i = 0; i < data.length; i++) {
+    crc ^= data[i];
+    for (let j = 0; j < 8; j++) {
+      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
+    }
+  }
+  return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
 async function refreshCurrentConv() {
@@ -846,11 +1123,13 @@ async function refreshCurrentConv() {
     if (data.error) { document.getElementById('status').textContent = t('error'); return; }
     // Clear and replay
     document.getElementById('messages').innerHTML = '';
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
+    clearAllStreams();
     for (const m of (data.messages || [])) {
-      addMsg(m.type || m.role, m.content, m);
+      let content = m.content || '';
+      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+      }
+      addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
     scrollBottom();
@@ -874,7 +1153,7 @@ async function refreshCurrentConv() {
 
 function sourceBadge(source) {
   if (!source) return '';
-  const name = source.name || '';
+  const name = displayAgentName(source.name || '') || '';
   const svc = source.llm_service || '';
   if (source.type === 'agent') {
     // Hash name to color
@@ -921,13 +1200,22 @@ function buildMetaLine(extra) {
 function addMsg(role, text, extra) {
   const el = document.createElement('div');
   // Support classified types: tool_call, tool_result map to CSS class "tool"
-  const cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
+  let cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
+  // Differentiate sub-agent responses from main assistant visually
+  if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
+    const srcName = (extra.source.name || 'assistant').toLowerCase();
+    if (srcName !== 'assistant') cssClass = 'subagent';
+  }
   el.className = 'msg ' + cssClass;
   el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
+  // Timestamp — use provided timestamp or current time
+  const msgTime = (extra && extra.timestamp) ? new Date(extra.timestamp * 1000) : new Date();
+  const timeStr = msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
 
-  // Action buttons (copy + delete) for user/assistant messages
+  // Action buttons (copy + delete) for user/assistant/subagent messages
   let actionsHtml = '';
   if (role === 'user' || role === 'assistant') {
     actionsHtml = '<span class="msg-actions">'
@@ -937,22 +1225,24 @@ function addMsg(role, text, extra) {
   }
 
   if (role === 'assistant') {
-    el.innerHTML = actionsHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
+    el.innerHTML = actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool' || role === 'tool_call') {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
     const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
-    el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">↳ ' + escapeHtml(text) + '</span>';
+    el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
   } else if (role === 'user') {
-    el.innerHTML = actionsHtml + badge + escapeHtml(text);
+    el.innerHTML = actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
     el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
   } else {
     el.textContent = text;
   }
+  // Check near-bottom BEFORE appending so new element doesn't shift the threshold
+  const shouldScroll = isNearBottom();
   document.getElementById('messages').appendChild(el);
-  scrollBottom();
+  scrollBottom(shouldScroll);
   return el;
 }
 
@@ -962,26 +1252,82 @@ function escapeHtml(t) {
   return d.innerHTML;
 }
 
+function isImageFile(name) {
+  return /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(name || '');
+}
+
+function inlineImageHtml(url, filename, sizeInfo) {
+  // Render authenticated inline image (max 512px) with click-to-view
+  const token = getToken();
+  const imgId = 'img_' + Math.random().toString(36).substring(2, 8);
+  // We need to fetch with auth then create blob URL
+  setTimeout(() => {
+    const el = document.getElementById(imgId);
+    if (!el) return;
+    const headers = {};
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    fetch(url, { headers, credentials: 'same-origin' }).then(r => {
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return r.blob();
+    }).then(blob => {
+      el.src = URL.createObjectURL(blob);
+      el.style.display = 'block';
+    }).catch((err) => { el.alt = 'Failed to load image: ' + err.message; el.style.display = 'block'; });
+  }, 50);
+  return '<div style="margin:6px 0;">'
+    + '<img id="' + imgId + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
+    + 'onclick="openFileViewer(\'' + url + '\')" title="Click to view full size" />'
+    + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'
+    + '\uD83D\uDCC4 ' + escapeHtml(filename || 'image') + (sizeInfo ? ' (' + sizeInfo + ')' : '')
+    + '</div></div>';
+}
+
 function renderMarkdown(text) {
   // Detect __show_file__ markers from show_file tool
   try {
     if (text.includes('__show_file__')) {
       const parsed = JSON.parse(text);
       if (parsed && parsed.__show_file__) {
+        if (isImageFile(parsed.filename)) {
+          return inlineImageHtml(parsed.url, parsed.filename, parsed.size_kb + ' KB');
+        }
         setTimeout(() => openFileViewer(parsed.url), 100);
-        return `<span style="cursor:pointer;color:#6c5ce7;" onclick="openFileViewer('${parsed.url}')">\uD83D\uDCC4 ${parsed.filename} (${parsed.size_kb} KB) — Click to view</span>`;
+        return '<span style="cursor:pointer;color:#6c5ce7;" onclick="openFileViewer(\'' + parsed.url + '\')">\uD83D\uDCC4 ' + parsed.filename + ' (' + parsed.size_kb + ' KB) \u2014 Click to view</span>';
       }
     }
   } catch(e) {}
-  // Replace file URLs with clickable preview links
-  text = text.replace(/(https?:\/\/[^\s<]*\/files\/[a-f0-9]+\/([^\s<"]+))/g,
-    '<a href="$1" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'$1\')">\uD83D\uDCC4 $2</a>');
+  // Code blocks first (protect from other replacements)
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Markdown links: [text](url) — must run BEFORE bare URL detection
+  text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url) {
+    if (url.match(/\/files\/[a-f0-9]+\//)) {
+      if (isImageFile(label) || isImageFile(url)) {
+        return inlineImageHtml(url, label, '');
+      }
+      return '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + label + '</a>';
+    }
+    return '<a href="' + url + '" target="_blank">' + label + '</a>';
+  });
+  // Bare file URLs (not already inside a tag attribute)
+  text = text.replace(/(^|[\s>])(https?:\/\/[^\s<"']*\/files\/[a-f0-9]+\/([^\s<"')]+))/g, function(_, pre, url, fname) {
+    if (isImageFile(fname)) {
+      return pre + inlineImageHtml(url, fname, '');
+    }
+    return pre + '<a class="flink" href="' + url + '" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();openFileViewer(\'' + url + '\')">\uD83D\uDCC4 ' + fname + '</a>';
+  });
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
-  text = text.replace(/(https?:\/\/[^\s<]+)(?!<\/a>)/g, '<a href="$1" target="_blank">$1</a>');
-  return text;
+  // Bare URLs (skip those already inside HTML tags or attributes)
+  // Split on existing tags (<a>, <img>, <div> with onclick, etc.) to avoid double-linking
+  const parts = text.split(/(<[^>]+>)/gi);
+  for (let i = 0; i < parts.length; i++) {
+    // Only process text nodes (not inside any HTML tag)
+    if (!parts[i].startsWith('<')) {
+      parts[i] = parts[i].replace(/(https?:\/\/[^\s<"']+)/g, '<a href="$1" target="_blank">$1</a>');
+    }
+  }
+  return parts.join('');
 }
 
 function isNearBottom() {
@@ -1012,42 +1358,68 @@ function updateScrollNav() {
 document.getElementById('messages').addEventListener('scroll', updateScrollNav);
 
 // ── Active interactions tracking ──────────────────────────────────
-let activeInteractions = {};  // agent_name → { startedAt, lastTool, status, msgPreview }
+let activeInteractions = {};  // agentKey (lowercase) → { name, startedAt, lastTool, activeTools, status, msgPreview }
 let activeTimer = null;
 
-let _agentDoneAt = {};  // agentName → timestamp of last done (prevents ghost re-register)
+function agentKey(name) { return (name || 'assistant').toLowerCase(); }
+
+let _agentDoneAt = {};  // agentKey → timestamp of last done (prevents ghost re-register)
 function trackAgentStart(agentName, msgPreview) {
+  const key = agentKey(agentName);
   // Ignore thinking events that arrive within 500ms after a done (race condition guard)
-  const doneTs = _agentDoneAt[agentName];
+  const doneTs = _agentDoneAt[key];
   if (doneTs && Date.now() - doneTs < 500) {
     console.log('[trackAgentStart] IGNORED (too close to done)', agentName);
     return;
   }
-  if (activeInteractions[agentName]) {
+  if (activeInteractions[key]) {
     // Already tracked — just update status (don't reset startedAt/preview)
-    activeInteractions[agentName].status = 'thinking';
+    activeInteractions[key].status = 'thinking';
+    activeInteractions[key].activeTools = [];
   } else {
-    activeInteractions[agentName] = {
-      startedAt: Date.now(), lastTool: '', status: 'thinking', msgPreview: msgPreview || '',
+    activeInteractions[key] = {
+      name: agentName || 'assistant',
+      startedAt: Date.now(), lastTool: '', activeTools: [], status: 'thinking', msgPreview: msgPreview || '',
     };
   }
   updateActivePanel();
   if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
 }
 function trackAgentTool(agentName, toolName) {
-  if (activeInteractions[agentName]) {
-    activeInteractions[agentName].lastTool = toolName;
-    activeInteractions[agentName].status = toolName;
+  const key = agentKey(agentName);
+  if (activeInteractions[key]) {
+    activeInteractions[key].lastTool = toolName;
+    activeInteractions[key].status = toolName;
+    // Track concurrent tools — add if not already present
+    const at = activeInteractions[key].activeTools;
+    if (at.indexOf(toolName) === -1) at.push(toolName);
+  }
+  updateActivePanel();
+}
+function trackAgentToolDone(agentName, toolName) {
+  const key = agentKey(agentName);
+  if (activeInteractions[key]) {
+    const at = activeInteractions[key].activeTools;
+    const idx = at.indexOf(toolName);
+    if (idx !== -1) at.splice(idx, 1);
+    // Update status to remaining tool or thinking
+    if (at.length > 0) {
+      activeInteractions[key].status = at[at.length - 1];
+    } else {
+      activeInteractions[key].status = 'thinking';
+    }
   }
   updateActivePanel();
 }
 function trackAgentDone(agentName) {
+  const key = agentKey(agentName);
   console.log('[trackAgentDone]', agentName, 'keys before:', Object.keys(activeInteractions));
-  _agentDoneAt[agentName] = Date.now();
-  delete activeInteractions[agentName];
+  _agentDoneAt[key] = Date.now();
+  delete activeInteractions[key];
   updateActivePanel();
-  if (Object.keys(activeInteractions).length === 0 && activeTimer) {
-    clearInterval(activeTimer); activeTimer = null;
+  if (Object.keys(activeInteractions).length === 0) {
+    hideTyping();
+    if (activeTimer) { clearInterval(activeTimer); activeTimer = null; }
   }
 }
 function updateActivePanel() {
@@ -1060,29 +1432,37 @@ function updateActivePanel() {
   }
   panel.classList.add('visible');
   const now = Date.now();
-  rows.innerHTML = names.map(name => {
-    const info = activeInteractions[name];
+  rows.innerHTML = names.map(key => {
+    const info = activeInteractions[key];
+    const displayName = displayAgentName(info.name);
     const secs = Math.round((now - info.startedAt) / 1000);
     const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
-    // Build rich status: iter N · round N/M · N tools · [last_tool]
+    // Build rich status: iter N · round N/M · N tools · [active tools]
     let statusParts = [];
     if (info.iteration) statusParts.push('iter ' + info.iteration);
     if (info.round && info.maxRounds > 1) statusParts.push('round ' + info.round + '/' + info.maxRounds);
     if (info.totalTools > 0) statusParts.push(info.totalTools + ' tools');
-    if (info.lastTool) statusParts.push('[' + info.lastTool + ']');
+    // Show all concurrent active tools, not just the last one
+    if (info.activeTools && info.activeTools.length > 1) {
+      statusParts.push('[' + info.activeTools.join(', ') + ']');
+    } else if (info.lastTool) {
+      statusParts.push('[' + info.lastTool + ']');
+    }
     const statusText = statusParts.length > 0 ? statusParts.join(' \u00b7 ') : 'thinking...';
     const preview = (!info.iteration && info.msgPreview) ? escapeHtml(info.msgPreview.substring(0, 40)) : '';
-    const hue = Math.abs([...name].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
+    const hue = Math.abs([...displayName].reduce((h,c) => (h * 31 + c.charCodeAt(0)) | 0, 0)) % 360;
     const color = 'hsl(' + hue + ',70%,65%)';
+    // Use info.name (original casing) for API calls like interrupt/stop
+    const apiName = info.name;
     return '<div class="active-row">'
       + '<span class="a-spinner" style="color:' + color + '">\u2733</span>'
-      + '<span class="a-name" style="color:' + color + '">' + escapeHtml(name) + '</span>'
+      + '<span class="a-name" style="color:' + color + '">' + escapeHtml(displayName) + '</span>'
       + '<span class="a-msg">' + preview + '</span>'
       + '<span class="a-status">' + escapeHtml(statusText) + '</span>'
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
-      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(name) + '\')">&#x23F8;</button>'
-      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(name) + '\')">&#x25A0;</button>'
+      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\')">&#x23F8;</button>'
+      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
 }
@@ -1418,12 +1798,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('thinking', (e) => {
     lastSSEActivity = Date.now();
-    // New iteration starting — finalize any previous streaming state
-    if (streamingEl) {
-      streamingEl = null;
-      streamingText = '';
-      streamingAgent = '';
-    }
     showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || 'assistant';
@@ -1438,19 +1812,30 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
-    streamingText += data.text;
-    if (data.agent_name) streamingAgent = data.agent_name;
-    if (!streamingEl) {
-      const src = streamingAgent ? {source: {type: 'agent', name: streamingAgent}} : undefined;
-      streamingEl = addMsg('assistant', '', src);
-      streamingChunks.push(streamingEl);
+    const agent = data.agent_name || streamingAgent || 'assistant';
+    streamingAgent = agent;  // legacy global
+    const s = getStream(agent);
+    s.text += data.text;
+    streamingText = s.text;  // legacy global
+    // Always have a source — every response comes from an agent
+    const src = data.source || {type: 'agent', name: agent};
+    if (!s.el) {
+      s.el = addMsg('assistant', '', {source: src});
+      // Apply subagent class if not main assistant
+      const srcName = (src.name || 'assistant').toLowerCase();
+      if (srcName !== 'assistant') {
+        s.el.className = 'msg subagent';
+      }
+      s.chunks.push(s.el);
+      streamingEl = s.el;  // legacy global
+      streamingChunks = s.chunks;
     }
-    // Update content but preserve badge
-    const badgeEl = streamingEl.querySelector('.msg-meta, .source-badge') ? '' : null;
-    const src2 = streamingAgent ? {source: {type: 'agent', name: streamingAgent}} : {};
-    const badge = src2.source ? sourceBadge(src2.source) : '';
-    streamingEl.innerHTML = badge + renderMarkdown(streamingText);
-    scrollBottom();
+    // Update content with badge — strip identity prefix if LLM echoed it
+    const badge = sourceBadge(src);
+    const displayText = s.text.replace(/^\[[^\]]+\]:\s*/, '');
+    const shouldScroll = isNearBottom();
+    s.el.innerHTML = badge + renderMarkdown(displayText);
+    scrollBottom(shouldScroll);
     document.getElementById('status').textContent = t('streaming');
   });
 
@@ -1458,29 +1843,30 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'assistant';
-    if (activeInteractions[agentName]) {
-      activeInteractions[agentName].iteration = data.iteration;
-      activeInteractions[agentName].maxIterations = data.max_iterations;
-      activeInteractions[agentName].round = data.round;
-      activeInteractions[agentName].maxRounds = data.max_rounds;
-      activeInteractions[agentName].totalTools = data.total_tools;
+    const aKey = agentKey(agentName);
+    if (activeInteractions[aKey]) {
+      activeInteractions[aKey].iteration = data.iteration;
+      activeInteractions[aKey].maxIterations = data.max_iterations;
+      activeInteractions[aKey].round = data.round;
+      activeInteractions[aKey].maxRounds = data.max_rounds;
+      activeInteractions[aKey].totalTools = data.total_tools;
       if (data.tools_called && data.tools_called.length > 0) {
-        activeInteractions[agentName].lastTool = data.tools_called[data.tools_called.length - 1];
+        activeInteractions[aKey].lastTool = data.tools_called[data.tools_called.length - 1];
       }
     }
     updateActivePanel();
     document.getElementById('status').textContent =
-      t('iterStatus', {agent: agentName, i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
+      t('iterStatus', {agent: displayAgentName(agentName), i: data.iteration, r: data.round, mr: data.max_rounds, t: data.total_tools});
     // Multi-tour: show compact progress message in chat when iteration advances
     if (data.iteration > 1 || data.round > 1) {
-      const lastShown = activeInteractions[agentName] ? activeInteractions[agentName]._lastShownIter : undefined;
+      const lastShown = activeInteractions[aKey] ? activeInteractions[aKey]._lastShownIter : undefined;
       if (data.iteration !== lastShown) {
         addMsg('system-compact', t('iterProgress', {
-          agent: agentName, i: data.iteration, r: data.round,
+          agent: displayAgentName(agentName), i: data.iteration, r: data.round,
           mr: data.max_rounds, t: data.total_tools
         }));
-        if (activeInteractions[agentName]) {
-          activeInteractions[agentName]._lastShownIter = data.iteration;
+        if (activeInteractions[aKey]) {
+          activeInteractions[aKey]._lastShownIter = data.iteration;
         }
       }
     }
@@ -1506,7 +1892,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
-    addMsg('system', t('subAgentStarted', {agent: data.agent_name}));
+    addMsg('system', t('subAgentStarted', {agent: displayAgentName(data.agent_name)}));
     scrollBottom();
   });
 
@@ -1514,12 +1900,13 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'sub-agent';
-    if (activeInteractions[agentName]) {
-      activeInteractions[agentName].iteration = data.iteration;
-      activeInteractions[agentName].maxIterations = data.max_iterations;
-      activeInteractions[agentName].totalTools = data.total_tools;
+    const aKey = agentKey(agentName);
+    if (activeInteractions[aKey]) {
+      activeInteractions[aKey].iteration = data.iteration;
+      activeInteractions[aKey].maxIterations = data.max_iterations;
+      activeInteractions[aKey].totalTools = data.total_tools;
       if (data.tools_called && data.tools_called.length > 0) {
-        activeInteractions[agentName].lastTool = data.tools_called[data.tools_called.length - 1];
+        activeInteractions[aKey].lastTool = data.tools_called[data.tools_called.length - 1];
       }
     }
     updateActivePanel();
@@ -1537,17 +1924,11 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent);
-    // Display like btw: badge + markdown response
+    hideTyping();
     if (data.response) {
-      const el = addMsg('btw', '');
-      const dur = data.duration_s || '?';
-      const tok = (data.tokens_in || 0) + (data.tokens_out || 0);
-      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(agent) + ' \u00b7 sub] </span>'
-        + renderMarkdown(data.response)
-        + '<span style="color:#555;font-size:10px;margin-left:8px;">(' + dur + 's, ' + tok + ' tok)</span>';
+      addMsg('agent-result', data.response, agent);
     } else if (data.error) {
-      const el = addMsg('btw', '');
-      el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(agent) + ' \u00b7 sub] Error: ' + escapeHtml(data.error) + '</span>';
+      addMsg('agent-result', 'Error: ' + data.error, agent);
     }
     scrollBottom();
   });
@@ -1555,15 +1936,18 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     hideTyping();
-    // Finalize any in-progress streaming bubble before tool calls
-    if (streamingEl) {
-      streamingEl = null;
-      streamingText = '';
-    }
     const data = JSON.parse(e.data);
-    trackAgentTool(data.agent_name || 'assistant', data.tool);
+    // Finalize streaming for THIS agent before showing tool call
+    const tcAgent = data.agent_name || 'assistant';
+    const tcs = streams[tcAgent.toLowerCase()];
+    if (tcs && tcs.el) {
+      // Keep the streaming element visible (it has the partial response text),
+      // but detach it from the per-agent stream state so done handler won't
+      // try to remove it again.
+      tcs.el = null; tcs.text = ''; tcs.chunks = [];
+    }
+    trackAgentTool(tcAgent, data.tool);
     addMsg('tool', t('callingTool', {tool: data.tool}));
-    scrollBottom();
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });
 
@@ -1577,15 +1961,14 @@ function connectSSE(cid) {
         if (Array.isArray(agents)) {
           const summary = agents.map(a => (a.agent || '?') + ': ' + a.status).join(', ');
           addMsg('tool', t('toolResult', {tool: 'spawn_agents', result: summary}));
-          scrollBottom();
           showTyping();
           return;
         }
       } catch(ex) { /* fall through to default */ }
     }
+    if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
     const preview = (data.result || '').substring(0, 200);
     addMsg('tool', t('toolResult', {tool: data.tool, result: preview + (data.result && data.result.length > 200 ? '...' : '')}));
-    scrollBottom();
     showTyping();
   });
 
@@ -1607,6 +1990,12 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'assistant';
     trackAgentDone(agentName);
+    // Remove any streamed tokens for this agent
+    const ds = streams[agentName.toLowerCase()];
+    if (ds) {
+      for (const c of ds.chunks) { if (c && c.parentNode) c.remove(); }
+      clearStream(agentName);
+    }
     if (Object.keys(activeInteractions).length === 0) {
       sending = false;
       document.getElementById('status').textContent = t('ready');
@@ -1619,19 +2008,23 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     const doneAgent = data.agent_name || data.source?.name || 'assistant';
     trackAgentDone(doneAgent);
-    console.log('[SSE done]', data.response ? data.response.substring(0, 100) : '(empty)');
+    console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count to prevent poll from re-fetching these messages
     if (data.message_count) serverMsgCount = data.message_count;
-    // Remove all intermediate streaming chunks (keep tool messages)
-    for (const chunk of streamingChunks) {
+    // Remove ONLY this agent's streaming chunks (not other agents')
+    const s = streams[doneAgent.toLowerCase()] || { el: null, text: '', chunks: [] };
+    for (const chunk of s.chunks) {
       if (chunk && chunk.parentNode) chunk.remove();
     }
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
-    resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trimEnd();
+    resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
+    // Strip identity prefix if LLM echoed it back (e.g. "[AgentName]: text")
+    resp = resp.replace(/^\[[^\]]+\]:\s*/, '');
     // Show the final response (or fallback if empty), with source badge + metadata
+    // Every response always has a source — fallback to agent_name or 'assistant'
     const extra = {};
-    if (data.source) extra.source = data.source;
+    extra.source = data.source || {type: 'agent', name: doneAgent};
     if (data.model) extra.model = data.model;
     if (data.provider) extra.provider = data.provider;
     if (data.base_url) extra.base_url = data.base_url;
@@ -1639,13 +2032,10 @@ function connectSSE(cid) {
     if (data.duration_ms) extra.duration_ms = data.duration_ms;
     if (resp) {
       addMsg('assistant', resp, extra);
-    } else if (streamingText) {
-      addMsg('assistant', streamingText, extra);
+    } else if (s.text) {
+      addMsg('assistant', s.text.replace(/^\[[^\]]+\]:\s*/, ''), extra);
     }
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
-    streamingAgent = '';
+    clearStream(doneAgent);
     scrollBottom();
 
     if (data.continuing) {
@@ -1680,14 +2070,17 @@ function connectSSE(cid) {
       trackAgentDone(cancelAgent);
     }
     hideTyping();
-    // Remove intermediate streaming chunks
-    for (const chunk of streamingChunks) {
-      if (chunk && chunk.parentNode) chunk.remove();
+    // Remove streaming chunks for the cancelled agent(s)
+    if (cancelAgent === 'all') {
+      clearAllStreams();
+    } else {
+      const cs = streams[cancelAgent.toLowerCase()];
+      if (cs) {
+        for (const c of cs.chunks) { if (c && c.parentNode) c.remove(); }
+        clearStream(cancelAgent);
+      }
     }
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
-    addMsg('system', cancelAgent !== 'all' ? '[' + cancelAgent + '] ' + t('cancelled') : t('cancelled'));
+    addMsg('system', cancelAgent !== 'all' ? '[' + displayAgentName(cancelAgent) + '] ' + t('cancelled') : t('cancelled'));
     scrollBottom();
     sending = false;
     document.getElementById('sendBtn').disabled = false;
@@ -1703,10 +2096,12 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'assistant';
+    const bKey = agent.toLowerCase();
+    const dName = displayAgentName(agent);
     const el = addMsg('btw', '');
-    el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span><em style="color:#888;">thinking...</em>';
-    btwElements[agent] = el;
-    btwTexts[agent] = '';
+    el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span><em style="color:#888;">thinking...</em>';
+    btwElements[bKey] = el;
+    btwTexts[bKey] = '';
     scrollBottom();
   });
 
@@ -1714,10 +2109,12 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'assistant';
-    btwTexts[agent] = (btwTexts[agent] || '') + data.text;
-    const el = btwElements[agent];
+    const bKey = agent.toLowerCase();
+    const dName = displayAgentName(agent);
+    btwTexts[bKey] = (btwTexts[bKey] || '') + data.text;
+    const el = btwElements[bKey];
     if (el) {
-      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span>' + renderMarkdown(btwTexts[agent]);
+      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(btwTexts[bKey]);
       scrollBottom();
     }
   });
@@ -1726,43 +2123,30 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'assistant';
+    const bKey = agent.toLowerCase();
+    const dName = displayAgentName(agent);
     if (data.error) {
-      const el = btwElements[agent];
-      if (el) { el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + agent + ' · btw] Error: ' + data.error + '</span>'; }
-      else { addMsg('error', '[' + agent + ' · btw] ' + data.error); }
-    } else if (data.response && !btwTexts[agent]) {
+      const el = btwElements[bKey];
+      if (el) { el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] Error: ' + escapeHtml(data.error) + '</span>'; }
+      else { addMsg('error', '[' + dName + ' \u00b7 btw] ' + data.error); }
+    } else if (data.response && !btwTexts[bKey]) {
       // Non-streaming fallback
-      const el = btwElements[agent] || addMsg('btw', '');
-      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + agent + ' · btw] </span>' + renderMarkdown(data.response);
+      const el = btwElements[bKey] || addMsg('btw', '');
+      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(data.response);
     }
-    delete btwElements[agent];
-    delete btwTexts[agent];
+    delete btwElements[bKey];
+    delete btwTexts[bKey];
     scrollBottom();
   });
 
   eventSource.addEventListener('interrupting', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    addMsg('system', 'Interrupting ' + (data.agent || 'assistant') + ' — requesting immediate response...');
+    addMsg('system', 'Interrupting ' + displayAgentName(data.agent) + ' — requesting immediate response...');
     scrollBottom();
   });
 
-  eventSource.addEventListener('discard', (e) => {
-    lastSSEActivity = Date.now();
-    // Poll check-in returned [NO_PENDING_WORK] — discard any streamed tokens
-    hideTyping();
-    for (const chunk of streamingChunks) {
-      if (chunk && chunk.parentNode) chunk.remove();
-    }
-    if (streamingEl && !streamingChunks.includes(streamingEl)) {
-      streamingEl.remove();
-    }
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
-    sending = false;
-    document.getElementById('status').textContent = '';
-  });
+  // NOTE: duplicate 'discard' listener removed — handled by the first one above
 
   eventSource.addEventListener('file_request', (e) => {
     lastSSEActivity = Date.now();
@@ -1799,9 +2183,9 @@ function connectSSE(cid) {
     hideTyping();
     const data = JSON.parse(e.data);
     addMsg('error', data.message || t('unknownError'));
-    streamingEl = null;
-    streamingText = '';
-    streamingChunks = [];
+    // Error could be from any agent — clear the agent's stream if specified
+    const errAgent = data.agent_name || 'assistant';
+    clearStream(errAgent);
     sending = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('stopBtn').style.display = 'none';
@@ -1839,14 +2223,16 @@ function connectSSE(cid) {
   eventSource.addEventListener('thought_scheduled', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    addMsg('system', t('thoughtScheduled', { agent: data.agent || 'default', delay: data.delay || '?' }));
+    addMsg('system', t('thoughtScheduled', { agent: displayAgentName(data.agent), delay: data.delay || '?' }));
     scrollBottom();
   });
 
   eventSource.addEventListener('thought_firing', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    addMsg('system', t('thoughtFiring', { agent: data.agent || 'default' }));
+    trackAgentStart(data.agent || 'assistant');
+    showTyping();
+    addMsg('system', t('thoughtFiring', { agent: displayAgentName(data.agent) }));
     scrollBottom();
   });
 
@@ -2174,20 +2560,31 @@ const HELP_DATA = {
     short: 'Show available commands or detailed help for a command',
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
+  '/msg': {
+    usage: '/msg <name|ALL> <message>',
+    short: 'Send a message to a specific agent (shortcut for /agent msg)',
+    detail: 'Send a message to a specific agent without changing the active agent.\n\nExamples:\n  /msg grok Explain this code\n  /msg ALL What do you think?',
+  },
+  '/btw': {
+    usage: '/btw <name|ALL> <question>',
+    short: 'Side-channel question to an agent (shortcut for /agent btw)',
+    detail: 'Ask a quick question to an agent without interrupting its current work.\n\nExamples:\n  /btw claude What is the time complexity?\n  /btw ALL Any thoughts on this?',
+  },
   '/agent': {
-    usage: '/agent list | create | select | default | delete | msg | interrupt | btw | resume',
+    usage: '/agent list | create | select | delete | msg | interrupt | btw | resume | setname',
     short: 'Manage AI agents',
     detail: 'Create, list, select, message, or control AI agents.\n\n'
-      + '  /agent list                   — List all agents (user + global)\n'
-      + '  /agent create                 — Create a new agent (interactive)\n'
-      + '  /agent select <name>          — Activate an agent for this conversation\n'
-      + '  /agent default                — Switch back to the default agent\n'
-      + '  /agent delete <name>          — Delete an agent by name\n'
-      + '  /agent msg <name> <text>      — Send a message to a specific agent\n'
-      + '  /agent msg ALL <text>         — Broadcast to all agents in parallel\n'
-      + '  /agent interrupt <name|ALL>   — Force agent to stop and respond immediately\n'
-      + '  /agent btw <name|ALL> <text>  — Side-channel question (no interruption)\n'
-      + '  /agent resume <name>          — Tell agent to continue from where it stopped\n\n'
+      + '  /agent list                       — List all agents (user + global)\n'
+      + '  /agent create                     — Create a new agent (interactive)\n'
+      + '  /agent select <name>              — Activate an agent (use real name or nickname)\n'
+      + '  /agent select assistant            — Switch back to the default assistant\n'
+      + '  /agent delete <name>              — Delete an agent by name\n'
+      + '  /agent msg <name> <text>          — Send a message to a specific agent\n'
+      + '  /agent msg ALL <text>             — Broadcast to all agents in parallel\n'
+      + '  /agent interrupt <name|ALL>       — Force agent to stop and respond immediately\n'
+      + '  /agent btw <name|ALL> <text>      — Side-channel question (no interruption)\n'
+      + '  /agent resume <name>              — Tell agent to continue from where it stopped\n'
+      + '  /agent setname <real> <nickname>  — Set display name (quotes for spaces)\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
@@ -2363,19 +2760,21 @@ const HELP_DATA = {
     short: 'Preview a file (image, PDF, text, code)',
     detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
   },
-  '/thought': {
-    usage: '/thought on [agent] [freq] | off [agent] | status [agent] | now [agent]',
-    short: 'Random thought — agent thinks spontaneously',
-    detail: 'Enable random spontaneous thoughts from an agent.\n\n'
-      + '  /thought on 2-3/h         — Default agent, 2-3 times per hour\n'
-      + '  /thought on researcher 1/2h — "researcher" agent, once per 2h\n'
-      + '  /thought on 5-10/d        — 5-10 times per day\n'
-      + '  /thought off              — Disable for default agent\n'
-      + '  /thought off researcher   — Disable for "researcher"\n'
-      + '  /thought status           — Show config and next trigger\n'
-      + '  /thought now              — Trigger a thought immediately\n\n'
+  '/autoconv': {
+    usage: '/autoconv on [agent] [freq] | off [agent] | status [agent] | now [agent]',
+    short: 'Auto-conversation — agents contribute to the conversation autonomously',
+    detail: 'Enable autonomous conversation contributions from an agent.\n\n'
+      + '  /autoconv on                — Assistant, default 6/1m (6 per minute)\n'
+      + '  /autoconv on 2-3/h          — Assistant, 2-3 times per hour\n'
+      + '  /autoconv on researcher 1/2h — "researcher" agent, once per 2h\n'
+      + '  /autoconv on 5-10/d         — 5-10 times per day\n'
+      + '  /autoconv off               — Disable for assistant\n'
+      + '  /autoconv off researcher    — Disable for "researcher"\n'
+      + '  /autoconv status            — Show config and next trigger\n'
+      + '  /autoconv now               — Trigger immediately\n\n'
       + 'Frequency format: <min>[-<max>]/<duration>. Units: s, m, h, d.\n'
-      + 'Thoughts only fire when the conversation is idle (no active interaction).',
+      + 'Only one schedule per agent — re-running /autoconv on replaces the previous.\n'
+      + 'Only fires when the conversation is idle (no active interaction).',
   },
 };
 
@@ -2407,6 +2806,35 @@ function cmdHelp(topic) {
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
   }
+}
+
+function resolveAgentName(nameOrNick) {
+  // Resolve a nickname to the real agent name, or return as-is
+  if (!nameOrNick) return nameOrNick;
+  for (const [real, nick] of Object.entries(nicknameMap)) {
+    if (nick.toLowerCase() === nameOrNick.toLowerCase()) return real;
+  }
+  return nameOrNick;
+}
+
+function displayAgentName(realName) {
+  // Return nickname if set, otherwise real name (case-insensitive lookup)
+  const key = (realName || '').toLowerCase();
+  for (const k of Object.keys(nicknameMap)) {
+    if (k.toLowerCase() === key) return nicknameMap[k];
+  }
+  return realName || 'assistant';
+}
+
+function parseQuotedArgs(text) {
+  // Parse command arguments supporting quoted strings: /cmd "arg one" "arg two" plain
+  const args = [];
+  const re = /"([^"]*)"|\S+/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    args.push(m[1] !== undefined ? m[1] : m[0]);
+  }
+  return args;
 }
 
 async function handleSlashCommand(text) {
@@ -2527,44 +2955,74 @@ async function handleSlashCommand(text) {
     return true;
   }
 
+  if (cmd === '/interrupt' || cmd === '/stop') {
+    const iargs = parseQuotedArgs(text);
+    const target = resolveAgentName(iargs[1] || 'ALL');
+    await cmdAgentInterrupt(target);
+    return true;
+  }
+
+  if (cmd === '/msg') {
+    const margs = parseQuotedArgs(text);
+    const target = resolveAgentName(margs[1] || '');
+    const msgText = margs.slice(2).join(' ');
+    if (!target) { addMsg('system', 'Usage: /msg <name|ALL> <message>'); }
+    else if (!msgText) { addMsg('system', 'Usage: /msg ' + target + ' <message>'); }
+    else if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(msgText); }
+    else { await cmdAgentMsg(target, msgText); }
+    return true;
+  }
+
+  if (cmd === '/btw') {
+    const bargs = parseQuotedArgs(text);
+    const target = resolveAgentName(bargs[1] || '');
+    const btwText = bargs.slice(2).join(' ');
+    if (!btwText && !target) { addMsg('system', 'Usage: /btw <name|ALL> <question>'); }
+    else if (!btwText) {
+      await cmdAgentBtw('', target + ' ' + bargs.slice(2).join(' '));
+    } else {
+      await cmdAgentBtw(target, btwText);
+    }
+    return true;
+  }
+
   if (cmd === '/agent') {
-    const sub = (parts[1] || 'list').toLowerCase();
+    const qargs = parseQuotedArgs(text);  // handles "quoted agent names"
+    const sub = (qargs[1] || 'list').toLowerCase();
     if (sub === 'list') {
       await cmdAgentList();
     } else if (sub === 'create') {
       await cmdAgentCreate();
     } else if (sub === 'select') {
-      const name = parts[2] || '';
+      const name = resolveAgentName(qargs[2] || '');
       await cmdAgentSelect(name);
-    } else if (sub === 'default') {
-      await cmdAgentSelect('');
     } else if (sub === 'delete' || sub === 'del') {
-      const name = parts[2];
+      const name = resolveAgentName(qargs[2]);
       if (!name) { addMsg('system', 'Usage: /agent delete <name>'); }
       else { await cmdAgentDelete(name); }
     } else if (sub === 'msg' || sub === 'message') {
-      const target = parts[2] || '';
-      const msgText = parts.slice(3).join(' ');
+      const target = resolveAgentName(qargs[2] || '');
+      const msgText = qargs.slice(3).join(' ');
       if (!target) { addMsg('system', 'Usage: /agent msg <name|ALL> <message>'); }
       else if (!msgText) { addMsg('system', 'Usage: /agent msg ' + target + ' <message>'); }
       else if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(msgText); }
       else { await cmdAgentMsg(target, msgText); }
     } else if (sub === 'interrupt' || sub === 'int') {
-      const target = parts[2] || '';
+      const target = resolveAgentName(qargs[2] || '');
       await cmdAgentInterrupt(target);
     } else if (sub === 'btw') {
-      const target = parts[2] || '';
-      const btwText = parts.slice(3).join(' ');
+      const target = resolveAgentName(qargs[2] || '');
+      const btwText = qargs.slice(3).join(' ');
       if (!btwText && !target) { addMsg('system', 'Usage: /agent btw <name|ALL> <question>'); }
       else if (!btwText) {
-        // No agent name given — treat target as message, send to default
-        await cmdAgentBtw('', target + ' ' + parts.slice(3).join(' '));
+        // No agent name given — treat target as message, send to assistant
+        await cmdAgentBtw('', target + ' ' + qargs.slice(3).join(' '));
       } else {
         await cmdAgentBtw(target, btwText);
       }
     } else if (sub === 'resume') {
-      const target = parts[2] || '';
-      const resumeMsg = parts.slice(3).join(' ') || 'Continue from where you left off.';
+      const target = resolveAgentName(qargs[2] || '');
+      const resumeMsg = qargs.slice(3).join(' ') || 'Continue from where you left off.';
       if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(resumeMsg); }
       else if (target) { await cmdAgentMsg(target, resumeMsg); }
       else {
@@ -2581,8 +3039,17 @@ async function handleSlashCommand(text) {
         } catch(e) { addMsg('error', e.message); hideTyping(); }
         sending = false;
       }
+    } else if (sub === 'setname' || sub === 'rename') {
+      const qargs = parseQuotedArgs(text);  // ['/agent', 'setname', 'realname', 'nickname']
+      const realName = qargs[2] || '';
+      const nickname = qargs[3] || '';
+      if (!realName || !nickname) {
+        addMsg('system', 'Usage: /agent setname <realname> <nickname>  (use quotes for names with spaces)');
+      } else {
+        await cmdAgentSetname(realName, nickname);
+      }
     } else {
-      addMsg('system', 'Usage: /agent list | create | select | default | delete | msg | interrupt | btw | resume');
+      addMsg('system', 'Usage: /agent list | create | select | default | delete | msg | interrupt | btw | resume | setname');
     }
     return true;
   }
@@ -2758,29 +3225,30 @@ async function handleSlashCommand(text) {
     return true;
   }
 
-  if (cmd === '/thought') {
+  if (cmd === '/autoconv') {
     if (!conversationId) { addMsg('system', t('thoughtNoConv')); return true; }
-    const sub = (parts[1] || 'status').toLowerCase();
+    const qargs = parseQuotedArgs(text);  // ['/autoconv', 'on', agentOrFreq, freq]
+    const sub = (qargs[1] || 'status').toLowerCase();
     const body = { action: 'random_thought', conversation_id: conversationId, sub };
     const freqPattern = /^\d+(-\d+)?\/\d*[smhd]$/;
     if (sub === 'on') {
-      if (parts[2] && !freqPattern.test(parts[2])) {
-        body.agent = parts[2];
-        body.frequency = parts[3] || '2-3/h';
+      if (qargs[2] && !freqPattern.test(qargs[2])) {
+        body.agent = resolveAgentName(qargs[2]);
+        body.frequency = qargs[3] || '6/1m';
       } else {
-        body.frequency = parts[2] || '2-3/h';
+        body.frequency = qargs[2] || '6/1m';
       }
     } else if (sub === 'off' || sub === 'status' || sub === 'now') {
-      if (parts[2]) body.agent = parts[2];
+      if (qargs[2]) body.agent = resolveAgentName(qargs[2]);
     }
     try {
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
       const data = await resp.json();
       if (data.error) { addMsg('error', data.error); }
-      else if (sub === 'on') { addMsg('system', t('thoughtEnabled', { agent: data.agent, freq: data.frequency, delay: data.next_in_seconds })); }
-      else if (sub === 'off') { addMsg('system', t('thoughtDisabled', { agent: data.agent })); }
-      else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: data.agent })); }
-      else { addMsg('system', data.enabled ? t('thoughtStatus', { agent: data.agent, freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: data.agent })); }
+      else if (sub === 'on') { addMsg('system', t('thoughtEnabled', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds })); }
+      else if (sub === 'off') { addMsg('system', t('thoughtDisabled', { agent: displayAgentName(data.agent) })); }
+      else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: displayAgentName(data.agent) })); }
+      else { addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) })); }
     } catch (e) { addMsg('error', 'Failed: ' + e.message); }
     return true;
   }
@@ -2996,12 +3464,27 @@ async function cmdAgentDelete(name) {
   } catch (e) { addMsg('error', 'Failed to delete agent: ' + e.message); }
 }
 
+async function cmdAgentSetname(realName, nickname) {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'set_agent_nickname', conversation_id: conversationId,
+        agent_name: realName, nickname: nickname,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    nicknameMap[realName] = nickname;
+    addMsg('system', t('agentRenamed', { real: realName, nick: nickname }));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
 async function cmdAgentMsg(agentName, text) {
   // Send a message to a specific agent without changing the active agent
-  addMsg('user', '[→ ' + agentName + '] ' + text);
-  streamingEl = null;
-  streamingText = '';
-  streamingChunks = [];
+  addMsg('user', '[\u2192 ' + agentName + '] ' + text);
+  clearStream(agentName);
   showTyping();
   sending = true;
   lastSSEActivity = Date.now();
@@ -3510,17 +3993,64 @@ async function loadConvFiles() {
       list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
       return;
     }
-    list.innerHTML = files.map(f => {
+    list.innerHTML = '';
+    for (const f of files) {
       const statusCls = f.available ? 'available' : 'expired';
       const statusTip = f.available ? 'Available' : 'Expired/cleaned';
       const href = window.location.origin + '/files/' + f.file_id + '/' + f.filename;
-      const nameHtml = f.available
-        ? `<a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`
-        : `<span style="text-decoration:line-through;color:#808090" title="${statusTip}">${escapeHtml(f.filename)}</span>`;
-      return `<span class="file-chip"><span class="file-status ${statusCls}" title="${statusTip}"></span>${nameHtml}</span>`;
-    }).join('');
+      const chip = document.createElement('span');
+      chip.className = 'file-chip';
+      if (f.available) {
+        chip.innerHTML = `<span class="file-status ${statusCls}" title="${statusTip}"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;
+        chip.addEventListener('contextmenu', (e) => showFileMenu(e, f.file_id, f.filename));
+      } else {
+        chip.innerHTML = `<span class="file-status ${statusCls}" title="${statusTip}"></span><span style="text-decoration:line-through;color:#808090" title="${statusTip}">${escapeHtml(f.filename)}</span>`;
+      }
+      list.appendChild(chip);
+    }
   } catch (e) {
     list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load files</span>';
+  }
+}
+
+// ── File context menu ──────────────────────────────────────────
+function showFileMenu(e, fileId, filename) {
+  e.preventDefault();
+  closeFileMenu();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.id = 'fileCtxMenu';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  const href = window.location.origin + '/files/' + fileId + '/' + filename;
+  menu.innerHTML =
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; View</div>' +
+    '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; Download</div>' +
+    '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; Delete</div>';
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
+}
+
+function closeFileMenu() {
+  const m = document.getElementById('fileCtxMenu');
+  if (m) m.remove();
+}
+
+async function deleteFile(fileId) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_file', file_id: fileId, conversation_id: conversationId }),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      loadConvFiles();
+    } else {
+      addMsg('system', 'Delete failed: ' + (data.error || 'unknown'));
+    }
+  } catch (e) {
+    addMsg('system', 'Delete failed: ' + e.message);
   }
 }
 
@@ -3890,10 +4420,8 @@ async function send() {
     msgEl.innerHTML = (text ? escapeHtml(text) : '') + renderUserAttachments(attachmentsForDisplay);
   }
   scrollBottom(true);  // Force scroll when user sends
-  streamingEl = null;
-  streamingText = '';
-  streamingChunks = [];
-  streamingAgent = '';
+  // Only clear the assistant stream (main agent) — don't kill ongoing thought streams
+  clearStream('assistant');
   showTyping();
 
   try {
@@ -4196,8 +4724,8 @@ function openFileViewer(filenameOrUrl) {
       <div style="display:flex;align-items:center;padding:8px 16px;gap:12px;background:#2d2d44;">
         <span id="viewerFileName" style="flex:1;color:#ccc;font-size:14px;"></span>
         <span id="viewerFileSize" style="color:#888;font-size:12px;"></span>
-        <a id="viewerDownload" download style="color:#6c5ce7;text-decoration:none;font-size:14px;cursor:pointer;">\\u2B07 Download</a>
-        <button onclick="closeFileViewer()" style="background:none;border:none;color:#ff6b6b;font-size:18px;cursor:pointer;">\\u2715</button>
+        <a id="viewerDownload" download style="background:#6c5ce7;color:#fff;text-decoration:none;font-size:13px;padding:4px 12px;border-radius:4px;cursor:pointer;display:inline-block;">\u2B07 Download</a>
+        <button onclick="closeFileViewer()" style="background:#ff6b6b;border:none;color:#fff;font-size:13px;padding:4px 10px;border-radius:4px;cursor:pointer;">\u2715</button>
       </div>
       <div id="viewerContent" style="flex:1;overflow:auto;padding:16px;"></div>
     `;
@@ -4218,26 +4746,42 @@ function openFileViewer(filenameOrUrl) {
   const fname = filenameOrUrl.split('/').pop();
   const ext = fname.split('.').pop().toLowerCase();
   nameEl.textContent = fname;
-  dlEl.href = url;
   dlEl.download = fname;
+  contentEl.innerHTML = '<p style="color:#888;">Loading...</p>';
 
-  if (['png','jpg','jpeg','gif','svg','webp','bmp'].includes(ext)) {
-    contentEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:40vh;object-fit:contain;">`;
-  } else if (ext === 'pdf') {
-    contentEl.innerHTML = `<iframe src="${url}" style="width:100%;height:40vh;border:none;"></iframe>`;
-  } else if (ext === 'html') {
-    contentEl.innerHTML = `<iframe src="${url}" sandbox="allow-same-origin" style="width:100%;height:40vh;border:none;background:#fff;"></iframe>`;
-  } else {
-    // Text/code: fetch and display
-    fetch(url).then(r => r.text()).then(text => {
-      sizeEl.textContent = (text.length / 1024).toFixed(1) + ' KB';
-      contentEl.innerHTML = `<pre style="margin:0;white-space:pre-wrap;word-break:break-all;color:#ddd;font-size:13px;font-family:monospace;">${text.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</pre>`;
-    }).catch(() => {
-      contentEl.innerHTML = '<p style="color:#ff6b6b;">Could not load file preview.</p>';
+  // All file fetches go through authenticated fetch to avoid auth redirects
+  const authHeaders = {};
+  const token = getToken();
+  if (token) authHeaders['Authorization'] = 'Bearer ' + token;
+
+  fetch(url, { headers: authHeaders, credentials: 'same-origin' }).then(r => {
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const ct = r.headers.get('content-type') || '';
+    sizeEl.textContent = r.headers.get('content-length')
+      ? (parseInt(r.headers.get('content-length')) / 1024).toFixed(1) + ' KB' : '';
+    // Create blob for download button
+    return r.blob().then(blob => {
+      const blobUrl = URL.createObjectURL(blob);
+      dlEl.href = blobUrl;
+      // Render based on type
+      if (['png','jpg','jpeg','gif','svg','webp','bmp'].includes(ext) || ct.startsWith('image/')) {
+        contentEl.innerHTML = '<img src="' + blobUrl + '" style="max-width:100%;max-height:40vh;object-fit:contain;">';
+      } else if (ext === 'pdf' || ct === 'application/pdf') {
+        contentEl.innerHTML = '<iframe src="' + blobUrl + '" style="width:100%;height:40vh;border:none;"></iframe>';
+      } else if (ext === 'html' || ct === 'text/html') {
+        contentEl.innerHTML = '<iframe src="' + blobUrl + '" sandbox="allow-same-origin" style="width:100%;height:40vh;border:none;background:#fff;"></iframe>';
+      } else {
+        // Text/code preview
+        blob.text().then(text => {
+          sizeEl.textContent = (text.length / 1024).toFixed(1) + ' KB';
+          contentEl.innerHTML = '<pre style="margin:0;white-space:pre-wrap;word-break:break-all;color:#ddd;font-size:13px;font-family:monospace;">' + text.replace(/</g,'&lt;').replace(/>/g,'&gt;') + '</pre>';
+        });
+      }
     });
-    return;
-  }
-  sizeEl.textContent = '';
+  }).catch((err) => {
+    contentEl.innerHTML = '<p style="color:#ff6b6b;">Could not load file: ' + escapeHtml(err.message) + '</p>';
+    dlEl.href = '#';
+  });
 }
 
 function closeFileViewer() {

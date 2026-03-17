@@ -97,6 +97,35 @@ class AgentLoopTask(BaseTask):
         self._context_op_events: Dict[str, threading.Event] = {}
         self._context_op_lock = threading.Lock()
 
+    @staticmethod
+    def _resolve_agent_name(name: str, conv_id: str) -> str:
+        """Resolve a nickname or case-variant to the canonical real agent name.
+
+        Resolution order:
+        1. Check nickname map (reverse lookup: nick → real name)
+        2. Check nickname map keys (case-insensitive: real name match)
+        3. Return original name if no mapping found
+
+        Always returns the real (canonical) agent name.
+        """
+        if not name or not conv_id:
+            return name or "assistant"
+        from core.conversation_store import ConversationStore
+        nicknames = ConversationStore.instance().get_extra(
+            conv_id, "agent_nicknames") or {}
+        if not nicknames:
+            return name
+        name_lower = name.lower()
+        # 1) nickname → real name (reverse lookup)
+        for real, nick in nicknames.items():
+            if nick.lower() == name_lower:
+                return real
+        # 2) case-insensitive real name match
+        for real in nicknames:
+            if real.lower() == name_lower:
+                return real
+        return name
+
     def initialize(self):
         """Start the poller at flow startup (not just on first request).
 
@@ -165,6 +194,10 @@ class AgentLoopTask(BaseTask):
                 "type": "integer", "required": False, "default": 200,
                 "description": "Maximum tool-use loop iterations (safety limit — agent synthesizes at the end if reached)",
             },
+            "max_consecutive_tool_calls": {
+                "type": "integer", "required": False, "default": 5,
+                "description": "Max consecutive calls to the same tool before the agent must ask for confirmation (0 = unlimited)",
+            },
             "tools": {
                 "type": "string", "required": False, "default": "",
                 "description": "JSON list of custom tool definitions (overrides builtins)",
@@ -193,9 +226,9 @@ class AgentLoopTask(BaseTask):
                 "type": "boolean", "required": False, "default": False,
                 "description": "Enable SSE streaming mode (publishes events to ConversationEventBus)",
             },
-            "pixazo_api_key": {
-                "type": "string", "required": False, "default": "", "sensitive": True,
-                "description": "Pixazo API key for image generation (or set PIXAZO_API_KEY env var)",
+            "image_service": {
+                "type": "string", "required": False, "default": "${global.image_default_service}",
+                "description": "Image generation service ID",
             },
             "max_rounds": {
                 "type": "integer", "required": False, "default": 1,
@@ -278,6 +311,37 @@ class AgentLoopTask(BaseTask):
             logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
 
+    def _resolve_image_service(self, service_id: str, user_id: str):
+        """Resolve image generation service by ID.
+
+        Resolution order: flow services → UserServiceRegistry → GlobalServiceRegistry.
+        Returns the service instance or None.
+        """
+        if not service_id:
+            return None
+        # 1. Flow-level services
+        if self._services:
+            svc = self._services.get(service_id)
+            if svc and hasattr(svc, 'generate'):
+                return svc
+        # 2. User-scoped services
+        try:
+            from gui.services.user_service_registry import UserServiceRegistry
+            svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
+            if svc and hasattr(svc, 'generate'):
+                return svc
+        except Exception:
+            pass
+        # 3. Global services
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
+            if svc and hasattr(svc, 'generate'):
+                return svc
+        except Exception:
+            pass
+        return None
+
     def _prepare_agent_context(self, flowfile: FlowFile):
         """Extract common context from flowfile and config for both sync and streaming modes."""
         model = self.config.get("model", "")
@@ -310,6 +374,23 @@ class AgentLoopTask(BaseTask):
                 f"Define it in global services or set 'llm.default.service' "
                 f"in config/global_parameters.json."
             )
+
+        # Resolve image service (same pattern as LLM service above)
+        img_svc_id = self.config.get("image_service", "")
+        if img_svc_id and "${" in img_svc_id:
+            from core.expression import resolve_expression as _re
+            _img_params = self._parameter_context._params if hasattr(self, '_parameter_context') and self._parameter_context else None
+            img_svc_id = _re(img_svc_id, parameters=_img_params)
+            if "${" in img_svc_id:
+                img_svc_id = ""
+        img_svc = self._resolve_image_service(img_svc_id, _user_id_for_svc)
+        if img_svc:
+            from core.tool_registry import ImageGenerationHandler
+            registry = self.get_tool_registry()
+            for h in registry.list_tools():
+                if isinstance(h, ImageGenerationHandler):
+                    h.set_service(img_svc)
+                    break
 
         registry = self.get_tool_registry()
         # conversation_id/user_id not yet known — will be set in _execute_streaming
@@ -393,6 +474,7 @@ class AgentLoopTask(BaseTask):
         temperature = float(self.config.get("temperature", 0.7))
         max_tokens = int(self.config.get("max_tokens", 0))
         max_iterations = int(self.config.get("max_iterations", 200))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 5))
 
         use_conv_store = self.config.get("conversation_store", False)
         conv_ttl = int(self.config.get("conversation_ttl", 0))
@@ -509,11 +591,6 @@ class AgentLoopTask(BaseTask):
             # Loaded from store — these messages are already persisted
             base_message_count = len(messages)
 
-        # File TTL = conversation TTL (0 = unlimited)
-        from core.tool_registry import CreateFileHandler, ExecuteScriptHandler
-        for h in registry.list_tools():
-            if isinstance(h, (CreateFileHandler, ExecuteScriptHandler)):
-                h.set_ttl(conv_ttl)
 
         if use_conv_store and not conversation_id:
             from core.conversation_store import ConversationStore
@@ -521,6 +598,8 @@ class AgentLoopTask(BaseTask):
 
         # target_agent: temporary agent override for /agent msg (not persisted)
         _target_agent = body_json.get("target_agent", "") if body_json else ""
+        if _target_agent and conversation_id:
+            _target_agent = self._resolve_agent_name(_target_agent, conversation_id)
 
         # Apply pending_agent from the first message (agent selected before conversation existed)
         _pending_agent = body_json.get("pending_agent", "") if body_json else ""
@@ -570,12 +649,15 @@ class AgentLoopTask(BaseTask):
                 if selected:
                     agent_def = rs.get_any("agent", selected, _uid)
                     if not agent_def and _target_agent:
-                        # /agent msg <name> with unknown agent — reject early
-                        raise ValueError(f"Agent '{_target_agent}' not found")
+                        # "assistant" is the default persona, not a ResourceStore agent
+                        if _target_agent != "assistant":
+                            # /agent msg <name> with unknown agent — reject early
+                            raise ValueError(f"Agent '{_target_agent}' not found")
                     if agent_def:
                         _selected_agent_def = agent_def
                         system_prompt = agent_def["prompt"]
-                        system_prompt += f"\n\n[You are agent '{selected}']\n"
+                        # Identity is injected later (with nickname awareness)
+
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                         # List other available agents (user + global)
                         all_agents = rs.list_all("agent", _uid)
@@ -705,11 +787,35 @@ class AgentLoopTask(BaseTask):
                 h.set_llm_service(_active_llm_service)
                 break
 
+        # Inject identity block into system prompt: real name + nickname
+        _real_name = (_active_agent_name or "assistant")
+        if conversation_id:
+            from core.conversation_store import ConversationStore as _CSNick
+            _nicknames = _CSNick.instance().get_extra(conversation_id, "agent_nicknames") or {}
+            _nick_key = _real_name.lower()
+            _nickname = next((v for k, v in _nicknames.items() if k.lower() == _nick_key), None)
+            if _nickname:
+                system_prompt = (
+                    f"[IDENTITY] Your real agent id is \"{_real_name}\". "
+                    f"The user has given you the nickname \"{_nickname}\". "
+                    f"When other agents or tools refer to \"{_real_name}\" or "
+                    f"\"{_nickname}\" (case-insensitive), they mean YOU.\n\n"
+                ) + system_prompt
+            else:
+                system_prompt = (
+                    f"[IDENTITY] Your agent id is \"{_real_name}\".\n\n"
+                ) + system_prompt
+        else:
+            system_prompt = (
+                f"[IDENTITY] Your agent id is \"{_real_name}\".\n\n"
+            ) + system_prompt
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,
+            "max_consecutive_tool_calls": max_consecutive_tool_calls,
             "max_rounds": int(self.config.get("max_rounds", 1)),
             "use_conv_store": use_conv_store, "conv_ttl": conv_ttl,
             "conv_attr": conv_attr, "conversation_id": conversation_id,
@@ -727,6 +833,7 @@ class AgentLoopTask(BaseTask):
             "_sub_conv_id_ref": _sub_conv_id,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
+            "_nicknames": _nicknames if conversation_id else {},
         }
 
 
@@ -880,7 +987,7 @@ class AgentLoopTask(BaseTask):
             # Detect context-mutating operations and pause FlowFile processing
             _ctx_op_conv_id = self._detect_context_op(flowfile)
             if _ctx_op_conv_id:
-                self.cancel_agent(_ctx_op_conv_id)
+                self.cancel_agent(_ctx_op_conv_id, silent=True)
                 if not self._acquire_context_op(_ctx_op_conv_id, timeout=30.0):
                     flowfile.set_content(json.dumps({
                         "error": "Timeout waiting for active agent to finish",
@@ -952,10 +1059,12 @@ class AgentLoopTask(BaseTask):
                 return [flowfile]
             # Return all display-relevant messages with type classification
             history = self._classify_messages_for_display(messages)
+            nicknames = store.get_extra(conv_id, "agent_nicknames") or {}
             result = json.dumps({
                 "conversation_id": conv_id,
                 "messages": history,
                 "message_count": len(messages),  # total raw count for polling
+                "nicknames": nicknames,
             }, ensure_ascii=False)
             flowfile.set_content(result.encode("utf-8"))
             return [flowfile]
@@ -979,9 +1088,29 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(result.encode("utf-8"))
             return [flowfile]
 
+        if action == "set_agent_nickname":
+            conv_id = body.get("conversation_id", "")
+            agent_name = body.get("agent_name", "").strip()
+            nickname = body.get("nickname", "").strip()
+            if agent_name and conv_id:
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
+            if not conv_id or not agent_name or not nickname:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or nickname"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            nicknames = store.get_extra(conv_id, "agent_nicknames") or {}
+            nicknames[agent_name] = nickname
+            store.set_extra(conv_id, "agent_nicknames", nicknames)
+            flowfile.set_content(json.dumps({
+                "ok": True, "agent_name": agent_name, "nickname": nickname,
+            }).encode())
+            return [flowfile]
+
         if action == "cancel":
             conv_id = body.get("conversation_id", "")
             agent_name = body.get("agent_name", "")
+            if agent_name:
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
@@ -1023,6 +1152,8 @@ class AgentLoopTask(BaseTask):
         if action == "interrupt":
             conv_id = body.get("conversation_id", "")
             agent_name = body.get("agent_name", "")
+            if agent_name:
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
@@ -1037,6 +1168,8 @@ class AgentLoopTask(BaseTask):
         if action == "btw":
             conv_id = body.get("conversation_id", "")
             agent_name = body.get("agent_name", "")
+            if agent_name and agent_name.upper() != "ALL":
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
             question = body.get("message", "")
             if not conv_id or not question:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id or message"}).encode())
@@ -1443,6 +1576,40 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps({"files": files}, ensure_ascii=False).encode())
             return [flowfile]
 
+        if action == "delete_file":
+            file_id = body.get("file_id", "")
+            conv_id = body.get("conversation_id", "")
+            if not file_id:
+                flowfile.set_content(json.dumps({"error": "Missing file_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            # Verify the file belongs to a conversation owned by this user
+            if conv_id and user_id:
+                conv_data = store.load(conv_id, user_id=user_id)
+                if conv_data is None:
+                    flowfile.set_content(json.dumps({"error": "Access denied"}).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                # Verify file_id is referenced in this conversation
+                import re as _re_del
+                found = any(
+                    file_id in (m.get("content", "") if isinstance(m.get("content"), str) else "")
+                    for m in conv_data
+                )
+                if not found:
+                    flowfile.set_content(json.dumps({"error": "File not in this conversation"}).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+            from core.file_store import FileStore
+            fstore = FileStore.instance()
+            if not fstore.exists(file_id):
+                flowfile.set_content(json.dumps({"error": "File not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            fstore.delete(file_id)
+            flowfile.set_content(json.dumps({"ok": True, "file_id": file_id}).encode())
+            return [flowfile]
+
         if action == "list_conv_flows":
             # Show all flows belonging to this user (not conversation-scoped)
             try:
@@ -1757,10 +1924,14 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
             context_data = store.load_context(conv_id, user_id=user_id)
+            _using_context = context_data is not None
             if context_data is None:
                 context_data = store.load(conv_id, user_id=user_id) or []
             if index < 0 or index >= len(context_data):
-                flowfile.set_content(json.dumps({"error": f"Index {index} out of range (0-{len(context_data)-1})"}).encode())
+                flowfile.set_content(json.dumps({
+                    "error": f"Index {index} out of range (0-{len(context_data)-1}). "
+                             "The context may have changed — please refresh.",
+                }).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
             context_data[index]["content"] = new_content
@@ -1787,7 +1958,24 @@ class AgentLoopTask(BaseTask):
             if context_data is None:
                 context_data = store.load(conv_id, user_id=user_id) or []
             if index < 0 or index >= len(context_data):
-                flowfile.set_content(json.dumps({"error": f"Index {index} out of range (0-{len(context_data)-1})"}).encode())
+                # Index from overlay may target messages if context was compacted;
+                # fall back to messages list
+                msgs = store.load(conv_id, user_id=user_id) or []
+                if 0 <= index < len(msgs):
+                    msgs.pop(index)
+                    store.save(conv_id, msgs, user_id=user_id)
+                    deserialized = self._deserialize_messages(msgs)
+                    estimated = self._estimate_tokens(deserialized)
+                    flowfile.set_content(json.dumps({
+                        "ok": True,
+                        "message_count": len(msgs),
+                        "token_estimate": estimated,
+                    }).encode())
+                    return [flowfile]
+                flowfile.set_content(json.dumps({
+                    "error": f"Index {index} out of range (0-{len(context_data)-1}). "
+                             "The context may have changed — please refresh.",
+                }).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
             context_data.pop(index)
@@ -1909,6 +2097,8 @@ class AgentLoopTask(BaseTask):
         if action == "select_agent":
             conv_id = body.get("conversation_id", "")
             agent_name = body.get("name", "").strip()
+            if agent_name:
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
@@ -1936,6 +2126,8 @@ class AgentLoopTask(BaseTask):
         if action == "delete_agent":
             agent_name = body.get("name", "").strip()
             conv_id = body.get("conversation_id", "")
+            if agent_name and conv_id:
+                agent_name = self._resolve_agent_name(agent_name, conv_id)
             if not agent_name:
                 flowfile.set_content(json.dumps({
                     "error": "Missing name",
@@ -2624,10 +2816,15 @@ class AgentLoopTask(BaseTask):
         # If no agent specified, use the currently selected agent for this conversation
         if not agent_name and conv_id:
             active_res = store.get_extra(conv_id, "active_resources") or {}
-            agent_name = active_res.get("agent", "") or "default"
-        agent_name = agent_name or "default"
-        thought_key = f"{conv_id}::thought::{agent_name}"
-        extra_key = f"random_thought::{agent_name}"
+            agent_name = active_res.get("agent", "") or "assistant"
+        agent_name = agent_name or "assistant"
+        # Resolve nickname → real name (case-insensitive)
+        if agent_name not in ("", "assistant"):
+            agent_name = self._resolve_agent_name(agent_name, conv_id)
+        # Normalize agent name for key consistency (case-insensitive)
+        _agent_key = agent_name.lower()
+        thought_key = f"{conv_id}::thought::{_agent_key}"
+        extra_key = f"random_thought::{_agent_key}"
         scheduler = PollScheduler.instance()
 
         if not conv_id:
@@ -2636,13 +2833,16 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         if sub == "on":
-            freq = body.get("frequency", "2-3/h")
+            freq = body.get("frequency", "6/1m")
             try:
                 min_iv, max_iv = self._parse_thought_frequency(freq)
             except ValueError as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
+
+            # Guard: one thought per agent — cancel any existing schedule
+            scheduler.cancel(thought_key)
 
             # Ensure conversation exists so set_extra doesn't silently fail
             if not store.set_extra(conv_id, extra_key, {"_probe": True}):
@@ -2677,6 +2877,8 @@ class AgentLoopTask(BaseTask):
         if sub == "off":
             store.set_extra(conv_id, extra_key, {"enabled": False})
             scheduler.cancel(thought_key)
+            # Don't cancel the thought in progress — let it finish naturally.
+            # It won't re-schedule because enabled=False.
             flowfile.set_content(json.dumps({
                 "ok": True, "agent": agent_name, "disabled": True,
             }).encode())
@@ -2754,14 +2956,21 @@ class AgentLoopTask(BaseTask):
         finish_reason = ""
         response_content = ""
         _need_more_retried_ns = False  # guards heuristic tool-mention retry
+        _consecutive_tool: Dict[str, int] = {}  # tool_name → consecutive call count
+        _max_consec = ctx.get("max_consecutive_tool_calls", 5)
 
-        _client_provider_ns = getattr(client, "provider", "")
+        _client_provider_ns = getattr(client, "provider", "") or ""
+        if not isinstance(_client_provider_ns, str):
+            _client_provider_ns = ""
 
         while iteration < ctx["max_iterations"]:
             iteration += 1
 
+            _id_nicks_ns = ctx.get("_nicknames") or {}
+            _llm_msgs = self._inject_identity(messages, _id_nicks_ns)
+
             response = client.complete(
-                messages=messages,
+                messages=_llm_msgs,
                 model=model or None,
                 temperature=ctx["temperature"],
                 max_tokens=ctx["max_tokens"],
@@ -2804,14 +3013,21 @@ class AgentLoopTask(BaseTask):
                         )))
                         continue
 
-                messages.append(LLMMessage(role="assistant", content=response.content))
-                response_content = response.content
+                _resp_clean_ns = (response.content or "").lstrip()
+                if _resp_clean_ns.startswith("["):
+                    import re as _re_strip_ns
+                    _resp_clean_ns = _re_strip_ns.sub(r'^\[[^\]]+\]:\s*', '', _resp_clean_ns)
+                _source_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
+                messages.append(LLMMessage(role="assistant", content=_resp_clean_ns, source=_source_ns))
+                response_content = _resp_clean_ns
                 break
 
             _need_more_retried_ns = False  # reset on successful tool_call
+            _source_tc_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
             messages.append(LLMMessage(
                 role="assistant", content=response.content,
                 tool_calls=response.tool_calls,
+                source=_source_tc_ns,
             ))
 
             # Re-inject executor before tool calls (fixes race condition)
@@ -2821,7 +3037,27 @@ class AgentLoopTask(BaseTask):
 
             for tc in response.tool_calls:
                 tools_called.append(tc.name)
-                logger.info(f"Agent calling tool '{tc.name}' with args: {tc.arguments}")
+
+                # Track consecutive calls per tool
+                if _max_consec > 0:
+                    _consecutive_tool[tc.name] = _consecutive_tool.get(tc.name, 0) + 1
+                    # Reset counters for other tools
+                    for _tn in list(_consecutive_tool):
+                        if _tn != tc.name:
+                            _consecutive_tool[_tn] = 0
+                    if _consecutive_tool[tc.name] > _max_consec:
+                        result_text = (
+                            f"Tool '{tc.name}' has been called {_consecutive_tool[tc.name]} times "
+                            f"consecutively (limit: {_max_consec}). "
+                            f"Stop and explain to the user what you've tried so far, "
+                            f"and ask if they want you to continue."
+                        )
+                        messages.append(LLMMessage(
+                            role="tool", content=result_text, tool_call_id=tc.id,
+                        ))
+                        continue
+
+                logger.info(f"Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result_text = registry.execute(tc.name, tc.arguments)
                 messages.append(LLMMessage(
                     role="tool", content=result_text, tool_call_id=tc.id,
@@ -2949,13 +3185,17 @@ class AgentLoopTask(BaseTask):
             _agent_name = ctx.get("active_agent_name", "")
             _llm_svc = ctx.get("active_llm_service", "")
             _client_prov = getattr(client, "provider", "") if client else ""
+            if not isinstance(_client_prov, str):
+                _client_prov = ""
             _client_burl = getattr(client, "base_url", "") if client else ""
+            if not isinstance(_client_burl, str):
+                _client_burl = ""
             _source = {"type": "agent", "name": _agent_name or "assistant"}
             if _llm_svc:
                 _source["llm_service"] = _llm_svc
             if _client_prov:
                 _source["provider"] = _client_prov
-            if _client_burl:
+            if _client_burl and isinstance(_client_burl, str):
                 import re as _re2
                 _source["base_url"] = _re2.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_burl)
             output = json.dumps({
@@ -3012,7 +3252,7 @@ class AgentLoopTask(BaseTask):
             AskAgentHandler, CreatePlanHandler, FilesystemToolHandler,
             FlowManagerHandler,
             LocalFilesHandler, NotifyUserHandler, ScheduleRecheckHandler,
-            UpdatePlanHandler,
+            SpawnAgentsHandler, UpdatePlanHandler,
         )
         for h in ctx["registry"].list_tools():
             if isinstance(h, ScheduleRecheckHandler):
@@ -3030,6 +3270,9 @@ class AgentLoopTask(BaseTask):
                 h.set_conversation_id(conversation_id)
             elif isinstance(h, NotifyUserHandler):
                 h.set_conversation_id(conversation_id)
+            elif isinstance(h, SpawnAgentsHandler):
+                h.set_conversation_id(conversation_id)
+                h.set_source_agent(ctx.get("active_agent_name", "") or "assistant")
             elif isinstance(h, FilesystemToolHandler):
                 h.set_user_id(ctx.get("user_id", ""))
                 fs_svc = self._find_filesystem_service()
@@ -3150,19 +3393,23 @@ class AgentLoopTask(BaseTask):
         with self._conv_gen_lock:
             return self._conv_generation.get(conversation_id, 0) == generation
 
-    def cancel_agent(self, conversation_id: str, agent_name: str = ""):
+    def cancel_agent(self, conversation_id: str, agent_name: str = "",
+                     silent: bool = False):
         """Cancel a running agent for this conversation.
 
-        If agent_name is a named sub-agent (not "assistant"/"default"/""),
+        If agent_name is a named sub-agent (not "assistant"/""),
         only cancel that specific agent's thread.
         Otherwise cancel ALL agents for this conversation.
 
         Increments the generation counter so the running thread detects
         staleness at the next check point and stops gracefully.
+
+        If silent=True, no SSE event is published (used by context ops
+        that cancel as a precaution, not as user-visible action).
         """
-        # "assistant" and "default" refer to the main (unnamed) agent
+        # "assistant" refers to the main (unnamed) agent
         # whose gen_key is just conversation_id, not conversation_id:assistant
-        _is_named = agent_name and agent_name not in ("", "assistant", "default")
+        _is_named = agent_name and agent_name not in ("", "assistant")
         with self._conv_gen_lock:
             if _is_named:
                 # Cancel only this specific sub-agent
@@ -3171,19 +3418,21 @@ class AgentLoopTask(BaseTask):
                     self._conv_generation.get(key, 0) + 1
             else:
                 # Cancel default assistant + all per-agent threads
+                # but NOT thought threads (they manage their own lifecycle)
                 self._conv_generation[conversation_id] = \
                     self._conv_generation.get(conversation_id, 0) + 1
                 for k in list(self._conv_generation):
-                    if k.startswith(conversation_id + ":"):
+                    if k.startswith(conversation_id + ":") and "::thought::" not in k:
                         self._conv_generation[k] += 1
-        # Publish cancellation event for SSE listeners
-        from core.conversation_event_bus import ConversationEventBus
-        ConversationEventBus.instance().publish_event(
-            conversation_id, "cancelled", {
-                "reason": "user_request",
-                "agent_name": agent_name if _is_named else "all",
-            }
-        )
+        if not silent:
+            # Publish cancellation event for SSE listeners
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conversation_id, "cancelled", {
+                    "reason": "user_request",
+                    "agent_name": agent_name if _is_named else "all",
+                }
+            )
         # Reset status
         from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "idle")
@@ -3209,7 +3458,7 @@ class AgentLoopTask(BaseTask):
         that the loop checks and triggers a forced synthesis response.
         """
         with self._interrupt_lock:
-            if agent_name and agent_name not in ("", "assistant", "default"):
+            if agent_name and agent_name not in ("", "assistant"):
                 self._conv_interrupt[f"{conversation_id}:{agent_name}"] = True
             else:
                 # Interrupt default assistant + all per-agent threads
@@ -3247,7 +3496,7 @@ class AgentLoopTask(BaseTask):
 
         try:
             # 1. Resolve agent's system prompt + LLM client
-            if agent_name and agent_name not in ("", "assistant", "default"):
+            if agent_name and agent_name not in ("", "assistant"):
                 rs = ResourceStore.instance()
                 adef = rs.get_any("agent", agent_name, user_id)
                 if not adef:
@@ -3298,8 +3547,21 @@ class AgentLoopTask(BaseTask):
                 summary_parts.append(f"[{role_label}]: {truncated}")
             context_summary = "\n".join(summary_parts)
 
+            # Inject identity into btw system prompt
+            _btw_nicknames = store.get_extra(conversation_id, "agent_nicknames") or {}
+            _btw_nick_key = (agent_name or "assistant").lower()
+            _btw_nick = next((v for k, v in _btw_nicknames.items() if k.lower() == _btw_nick_key), None)
+            if _btw_nick:
+                _id_block = (
+                    f"[IDENTITY] Your real agent id is \"{agent_name}\". "
+                    f"The user has given you the nickname \"{_btw_nick}\". "
+                    f"When other agents or tools refer to \"{agent_name}\" or "
+                    f"\"{_btw_nick}\" (case-insensitive), they mean YOU.\n\n"
+                )
+            else:
+                _id_block = f"[IDENTITY] Your agent id is \"{agent_name}\".\n\n"
             btw_system = (
-                sys_prompt + "\n\n"
+                _id_block + sys_prompt + "\n\n"
                 "[SIDE QUESTION: The user is asking a quick question while you are working. "
                 "Answer briefly and concisely. Do NOT use any tools. "
                 "This does not affect your current task.]"
@@ -3330,12 +3592,24 @@ class AgentLoopTask(BaseTask):
                 callback=on_btw_token,
             )
 
-            # 4. Publish done event (NOT persisted in conversation)
+            # 4. Persist btw Q&A in conversation history
+            import time as _btw_time
+            _btw_now = _btw_time.time()
+            _btw_user_source = {"type": "user", "name": "btw"}
+            _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
+            store.append_messages(conversation_id, [
+                {"role": "user", "content": f"[btw] {question}",
+                 "source": _btw_user_source, "timestamp": _btw_now},
+                {"role": "assistant", "content": response.content,
+                 "source": _btw_agent_source, "timestamp": _btw_now},
+            ])
+
+            # 5. Publish done event
             bus.publish_event(conversation_id, "btw_done", {
                 "agent_name": agent_name,
                 "question": question,
                 "response": response.content,
-                "source": {"type": "agent", "name": agent_name, "btw": True},
+                "source": _btw_agent_source,
             })
             logger.info(f"[btw:{conversation_id[:8]}] {agent_name} answered "
                         f"({len(response.content)} chars)")
@@ -3440,6 +3714,16 @@ class AgentLoopTask(BaseTask):
                 src["base_url"] = _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_base_url)
             return src
 
+        def _strip_echo_prefix(text: str) -> str:
+            """Strip identity prefix that the LLM may echo back."""
+            if not text:
+                return text
+            stripped = text.lstrip()
+            if stripped.startswith("["):
+                import re as _re_strip
+                return _re_strip.sub(r'^\[[^\]]+\]:\s*', '', stripped)
+            return text
+
         def _append(msg: LLMMessage):
             """Append a message to both the LLM context and the new-messages list."""
             messages.append(msg)
@@ -3473,6 +3757,10 @@ class AgentLoopTask(BaseTask):
 
         # Persist the user message immediately so it's never lost
         _flush_new()
+
+        # Consecutive tool call limiter
+        _consecutive_tool_s: Dict[str, int] = {}
+        _max_consec_s = ctx.get("max_consecutive_tool_calls", 5)
 
         try:
             for current_round in range(1, max_rounds + 1):
@@ -3523,6 +3811,7 @@ class AgentLoopTask(BaseTask):
                             bus.publish_event(conversation_id, "token", {
                                 "text": text,
                                 "agent_name": _agent_name or "assistant",
+                                "source": _agent_source(),
                             })
 
                     # Heartbeat thread (suppressed during silent poll)
@@ -3556,6 +3845,10 @@ class AgentLoopTask(BaseTask):
                         ctx.get("context_keep_recent", 6),
                         conversation_id=conversation_id,
                     )
+
+                    # Inject identity prefixes so LLM knows who said what
+                    _id_nicks = ctx.get("_nicknames") or {}
+                    llm_context = self._inject_identity(llm_context, _id_nicks)
 
                     # Check cancellation before LLM call
                     if not self._is_current_generation(gen_key, my_generation):
@@ -3678,7 +3971,7 @@ class AgentLoopTask(BaseTask):
 
                         # [NEED_MORE] signal: model requests another turn
                         if "[NEED_MORE]" in _resp_text:
-                            _clean = _resp_text.replace("[NEED_MORE]", "").strip()
+                            _clean = _strip_echo_prefix(_resp_text.replace("[NEED_MORE]", "").strip())
                             if _clean:
                                 _append(LLMMessage(role="assistant", content=_clean, source=_agent_source()))
                                 if callback:
@@ -3710,8 +4003,9 @@ class AgentLoopTask(BaseTask):
                                             f"{_mentioned}, injecting reminder")
                                 continue
 
-                        _append(LLMMessage(role="assistant", content=response.content, source=_agent_source()))
-                        response_content = response.content
+                        _resp_clean = _strip_echo_prefix(response.content or "")
+                        _append(LLMMessage(role="assistant", content=_resp_clean, source=_agent_source()))
+                        response_content = _resp_clean
                         _flush_new()
                         break
 
@@ -3749,20 +4043,40 @@ class AgentLoopTask(BaseTask):
                         status="tool_call",
                     )
 
+                    # Check consecutive tool call limit
+                    _blocked_tools = set()
+                    if _max_consec_s > 0:
+                        for tc in response.tool_calls:
+                            _consecutive_tool_s[tc.name] = _consecutive_tool_s.get(tc.name, 0) + 1
+                            for _tn in list(_consecutive_tool_s):
+                                if _tn != tc.name:
+                                    _consecutive_tool_s[_tn] = 0
+                            if _consecutive_tool_s[tc.name] > _max_consec_s:
+                                _blocked_tools.add(tc.name)
+
                     if len(response.tool_calls) == 1:
                         # Single tool — direct execution (no thread overhead)
                         tc = response.tool_calls[0]
-                        try:
-                            result_text = registry.execute(tc.name, tc.arguments)
-                        except Exception as tool_err:
-                            result_text = f"Error: {tool_err}"
-                            logger.error(f"Tool '{tc.name}' failed: {tool_err}")
+                        if tc.name in _blocked_tools:
+                            result_text = (
+                                f"Tool '{tc.name}' has been called {_consecutive_tool_s[tc.name]} times "
+                                f"consecutively (limit: {_max_consec_s}). "
+                                f"Stop and explain to the user what you've tried so far, "
+                                f"and ask if they want you to continue."
+                            )
+                        else:
+                            try:
+                                result_text = registry.execute(tc.name, tc.arguments)
+                            except Exception as tool_err:
+                                result_text = f"Error: {tool_err}"
+                                logger.error(f"Tool '{tc.name}' failed: {tool_err}")
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": result_text[:2000],
+                            "agent_name": _agent_name or "assistant",
                         })
                         bus.publish_event(conversation_id, "iteration_status", {
                             "agent_name": _agent_name or "assistant",
@@ -3792,6 +4106,7 @@ class AgentLoopTask(BaseTask):
                                 results_map[tc.id] = (tc, result_text)
                                 bus.publish_event(conversation_id, "tool_result", {
                                     "tool": tc.name, "result": result_text[:2000],
+                                    "agent_name": _agent_name or "assistant",
                                 })
 
                         # Append results in original order (LLM expects consistent ordering)
@@ -3975,56 +4290,76 @@ class AgentLoopTask(BaseTask):
             # Handle [NO_PENDING_WORK] / [RECHECK_IN:...] tags
             if "[NO_PENDING_WORK]" in (response_content or ""):
                 import re as _re
-                recheck_match = _re.search(r'\[RECHECK_IN:(\d+)\]', response_content or "")
-                default_recheck = int(self.config.get("poll_recheck_delay", 7200))
-                recheck_delay = int(recheck_match.group(1)) if recheck_match else default_recheck
 
-                # Strip tags to see if there's real content underneath
-                stripped = _re.sub(r'\s*\[NO_PENDING_WORK\]', '', response_content)
-                stripped = _re.sub(r'\s*\[RECHECK_IN:\d+\]', '', stripped)
-                stripped = _re.sub(r'\[System:[^\]]*\]', '', stripped)
-                stripped = stripped.strip()
-
-                # Set cooldown (in-memory) AND persistent schedule
-                from core.conversation_store import ConversationStore
-                from core.poll_scheduler import PollScheduler
-                convs = ConversationStore.instance().list_conversations()
-                conv_meta = next((c for c in convs if c["conversation_id"] == conversation_id), None)
-                current_updated_at = conv_meta["updated_at"] if conv_meta else time.time()
-                self._poll_cooldown[conversation_id] = (current_updated_at, time.time() + recheck_delay)
-                # Persist to PollScheduler so it survives restarts
-                user_id = ctx.get("user_id", "")
-                PollScheduler.instance().schedule_delay(
-                    conversation_id, recheck_delay, user_id=user_id,
-                    reason="[RECHECK_IN] tag from agent response",
-                )
-
-                if not stripped:
-                    # Pure poll check-in with nothing to say — discard entirely
-                    logger.info(f"[agent:{conversation_id[:8]}] poll check-in: no pending work, "
-                                f"recheck in {recheck_delay}s (discarded)")
-                    bus.publish_event(conversation_id, "discard", {
-                        "agent_name": _agent_name or "assistant",
-                    })
-                    new_messages.clear()
-                    # Mark conversation idle — agent has no pending work
-                    ConversationStore.instance().set_status(conversation_id, "idle")
-                    return
+                # Random thoughts must ALWAYS produce a response — reject NO_PENDING_WORK
+                if _is_thought:
+                    stripped_thought = _re.sub(r'\s*\[NO_PENDING_WORK\]', '', response_content or "")
+                    stripped_thought = _re.sub(r'\s*\[RECHECK_IN:\d+\]', '', stripped_thought).strip()
+                    if stripped_thought:
+                        # Has real content — use it
+                        response_content = stripped_thought
+                    else:
+                        # Empty — discard silently, next random thought will fire
+                        logger.info(f"[agent:{conversation_id[:8]}] random thought returned "
+                                    f"NO_PENDING_WORK — discarding (next thought will fire)")
+                        bus.publish_event(conversation_id, "discard", {
+                            "agent_name": _agent_name or "assistant",
+                        })
+                        new_messages.clear()
+                        return
+                    # Skip the cooldown/recheck logic for thoughts
                 else:
-                    # Real content + tags — keep the content, strip the tags
-                    logger.info(f"[agent:{conversation_id[:8]}] response with NO_PENDING_WORK tag, "
-                                f"keeping {len(stripped)} chars, recheck in {recheck_delay}s")
-                    response_content = stripped
-                    # Also strip from the persisted assistant message
-                    if new_messages:
-                        last_assistant = None
-                        for msg in reversed(new_messages):
-                            if msg.role == "assistant":
-                                last_assistant = msg
-                                break
-                        if last_assistant and "[NO_PENDING_WORK]" in (last_assistant.content or ""):
-                            last_assistant.content = stripped
-                    _flush_new()
+
+                    recheck_match = _re.search(r'\[RECHECK_IN:(\d+)\]', response_content or "")
+                    default_recheck = int(self.config.get("poll_recheck_delay", 7200))
+                    recheck_delay = int(recheck_match.group(1)) if recheck_match else default_recheck
+
+                    # Strip tags to see if there's real content underneath
+                    stripped = _re.sub(r'\s*\[NO_PENDING_WORK\]', '', response_content)
+                    stripped = _re.sub(r'\s*\[RECHECK_IN:\d+\]', '', stripped)
+                    stripped = _re.sub(r'\[System:[^\]]*\]', '', stripped)
+                    stripped = stripped.strip()
+
+                    # Set cooldown (in-memory) AND persistent schedule
+                    from core.conversation_store import ConversationStore
+                    from core.poll_scheduler import PollScheduler
+                    convs = ConversationStore.instance().list_conversations()
+                    conv_meta = next((c for c in convs if c["conversation_id"] == conversation_id), None)
+                    current_updated_at = conv_meta["updated_at"] if conv_meta else time.time()
+                    self._poll_cooldown[conversation_id] = (current_updated_at, time.time() + recheck_delay)
+                    # Persist to PollScheduler so it survives restarts
+                    user_id = ctx.get("user_id", "")
+                    PollScheduler.instance().schedule_delay(
+                        conversation_id, recheck_delay, user_id=user_id,
+                        reason="[RECHECK_IN] tag from agent response",
+                    )
+
+                    if not stripped:
+                        # Pure poll check-in with nothing to say — discard entirely
+                        logger.info(f"[agent:{conversation_id[:8]}] poll check-in: no pending work, "
+                                    f"recheck in {recheck_delay}s (discarded)")
+                        bus.publish_event(conversation_id, "discard", {
+                            "agent_name": _agent_name or "assistant",
+                        })
+                        new_messages.clear()
+                        # Mark conversation idle — agent has no pending work
+                        ConversationStore.instance().set_status(conversation_id, "idle")
+                        return
+                    else:
+                        # Real content + tags — keep the content, strip the tags
+                        logger.info(f"[agent:{conversation_id[:8]}] response with NO_PENDING_WORK tag, "
+                                    f"keeping {len(stripped)} chars, recheck in {recheck_delay}s")
+                        response_content = stripped
+                        # Also strip from the persisted assistant message
+                        if new_messages:
+                            last_assistant = None
+                            for msg in reversed(new_messages):
+                                if msg.role == "assistant":
+                                    last_assistant = msg
+                                    break
+                            if last_assistant and "[NO_PENDING_WORK]" in (last_assistant.content or ""):
+                                last_assistant.content = stripped
+                        _flush_new()
 
             # Publish final done event
             duration_ms = (time.time() - start_time) * 1000
@@ -4134,12 +4469,13 @@ class AgentLoopTask(BaseTask):
                         if "[random_thought]" in _rr and "(" in _rr:
                             _rt_agents.add(_rr.rsplit("(", 1)[-1].rstrip(")"))
                     if not _rt_agents:
-                        _rt_agents = {"default"}
+                        _rt_agents = {"assistant"}
                     from core.conversation_event_bus import ConversationEventBus as _EBrt
                     _rt_bus = _EBrt.instance()
                     _rt_store = _CSrt.instance()
                     for _rt_agent in _rt_agents:
-                        _rt_extra_key = f"random_thought::{_rt_agent}"
+                        _rt_agent_key = _rt_agent.lower()
+                        _rt_extra_key = f"random_thought::{_rt_agent_key}"
                         _rt_config = _rt_store.get_extra(conversation_id, _rt_extra_key)
                         if _rt_config and _rt_config.get("enabled"):
                             _rt_delay = _rng_rt.randint(
@@ -4147,7 +4483,7 @@ class AgentLoopTask(BaseTask):
                             )
                             _PSrt.instance().schedule_delay(
                                 conversation_id, _rt_delay,
-                                key=f"{conversation_id}::thought::{_rt_agent}",
+                                key=f"{conversation_id}::thought::{_rt_agent_key}",
                                 reason=f"[random_thought] spontaneous thought ({_rt_agent})",
                                 user_id=ctx.get("user_id", ""),
                             )
@@ -4465,7 +4801,7 @@ class AgentLoopTask(BaseTask):
                 continue
 
             # Extract agent name from key (conv_id::thought::agent_name)
-            _thought_agent = entry_key.rsplit("::", 1)[-1] if "::" in entry_key else "default"
+            _thought_agent = entry_key.rsplit("::", 1)[-1] if "::" in entry_key else "assistant"
 
             # Skip if this agent already has a thought running
             with self._active_lock:
@@ -4478,9 +4814,12 @@ class AgentLoopTask(BaseTask):
             store.set_status(cid, "active")
             bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
 
+            # Each thought agent gets its own gen_key so multiple thoughts
+            # on the same conversation don't invalidate each other.
+            _thought_gen_key = entry_key  # e.g. "conv_id::thought::grok"
             with self._conv_gen_lock:
-                gen = self._conv_generation.get(cid, 0) + 1
-                self._conv_generation[cid] = gen
+                gen = self._conv_generation.get(_thought_gen_key, 0) + 1
+                self._conv_generation[_thought_gen_key] = gen
 
             # Mark as active (but NOT user-active — won't block other thoughts)
             with self._active_lock:
@@ -4499,13 +4838,13 @@ class AgentLoopTask(BaseTask):
                         self._active_thoughts.discard(entry_key)
                     continue
                 ctx["_generation"] = gen
-                ctx["_gen_key"] = cid
+                ctx["_gen_key"] = _thought_gen_key
                 ctx["_thought_key"] = entry_key
 
                 bus.publish_event(cid, "thinking", {
                     "iteration": 0,
                     "poll": True,
-                    "agent_name": _thought_agent if _thought_agent != "default" else "",
+                    "agent_name": _thought_agent if _thought_agent != "assistant" else "",
                 })
 
                 thread = threading.Thread(
@@ -4597,7 +4936,7 @@ class AgentLoopTask(BaseTask):
                 if "[random_thought]" in _sr and "(" in _sr:
                     _thought_agent_name = _sr.rsplit("(", 1)[-1].rstrip(")")
                     break
-            if _thought_agent_name and _thought_agent_name != "default":
+            if _thought_agent_name and _thought_agent_name != "assistant":
                 try:
                     from core.resource_store import ResourceStore
                     rs = ResourceStore.instance()
@@ -4656,6 +4995,14 @@ class AgentLoopTask(BaseTask):
         )
         self._inject_executor(registry, sub_executor)
 
+        # Set source agent on SpawnAgentsHandler for self-call prevention
+        from core.tool_registry import SpawnAgentsHandler as _SAH
+        _poll_source = _thought_agent_name or "assistant"
+        for h in registry.list_tools():
+            if isinstance(h, _SAH):
+                h.set_source_agent(_poll_source)
+                break
+
         tool_defs = [
             LLMToolDefinition(
                 name=h.name, description=h.description, parameters=h.parameters_schema,
@@ -4666,7 +5013,7 @@ class AgentLoopTask(BaseTask):
         # Load context (diverged) or fall back to messages
         system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
         # Use agent-specific prompt for non-default thought agents
-        if _thought_agent_name and _thought_agent_name != "default":
+        if _thought_agent_name and _thought_agent_name != "assistant":
             try:
                 from core.resource_store import ResourceStore as _RSp
                 _agent_def = _RSp.instance().get_any("agent", _thought_agent_name, _poll_uid or "anonymous")
@@ -4676,7 +5023,23 @@ class AgentLoopTask(BaseTask):
                 pass
         from datetime import datetime
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        # Inject identity block into thought agent's system prompt
+        _thought_real = _thought_agent_name or "assistant"
         from core.conversation_store import ConversationStore as _CS3
+        _nicknames = _CS3.instance().get_extra(conversation_id, "agent_nicknames") or {}
+        _nick_key = _thought_real.lower()
+        _nickname = next((v for k, v in _nicknames.items() if k.lower() == _nick_key), None)
+        if _nickname:
+            system_prompt = (
+                f"[IDENTITY] Your real agent id is \"{_thought_real}\". "
+                f"The user has given you the nickname \"{_nickname}\". "
+                f"When other agents or tools refer to \"{_thought_real}\" or "
+                f"\"{_nickname}\" (case-insensitive), they mean YOU.\n\n"
+            ) + system_prompt
+        else:
+            system_prompt = (
+                f"[IDENTITY] Your agent id is \"{_thought_real}\".\n\n"
+            ) + system_prompt
         _context_data = _CS3.instance().load_context(conversation_id)
         _context_diverged = False
         try:
@@ -4688,26 +5051,25 @@ class AgentLoopTask(BaseTask):
         except (KeyError, TypeError):
             return None
 
+        # Replace system prompt with identity-enriched version
+        if messages and messages[0].role == "system":
+            messages[0] = LLMMessage(role="system", content=system_prompt)
+
         # Inject poll check-in prompt (not persisted unless real work happens)
         is_random_thought = any(
             r.startswith("[random_thought]") for r in (scheduled_reasons or [])
         )
         if is_random_thought:
             checkin_content = (
-                "[System: Random thought — spontaneous wake-up]\n"
-                "You are waking up randomly — this is NOT a user request or a scheduled task.\n"
-                "Review the conversation context and share a spontaneous thought worth acting on.\n"
-                "You might:\n"
-                "- Follow up on something discussed earlier with a new angle or insight\n"
-                "- Suggest an idea or action related to the conversation topic\n"
-                "- Ask a thought-provoking question\n"
-                "- Provide a useful tip or observation\n"
-                "- Use spawn_agents to ask another agent a question or start a discussion\n\n"
-                "Act on your thought: if you have something useful to say, say it.\n"
-                "You can also engage other agents using the spawn_agents tool if you want "
-                "to get their perspective, ask them a question, or collaborate on an idea.\n"
-                "If you have nothing relevant, respond with [NO_PENDING_WORK].\n"
-                "Be brief and natural — like a colleague sharing an afterthought."
+                "[System: You are continuing the conversation naturally.]\n"
+                "Think about what has been discussed so far. If something comes to mind — "
+                "a follow-up, a question, a new angle, something you forgot to mention, "
+                "a connection you just made — share it directly.\n"
+                "Respond as if you're still in the conversation, not arriving from somewhere else. "
+                "No preamble like 'a thought occurred to me' or 'while thinking about it'. "
+                "Just say what you have to say, naturally.\n"
+                "You can also engage other agents via spawn_agents if you want their perspective.\n"
+                "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
             )
         elif scheduled_reasons:
             # This wake-up was explicitly scheduled — tell the agent why
@@ -4744,20 +5106,16 @@ class AgentLoopTask(BaseTask):
         if not max_tokens:
             max_tokens = 4096
         max_iterations = int(self.config.get("max_iterations", 200))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 5))
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 
-        # File TTL = conversation TTL (0 = unlimited)
-        from core.tool_registry import CreateFileHandler, ExecuteScriptHandler
-        for h in registry.list_tools():
-            if isinstance(h, (CreateFileHandler, ExecuteScriptHandler)):
-                h.set_ttl(conv_ttl)
 
         # Resolve agent name and LLM service for source tracking
         _poll_agent_name = ""
         _poll_agent_svc = svc_id if svc_id != "default" else ""
-        if _thought_agent_name and _thought_agent_name != "default":
+        if _thought_agent_name and _thought_agent_name != "assistant":
             _poll_agent_name = _thought_agent_name
-        elif _thought_agent_name == "default":
+        elif _thought_agent_name == "assistant":
             _poll_agent_name = ""  # will show as "assistant"
 
         return {
@@ -4765,6 +5123,7 @@ class AgentLoopTask(BaseTask):
             "messages": messages, "model": model,
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,
+            "max_consecutive_tool_calls": max_consecutive_tool_calls,
             "max_rounds": int(self.config.get("max_rounds", 1)),
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
@@ -4777,6 +5136,7 @@ class AgentLoopTask(BaseTask):
             "_base_message_count": base_message_count,
             "_context_diverged": _context_diverged,
             "sub_executor": sub_executor,
+            "_nicknames": _nicknames,
         }
 
     def _wire_embed_fn(
@@ -4827,7 +5187,13 @@ class AgentLoopTask(BaseTask):
         file_base_url = self.config.get("file_base_url", "")
         # file_ttl is set per-request to match conversation TTL
         # (see _prepare_agent_context and _build_poll_context)
-        pixazo_key = self.config.get("pixazo_api_key", "")
+        # Resolve any remaining expressions (e.g. ${secrets.*} from cascaded ${flow.parameters.*})
+        from core.expression import resolve_expression as _re
+        _params = self._parameter_context._params if hasattr(self, '_parameter_context') and self._parameter_context else None
+        if file_base_url and "${" in file_base_url:
+            file_base_url = _re(file_base_url, parameters=_params)
+            if "${" in file_base_url:
+                file_base_url = ""
 
         for h in registry.list_tools():
             if isinstance(h, CreateFileHandler):
@@ -4839,8 +5205,6 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ImageGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
-                if pixazo_key:
-                    h.set_api_key(pixazo_key)
             elif isinstance(h, ScheduleRecheckHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
@@ -4895,6 +5259,9 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, (SpawnAgentsHandler, UseSkillHandler)):
                 if user_id:
                     h.set_user_id(user_id)
+                if isinstance(h, SpawnAgentsHandler):
+                    if conversation_id:
+                        h.set_conversation_id(conversation_id)
                 # SubAgentExecutor is set up lazily in _prepare_agent_context
             elif isinstance(h, ShowFileHandler):
                 if file_base_url:
@@ -5561,10 +5928,15 @@ class AgentLoopTask(BaseTask):
             if role == "assistant" and tool_calls:
                 # Assistant message that contains tool calls
                 if content:
-                    result.append({
+                    _tc_entry = {
                         "type": "assistant", "role": "assistant",
                         "content": content,
-                    })
+                    }
+                    if m.get("source"):
+                        _tc_entry["source"] = m["source"]
+                    if m.get("timestamp"):
+                        _tc_entry["timestamp"] = m["timestamp"]
+                    result.append(_tc_entry)
                 for tc in tool_calls:
                     result.append({
                         "type": "tool_call", "role": "assistant",
@@ -5586,11 +5958,90 @@ class AgentLoopTask(BaseTask):
                 if role == "user" and content.startswith("[System:"):
                     continue
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
+                if m.get("timestamp"):
+                    entry["timestamp"] = m["timestamp"]
                 if m.get("channel"):
                     entry["channel"] = m["channel"]
                 if m.get("source"):
                     entry["source"] = m["source"]
+                elif role == "assistant":
+                    # Infer source from identity prefix if present
+                    import re as _re_src
+                    _prefix_match = _re_src.match(r'^\[([^\]]+)\]:\s*', content)
+                    if _prefix_match:
+                        entry["source"] = {"type": "agent", "name": _prefix_match.group(1)}
+                    else:
+                        entry["source"] = {"type": "agent", "name": "assistant"}
                 result.append(entry)
+        return result
+
+    @staticmethod
+    def _inject_identity(messages: List[LLMMessage],
+                         nicknames: Optional[Dict[str, str]] = None,
+                         ) -> List[LLMMessage]:
+        """Return a copy of messages with identity prefixes for the LLM.
+
+        Assistant messages from named agents get ``[DisplayName]: `` prepended
+        so the LLM can distinguish who said what in multi-agent conversations.
+        User messages get ``[User]: `` prefix when there are multiple
+        participants (more than just the user and one assistant).
+        The original messages are NOT mutated — a shallow copy is returned.
+        """
+        nicks = nicknames or {}
+        # Check if there are multiple distinct agents in the conversation
+        agents_seen: set = set()
+        for m in messages:
+            if m.source and m.source.get("type") == "agent":
+                agents_seen.add(m.source.get("name", "assistant"))
+        multi_agent = len(agents_seen) > 1
+        if not multi_agent and len(agents_seen) <= 1:
+            return messages  # Single agent conversation — no prefixing needed
+
+        result = []
+        _skip_next_assistant = False
+        for m in messages:
+            if isinstance(m.content, str) and m.content.startswith(
+                    "[Conversation summary"):
+                # Summary messages — mark as such, don't prefix with agent name
+                _skip_next_assistant = True  # The "Understood..." response
+                result.append(m)
+                continue
+            if _skip_next_assistant and m.role == "assistant":
+                _skip_next_assistant = False
+                result.append(m)
+                continue
+            _skip_next_assistant = False
+            if m.role == "assistant" and isinstance(m.content, str) and m.content:
+                name = "assistant"
+                if m.source:
+                    name = m.source.get("name", "assistant")
+                display = nicks.get(name, name)
+                prefix = f"[{display}]: "
+                if not m.content.startswith("[") and not m.content.startswith(prefix):
+                    m = LLMMessage(
+                        role=m.role,
+                        content=prefix + m.content,
+                        tool_calls=m.tool_calls,
+                        tool_call_id=m.tool_call_id,
+                        source=m.source,
+                    )
+            elif m.role == "user" and isinstance(m.content, str) and m.content:
+                # Don't prefix system-injected user messages or summaries
+                if not m.content.startswith("["):
+                    name = ""
+                    if m.source:
+                        name = m.source.get("name", "")
+                    display = name or "User"
+                    prefix = f"[{display}]: "
+                    if not m.content.startswith(prefix):
+                        m = LLMMessage(
+                            role=m.role,
+                            content=prefix + m.content,
+                            tool_calls=m.tool_calls,
+                            tool_call_id=m.tool_call_id,
+                            source=m.source,
+                        )
+            result.append(m)
         return result
 
     def _serialize_messages(self, messages: List[LLMMessage],

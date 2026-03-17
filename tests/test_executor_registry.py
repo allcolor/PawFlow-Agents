@@ -65,48 +65,26 @@ class TestExecutorRegistry(unittest.TestCase):
         assert self.registry.count() == 1
         assert self.registry.get("alive") is alive
 
-    def test_save_state_creates_file(self):
+    def test_register_and_get(self):
         mock_ex = MagicMock()
-        mock_ex._flow = MagicMock()
-        mock_ex._flow.id = "test_flow"
-        mock_ex._flow_version = 3
-        mock_ex._max_workers = 4
-        mock_ex._max_retries = 2
-        mock_ex._parameter_context = MagicMock()
-        mock_ex._parameter_context._params = {"key": "val"}
-
         self.registry.register("test_flow", mock_ex)
+        assert self.registry.get("test_flow") is mock_ex
 
-        p = Path("continuous_state.json")
-        assert p.exists()
-        data = json.loads(p.read_text())
-        assert len(data["running_flows"]) == 1
-        assert data["running_flows"][0]["flow_id"] == "test_flow"
-        assert data["running_flows"][0]["flow_version"] == 3
-
-    def test_unregister_updates_state_file(self):
+    def test_unregister(self):
         mock_ex = MagicMock()
-        mock_ex._flow = MagicMock()
-        mock_ex._flow.id = "test_flow"
-        mock_ex._flow_version = 1
-        mock_ex._max_workers = 4
-        mock_ex._max_retries = 2
-        mock_ex._parameter_context = MagicMock()
-        mock_ex._parameter_context._params = {}
-
         self.registry.register("test_flow", mock_ex)
         self.registry.unregister("test_flow")
-
-        p = Path("continuous_state.json")
-        data = json.loads(p.read_text())
-        assert len(data["running_flows"]) == 0
+        assert self.registry.get("test_flow") is None
 
     def test_restore_skips_if_already_restored(self):
         self.registry._restored = True
         self.registry.restore_from_disk()  # Should be a no-op
 
-    def test_restore_no_state_file(self):
-        self.registry.restore_from_disk()  # Should not crash
+    def test_restore_no_deployments(self):
+        # Mock DeploymentRegistry to return empty
+        with patch("gui.services.executor_registry._get_deployment_registry") as mock_dr:
+            mock_dr.return_value = None
+            self.registry.restore_from_disk()  # Should not crash
         assert self.registry.count() == 0
 
 

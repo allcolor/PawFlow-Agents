@@ -48,13 +48,12 @@ class SandboxFile:
     """
 
     def __init__(self, name: str, mode: str, initial: bytes,
-                 store: Any, base_url: str, ttl: int,
+                 store: Any, base_url: str,
                  created_files: List[str]):
         self._name = name
         self._mode = mode
         self._store = store
         self._base_url = base_url
-        self._ttl = ttl
         self._created_files = created_files
         self._closed = False
 
@@ -94,7 +93,7 @@ class SandboxFile:
             if content:
                 from core.file_store import FileStore as _FS
                 ct = _FS._guess_content_type(self._name)
-                file_id = self._store.store(self._name, content, ct, self._ttl)
+                file_id = self._store.store(self._name, content, ct)
                 url = f"{self._base_url}/files/{file_id}/{self._name}"
                 self._created_files.append(url)
         self._buf.close()
@@ -114,7 +113,6 @@ class SandboxFile:
 
 def make_sandbox_open(
     base_url: str = "http://localhost:9090",
-    ttl: int = 3600,
     created_files: Optional[List[str]] = None,
     vfs: Optional[Dict[str, bytes]] = None,
 ) -> Callable:
@@ -122,7 +120,6 @@ def make_sandbox_open(
 
     Args:
         base_url: Base URL for download links.
-        ttl: File TTL in seconds.
         created_files: List to append created file URLs to.
         vfs: In-memory virtual filesystem (filename -> bytes).
     """
@@ -156,7 +153,7 @@ def make_sandbox_open(
 
         sf = SandboxFile(
             safe_name, mode, initial,
-            store, base_url, ttl, created_files,
+            store, base_url, created_files,
         )
 
         # Capture written content into VFS on close
@@ -301,7 +298,6 @@ def execute_sandboxed(
     code: str,
     local_vars: Optional[Dict[str, Any]] = None,
     base_url: str = "http://localhost:9090",
-    ttl: int = 3600,
     vfs: Optional[Dict[str, bytes]] = None,
 ) -> tuple:
     """Execute code in the sandbox.
@@ -310,7 +306,6 @@ def execute_sandboxed(
         code: Python code to execute.
         local_vars: Variables to inject into the namespace (e.g. flowfile).
         base_url: Base URL for file download links.
-        ttl: File TTL in seconds.
         vfs: Shared in-memory virtual filesystem.
 
     Returns:
@@ -324,7 +319,7 @@ def execute_sandboxed(
     created_files: List[str] = []
 
     sandbox_open = make_sandbox_open(
-        base_url=base_url, ttl=ttl,
+        base_url=base_url,
         created_files=created_files, vfs=vfs,
     )
 

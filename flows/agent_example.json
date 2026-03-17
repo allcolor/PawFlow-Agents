@@ -5,14 +5,13 @@
   "description": "LLM agent with SSE streaming, OAuth2 login, chat UI, multi-turn conversations, file generation, and per-tool permissions. Visit /chat for the web interface.",
   "parameters": {
     "llm_service": "${global.llm_default_service}",
-    "file_ttl": 3600,
     "conversation_ttl": 0,
     "oauth_provider": "google",
     "oauth_client_id": "",
     "oauth_client_secret": "",
     "oauth_redirect_uri": "http://localhost:9090/auth/callback",
     "oauth_default_role": "operator",
-    "pixazo_api_key": "",
+    "image_service": "${global.image_default_service}",
     "poll_interval": 30,
     "poll_recheck_delay": 7200
   },
@@ -122,9 +121,8 @@
         "conversation_store": true,
         "conversation_ttl": "${flow.parameters.conversation_ttl}",
         "file_base_url": "http://localhost:9090",
-        "file_ttl": "${flow.parameters.file_ttl}",
         "streaming": true,
-        "pixazo_api_key": "${flow.parameters.pixazo_api_key}"
+        "image_service": "${flow.parameters.image_service}"
       }
     },
     "agent_events": {

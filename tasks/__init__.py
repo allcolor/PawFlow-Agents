@@ -47,6 +47,9 @@ def _register_all_services():
     except ImportError:
         pass  # slack_sdk not installed
 
+    # Image generation services
+    import services.pixazo_image_service      # noqa: F401
+
     # Executor service
     import services.remote_executor_service   # noqa: F401
 

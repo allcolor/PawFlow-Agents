@@ -11,5 +11,6 @@
   "grok_llm_model": "grok-4-latest",
   "claude_code_service": "claude_llm_service",
   "llm_default_service": "llm_default_service",
-  "claude_llm_service": "claude_llm_service"
+  "claude_llm_service": "claude_llm_service",
+  "image_default_service": "image_default_service"
 }

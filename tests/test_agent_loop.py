@@ -352,8 +352,9 @@ class TestToolRegistry(unittest.TestCase):
 
     def test_read_file_handler(self):
         from core.file_store import FileStore
-        FileStore.reset()
+        import shutil
         _tmpdir = tempfile.mkdtemp()
+        _old_instance = FileStore._instance
         store = FileStore(base_dir=_tmpdir)
         FileStore._instance = store
         try:
@@ -362,8 +363,7 @@ class TestToolRegistry(unittest.TestCase):
             result = handler.execute({"path": "hello.txt"})
             assert result == "hello world"
         finally:
-            FileStore.reset()
-            import shutil
+            FileStore._instance = _old_instance
             shutil.rmtree(_tmpdir, ignore_errors=True)
 
     def test_read_file_nonexistent(self):
@@ -1634,19 +1634,19 @@ class TestRandomThought(unittest.TestCase):
         from core.poll_scheduler import PollScheduler
         import time
         sched = PollScheduler.instance()
-        sched.schedule("conv1", time.time() + 3600, key="conv1::thought::default",
+        sched.schedule("conv1", time.time() + 3600, key="conv1::thought::assistant",
                        reason="test thought")
         # Can retrieve by compound key
-        entry = sched.get("conv1::thought::default")
+        entry = sched.get("conv1::thought::assistant")
         assert entry is not None
         assert entry["conversation_id"] == "conv1"
-        assert entry["key"] == "conv1::thought::default"
+        assert entry["key"] == "conv1::thought::assistant"
         # Regular key still works
         sched.schedule("conv2", time.time() + 3600, reason="normal")
         assert sched.get("conv2") is not None
         # Cancel compound key
-        assert sched.cancel("conv1::thought::default") is True
-        assert sched.get("conv1::thought::default") is None
+        assert sched.cancel("conv1::thought::assistant") is True
+        assert sched.get("conv1::thought::assistant") is None
 
     def test_random_thought_on(self):
         """Action 'on' stores config and creates schedule."""
@@ -1664,15 +1664,15 @@ class TestRandomThought(unittest.TestCase):
         result = task.execute(ff)
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
-        assert data["agent"] == "default"
+        assert data["agent"] == "assistant"
         assert data["frequency"] == "2-3/h"
         assert data["next_in_seconds"] > 0
         # Config stored in extras
-        cfg = store.get_extra("rt1", "random_thought::default")
+        cfg = store.get_extra("rt1", "random_thought::assistant")
         assert cfg["enabled"] is True
         assert cfg["min_interval"] == 1200
         # Schedule created
-        sched = PollScheduler.instance().get("rt1::thought::default")
+        sched = PollScheduler.instance().get("rt1::thought::assistant")
         assert sched is not None
 
     def test_random_thought_off(self):
@@ -1697,9 +1697,9 @@ class TestRandomThought(unittest.TestCase):
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
         assert data["disabled"] is True
-        cfg = store.get_extra("rt2", "random_thought::default")
+        cfg = store.get_extra("rt2", "random_thought::assistant")
         assert cfg["enabled"] is False
-        assert PollScheduler.instance().get("rt2::thought::default") is None
+        assert PollScheduler.instance().get("rt2::thought::assistant") is None
 
     def test_random_thought_status(self):
         """Action 'status' returns config and next trigger."""
@@ -1745,7 +1745,7 @@ class TestRandomThought(unittest.TestCase):
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
         assert data["triggered"] is True
-        sched = PollScheduler.instance().get("rt4::thought::default")
+        sched = PollScheduler.instance().get("rt4::thought::assistant")
         assert sched is not None
 
     def test_random_thought_not_blocked_by_active(self):
@@ -1754,7 +1754,7 @@ class TestRandomThought(unittest.TestCase):
         import time
         sched = PollScheduler.instance()
         # Create a thought schedule that's already due
-        sched.schedule("rt5", time.time() - 10, key="rt5::thought::default",
+        sched.schedule("rt5", time.time() - 10, key="rt5::thought::assistant",
                        reason="[random_thought] test", user_id="u1")
         task = self._make_task()
         # Mark conversation as user-active
@@ -1770,8 +1770,87 @@ class TestRandomThought(unittest.TestCase):
         ])
         task._poll_once()
         # Thought should have been consumed from scheduler (not deferred)
-        new_sched = sched.get("rt5::thought::default")
+        new_sched = sched.get("rt5::thought::assistant")
         assert new_sched is None
+
+
+class TestImageServiceResolution(unittest.TestCase):
+    """Tests for image generation service architecture."""
+
+    def test_image_handler_delegates_to_service(self):
+        """ImageGenerationHandler delegates to injected service."""
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        mock_service = MagicMock()
+        mock_service.generate.return_value = {
+            "image_bytes": b"\x89PNG fake",
+            "content_type": "image/png",
+        }
+        handler.set_service(mock_service)
+        handler.set_base_url("http://localhost:9090")
+
+        with patch("core.file_store.FileStore.instance") as mock_fs:
+            mock_store = MagicMock()
+            mock_store.store.return_value = "file123"
+            mock_fs.return_value = mock_store
+
+            result = handler.execute({"prompt": "a cat", "width": 512})
+
+        mock_service.generate.assert_called_once_with(prompt="a cat", width=512)
+        assert "file123" in result
+        assert "Image generated" in result
+
+    def test_image_handler_no_service_returns_error(self):
+        """Without a service, handler returns a clear error message."""
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        result = handler.execute({"prompt": "a cat"})
+        assert "no image generation service configured" in result
+
+    def test_image_service_schema(self):
+        """AgentLoopTask schema has image_service, not pixazo_api_key."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask({"system_prompt": "test"})
+        schema = task.get_parameter_schema()
+        assert "image_service" in schema
+        assert "pixazo_api_key" not in schema
+
+    def test_resolve_image_service_from_flow(self):
+        """_resolve_image_service finds service in flow-level services."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        mock_svc = MagicMock()
+        mock_svc.generate = MagicMock()
+        task._services = {"my_img_svc": mock_svc}
+
+        result = task._resolve_image_service("my_img_svc", "user1")
+        assert result is mock_svc
+
+    def test_resolve_image_service_none(self):
+        """_resolve_image_service returns None for empty service_id."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        task._services = {}
+        assert task._resolve_image_service("", "user1") is None
+
+    def test_resolve_image_service_from_global(self):
+        """_resolve_image_service falls through to GlobalServiceRegistry."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        task = AgentLoopTask.__new__(AgentLoopTask)
+        task._services = {}
+
+        mock_svc = MagicMock()
+        mock_svc.generate = MagicMock()
+
+        with patch("gui.services.user_service_registry.UserServiceRegistry") as mock_usr:
+            mock_usr.get_instance.return_value.get_live_instance.return_value = None
+            with patch("gui.services.global_service_registry.GlobalServiceRegistry") as mock_glob:
+                mock_glob.get_instance.return_value.get_live_instance.return_value = mock_svc
+                result = task._resolve_image_service("pixazo_svc", "user1")
+
+        assert result is mock_svc
 
 
 if __name__ == "__main__":

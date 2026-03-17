@@ -84,11 +84,38 @@ class ValidateSessionAuthTask(BaseTask):
         if session is None:
             logger.debug(f"Invalid session token: {token[:16]}... "
                          f"(active_sessions={len(sm._sessions)})")
-            return [self._auth_failed(flowfile, "Invalid session token")]
+            # Try silent refresh before failing
+            refreshed_session = self._try_silent_refresh(flowfile, sm)
+            if refreshed_session:
+                session = refreshed_session
+                # Re-set the cookie with the new session_id
+                cookie_name = self.config.get("cookie_name", "pyfi2_token")
+                cookie_max_age = 28800
+                cookie = (
+                    f"{cookie_name}={session.session_id}; "
+                    f"Path=/; Max-Age={cookie_max_age}; "
+                    f"HttpOnly; SameSite=Lax"
+                )
+                flowfile.set_attribute("http.response.header.Set-Cookie", cookie)
+            else:
+                return [self._auth_failed(flowfile, "Invalid session token")]
 
         if session.is_expired:
             sm._sessions.pop(token, None)
-            return [self._auth_failed(flowfile, "Session expired")]
+            # Try silent refresh before failing
+            refreshed_session = self._try_silent_refresh(flowfile, sm)
+            if refreshed_session:
+                session = refreshed_session
+                cookie_name = self.config.get("cookie_name", "pyfi2_token")
+                cookie_max_age = 28800
+                cookie = (
+                    f"{cookie_name}={session.session_id}; "
+                    f"Path=/; Max-Age={cookie_max_age}; "
+                    f"HttpOnly; SameSite=Lax"
+                )
+                flowfile.set_attribute("http.response.header.Set-Cookie", cookie)
+            else:
+                return [self._auth_failed(flowfile, "Session expired")]
 
         # Sliding session: renew expiry on each successful validation
         import time as _time
@@ -120,6 +147,85 @@ class ValidateSessionAuthTask(BaseTask):
                     return part[len(cookie_name) + 1:]
 
         return ""
+
+    def _try_silent_refresh(self, flowfile: FlowFile, sm) -> object:
+        """Try to silently refresh the OAuth session using stored refresh tokens.
+
+        Returns a new Session on success, or None on failure.
+        """
+        try:
+            from core.oauth_token_store import OAuthTokenStore
+            token_store = OAuthTokenStore.instance()
+
+            # We need to find the user — check all known users with tokens
+            # The cookie is invalid/expired, so we can't get user from session.
+            # But we can extract user from the old (expired) session if it existed,
+            # or from stored tokens.
+            cookie_name = self.config.get("cookie_name", "pyfi2_token")
+            old_token = self._extract_token(flowfile, cookie_name)
+
+            # Check if there's an expired session we can identify the user from
+            username = None
+            provider = None
+            for sid, sess in list(sm._sessions.items()):
+                if sid == old_token:
+                    username = sess.username
+                    break
+
+            # Also check recently expired sessions that may have been cleaned up
+            if not username:
+                # Try all users who have OAuth tokens stored
+                import os
+                users_dir = os.path.join("config", "users")
+                if os.path.isdir(users_dir):
+                    for user_dir in os.listdir(users_dir):
+                        tokens_path = os.path.join(users_dir, user_dir, "oauth_tokens.json")
+                        if os.path.exists(tokens_path):
+                            # Try refresh for this user
+                            for prov in ["google", "github", "microsoft"]:
+                                new_access = token_store.get_access_token(user_dir, prov)
+                                if new_access:
+                                    username = user_dir
+                                    provider = prov
+                                    break
+                        if username:
+                            break
+
+            if not username:
+                return None
+
+            # Determine provider if not found yet
+            if not provider:
+                for prov in ["google", "github", "microsoft"]:
+                    if token_store.has_tokens(username, prov):
+                        new_access = token_store.get_access_token(username, prov)
+                        if new_access:
+                            provider = prov
+                            break
+
+            if not provider:
+                return None
+
+            # Re-create session for this user
+            user = sm._users.get(username)
+            if not user:
+                return None
+
+            session = sm.authenticate_oauth(
+                provider=provider,
+                oauth_id=user.oauth_id or "",
+                email=user.email or username,
+                display_name=user.display_name or username,
+                ip_address=flowfile.get_attribute("http.remote.addr") or "",
+            )
+
+            if session:
+                logger.info(f"Silent token refresh: renewed session for {username}")
+            return session
+
+        except Exception as e:
+            logger.debug(f"Silent refresh failed: {e}")
+            return None
 
     def _auth_failed(self, flowfile: FlowFile, error: str) -> FlowFile:
         """Handle authentication failure."""

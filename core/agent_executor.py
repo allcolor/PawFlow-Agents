@@ -537,15 +537,59 @@ class SubAgentExecutor:
 
 def resolve_agent_task(
     agent_name: str, message: str, user_id: str,
+    conversation_id: str = "",
 ) -> AgentTask:
     """Resolve an agent name to an AgentTask using the ResourceStore.
 
     Loads the agent definition and fills in all fields.
+    Supports nickname resolution and case-insensitive matching.
     Raises KeyError if agent not found.
     """
     from core.resource_store import ResourceStore
     store = ResourceStore.instance()
+
+    # 1) Direct lookup
     agent_def = store.get_any("agent", agent_name, user_id)
+
+    # 2) Case-insensitive lookup
+    if agent_def is None:
+        all_agents = store.list_all("agent", user_id)
+        for a in all_agents:
+            if a["name"].lower() == agent_name.lower():
+                agent_name = a["name"]
+                agent_def = store.get_any("agent", agent_name, user_id)
+                break
+
+    # 3) Nickname → real name resolution via conversation store
+    if agent_def is None and conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            nicknames = ConversationStore.instance().get_extra(
+                conversation_id, "agent_nicknames") or {}
+            # nicknames = {real_name: display_name} — reverse lookup
+            for real_name, nick in nicknames.items():
+                if nick.lower() == agent_name.lower():
+                    agent_name = real_name
+                    agent_def = store.get_any("agent", agent_name, user_id)
+                    break
+            # Also try case-insensitive on real names in nicknames
+            if agent_def is None:
+                for real_name in nicknames:
+                    if real_name.lower() == agent_name.lower():
+                        agent_name = real_name
+                        agent_def = store.get_any("agent", agent_name, user_id)
+                        break
+        except Exception:
+            pass
+
+    # "assistant" is the default persona, not a ResourceStore agent
+    if agent_def is None and agent_name.lower() == "assistant":
+        agent_def = {
+            "name": "assistant",
+            "prompt": "You are a helpful assistant.",
+            "llm_service": "",
+        }
+
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
 
@@ -557,11 +601,35 @@ def resolve_agent_task(
         if "${" in llm_svc:
             llm_svc = ""  # unresolved → skip
 
+    # Build system prompt with identity block
+    _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
+    _nick = None
+    if conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            _nicks = ConversationStore.instance().get_extra(
+                conversation_id, "agent_nicknames") or {}
+            _nk = agent_name.lower()
+            _nick = next((v for k, v in _nicks.items() if k.lower() == _nk), None)
+        except Exception:
+            pass
+    if _nick:
+        _sys_prompt = (
+            f"[IDENTITY] Your real agent id is \"{agent_name}\". "
+            f"The user has given you the nickname \"{_nick}\". "
+            f"When other agents or tools refer to \"{agent_name}\" or "
+            f"\"{_nick}\" (case-insensitive), they mean YOU.\n\n"
+        ) + _sys_prompt
+    else:
+        _sys_prompt = (
+            f"[IDENTITY] Your agent id is \"{agent_name}\".\n\n"
+        ) + _sys_prompt
+
     return AgentTask(
         id=uuid.uuid4().hex[:12],
         agent_name=agent_name,
         message=message,
-        system_prompt=agent_def.get("prompt", "You are a helpful assistant."),
+        system_prompt=_sys_prompt,
         model=agent_def.get("model", ""),
         tools=agent_def.get("tools") or None,
         max_iterations=agent_def.get("max_iterations", 50),

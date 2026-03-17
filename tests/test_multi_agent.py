@@ -83,7 +83,7 @@ class TestAgentTask:
         task = AgentTask(id="t1", agent_name="test", message="hello")
         assert task.max_iterations == 50
         assert task.max_depth == 1
-        assert task.timeout == 120
+        assert task.timeout == 300
         assert task.tools is None
 
 
@@ -405,7 +405,7 @@ class TestResolveAgentTask:
 
             assert task.agent_name == "analyst"
             assert task.message == "Analyze this"
-            assert task.system_prompt == "You are an analyst"
+            assert "You are an analyst" in task.system_prompt
             assert task.model == "gpt-4"
             assert task.tools == ["execute_script", "web_search"]
             assert task.max_depth == 2
@@ -437,7 +437,7 @@ class TestSpawnAgentsExcluded:
 
         task = AgentTask(
             id="t1", agent_name="test", message="Hi",
-            system_prompt="...", tools=None,  # no whitelist = all except spawn
+            system_prompt="...", tools=["echo"],  # explicit whitelist excludes spawn
         )
         executor.execute_agent(task)
 

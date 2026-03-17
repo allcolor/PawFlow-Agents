@@ -27,7 +27,7 @@ class FileStore:
     _lock = threading.Lock()
 
     def __init__(self, base_dir: Optional[str] = None):
-        self._base_dir = base_dir or _DEFAULT_DIR
+        self._base_dir = os.path.abspath(base_dir or _DEFAULT_DIR)
         os.makedirs(self._base_dir, exist_ok=True)
         self._entries: Dict[str, Dict[str, Any]] = {}
         self._store_lock = threading.RLock()
@@ -41,13 +41,6 @@ class FileStore:
                     cls._instance = cls()
         return cls._instance
 
-    @classmethod
-    def reset(cls):
-        """Reset singleton (for testing)."""
-        with cls._lock:
-            if cls._instance is not None:
-                cls._instance._cleanup_all()
-            cls._instance = None
 
     def _ensure_loaded(self):
         """Load index from disk on first access."""
@@ -84,15 +77,13 @@ class FileStore:
             pass
 
     def store(self, filename: str, content: bytes,
-              content_type: str = "application/octet-stream",
-              ttl: int = 3600) -> str:
+              content_type: str = "application/octet-stream") -> str:
         """Store a file and return its file_id.
 
         Args:
             filename: Original filename (preserved for download)
             content: File content as bytes
             content_type: MIME type
-            ttl: Time to live in seconds (default 1 hour, 0 = no expiry)
 
         Returns:
             file_id: Unique identifier for retrieval
@@ -116,12 +107,11 @@ class FileStore:
                 "content_type": content_type,
                 "size": len(content),
                 "created_at": time.time(),
-                "expires_at": time.time() + ttl if ttl > 0 else 0,
             }
 
         self._save_index()
         logger.info(f"FileStore: stored '{safe_name}' as {file_id} "
-                    f"({len(content)} bytes, TTL {ttl}s)")
+                    f"({len(content)} bytes)")
         return file_id
 
     def get(self, file_id: str) -> Optional[Tuple[str, bytes, str]]:
@@ -134,10 +124,6 @@ class FileStore:
             self._ensure_loaded()
             entry = self._entries.get(file_id)
             if entry is None:
-                return None
-            if entry["expires_at"] > 0 and entry["expires_at"] < time.time():
-                self._remove_entry(file_id)
-                self._save_index()
                 return None
 
         try:
@@ -156,9 +142,8 @@ class FileStore:
             entry = self._entries.get(file_id)
             if entry is None:
                 return False
-            if entry["expires_at"] > 0:
-                return entry["expires_at"] >= time.time()
-            return True
+            # File exists if it's in the index and on disk
+            return os.path.exists(entry.get("path", ""))
 
     def delete(self, file_id: str):
         with self._store_lock:
@@ -177,46 +162,21 @@ class FileStore:
                 pass
 
     def list_files(self) -> List[Dict[str, Any]]:
-        """List active (non-expired) files."""
-        now = time.time()
+        """List all stored files."""
         result = []
         with self._store_lock:
             self._ensure_loaded()
             for fid, entry in self._entries.items():
-                if entry["expires_at"] > 0 and entry["expires_at"] < now:
-                    continue
                 result.append({
                     "file_id": fid,
                     "filename": entry["filename"],
                     "content_type": entry["content_type"],
                     "size": entry["size"],
                     "created_at": entry["created_at"],
-                    "expires_at": entry["expires_at"],
                 })
         return result
 
-    def cleanup(self) -> int:
-        """Remove expired files. Returns count removed."""
-        now = time.time()
-        removed = 0
-        with self._store_lock:
-            self._ensure_loaded()
-            expired = [fid for fid, e in self._entries.items()
-                       if e["expires_at"] > 0 and e["expires_at"] < now]
-            for fid in expired:
-                self._remove_entry(fid)
-                removed += 1
-        if removed:
-            self._save_index()
-            logger.info(f"FileStore: cleaned up {removed} expired files")
-        return removed
 
-    def _cleanup_all(self):
-        """Remove all files (for shutdown/reset)."""
-        with self._store_lock:
-            for fid in list(self._entries.keys()):
-                self._remove_entry(fid)
-        self._save_index()
 
     def count(self) -> int:
         with self._store_lock:
@@ -239,7 +199,6 @@ class FileStore:
                         "content_type": e["content_type"],
                         "size": e["size"],
                         "created_at": e["created_at"],
-                        "expires_at": e["expires_at"],
                     }
                     for fid, e in self._entries.items()
                 }
@@ -261,22 +220,22 @@ class FileStore:
                 with open(path, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 loaded = 0
-                expired = 0
                 for fid, entry in data.items():
-                    # Skip expired
-                    if entry.get("expires_at", 0) > 0 and entry["expires_at"] < now:
-                        # Clean up expired file from disk
-                        file_dir = os.path.join(self._base_dir, fid)
-                        shutil.rmtree(file_dir, ignore_errors=True)
-                        expired += 1
-                        continue
+                    # Resolve path — may be relative from older versions
+                    stored_path = entry.get("path", "")
+                    if stored_path and not os.path.isabs(stored_path):
+                        # Reconstruct absolute path from base_dir
+                        stored_path = os.path.join(
+                            self._base_dir, fid, entry.get("filename", ""))
+                        entry["path"] = stored_path
                     # Verify file still exists
-                    if os.path.exists(entry.get("path", "")):
+                    if os.path.exists(stored_path):
                         self._entries[fid] = entry
                         loaded += 1
-                if loaded or expired:
-                    logger.info(f"FileStore: loaded {loaded} files from index "
-                                f"({expired} expired removed)")
+                if loaded:
+                    logger.info(f"FileStore: loaded {loaded} files from index")
+                if loaded == 0:
+                    self._rebuild_index()
                 return
             except Exception as e:
                 logger.warning(f"FileStore: failed to load index, rebuilding: {e}")

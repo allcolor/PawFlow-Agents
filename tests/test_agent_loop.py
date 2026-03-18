@@ -1326,8 +1326,8 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         assert data["diverged"] is True
         assert data["message_count"] == 2
 
-    def test_rebuild_action_full_restore(self):
-        """rebuild restores full conversation when it fits."""
+    def test_rebuild_action_accepted(self):
+        """rebuild returns accepted ack (runs in background)."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
         msgs = [
@@ -1336,7 +1336,6 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
             {"role": "assistant", "content": "hello"},
         ]
         store.save("cx3", msgs)
-        # Pre-diverge with a short context
         store.save_context("cx3", [{"role": "system", "content": "short"}])
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
@@ -1345,9 +1344,10 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         }).encode())
         result = task.execute(ff)
         data = json.loads(result[0].get_content())
-        assert data["ok"] is True
-        assert data["action"] == "full_restore"
-        assert data["before"] == 3
+        assert data["status"] == "accepted"
+        assert data["action"] == "rebuild"
+        # Rebuild runs in background — wait briefly for thread
+        import time; time.sleep(0.5)
         # After rebuild, context should contain all messages
         ctx = store.load_context("cx3")
         assert ctx is not None
@@ -1375,8 +1375,8 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         }).encode())
         result = task.execute(ff)
         data = json.loads(result[0].get_content())
-        assert data["ok"] is True
-        assert data["kept_messages"] == 2
+        assert data["status"] == "accepted"
+        import time; time.sleep(0.5)  # background thread
         # Context should be saved
         ctx = store.load_context("cx4")
         assert ctx is not None

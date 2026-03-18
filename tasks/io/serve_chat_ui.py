@@ -3229,12 +3229,9 @@ async function handleSlashCommand(text) {
       body: JSON.stringify(restartBody),
       credentials: 'same-origin',
     }).then(r => r.json()).then(data => {
-      if (data.ok) {
-        addMsg('system', data.kept_messages === 0 ? t('restartEmpty') : t('restartFrom', {n: data.kept_messages}));
-      } else {
-        addMsg('error', data.error || 'Failed');
-      }
-    }).catch(e => addMsg('error', e.message))
+      if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
+      // SSE compact_progress events handle the display
+    }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; })
       .finally(() => { hideContextOp(); contextOpInProgress = false; });
     return true;
   }
@@ -3270,13 +3267,8 @@ async function handleSlashCommand(text) {
       body: JSON.stringify(summaryBody),
       credentials: 'same-origin',
     }).then(r => r.json()).then(data => {
-      if (data.ok) {
-        addMsg('system', t('resumed', {n: data.messages_summarized, len: data.summary_length}));
-      } else {
-        addMsg('error', data.error || 'Failed');
-      }
-    }).catch(e => addMsg('error', e.message))
-      .finally(() => { hideContextOp(); contextOpInProgress = false; });
+      if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
+    }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; });
     return true;
   }
 
@@ -3366,11 +3358,8 @@ async function handleSlashCommand(text) {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify(rfBody),
     }).then(r => r.json()).then(data => {
-      if (data.error) { addMsg('error', 'Rebuild full failed: ' + data.error); return; }
-      const target = data.agent || 'shared';
-      addMsg('system', 'Context rebuilt (full): ' + data.messages + ' messages, ~' + data.token_estimate + ' tokens (' + target + ')');
-    }).catch(e => addMsg('error', 'Rebuild full failed: ' + e.message))
-      .finally(() => { hideContextOp(); contextOpInProgress = false; });
+      if (data.error) { addMsg('error', 'Rebuild full failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
+    }).catch(e => { addMsg('error', 'Rebuild full failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
     return true;
   }
 
@@ -4385,14 +4374,8 @@ function cmdRebuild(agentName) {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
-    if (data.action === 'too_large') {
-      addMsg('system', data.message);
-    } else {
-      addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
-    }
-  }).catch(e => addMsg('error', 'Rebuild failed: ' + e.message))
-    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+    if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
+  }).catch(e => { addMsg('error', 'Rebuild failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
 }
 
 function cmdRebuildClean() {

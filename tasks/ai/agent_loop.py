@@ -1225,6 +1225,51 @@ class AgentLoopTask(BaseTask):
 
     # ── Context operation pause/resume ─────────────────────────────────
 
+    def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile):
+        """Run a context operation in background with lock + SSE progress.
+
+        Returns immediately with an ack. The background thread:
+        1. Cancels the active agent
+        2. Acquires the context op lock (blocks FlowFiles)
+        3. Runs fn() which returns a result dict
+        4. Publishes SSE done/error event
+        5. Releases the lock
+        """
+        from core.conversation_event_bus import ConversationEventBus
+        bus = ConversationEventBus.instance()
+
+        def _bg():
+            self.cancel_agent(conv_id, silent=True)
+            if not self._acquire_context_op(conv_id, timeout=60.0):
+                bus.publish_event(conv_id, "compact_progress", {
+                    "stage": "error",
+                    "error": f"Timeout waiting for active agent ({op_name})",
+                })
+                return
+            try:
+                bus.publish_event(conv_id, "compact_progress", {
+                    "stage": "start", "detail": op_name,
+                })
+                result = fn()
+                bus.publish_event(conv_id, "compact_progress", {
+                    "stage": "done", **result,
+                })
+            except Exception as e:
+                bus.publish_event(conv_id, "compact_progress", {
+                    "stage": "error", "error": str(e),
+                })
+                logger.error("%s failed: %s", op_name, e, exc_info=True)
+            finally:
+                self._release_context_op(conv_id)
+
+        thread = threading.Thread(target=_bg, daemon=True,
+                                  name=f"{op_name}-{conv_id[:8]}")
+        thread.start()
+        flowfile.set_content(json.dumps({
+            "status": "accepted", "action": op_name,
+        }).encode())
+        return [flowfile]
+
     def _get_context_op_event(self, conversation_id: str) -> threading.Event:
         """Get or create a per-conversation context-op Event (set = free)."""
         with self._context_op_lock:
@@ -1257,11 +1302,8 @@ class AgentLoopTask(BaseTask):
                 return True
             return evt.is_set()
 
-    _CONTEXT_OPS = frozenset((
-        # compact manages its own lock (background thread)
-        "rebuild", "rebuild_clean", "rebuild_full",
-        "resume_conversation", "restart_from",
-    ))
+    # All context ops manage their own lock in background threads
+    _CONTEXT_OPS = frozenset()
 
     @staticmethod
     def _extract_conversation_id(ff) -> Optional[str]:
@@ -1624,34 +1666,33 @@ class AgentLoopTask(BaseTask):
 
         if action == "restart_from":
             conv_id = body.get("conversation_id", "")
-            _ctx_agent = body.get("agent_name", "")
+            _rf_agent = body.get("agent_name", "")
             keep_last = int(body.get("keep_last", 5))
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            all_msgs = store.load(conv_id, user_id=user_id)
-            if not all_msgs:
+            _rf_msgs = store.load(conv_id, user_id=user_id)
+            if not _rf_msgs:
                 flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            # Take last N messages + system prompt as new context
-            deserialized = self._deserialize_messages(all_msgs)
-            system_msgs = [m for m in deserialized if m.role == "system"]
-            non_system = [m for m in deserialized if m.role != "system"]
-            if keep_last == 0:
-                # Empty context — keep only system prompt
-                new_context = system_msgs
-            else:
-                kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
-                new_context = system_msgs + kept
-            serialized_ctx = self._serialize_messages(new_context)
-            store.save_agent_context(conv_id, _ctx_agent, serialized_ctx)
-            flowfile.set_content(json.dumps({
-                "ok": True, "conversation_id": conv_id,
-                "kept_messages": len(new_context) - len(system_msgs),
-            }).encode())
-            return [flowfile]
+
+            def _do_restart():
+                deserialized = self._deserialize_messages(_rf_msgs)
+                system_msgs = [m for m in deserialized if m.role == "system"]
+                non_system = [m for m in deserialized if m.role != "system"]
+                if keep_last == 0:
+                    new_context = system_msgs
+                else:
+                    kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
+                    new_context = system_msgs + kept
+                serialized_ctx = self._serialize_messages(new_context)
+                store.save_agent_context(conv_id, _rf_agent, serialized_ctx)
+                return {"kept_messages": len(new_context) - len(system_msgs),
+                        "agent": _rf_agent or "shared"}
+
+            return self._run_bg_context_op(conv_id, "restart_from", _do_restart, flowfile)
 
         if action == "delete_message":
             conv_id = body.get("conversation_id", "")
@@ -1669,66 +1710,56 @@ class AgentLoopTask(BaseTask):
 
         if action == "resume_conversation":
             conv_id = body.get("conversation_id", "")
-            _ctx_agent = body.get("agent_name", "")
+            _rs_agent = body.get("agent_name", "")
             max_summary_tokens = int(body.get("max_tokens", 500))
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            all_msgs = store.load(conv_id, user_id=user_id)
-            if not all_msgs:
+            _rs_msgs = store.load(conv_id, user_id=user_id)
+            if not _rs_msgs:
                 flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            # Resolve LLM client for summarization
-            task_llm_service = self.config.get("llm_service", "")
-            if not task_llm_service or "${" in task_llm_service:
-                task_llm_service = "default"
-            client, _ = self._resolve_llm_service(task_llm_service, user_id)
-            if not client and self.config.get("api_key"):
-                client = LLMClient(
-                    provider=self.config.get("provider", "openai"),
-                    api_key=self.config["api_key"],
-                    base_url=self.config.get("base_url", ""),
-                    timeout=int(self.config.get("timeout", 120)),
+            # Resolve LLM client
+            _summ_client, _ = self._get_summarizer_client(user_id)
+            _rs_client = _summ_client
+            if not _rs_client:
+                _rs_client, _ = self._resolve_client(
+                    self.config.get("llm_service", "default"),
+                    user_id, resolve_expressions=False,
                 )
-            if not client:
-                flowfile.set_content(json.dumps({"error": "No LLM service available for summarization"}).encode())
-                flowfile.set_attribute("http.response.status", "500")
+            if not _rs_client:
+                flowfile.set_content(json.dumps({"error": "No LLM service for summarization"}).encode())
                 return [flowfile]
-            # Deserialize and summarize
-            try:
-                deserialized = self._deserialize_messages(all_msgs)
-                # Filter out system messages for summarization
+
+            def _do_resume():
+                deserialized = self._deserialize_messages(_rs_msgs)
                 content_msgs = [m for m in deserialized if m.role != "system"]
-                model = self.config.get("model", "")
-                # Use agent's LLM service max_tokens as context window
                 context_max = int(self.config.get("context_max_tokens", 64000))
-                if _ctx_agent:
+                # Resolve agent's max_tokens
+                if _rs_agent:
                     try:
-                        from core.resource_store import ResourceStore as _RS_resume
-                        _adef_r = _RS_resume.instance().get_any("agent", _ctx_agent, user_id)
-                        if _adef_r and _adef_r.get("llm_service"):
-                            _svc_r = _adef_r["llm_service"]
-                            if "${" in _svc_r:
+                        from core.resource_store import ResourceStore as _RS_r
+                        _ad = _RS_r.instance().get_any("agent", _rs_agent, user_id)
+                        if _ad and _ad.get("llm_service"):
+                            _sid = _ad["llm_service"]
+                            if "${" in _sid:
                                 from core.expression import resolve_expression as _re_r
-                                _svc_r = _re_r(_svc_r, owner=user_id)
-                            if _svc_r and "${" not in _svc_r:
-                                _, _rsvc = self._resolve_llm_service(_svc_r, user_id)
-                                if _rsvc:
-                                    _v = int((getattr(_rsvc, 'config', {}) or {}).get("max_tokens", 0))
+                                _sid = _re_r(_sid, owner=user_id)
+                            if _sid and "${" not in _sid:
+                                _, _sv = self._resolve_llm_service(_sid, user_id)
+                                if _sv:
+                                    _v = int((getattr(_sv, 'config', {}) or {}).get("max_tokens", 0))
                                     if _v:
                                         context_max = _v
                     except Exception:
                         pass
-                summary = self._summarize_messages(content_msgs, client, context_max)
-                # Truncate summary to approximate token budget
-                if len(summary) > max_summary_tokens * 4:  # ~4 chars per token
-                    # Re-summarize with explicit length constraint
-                    summary = self._call_summarize_with_budget(
-                        client, summary, max_summary_tokens,
-                    )
-                # Build new context: system + summary pair
+                summary = self._summarize_messages(
+                    content_msgs, _rs_client, context_max,
+                    target_tokens=max_summary_tokens,
+                    conversation_id=conv_id,
+                )
                 sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
                 from datetime import datetime
                 sys_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -1739,17 +1770,12 @@ class AgentLoopTask(BaseTask):
                     LLMMessage(role="assistant",
                                content="Understood. I have the context from our earlier conversation. Continuing from where we left off."),
                 ]
-                store.save_agent_context(conv_id, _ctx_agent, self._serialize_messages(new_context))
-                flowfile.set_content(json.dumps({
-                    "ok": True, "conversation_id": conv_id,
-                    "summary_length": len(summary),
-                    "messages_summarized": len(all_msgs),
-                }, ensure_ascii=False).encode())
-            except Exception as e:
-                logger.error(f"Resume summarization failed: {e}", exc_info=True)
-                flowfile.set_content(json.dumps({"error": str(e)}).encode())
-                flowfile.set_attribute("http.response.status", "500")
-            return [flowfile]
+                store.save_agent_context(conv_id, _rs_agent, self._serialize_messages(new_context))
+                return {"summary_length": len(summary),
+                        "messages_summarized": len(_rs_msgs),
+                        "agent": _rs_agent or "shared"}
+
+            return self._run_bg_context_op(conv_id, "summary", _do_resume, flowfile)
 
         if action == "ping":
             # Keep-alive: session renewal happens in validateSessionAuth upstream
@@ -2268,168 +2294,95 @@ class AgentLoopTask(BaseTask):
             _compact_agent_name = _ctx_agent
             _compact_keep = int(self.config.get("context_keep_recent", 6))
 
-            # Run compaction in background — holds context op lock until done
-            _self_ref = self
-
-            def _run_compact():
-                from core.conversation_event_bus import ConversationEventBus
-                bus = ConversationEventBus.instance()
-                # Acquire context op lock (blocks incoming FlowFiles for this conv)
-                _self_ref.cancel_agent(_compact_conv, silent=True)
-                if not _self_ref._acquire_context_op(_compact_conv, timeout=60.0):
-                    bus.publish_event(_compact_conv, "compact_progress", {
-                        "stage": "error",
-                        "error": "Timeout waiting for active agent to finish",
-                    })
-                    return
-                try:
-                    msgs = self._deserialize_messages(_compact_source)
-                    before_count = len(msgs)
-                    estimated = self._estimate_tokens(msgs)
-                    bus.publish_event(_compact_conv, "compact_progress", {
-                        "stage": "start",
-                        "messages": before_count,
-                        "tokens": estimated,
-                        "agent": _compact_agent_name or "shared",
-                    })
-                    compacted = self._compact_if_needed(
-                        msgs, _compact_client, _compact_max, 0.5,
-                        _compact_keep,
-                        conversation_id=_compact_conv,
-                        agent_name=_compact_agent_name,
-                    )
-                    after_count = len(compacted)
-                    after_tokens = self._estimate_tokens(compacted)
-                    bus.publish_event(_compact_conv, "compact_progress", {
-                        "stage": "done",
-                        "before": before_count, "after": after_count,
+            def _do_compact():
+                msgs = self._deserialize_messages(_compact_source)
+                before = len(msgs)
+                estimated = self._estimate_tokens(msgs)
+                compacted = self._compact_if_needed(
+                    msgs, _compact_client, _compact_max, 0.5,
+                    _compact_keep, conversation_id=_compact_conv,
+                    agent_name=_compact_agent_name,
+                )
+                after_tokens = self._estimate_tokens(compacted)
+                return {"before": before, "after": len(compacted),
                         "tokens_before": estimated, "tokens_after": after_tokens,
-                        "agent": _compact_agent_name or "shared",
-                    })
-                except Exception as e:
-                    bus.publish_event(_compact_conv, "compact_progress", {
-                        "stage": "error", "error": str(e),
-                    })
-                    logger.error("Compact failed: %s", e, exc_info=True)
-                finally:
-                    _self_ref._release_context_op(_compact_conv)
+                        "agent": _compact_agent_name or "shared"}
 
-            thread = threading.Thread(target=_run_compact, daemon=True,
-                                      name=f"compact-{conv_id[:8]}")
-            thread.start()
-            # Return ack immediately
-            flowfile.set_content(json.dumps({
-                "status": "accepted", "action": "compact",
-            }).encode())
-            return [flowfile]
+            return self._run_bg_context_op(conv_id, "compact", _do_compact, flowfile)
 
         if action == "rebuild":
             conv_id = body.get("conversation_id", "")
-            _ctx_agent = body.get("agent_name", "")
+            _rb_agent = body.get("agent_name", "")
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            all_msgs = store.load(conv_id, user_id=user_id)
-            if not all_msgs:
+            _rb_msgs = store.load(conv_id, user_id=user_id)
+            if not _rb_msgs:
                 flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            deserialized = self._deserialize_messages(all_msgs)
-            estimated = self._estimate_tokens(deserialized)
-            context_max = _ctx_max_tokens(_ctx_agent)
-            limit = int(context_max * 0.8)
-            if estimated <= limit:
-                # Full restore — everything fits
-                _ctx_save(conv_id, all_msgs)
-                flowfile.set_content(json.dumps({
-                    "ok": True, "action": "full_restore",
-                    "before": len(all_msgs), "after": len(all_msgs),
-                    "token_estimate": estimated,
-                }).encode())
-            else:
-                # Doesn't fit — compact to make it fit
-                _summ_client, _ = self._get_summarizer_client(user_id)
-                if _summ_client:
-                    client = _summ_client
+            # Resolve client for potential compaction
+            _summ_client, _ = self._get_summarizer_client(user_id)
+            _rb_client = _summ_client
+            if not _rb_client:
+                _rb_client, _ = self._resolve_client(
+                    self.config.get("llm_service", "default"),
+                    user_id, resolve_expressions=False,
+                )
+            _rb_max = _ctx_max_tokens(_rb_agent)
+
+            def _do_rebuild():
+                deserialized = self._deserialize_messages(_rb_msgs)
+                estimated = self._estimate_tokens(deserialized)
+                limit = int(_rb_max * 0.8)
+                if estimated <= limit:
+                    _ctx_save(conv_id, _rb_msgs, _rb_agent)
+                    return {"action": "full_restore", "before": len(_rb_msgs),
+                            "after": len(_rb_msgs), "tokens_after": estimated}
+                if not _rb_client:
+                    raise ValueError("No LLM service for compaction")
+                compacted = self._compact_if_needed(
+                    deserialized, _rb_client, _rb_max, 0.8,
+                    int(self.config.get("context_keep_recent", 6)),
+                    conversation_id=conv_id, agent_name=_rb_agent,
+                )
+                return {"action": "compacted", "before": len(_rb_msgs),
+                        "after": len(compacted),
+                        "tokens_after": self._estimate_tokens(compacted)}
+
+            return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)
+
+        if action in ("rebuild_clean", "rebuild_full"):
+            conv_id = body.get("conversation_id", "")
+            _rf_agent = body.get("agent_name", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _rf_msgs = store.load(conv_id, user_id=user_id)
+            if not _rf_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+
+            def _do_rebuild_full():
+                deserialized = self._deserialize_messages(_rf_msgs)
+                estimated = self._estimate_tokens(deserialized)
+                if _rf_agent == "ALL":
+                    agent_map = store.list_agent_contexts(conv_id)
+                    for name in agent_map:
+                        if name == "*":
+                            store.save_context(conv_id, list(_rf_msgs))
+                        else:
+                            store.save_agent_context(conv_id, name, list(_rf_msgs))
                 else:
-                    client, _ = self._resolve_client(
-                        self.config.get("llm_service", "default"),
-                        user_id, resolve_expressions=False,
-                    )
-                if not client:
-                    flowfile.set_content(json.dumps({"error": "No LLM service for compaction"}).encode())
-                    return [flowfile]
-                try:
-                    compacted = self._compact_if_needed(
-                        deserialized, client, context_max, 0.8,
-                        int(self.config.get("context_keep_recent", 6)),
-                        conversation_id=conv_id,
-                        agent_name=_ctx_agent,
-                    )
-                    new_estimate = self._estimate_tokens(compacted)
-                    flowfile.set_content(json.dumps({
-                        "ok": True, "action": "compacted",
-                        "before": len(all_msgs), "after": len(compacted),
-                        "token_estimate": new_estimate,
-                    }).encode())
-                except Exception as e:
-                    flowfile.set_content(json.dumps({"error": str(e)}).encode())
-            return [flowfile]
+                    _ctx_save(conv_id, list(_rf_msgs), _rf_agent)
+                return {"action": "full_restore", "messages": len(_rf_msgs),
+                        "tokens_after": estimated,
+                        "agent": _rf_agent or "shared"}
 
-        if action == "rebuild_clean":
-            conv_id = body.get("conversation_id", "")
-            _ctx_agent = body.get("agent_name", "")
-            if not conv_id:
-                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                return [flowfile]
-            all_msgs = store.load(conv_id, user_id=user_id)
-            if not all_msgs:
-                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
-                flowfile.set_attribute("http.response.status", "404")
-                return [flowfile]
-            # Set context = full conversation (no compaction, no LLM)
-            _ctx_save(conv_id, list(all_msgs))
-            deserialized = self._deserialize_messages(all_msgs)
-            estimated = self._estimate_tokens(deserialized)
-            flowfile.set_content(json.dumps({
-                "ok": True, "action": "clean_restore",
-                "messages": len(all_msgs),
-                "token_estimate": estimated,
-            }).encode())
-            return [flowfile]
-
-        if action == "rebuild_full":
-            conv_id = body.get("conversation_id", "")
-            _ctx_agent = body.get("agent_name", "")
-            if not conv_id:
-                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
-                flowfile.set_attribute("http.response.status", "400")
-                return [flowfile]
-            all_msgs = store.load(conv_id, user_id=user_id)
-            if not all_msgs:
-                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
-                flowfile.set_attribute("http.response.status", "404")
-                return [flowfile]
-            deserialized = self._deserialize_messages(all_msgs)
-            estimated = self._estimate_tokens(deserialized)
-            if _ctx_agent == "ALL":
-                # Rebuild all agent contexts + shared
-                agent_map = store.list_agent_contexts(conv_id)
-                for name in agent_map:
-                    if name == "*":
-                        store.save_context(conv_id, list(all_msgs))
-                    else:
-                        store.save_agent_context(conv_id, name, list(all_msgs))
-            else:
-                _ctx_save(conv_id, list(all_msgs), _ctx_agent)
-            flowfile.set_content(json.dumps({
-                "ok": True,
-                "messages": len(all_msgs),
-                "token_estimate": estimated,
-                "agent": _ctx_agent or "shared",
-            }).encode())
+            return self._run_bg_context_op(conv_id, "rebuild_full", _do_rebuild_full, flowfile)
             return [flowfile]
 
         if action == "get_context":
@@ -4221,11 +4174,11 @@ class AgentLoopTask(BaseTask):
 
     def _btw_query(self, conversation_id: str, agent_name: str,
                    question: str, user_id: str) -> None:
-        """Side-channel query — separate LLM call, no state modification.
+        """Side-channel query — separate LLM call, no tools.
 
         Loads a lightweight context (system prompt + last few messages),
         makes a single LLM call without tools, and publishes the response
-        via SSE. Does NOT persist anything to conversation history.
+        via SSE. Persists btw Q&A to conversation history with btw flag.
         """
         from core.conversation_event_bus import ConversationEventBus
         from core.conversation_store import ConversationStore
@@ -4335,7 +4288,8 @@ class AgentLoopTask(BaseTask):
             # 4. Persist btw Q&A in conversation history
             import time as _btw_time
             _btw_now = _btw_time.time()
-            _btw_user_source = {"type": "user", "name": "btw"}
+            _btw_user_source = {"type": "user", "name": user_id or "anonymous",
+                                "btw": True, "target_agent": agent_name}
             _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
             store.append_messages(conversation_id, [
                 {"role": "user", "content": f"[btw] {question}",

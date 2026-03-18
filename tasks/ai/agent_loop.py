@@ -430,10 +430,12 @@ class AgentLoopTask(BaseTask):
             _agent_names = []
 
         for h in registry.list_tools():
-            if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
+            if isinstance(h, (GetAgentResultsHandler, UseSkillHandler)):
                 h.set_executor(sub_executor)
-            if isinstance(h, SpawnAgentsHandler) and _agent_names:
-                h.set_available_agents(_agent_names)
+            if isinstance(h, SpawnAgentsHandler):
+                h.set_spawn_deps(client, _client_resolver, _sub_on_event)
+                if _agent_names:
+                    h.set_available_agents(_agent_names)
 
         user_role = flowfile.get_attribute("http.auth.roles") or ""
         if user_role:
@@ -3412,16 +3414,12 @@ class AgentLoopTask(BaseTask):
 
     @staticmethod
     def _inject_executor(registry: ToolRegistry, sub_executor):
-        """Inject sub_executor into spawn_agents/get_agent_results/use_skill handlers.
-
-        Fixes race condition where shared handler instances lose their executor
-        reference when registry is recreated or another conversation overwrites it.
-        """
+        """Inject sub_executor into get_agent_results/use_skill handlers (thread-local)."""
         from core.tool_registry import (
-            SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
+            GetAgentResultsHandler, UseSkillHandler,
         )
         for h in registry.list_tools():
-            if isinstance(h, (SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler)):
+            if isinstance(h, (GetAgentResultsHandler, UseSkillHandler)):
                 h.set_executor(sub_executor)
 
     def _is_current_generation(self, conversation_id: str, generation: int) -> bool:
@@ -5107,12 +5105,13 @@ class AgentLoopTask(BaseTask):
         )
         self._inject_executor(registry, sub_executor)
 
-        # Set source agent on SpawnAgentsHandler for self-call prevention
+        # Set spawn dependencies on SpawnAgentsHandler
         from core.tool_registry import SpawnAgentsHandler as _SAH
         _poll_source = _active_agent or "assistant"
         _poll_svc = svc_id or ""
         for h in registry.list_tools():
             if isinstance(h, _SAH):
+                h.set_spawn_deps(client, _client_resolver, _poll_on_event)
                 h.set_source_agent(_poll_source, _poll_svc)
                 break
 

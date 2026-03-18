@@ -3512,9 +3512,18 @@ class SpawnAgentsHandler(ToolHandler):
         self._conversation_id = ""
         self._available_agents: List[str] = []
         self._local = threading.local()  # thread-safe source agent
+        self._client_resolver = None  # callable(svc_id, uid) -> (client, svc)
+        self._on_event = None  # callable(event_type, data)
+        self._default_client = None  # fallback LLM client
 
     def set_conversation_id(self, conversation_id: str) -> None:
         self._conversation_id = conversation_id
+
+    def set_spawn_deps(self, client, client_resolver, on_event):
+        """Set dependencies for spawning sub-agents (not thread-local)."""
+        self._default_client = client
+        self._client_resolver = client_resolver
+        self._on_event = on_event
 
     def set_source_agent(self, agent_name: str, llm_service: str = "") -> None:
         self._local.source_agent = agent_name
@@ -3582,15 +3591,11 @@ class SpawnAgentsHandler(ToolHandler):
     def set_user_id(self, uid: str):
         self._user_id = uid
 
-    def set_executor(self, executor):
-        """Set the SubAgentExecutor instance (thread-local)."""
-        self._local.executor = executor
-
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if not getattr(self._local, 'executor', None):
-            return "Error: Agent executor not configured."
+        if not self._client_resolver or not self._default_client:
+            return "Error: Agent executor not configured (missing client_resolver)."
 
-        from core.agent_executor import resolve_agent_task
+        from core.agent_executor import resolve_agent_task, SubAgentExecutor
         import uuid
 
         tasks_spec = arguments.get("tasks", [])
@@ -3642,7 +3647,13 @@ class SpawnAgentsHandler(ToolHandler):
         if not agent_tasks:
             return "Error: no valid tasks to spawn."
 
-        results = self._local.executor.spawn(agent_tasks, wait=wait)
+        # Create executor on-the-fly — no thread-local needed
+        executor = SubAgentExecutor(
+            self._default_client, None, max_workers=4,
+            client_resolver=self._client_resolver,
+            on_event=self._on_event,
+        )
+        results = executor.spawn(agent_tasks, wait=wait)
 
         if not wait:
             ids = [r.task_id for r in results]

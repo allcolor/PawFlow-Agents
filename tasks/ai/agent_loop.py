@@ -4174,11 +4174,13 @@ class AgentLoopTask(BaseTask):
                             # Re-inject thread-local state in pool thread
                             if _sub_exec:
                                 self._inject_executor(registry, _sub_exec)
-                            from core.tool_registry import SpawnAgentsHandler as _SAH_pool
-                            for _hp in registry.list_tools():
-                                if isinstance(_hp, _SAH_pool):
-                                    _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
-                                    break
+                                from core.tool_registry import SpawnAgentsHandler as _SAH_pool
+                                for _hp in registry.list_tools():
+                                    if isinstance(_hp, _SAH_pool):
+                                        _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
+                                        _has = getattr(_hp._local, 'executor', None)
+                                        print(f"[POOL] {tc.name} executor={_has is not None} thread={threading.current_thread().name}", flush=True)
+                                        break
                             try:
                                 return tc, registry.execute(tc.name, tc.arguments) or ""
                             except Exception as e:

@@ -4345,7 +4345,11 @@ function cmdRebuild(agentName) {
     body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
-    addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
+    if (data.action === 'too_large') {
+      addMsg('system', data.message);
+    } else {
+      addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));
+    }
   }).catch(e => addMsg('error', 'Rebuild failed: ' + e.message))
     .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }

@@ -2300,39 +2300,18 @@ class AgentLoopTask(BaseTask):
                     "token_estimate": estimated,
                 }).encode())
             else:
-                # Need compaction — resolve LLM client
-                svc_id = self.config.get("llm_service", "")
-                if not svc_id or "${" in svc_id:
-                    svc_id = "default"
-                _client, _ = self._resolve_llm_service(svc_id, user_id or "")
-                if _client:
-                    client = _client
-                elif self.config.get("api_key"):
-                    client = LLMClient(
-                        provider=self.config.get("provider", "openai"),
-                        api_key=self.config["api_key"],
-                        base_url=self.config.get("base_url", ""),
-                        default_model=self.config.get("model", ""),
-                        timeout=int(self.config.get("timeout", 120)),
-                    )
-                else:
-                    flowfile.set_content(json.dumps({"error": f"LLM service '{svc_id}' not found"}).encode())
-                    return [flowfile]
-                try:
-                    compacted = self._compact_if_needed(
-                        deserialized, client, context_max, 0.8,
-                        int(self.config.get("context_keep_recent", 6)),
-                        conversation_id=conv_id,
-                        agent_name=_ctx_agent,
-                    )
-                    new_estimate = self._estimate_tokens(compacted)
-                    flowfile.set_content(json.dumps({
-                        "ok": True, "action": "compacted",
-                        "before": len(all_msgs), "after": len(compacted),
-                        "token_estimate": new_estimate,
-                    }).encode())
-                except Exception as e:
-                    flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                # Doesn't fit — inform user instead of silently compacting
+                flowfile.set_content(json.dumps({
+                    "ok": True, "action": "too_large",
+                    "before": len(all_msgs), "after": len(all_msgs),
+                    "token_estimate": estimated,
+                    "context_max": context_max,
+                    "message": (
+                        f"Conversation ({estimated} tokens) exceeds context "
+                        f"window ({context_max} tokens). Use /compact to "
+                        f"shrink it, or /rebuild-full to load it as-is."
+                    ),
+                }).encode())
             return [flowfile]
 
         if action == "rebuild_clean":

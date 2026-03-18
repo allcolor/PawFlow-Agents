@@ -2232,47 +2232,73 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            # Load current context (or messages if not diverged)
+            # Load source data
             context_data = _ctx_load(conv_id, _ctx_agent)
-            if context_data is not None:
-                source_data = context_data
-            else:
-                source_data = store.load(conv_id, user_id=user_id)
+            source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
             if not source_data or len(source_data) < 4:
                 flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
                 return [flowfile]
-            # Resolve compaction client — use summarizer if available, else default
-            _summ_client, _summ_max = self._get_summarizer_client(user_id)
+            # Resolve client
+            _summ_client, _ = self._get_summarizer_client(user_id)
             if _summ_client:
-                client = _summ_client
+                _compact_client = _summ_client
             else:
                 svc_id = self.config.get("llm_service", "")
                 if not svc_id or "${" in svc_id:
                     svc_id = "default"
-                client, _ = self._resolve_client(
+                _compact_client, _ = self._resolve_client(
                     svc_id, user_id, resolve_expressions=False,
                 )
-                if not client:
-                    flowfile.set_content(json.dumps({"error": f"LLM service not found"}).encode())
-                    return [flowfile]
+            if not _compact_client:
+                flowfile.set_content(json.dumps({"error": "LLM service not found"}).encode())
+                return [flowfile]
             _compact_max = _ctx_max_tokens(_ctx_agent)
-            try:
-                msgs = self._deserialize_messages(source_data)
-                before_count = len(msgs)
-                compacted = self._compact_if_needed(
-                    msgs, client,
-                    _compact_max,
-                    0.5,  # aggressive
-                    int(self.config.get("context_keep_recent", 6)),
-                    conversation_id=conv_id,
-                    agent_name=_ctx_agent,
-                )
-                after_count = len(compacted)
-                flowfile.set_content(json.dumps({
-                    "compacted": True, "before": before_count, "after": after_count,
-                }).encode())
-            except Exception as e:
-                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            _compact_source = source_data
+            _compact_conv = conv_id
+            _compact_agent_name = _ctx_agent
+            _compact_keep = int(self.config.get("context_keep_recent", 6))
+
+            # Run compaction in background — publish SSE progress events
+            def _run_compact():
+                from core.conversation_event_bus import ConversationEventBus
+                bus = ConversationEventBus.instance()
+                try:
+                    msgs = self._deserialize_messages(_compact_source)
+                    before_count = len(msgs)
+                    estimated = self._estimate_tokens(msgs)
+                    bus.publish_event(_compact_conv, "compact_progress", {
+                        "stage": "start",
+                        "messages": before_count,
+                        "tokens": estimated,
+                        "agent": _compact_agent_name or "shared",
+                    })
+                    compacted = self._compact_if_needed(
+                        msgs, _compact_client, _compact_max, 0.5,
+                        _compact_keep,
+                        conversation_id=_compact_conv,
+                        agent_name=_compact_agent_name,
+                    )
+                    after_count = len(compacted)
+                    after_tokens = self._estimate_tokens(compacted)
+                    bus.publish_event(_compact_conv, "compact_progress", {
+                        "stage": "done",
+                        "before": before_count, "after": after_count,
+                        "tokens_before": estimated, "tokens_after": after_tokens,
+                        "agent": _compact_agent_name or "shared",
+                    })
+                except Exception as e:
+                    bus.publish_event(_compact_conv, "compact_progress", {
+                        "stage": "error", "error": str(e),
+                    })
+                    logger.error("Compact failed: %s", e, exc_info=True)
+
+            thread = threading.Thread(target=_run_compact, daemon=True,
+                                      name=f"compact-{conv_id[:8]}")
+            thread.start()
+            # Return ack immediately
+            flowfile.set_content(json.dumps({
+                "status": "accepted", "action": "compact",
+            }).encode())
             return [flowfile]
 
         if action == "rebuild":
@@ -5757,13 +5783,15 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ImageGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
-                if conversation_id or user_id:
-                    h.set_service_resolver(self._make_image_resolver(
-                        user_id, conversation_id, agent_name,
-                    ))
+                h.set_service_resolver(self._make_image_resolver(
+                    user_id, conversation_id, agent_name,
+                ))
             elif isinstance(h, VideoGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                h.set_service_resolver(self._make_video_resolver(
+                    user_id, conversation_id, agent_name,
+                ))
                 if conversation_id or user_id:
                     h.set_service_resolver(self._make_video_resolver(
                         user_id, conversation_id, agent_name,
@@ -6131,7 +6159,8 @@ class AgentLoopTask(BaseTask):
         _summary_target = max(500, int(max_tokens / 4))
         try:
             summary = self._summarize_messages(old_messages, client, max_tokens,
-                                               target_tokens=_summary_target)
+                                               target_tokens=_summary_target,
+                                               conversation_id=conversation_id)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
             return messages  # Keep original if summarization fails
@@ -6175,6 +6204,7 @@ class AgentLoopTask(BaseTask):
         client: LLMClient,
         max_tokens: int,
         target_tokens: int = 0,
+        conversation_id: str = "",
     ) -> str:
         """Summarize messages, chunking if the text is too large for the LLM.
 
@@ -6193,27 +6223,45 @@ class AgentLoopTask(BaseTask):
         text_tokens = self._estimate_tokens([LLMMessage(role="user", content=summary_text)])
         safe_limit = int(max_tokens * 0.65)  # leave room for system prompt + output
 
+        def _pub(stage, detail=""):
+            if conversation_id:
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "compact_progress",
+                        {"stage": stage, "detail": detail},
+                    )
+                except Exception:
+                    pass
+
         if text_tokens <= safe_limit:
+            _pub("summarizing", f"single pass ({text_tokens} tokens)")
             return self._call_summarize(client, summary_text, target_tokens)
 
         # Too large — split in half and summarize each part recursively
         mid = len(old_messages) // 2
         if mid == 0:
             truncated = summary_text[:safe_limit * 3]
+            _pub("summarizing", "single message (truncated)")
             return self._call_summarize(client, truncated, target_tokens)
 
+        _pub("chunking", f"splitting {len(old_messages)} messages into 2 chunks")
         logger.info(f"[compact] Text too large ({text_tokens} tokens > {safe_limit}), "
                     f"splitting {len(old_messages)} messages into 2 chunks")
 
-        # Each chunk gets half the target budget
         chunk_target = max(250, target_tokens // 2)
-        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens, chunk_target)
-        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens, chunk_target)
+        _pub("summarizing", f"chunk 1/{2} ({mid} messages)")
+        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens,
+                                             chunk_target, conversation_id)
+        _pub("summarizing", f"chunk 2/{2} ({len(old_messages) - mid} messages)")
+        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens,
+                                             chunk_target, conversation_id)
 
         combined = f"Part 1:\n{summary_a}\n\nPart 2:\n{summary_b}"
         combined_tokens = self._estimate_tokens([LLMMessage(role="user", content=combined)])
 
         if combined_tokens <= safe_limit:
+            _pub("summarizing", "merging chunks")
             return self._call_summarize(client, combined, target_tokens)
         else:
             # Still too big — just concatenate (will be compacted on next cycle)

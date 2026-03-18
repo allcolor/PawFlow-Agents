@@ -2130,6 +2130,25 @@ function connectSSE(cid) {
     }
   });
 
+  eventSource.addEventListener('compact_progress', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.stage === 'start') {
+      showContextOp('Compacting ' + (data.agent || '') + ' (' + data.messages + ' messages, ~' + data.tokens + ' tokens)');
+    } else if (data.stage === 'chunking' || data.stage === 'summarizing') {
+      showContextOp('Compacting: ' + (data.detail || data.stage));
+    } else if (data.stage === 'done') {
+      hideContextOp();
+      contextOpInProgress = false;
+      const agent = data.agent || 'shared';
+      addMsg('system', 'Compacted (' + agent + '): ' + data.before + ' messages \u2192 ' + data.after + ' messages (~' + data.tokens_after + ' tokens)');
+    } else if (data.stage === 'error') {
+      hideContextOp();
+      contextOpInProgress = false;
+      addMsg('error', 'Compaction failed: ' + data.error);
+    }
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -4326,11 +4345,16 @@ function cmdCompact(agentName) {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
-    const target = agentName ? ' (' + agentName + ')' : '';
-    addMsg('system', 'Compacted' + target + ': ' + data.before + ' messages \u2192 ' + data.after + ' messages');
-  }).catch(e => addMsg('error', 'Compaction failed: ' + e.message))
-    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+    if (data.error) {
+      addMsg('error', 'Compaction failed: ' + data.error);
+      hideContextOp(); contextOpInProgress = false;
+    }
+    // status=accepted → compaction runs in background, SSE events will report progress
+    // contextOpInProgress stays true until compact_progress done event arrives
+  }).catch(e => {
+    addMsg('error', 'Compaction failed: ' + e.message);
+    hideContextOp(); contextOpInProgress = false;
+  });
 }
 
 function cmdRebuild(agentName) {

@@ -737,15 +737,12 @@ class ContinuousFlowExecutor:
             task.reset()
 
     def clear_all_queues(self):
-        """Clear all queues and reset task buffers.
-
-        Does NOT reset in/out counters — clearing queues is a queue
-        management operation, not a flow restart.
-        """
+        """Clear all queues, reset task buffers and counters."""
         self._connections.clear_all()
         for task in self._tasks.values():
             if hasattr(task, 'reset'):
                 task.reset()
+        self._task_states.reset_all_counters()
 
     # -- Flow Version Updates --
 

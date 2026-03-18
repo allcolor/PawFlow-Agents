@@ -5788,6 +5788,10 @@ class AgentLoopTask(BaseTask):
                 sched_key = f"{cid}::task::{tid}"
                 if sched.get(sched_key):
                     continue  # already scheduled
+                # Don't reschedule if task is currently running
+                with self._active_lock:
+                    if sched_key in self._active_thoughts:
+                        continue
                 from core.tool_registry import AssignTaskHandler
                 delay = AssignTaskHandler._get_task_delay(task)
                 sched.schedule_delay(
@@ -6044,6 +6048,8 @@ class AgentLoopTask(BaseTask):
                         + (f"**Progress:** {_td.get('last_result', '')}\n" if _td.get("last_result") else "")
                         + _rej_text + "\n\n"
                         f"Call complete_task(task_id=\"{_tid}\", done=true/false, progress=\"...\").\n"
+                        "Do NOT repeat information already shared in previous iterations. "
+                        "Focus on NEW progress only. Be concise.\n"
                         "Do NOT respond with [NO_PENDING_WORK]."
                     )
             else:
@@ -6061,6 +6067,7 @@ class AgentLoopTask(BaseTask):
                     f"[System: {len(_my_tasks)} active tasks]\n\n"
                     + "\n".join(lines) + "\n\n"
                     "Work on your tasks. Call complete_task(task_id=\"...\", done=true/false, progress=\"...\") for each.\n"
+                    "Do NOT repeat information from previous iterations. Focus on NEW progress only.\n"
                     "Do NOT respond with [NO_PENDING_WORK]."
                 )
         elif _is_task_verify:

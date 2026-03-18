@@ -238,13 +238,13 @@ class AgentLoopTask(BaseTask):
                 "type": "integer", "required": False, "default": 7200,
                 "description": "When the agent finds no pending work, wait this many seconds before rechecking (default 2 hours). Ignored if user interacts before the delay expires.",
             },
-            "context_max_tokens": {
+            "max_context_size": {
                 "type": "integer", "required": False, "default": 64000,
                 "description": "Maximum context size in tokens (estimated). When reached, older messages are compacted into a summary.",
             },
             "context_compact_threshold": {
                 "type": "float", "required": False, "default": 0.8,
-                "description": "Compact when context reaches this fraction of context_max_tokens (default 0.8 = 80%)",
+                "description": "Compact when context reaches this fraction of max_context_size (default 0.8 = 80%)",
             },
             "context_keep_recent": {
                 "type": "integer", "required": False, "default": 6,
@@ -350,7 +350,7 @@ class AgentLoopTask(BaseTask):
             return None, 0
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if client and svc:
-            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
             return client, ctx_max
         return None, 0
 
@@ -599,7 +599,7 @@ class AgentLoopTask(BaseTask):
         _cc = compact_client or client
         synth_context = self._compact_if_needed(
             list(messages), _cc,
-            ctx.get("context_max_tokens", 64000),
+            ctx.get("max_context_size", 64000),
             compact_threshold,
             ctx.get("context_keep_recent", 6),
             conversation_id=conversation_id,
@@ -629,7 +629,7 @@ class AgentLoopTask(BaseTask):
                     logger.warning("[agent] synthesis overflow, forcing aggressive compaction...")
                     synth_context = self._compact_if_needed(
                         synth_context, _cc,
-                        ctx.get("context_max_tokens", 64000),
+                        ctx.get("max_context_size", 64000),
                         0.4, ctx.get("context_keep_recent", 4),
                         conversation_id=conversation_id,
                     )
@@ -831,7 +831,7 @@ class AgentLoopTask(BaseTask):
         # Will be overridden below if a persona is selected (after conversation_id is known)
         _base_system_prompt = system_prompt
         temperature = float(self.config.get("temperature", 0.7))
-        max_tokens = int(self.config.get("max_tokens", 0))
+        max_tokens = int(self.config.get("max_context_size", 0))
         max_iterations = int(self.config.get("max_iterations", 200))
         max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 5))
 
@@ -1157,11 +1157,10 @@ class AgentLoopTask(BaseTask):
             except Exception as e:
                 logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
 
-        # Resolve max_tokens: task config → service config → default 4096
-        if not max_tokens and resolved_svc:
-            max_tokens = int(getattr(resolved_svc, 'config', {}).get("max_tokens", 0))
+        # Resolve max_tokens for LLM output (0 = unlimited)
+        # This is NOT the context size — it's the max output the LLM can generate
         if not max_tokens:
-            max_tokens = 4096
+            max_tokens = 0  # no artificial limit on output
 
         # Inject identity block into system prompt
         _nicknames = {}
@@ -1192,11 +1191,11 @@ class AgentLoopTask(BaseTask):
             "conv_attr": conv_attr, "conversation_id": conversation_id,
             "user_id": user_id,
             "_base_message_count": base_message_count,
-            "context_max_tokens": int(
+            "max_context_size": int(
                 # Per-agent: use service max_tokens (= context window size)
-                (getattr(resolved_svc, 'config', {}) or {}).get("max_tokens", 0)
-                or (_selected_agent_def or {}).get("context_max_tokens", 0)
-                or self.config.get("context_max_tokens", 64000)
+                (getattr(resolved_svc, 'config', {}) or {}).get("max_context_size", 0)
+                or (_selected_agent_def or {}).get("max_context_size", 0)
+                or self.config.get("max_context_size", 64000)
             ),
             "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
@@ -1727,7 +1726,7 @@ class AgentLoopTask(BaseTask):
             def _do_resume():
                 deserialized = self._deserialize_messages(_rs_msgs)
                 content_msgs = [m for m in deserialized if m.role != "system"]
-                context_max = int(self.config.get("context_max_tokens", 64000))
+                context_max = int(self.config.get("max_context_size", 64000))
                 # Resolve agent's max_tokens
                 if _rs_agent:
                     try:
@@ -1741,7 +1740,7 @@ class AgentLoopTask(BaseTask):
                             if _sid and "${" not in _sid:
                                 _, _sv = self._resolve_llm_service(_sid, user_id)
                                 if _sv:
-                                    _v = int((getattr(_sv, 'config', {}) or {}).get("max_tokens", 0))
+                                    _v = int((getattr(_sv, 'config', {}) or {}).get("max_context_size", 0))
                                     if _v:
                                         context_max = _v
                     except Exception:
@@ -2214,7 +2213,7 @@ class AgentLoopTask(BaseTask):
                     if svc_id and "${" not in svc_id:
                         _, svc = self._resolve_llm_service(svc_id, user_id)
                         if svc:
-                            v = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+                            v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
                             if v:
                                 return v
             except Exception:
@@ -2222,13 +2221,13 @@ class AgentLoopTask(BaseTask):
             return 0
 
         def _ctx_max_tokens(agent_name=""):
-            """Get context_max_tokens for an agent or shared context.
+            """Get max_context_size for an agent or shared context.
 
             For a specific agent: use that agent's LLM service max_tokens.
             For shared ("" or "ALL"): use the LARGEST max_tokens among all
             agents (the shared context must fit the biggest consumer).
             """
-            flow_default = int(self.config.get("context_max_tokens", 64000))
+            flow_default = int(self.config.get("max_context_size", 64000))
             if agent_name and agent_name not in ("", "ALL"):
                 return _resolve_agent_max_tokens(agent_name) or flow_default
             # Shared: max of all agent LLM services
@@ -2245,7 +2244,7 @@ class AgentLoopTask(BaseTask):
                 if default_svc and "${" not in default_svc:
                     _, svc = self._resolve_llm_service(default_svc, user_id)
                     if svc:
-                        v = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+                        v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
                         if v > max_val:
                             max_val = v
                 return max_val or flow_default
@@ -4652,7 +4651,7 @@ class AgentLoopTask(BaseTask):
                     _pre_compact_len = len(messages)
                     llm_context = self._compact_if_needed(
                         list(messages), compact_client,
-                        ctx.get("context_max_tokens", 64000),
+                        ctx.get("max_context_size", 64000),
                         ctx.get("context_compact_threshold", 0.8),
                         ctx.get("context_keep_recent", 6),
                         conversation_id=conversation_id,
@@ -4692,7 +4691,7 @@ class AgentLoopTask(BaseTask):
                         interrupt_resp = client.complete_stream(
                             messages=self._compact_if_needed(
                                 list(messages), compact_client,
-                                ctx.get("context_max_tokens", 64000), 0.6,
+                                ctx.get("max_context_size", 64000), 0.6,
                                 ctx.get("context_keep_recent", 6),
                             ),
                             model=model or None,
@@ -4736,7 +4735,7 @@ class AgentLoopTask(BaseTask):
                             })
                             llm_context = self._compact_if_needed(
                                 llm_context, compact_client,
-                                ctx.get("context_max_tokens", 64000),
+                                ctx.get("max_context_size", 64000),
                                 0.5,  # aggressive threshold
                                 ctx.get("context_keep_recent", 6),
                                 conversation_id=conversation_id,
@@ -5995,9 +5994,9 @@ class AgentLoopTask(BaseTask):
         base_message_count = len(messages)
 
         temperature = float(self.config.get("temperature", 0.7))
-        max_tokens = int(self.config.get("max_tokens", 0))
+        max_tokens = int(self.config.get("max_context_size", 0))
         if not max_tokens and _poll_svc:
-            max_tokens = int(getattr(_poll_svc, 'config', {}).get("max_tokens", 0))
+            max_tokens = int(getattr(_poll_svc, 'config', {}).get("max_context_size", 0))
         if not max_tokens:
             max_tokens = 4096
         max_iterations = int(self.config.get("max_iterations", 200))
@@ -6011,8 +6010,8 @@ class AgentLoopTask(BaseTask):
 
         # Context window from service config
         _poll_ctx_max = int(
-            (getattr(_poll_svc, 'config', {}) or {}).get("max_tokens", 0)
-            or self.config.get("context_max_tokens", 64000)
+            (getattr(_poll_svc, 'config', {}) or {}).get("max_context_size", 0)
+            or self.config.get("max_context_size", 64000)
         )
 
         return {
@@ -6025,7 +6024,7 @@ class AgentLoopTask(BaseTask):
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
             "user_id": poll_user_id,
-            "context_max_tokens": _poll_ctx_max,
+            "max_context_size": _poll_ctx_max,
             "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "active_agent_name": _agent_name,
@@ -6642,7 +6641,7 @@ class AgentLoopTask(BaseTask):
                     LLMMessage(role="user", content=clean_text),
                 ],
                 temperature=0.3,
-                max_tokens=min(target_tokens * 2, 16000),
+                max_tokens=0,  # no output limit — target is in the prompt
             )
         except Exception as e:
             err_str = str(e)

@@ -198,7 +198,7 @@ class LLMClient:
         messages: List[LLMMessage],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024,
+        max_tokens: int = 0,
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
     ) -> LLMResponse:
@@ -252,7 +252,7 @@ class LLMClient:
         messages: List[LLMMessage],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024,
+        max_tokens: int = 0,
         tools: Optional[List[LLMToolDefinition]] = None,
         callback=None,
     ) -> LLMResponse:
@@ -286,14 +286,15 @@ class LLMClient:
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback) -> LLMResponse:
         """OpenAI streaming: reads SSE chunks from the API."""
-        tokens_key = self._openai_tokens_key(model, self.base_url)
         body = {
             "model": model,
             "messages": self._build_openai_messages(messages),
             "temperature": temperature,
-            tokens_key: max_tokens,
             "stream": True,
         }
+        if max_tokens > 0:
+            tokens_key = self._openai_tokens_key(model, self.base_url)
+            body[tokens_key] = max_tokens
         if tools:
             body["tools"] = [
                 {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
@@ -406,7 +407,7 @@ class LLMClient:
         body = {
             "model": model,
             "messages": api_messages,
-            "max_tokens": max_tokens,
+            "max_tokens": max_tokens if max_tokens > 0 else 64000,
             "temperature": temperature,
             "stream": True,
         }
@@ -649,13 +650,14 @@ class LLMClient:
         return "max_tokens"
 
     def _complete_openai(self, messages, model, temperature, max_tokens, response_format, tools=None) -> LLMResponse:
-        tokens_key = self._openai_tokens_key(model, self.base_url)
         body = {
             "model": model,
             "messages": self._build_openai_messages(messages),
             "temperature": temperature,
-            tokens_key: max_tokens,
         }
+        if max_tokens > 0:
+            tokens_key = self._openai_tokens_key(model, self.base_url)
+            body[tokens_key] = max_tokens
         if response_format == "json":
             body["response_format"] = {"type": "json_object"}
         if tools:
@@ -782,7 +784,7 @@ class LLMClient:
     def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None) -> LLMResponse:
         system_text, api_messages = self._build_anthropic_messages(messages)
 
-        body = {"model": model, "messages": api_messages, "max_tokens": max_tokens, "temperature": temperature}
+        body = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         if system_text:
             body["system"] = system_text
         if tools:

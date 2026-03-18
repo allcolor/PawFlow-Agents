@@ -299,7 +299,7 @@ class SubAgentExecutor:
                     messages=messages,
                     model=task.model or None,
                     temperature=0.7,
-                    max_tokens=4096,
+                    max_tokens=0,
                     tools=tool_defs if tool_defs else None,
                 )
 
@@ -433,7 +433,7 @@ class SubAgentExecutor:
                 messages=messages,
                 model=model or None,
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=0,
                 tools=None,
             )
             return resp.content
@@ -560,7 +560,7 @@ class SubAgentExecutor:
                 messages=messages,
                 model=model or None,
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=0,
                 tools=None,
             )
             return AgentResult(

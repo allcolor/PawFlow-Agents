@@ -9,7 +9,7 @@
       "default_model": "${global.llm_model}",
       "timeout": 300,
       "max_retries": 2,
-      "max_tokens": 65536,
+      "max_context_size": 65536,
       "max_concurrent": 0,
       "cost_per_1m_input": "2.5",
       "cost_per_1m_output": "15",
@@ -30,7 +30,7 @@
       "default_model": "${global.grok_llm_model}",
       "timeout": 300,
       "max_retries": 2,
-      "max_tokens": 65536,
+      "max_context_size": 65536,
       "max_concurrent": 0,
       "cost_per_1m_input": "0.02",
       "cost_per_1m_output": "0.05"
@@ -63,10 +63,12 @@
       "default_model": "${global.qwen_llm_model}",
       "timeout": 120,
       "max_retries": 1,
-      "max_tokens": 32768,
+      "max_context_size": 8192,
       "max_concurrent": 1,
       "cost_per_1m_input": "0",
-      "cost_per_1m_output": "0"
+      "cost_per_1m_output": "0",
+      "claude_binary": "claude",
+      "gemini_binary": "gemini"
     },
     "enabled": true,
     "description": "Local Qwen 3.5 35B-A3B via OpenAI-compatible API",

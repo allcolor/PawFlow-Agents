@@ -87,7 +87,7 @@ class LLMConnectionService(BaseService):
         messages: List[LLMMessage],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024,
+        max_tokens: int = 0,
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
     ) -> LLMResponse:
@@ -105,7 +105,7 @@ class LLMConnectionService(BaseService):
         messages: List[LLMMessage],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: int = 1024,
+        max_tokens: int = 0,
         tools: Optional[List[LLMToolDefinition]] = None,
         callback=None,
     ) -> LLMResponse:
@@ -219,12 +219,11 @@ class LLMConnectionService(BaseService):
                 "description": "Number of retries on transient errors",
                 "show_when": {"provider": ["openai", "anthropic"]},
             },
-            "max_tokens": {
+            "max_context_size": {
                 "type": "integer",
                 "required": False,
                 "default": 0,
-                "description": "Max output tokens per request (0 = provider default)",
-                "show_when": {"provider": ["openai", "anthropic"]},
+                "description": "Context window size in tokens (0 = use model default). Used for automatic compaction.",
             },
             "max_concurrent": {
                 "type": "integer",

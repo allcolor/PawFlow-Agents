@@ -812,13 +812,15 @@ async function _recoverConversation(cid) {
         // Check if this user message is already displayed (sent locally by send())
         const existing = msgContainer.querySelectorAll('.msg.user');
         const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
-        // Strip [→ agent] / [btw → agent] / [btw] prefix for dedup
-        const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
-        const localText = stripPrefix(lastUserEl.textContent.trim());
-        const serverText = stripPrefix((m.content || '').trim());
-        if (lastUserEl && (localText === serverText || lastUserEl.textContent.trim() === (m.content || '').trim())) {
-          console.log('[poll] skipping duplicate user message');
-          continue;
+        if (lastUserEl) {
+          // Compare raw text (without badges/prefixes) for dedup
+          const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
+          const localRaw = stripPrefix(lastUserEl.dataset.rawText || lastUserEl.textContent.trim());
+          const serverRaw = stripPrefix((m.content || '').trim());
+          if (localRaw === serverRaw) {
+            console.log('[poll] skipping duplicate user message');
+            continue;
+          }
         }
       }
       if (mType === 'assistant') {

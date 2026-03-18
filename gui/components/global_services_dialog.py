@@ -64,29 +64,25 @@ def global_services_dialog():
                         st.caption(sdef.description)
                 with hdr_cols[1]:
                     if sdef.enabled:
-                        if st.button("⏸️", key=f"gsvc_dis_{sid}_{gen}",
-                                     help=t("common.disabled")):
-                            registry.disable(sid)
-                            st.session_state["_gsvc_gen"] = gen + 1
-                            st.rerun(scope="fragment")
+                        st.button("⏸️", key=f"gsvc_dis_{sid}_{gen}",
+                                  help=t("common.disabled"),
+                                  on_click=lambda _s=sid: (registry.disable(_s),
+                                      st.session_state.update({"_gsvc_gen": gen + 1})))
                     else:
-                        if st.button("▶️", key=f"gsvc_en_{sid}_{gen}",
-                                     help=t("common.enabled")):
-                            registry.enable(sid)
-                            st.session_state["_gsvc_gen"] = gen + 1
-                            st.rerun(scope="fragment")
+                        st.button("▶️", key=f"gsvc_en_{sid}_{gen}",
+                                  help=t("common.enabled"),
+                                  on_click=lambda _s=sid: (registry.enable(_s),
+                                      st.session_state.update({"_gsvc_gen": gen + 1})))
                 with hdr_cols[2]:
-                    if st.button("⚙️", key=f"gsvc_cfg_{sid}_{gen}",
-                                 help=t("common.edit")):
-                        st.session_state["_gsvc_edit"] = sid
-                        st.session_state["_gsvc_gen"] = gen + 1
-                        st.rerun(scope="fragment")
+                    st.button("⚙️", key=f"gsvc_cfg_{sid}_{gen}",
+                              help=t("common.edit"),
+                              on_click=lambda _s=sid: st.session_state.update({
+                                  "_gsvc_edit": _s, "_gsvc_gen": gen + 1}))
                 with hdr_cols[3]:
-                    if st.button("🗑️", key=f"gsvc_del_{sid}_{gen}",
-                                 help=t("common.delete")):
-                        registry.uninstall(sid)
-                        st.session_state["_gsvc_gen"] = gen + 1
-                        st.rerun(scope="fragment")
+                    st.button("🗑️", key=f"gsvc_del_{sid}_{gen}",
+                              help=t("common.delete"),
+                              on_click=lambda _s=sid: (registry.uninstall(_s),
+                                  st.session_state.update({"_gsvc_gen": gen + 1})))
 
                 if editing == sid:
                     _render_config_editor(registry, sdef, gen)
@@ -130,25 +126,38 @@ def global_services_dialog():
                 else:
                     st.caption(t("runtime.global_services_no_schema"))
 
-            if st.button(f"➕ {t('runtime.global_services_install')}",
-                         key=f"gsvc_install_{gen}", type="primary"):
-                if not new_id or not new_id.strip():
-                    st.warning(t("runtime.service_name_required"))
-                elif new_id.strip() in definitions:
-                    st.warning(t("runtime.global_services_exists"))
-                else:
-                    try:
-                        registry.install(
-                            service_id=new_id.strip(),
-                            service_type=new_type,
-                            config=new_config if new_type else {},
-                            description=new_desc,
-                            enabled=True,
-                        )
-                        st.session_state["_gsvc_gen"] = gen + 1
-                        st.rerun(scope="fragment")
-                    except Exception as e:
-                        st.error(f"{t('common.error')}: {e}")
+            def _do_install():
+                _id = st.session_state.get(f"gsvc_new_id_{gen}", "").strip()
+                _type = st.session_state.get(f"gsvc_new_type_{gen}", "")
+                _desc = st.session_state.get(f"gsvc_new_desc_{gen}", "")
+                if not _id:
+                    st.session_state["_gsvc_error"] = t("runtime.service_name_required")
+                    return
+                if _id in definitions:
+                    st.session_state["_gsvc_error"] = t("runtime.global_services_exists")
+                    return
+                # Collect schema config from session_state
+                _cfg = {}
+                if new_type:
+                    _schema = _get_service_schema(_type)
+                    if _schema:
+                        for pn in _schema:
+                            wk = f"gsvc_new_cfg_{gen}_{pn}"
+                            if wk in st.session_state:
+                                _cfg[pn] = st.session_state[wk]
+                try:
+                    registry.install(service_id=_id, service_type=_type,
+                                     config=_cfg, description=_desc, enabled=True)
+                    st.session_state["_gsvc_gen"] = gen + 1
+                except Exception as e:
+                    st.session_state["_gsvc_error"] = str(e)
+
+            st.button(f"➕ {t('runtime.global_services_install')}",
+                      key=f"gsvc_install_{gen}", type="primary",
+                      on_click=_do_install)
+            _err = st.session_state.pop("_gsvc_error", None)
+            if _err:
+                st.error(_err)
 
     # Close
     st.markdown("---")

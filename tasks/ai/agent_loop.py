@@ -3700,7 +3700,10 @@ class AgentLoopTask(BaseTask):
         _agent_name = ctx.get("active_agent_name", "")
         _agent_svc = ctx.get("active_llm_service", "")
 
-        # Set source agent on SpawnAgentsHandler in THIS thread (thread-local)
+        # Set thread-local state on handlers (executor + source agent)
+        _sub_exec = ctx.get("sub_executor")
+        if _sub_exec:
+            self._inject_executor(registry, _sub_exec)
         from core.tool_registry import SpawnAgentsHandler as _SAH_stream
         for _h in registry.list_tools():
             if isinstance(_h, _SAH_stream):

@@ -23,12 +23,14 @@ _DEFAULT_DIR = "data/memories"
 class MemoryEntry:
     """A single memory entry."""
 
-    __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source", "embedding")
+    __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
+                 "embedding", "agent")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
                  created_at: float = 0, updated_at: float = 0,
-                 embedding: Optional[List[float]] = None):
+                 embedding: Optional[List[float]] = None,
+                 agent: str = ""):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -36,6 +38,7 @@ class MemoryEntry:
         self.updated_at = updated_at or self.created_at
         self.source = source  # e.g. "conversation:abc123", "agent", "user"
         self.embedding = embedding  # optional vector for semantic search
+        self.agent = agent  # agent name ("" = global memory)
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -48,6 +51,8 @@ class MemoryEntry:
         }
         if self.embedding is not None:
             d["embedding"] = self.embedding
+        if self.agent:
+            d["agent"] = self.agent
         return d
 
     @classmethod
@@ -60,6 +65,7 @@ class MemoryEntry:
             created_at=data.get("created_at", 0),
             updated_at=data.get("updated_at", 0),
             embedding=data.get("embedding"),
+            agent=data.get("agent", ""),
         )
 
     def matches(self, query: str) -> bool:
@@ -107,7 +113,8 @@ class MemoryStore:
 
     def remember(self, user_id: str, text: str, tags: List[str],
                  source: str = "",
-                 embedding: Optional[List[float]] = None) -> MemoryEntry:
+                 embedding: Optional[List[float]] = None,
+                 agent: str = "") -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -122,11 +129,13 @@ class MemoryStore:
                         e.source = source
                     if embedding is not None:
                         e.embedding = embedding
+                    if agent:
+                        e.agent = agent
                     self._save_user(user_id)
                     return e
 
             entry = MemoryEntry(text=text, tags=tags, source=source,
-                                embedding=embedding)
+                                embedding=embedding, agent=agent)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -202,6 +211,49 @@ class MemoryStore:
         with self._store_lock:
             self._ensure_loaded(user_id)
             return len(self._memories.get(user_id, []))
+
+    def list_by_agent(self, user_id: str, agent_name: str) -> List[MemoryEntry]:
+        """List memories for a specific agent (or global if agent_name is empty)."""
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            entries = self._memories.get(user_id, [])
+        return [e for e in entries if e.agent == agent_name]
+
+    def update_text(self, user_id: str, memory_id: str, new_text: str) -> bool:
+        """Update the text of an existing memory."""
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            for e in self._memories.get(user_id, []):
+                if e.id == memory_id:
+                    e.text = new_text
+                    e.updated_at = time.time()
+                    self._save_user(user_id)
+                    return True
+            return False
+
+    def update_tags(self, user_id: str, memory_id: str, tags: List[str]) -> bool:
+        """Replace the tags of an existing memory."""
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            for e in self._memories.get(user_id, []):
+                if e.id == memory_id:
+                    e.tags = [t.lower().strip() for t in tags if t.strip()]
+                    e.updated_at = time.time()
+                    self._save_user(user_id)
+                    return True
+            return False
+
+    def update_agent(self, user_id: str, memory_id: str, agent: str) -> bool:
+        """Change the agent scope of a memory (empty = global)."""
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            for e in self._memories.get(user_id, []):
+                if e.id == memory_id:
+                    e.agent = agent
+                    e.updated_at = time.time()
+                    self._save_user(user_id)
+                    return True
+            return False
 
     # ── Semantic search ─────────────────────────────────────────
 

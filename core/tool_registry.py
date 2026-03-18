@@ -1378,14 +1378,15 @@ class RemoteExecutorHandler(ToolHandler):
 
 
 class ImageGenerationHandler(ToolHandler):
-    """Generate images via a pluggable image generation service.
+    """Generate images via a dynamically resolved image generation service.
 
-    Provider-agnostic — delegates to whichever BaseImageGenerationService
-    is injected via set_service(). Handles FileStore storage and URL creation.
+    At execution time, calls a resolver function that discovers available
+    image services and selects one based on per-agent conversation preferences.
+    Handles FileStore storage and URL creation.
     """
 
     _base_url: str = "http://localhost:9090"
-    _service = None  # BaseImageGenerationService instance
+    _service_resolver = None  # () -> (service, error_msg)
 
     @property
     def name(self) -> str:
@@ -1428,24 +1429,26 @@ class ImageGenerationHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
-    def set_service(self, service):
-        """Inject the resolved image generation service."""
-        self._service = service
+    def set_service_resolver(self, resolver):
+        """Set a resolver function: () -> (service, error_msg)."""
+        self._service_resolver = resolver
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        if not self._service:
-            return ("Error: no image generation service configured. "
-                    "Create an image generation service and set image_service "
-                    "in flow parameters.")
+        # Resolve service dynamically
+        if not self._service_resolver:
+            return "Error: no image service resolver configured"
+        service, error = self._service_resolver()
+        if not service:
+            return f"Error: {error or 'no image generation service available'}"
 
         prompt = arguments.get("prompt", "")
         if not prompt:
             return "Error: no prompt provided"
 
         try:
-            result = self._service.generate(**arguments)
+            result = service.generate(**arguments)
             # result = {"image_bytes": bytes, "content_type": str}
 
             from core.file_store import FileStore
@@ -1462,6 +1465,100 @@ class ImageGenerationHandler(ToolHandler):
 
         except Exception as e:
             return f"Error generating image: {e}"
+
+
+class VideoGenerationHandler(ToolHandler):
+    """Generate videos via a dynamically resolved video generation service.
+
+    At execution time, calls a resolver function that discovers available
+    video services and selects one based on per-agent conversation preferences.
+    Handles FileStore storage and URL creation.
+    """
+
+    _base_url: str = "http://localhost:9090"
+    _service_resolver = None  # () -> (service, error_msg)
+
+    @property
+    def name(self) -> str:
+        return "generate_video"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Generate a video from a text prompt. "
+            "Returns a download URL for the generated video. "
+            "Be descriptive in your prompt for best results."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Detailed description of the video to generate",
+                },
+                "negative_prompt": {
+                    "type": "string",
+                    "description": "What to avoid in the video (optional)",
+                },
+                "duration": {
+                    "type": "number",
+                    "description": "Video duration in seconds (optional, provider-dependent)",
+                },
+                "width": {
+                    "type": "integer",
+                    "description": "Video width in pixels (optional)",
+                },
+                "height": {
+                    "type": "integer",
+                    "description": "Video height in pixels (optional)",
+                },
+            },
+            "required": ["prompt"],
+        }
+
+    def set_base_url(self, base_url: str):
+        self._base_url = base_url.rstrip("/")
+
+    def set_service_resolver(self, resolver):
+        """Set a resolver function: () -> (service, error_msg)."""
+        self._service_resolver = resolver
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import time as _time
+
+        # Resolve service dynamically
+        if not self._service_resolver:
+            return "Error: no video service resolver configured"
+        service, error = self._service_resolver()
+        if not service:
+            return f"Error: {error or 'no video generation service available'}"
+
+        prompt = arguments.get("prompt", "")
+        if not prompt:
+            return "Error: no prompt provided"
+
+        try:
+            result = service.generate(**arguments)
+            # result = {"video_bytes": bytes, "content_type": str}
+
+            from core.file_store import FileStore
+            ct = result["content_type"]
+            ext = {
+                "video/mp4": "mp4", "video/webm": "webm",
+                "video/quicktime": "mov", "video/x-msvideo": "avi",
+            }.get(ct.split(";")[0].strip(), "mp4")
+            filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+            file_id = FileStore.instance().store(
+                filename, result["video_bytes"], content_type=ct
+            )
+            download_url = f"{self._base_url}/files/{file_id}/{filename}"
+            return f"Video generated: {download_url}"
+
+        except Exception as e:
+            return f"Error generating video: {e}"
 
 
 class NotifyUserHandler(ToolHandler):
@@ -2412,6 +2509,7 @@ class RememberHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
+        self._agent_name = ""
         self._embed_fn = None
 
     @property
@@ -2423,7 +2521,9 @@ class RememberHandler(ToolHandler):
         return (
             "Store a fact or piece of information in persistent memory. "
             "Use this to remember user preferences, important context, "
-            "or anything that should be recalled in future conversations."
+            "or anything that should be recalled in future conversations. "
+            "By default the memory is scoped to your agent. Set global=true "
+            "to make it accessible to all agents."
         )
 
     @property
@@ -2440,12 +2540,19 @@ class RememberHandler(ToolHandler):
                     "items": {"type": "string"},
                     "description": "Tags for categorization and retrieval (e.g. 'preference', 'name', 'project')",
                 },
+                "global": {
+                    "type": "boolean",
+                    "description": "If true, memory is global (shared across all agents). Default: false (scoped to current agent).",
+                },
             },
             "required": ["text"],
         }
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
 
     def set_embed_fn(self, fn):
         """Set embedding function for auto-embedding memories."""
@@ -2458,8 +2565,10 @@ class RememberHandler(ToolHandler):
         tags = arguments.get("tags", [])
         if not isinstance(tags, list):
             tags = [str(tags)]
+        is_global = arguments.get("global", False)
 
         user_id = self._user_id or "anonymous"
+        agent = "" if is_global else (self._agent_name or "")
         try:
             # Auto-embed if embed function is available
             embedding = None
@@ -2472,9 +2581,10 @@ class RememberHandler(ToolHandler):
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
-                embedding=embedding,
+                embedding=embedding, agent=agent,
             )
-            return f"Remembered (id: {entry.id}, tags: {entry.tags})"
+            scope = "global" if not agent else f"agent:{agent}"
+            return f"Remembered (id: {entry.id}, tags: {entry.tags}, scope: {scope})"
         except Exception as e:
             return f"Error storing memory: {e}"
 
@@ -4156,6 +4266,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(LocalFilesHandler())
     registry.register(RemoteExecutorHandler())
     registry.register(ImageGenerationHandler())
+    registry.register(VideoGenerationHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())

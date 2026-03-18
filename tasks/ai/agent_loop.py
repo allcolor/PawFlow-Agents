@@ -226,10 +226,6 @@ class AgentLoopTask(BaseTask):
                 "type": "boolean", "required": False, "default": False,
                 "description": "Enable SSE streaming mode (publishes events to ConversationEventBus)",
             },
-            "image_service": {
-                "type": "string", "required": False, "default": "${global.image_default_service}",
-                "description": "Image generation service ID",
-            },
             "max_rounds": {
                 "type": "integer", "required": False, "default": 1,
                 "description": "Max autonomous continuation rounds (agent calls schedule_continuation to trigger next round)",
@@ -260,25 +256,51 @@ class AgentLoopTask(BaseTask):
             },
         }
 
-    def _get_default_client(self, user_id: str = ""):
-        """Get the task's default LLM client (for compaction/summarization).
+    def _resolve_client(self, service_id: str, user_id: str, *,
+                        resolve_expressions: bool = True,
+                        raise_on_missing: bool = False,
+                        default_model: str = ""):
+        """Unified LLM client resolution.
 
-        Always uses the task-level llm_service, never the agent-switched one.
+        Returns (LLMClient | None, service | None).  When *raise_on_missing*
+        is True a ``ValueError`` is raised instead of returning ``(None, None)``.
         """
-        task_llm_service = self.config.get("llm_service", "")
-        if task_llm_service and "${" in task_llm_service:
+        svc_id = service_id
+        if resolve_expressions and svc_id and "${" in svc_id:
             from core.expression import resolve_expression
-            task_llm_service = resolve_expression(task_llm_service, owner=user_id)
-        if not task_llm_service or "${" in task_llm_service:
-            task_llm_service = ""  # let _resolve_llm_service try registries
-        client, _ = self._resolve_llm_service(task_llm_service, user_id)
+            svc_id = resolve_expression(svc_id, owner=user_id)
+        if not svc_id or "${" in svc_id:
+            if resolve_expressions:
+                svc_id = ""  # expression unresolved → let registries try
+            else:
+                svc_id = "default"
+        client, svc = self._resolve_llm_service(svc_id, user_id)
         if not client and self.config.get("api_key"):
             client = LLMClient(
                 provider=self.config.get("provider", "openai"),
                 api_key=self.config["api_key"],
                 base_url=self.config.get("base_url", ""),
+                default_model=default_model,
                 timeout=int(self.config.get("timeout", 120)),
             )
+            svc = None
+        if not client and raise_on_missing:
+            raise ValueError(
+                f"LLM service '{service_id}' not found. "
+                f"Define it in global services or set 'llm.default.service' "
+                f"in config/global_parameters.json."
+            )
+        return client, svc
+
+    def _get_default_client(self, user_id: str = ""):
+        """Get the task's default LLM client (for compaction/summarization).
+
+        Always uses the task-level llm_service, never the agent-switched one.
+        """
+        client, _ = self._resolve_client(
+            self.config.get("llm_service", ""), user_id,
+            resolve_expressions=True,
+        )
         return client
 
     def _resolve_llm_service(self, service_id: str, user_id: str):
@@ -311,20 +333,58 @@ class AgentLoopTask(BaseTask):
             logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
 
-    def _resolve_image_service(self, service_id: str, user_id: str):
-        """Resolve image generation service by ID.
+    # ── Media service discovery (generic for image/video) ───────────
 
-        Resolution order: flow services → UserServiceRegistry → GlobalServiceRegistry.
-        Returns the service instance or None.
+    @staticmethod
+    def _is_media_service_type(service_type: str, base_class) -> bool:
+        """Check if a service_type inherits from base_class via ServiceFactory."""
+        try:
+            from core import ServiceFactory
+            cls = ServiceFactory.get(service_type)
+            return cls is not None and issubclass(cls, base_class)
+        except Exception:
+            return False
+
+    def _discover_media_services(self, user_id: str, base_class) -> list:
+        """Discover all deployed services inheriting from base_class.
+
+        Returns list of (service_id, service_type, scope) tuples.
         """
+        results = []
+        seen = set()
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all_definitions().items():
+                if not getattr(sdef, "enabled", True):
+                    continue
+                stype = getattr(sdef, "service_type", "") or ""
+                if self._is_media_service_type(stype, base_class):
+                    results.append((sid, stype, "global"))
+                    seen.add(sid)
+        except Exception:
+            pass
+        if user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                ureg = UserServiceRegistry.get_instance()
+                for sid, sdef in ureg.get_all_for_user(user_id).items():
+                    if sid in seen:
+                        continue
+                    if not getattr(sdef, "enabled", True):
+                        continue
+                    stype = getattr(sdef, "service_type", "") or ""
+                    if self._is_media_service_type(stype, base_class):
+                        results.append((sid, stype, "user"))
+            except Exception:
+                pass
+        return results
+
+    @staticmethod
+    def _resolve_media_service_by_id(service_id: str, user_id: str):
+        """Resolve a media service by ID. Returns instance or None."""
         if not service_id:
             return None
-        # 1. Flow-level services
-        if self._services:
-            svc = self._services.get(service_id)
-            if svc and hasattr(svc, 'generate'):
-                return svc
-        # 2. User-scoped services
         try:
             from gui.services.user_service_registry import UserServiceRegistry
             svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
@@ -332,7 +392,6 @@ class AgentLoopTask(BaseTask):
                 return svc
         except Exception:
             pass
-        # 3. Global services
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
@@ -342,6 +401,308 @@ class AgentLoopTask(BaseTask):
             pass
         return None
 
+    def _make_media_resolver(self, user_id: str, conversation_id: str,
+                             agent_name: str, base_class,
+                             extra_key: str, label: str, command: str):
+        """Build a generic resolver closure for any media service type."""
+        _self = self
+        def resolver():
+            available = _self._discover_media_services(user_id, base_class)
+            if not available:
+                return None, f"No {label} service deployed"
+            if len(available) == 1:
+                svc = _self._resolve_media_service_by_id(available[0][0], user_id)
+                if svc:
+                    return svc, None
+                return None, f"{label.title()} service '{available[0][0]}' failed to connect"
+            # Multiple → check per-agent preference, then wildcard
+            if conversation_id:
+                from core.conversation_store import ConversationStore
+                prefs = ConversationStore.instance().get_extra(
+                    conversation_id, extra_key,
+                ) or {}
+                preferred = prefs.get(agent_name or "assistant") or prefs.get("*")
+                if preferred:
+                    svc = _self._resolve_media_service_by_id(preferred, user_id)
+                    if svc:
+                        return svc, None
+            names = [s[0] for s in available]
+            return None, (
+                f"Multiple {label} services available: {', '.join(names)}. "
+                f"Use {command} select <name> to choose one for this "
+                f"conversation, or {command} select <name> <agent> for "
+                f"a specific agent."
+            )
+        return resolver
+
+    def _make_image_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_image_generation import BaseImageGenerationService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseImageGenerationService, "image_services",
+            "image generation", "/imgservice",
+        )
+
+    def _make_video_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_video_generation import BaseVideoGenerationService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseVideoGenerationService, "video_services",
+            "video generation", "/vidservice",
+        )
+
+    @staticmethod
+    def _build_identity_block(agent_name: str, conversation_id: str = "",
+                              nicknames: dict = None) -> str:
+        """Build the [IDENTITY] prefix for a system prompt."""
+        real_name = agent_name or "assistant"
+        if conversation_id and nicknames is None:
+            from core.conversation_store import ConversationStore
+            nicknames = ConversationStore.instance().get_extra(
+                conversation_id, "agent_nicknames",
+            ) or {}
+        if nicknames:
+            nick_key = real_name.lower()
+            nickname = next(
+                (v for k, v in nicknames.items() if k.lower() == nick_key), None,
+            )
+            if nickname:
+                return (
+                    f"[IDENTITY] Your real agent id is \"{real_name}\". "
+                    f"The user has given you the nickname \"{nickname}\". "
+                    f"When other agents or tools refer to \"{real_name}\" or "
+                    f"\"{nickname}\" (case-insensitive), they mean YOU.\n\n"
+                )
+        return f"[IDENTITY] Your agent id is \"{real_name}\".\n\n"
+
+    def _build_done_event(self, conversation_id: str, response_content: str,
+                         agent_name: str, model: str, provider: str,
+                         tokens_in: int, tokens_out: int,
+                         tools_called: list, iteration: int, start_time: float,
+                         source: dict = None, *,
+                         continuing: bool = False, interrupted: bool = False):
+        """Build a 'done' event dict for SSE publishing."""
+        from core.conversation_store import ConversationStore
+        duration_ms = (time.time() - start_time) * 1000
+        event = {
+            "response": response_content,
+            "conversation_id": conversation_id,
+            "agent_name": agent_name or "assistant",
+            "model": model,
+            "provider": provider,
+            "base_url": (source or {}).get("base_url", ""),
+            "tokens_in": tokens_in,
+            "tokens_out": tokens_out,
+            "tools_called": tools_called,
+            "iterations": iteration,
+            "duration_ms": round(duration_ms, 1),
+            "message_count": ConversationStore.instance().message_count(conversation_id),
+            "source": source or {},
+        }
+        if continuing:
+            event["continuing"] = True
+        if interrupted:
+            event["interrupted"] = True
+        return event
+
+    def _decrement_active(self, conversation_id: str, ctx: dict = None):
+        """Decrement the active-conversation refcount and clean up tracking."""
+        with self._active_lock:
+            rc = self._active_conversations.get(conversation_id, 1) - 1
+            if rc <= 0:
+                self._active_conversations.pop(conversation_id, None)
+            else:
+                self._active_conversations[conversation_id] = rc
+            if ctx and not ctx.get("is_poll"):
+                self._user_active_conversations.discard(conversation_id)
+            if ctx:
+                _tk = ctx.get("_thought_key")
+                if _tk:
+                    self._active_thoughts.discard(_tk)
+        if ctx:
+            gen_key = ctx.get("_gen_key", conversation_id)
+            with self._interactions_lock:
+                self._active_interactions.pop(gen_key, None)
+
+    @staticmethod
+    def _track_tokens(user_id: str, tokens_in: int, tokens_out: int,
+                      model: str, agent_name: str = "assistant",
+                      llm_service: str = ""):
+        """Track token usage via TokenTracker (best-effort)."""
+        try:
+            from core.token_tracker import TokenTracker
+            TokenTracker.instance().track(
+                user_id, tokens_in, tokens_out,
+                model=model, agent_name=agent_name,
+                llm_service=llm_service,
+            )
+            TokenTracker.instance().flush()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _strip_echo_prefix(text: str) -> str:
+        """Strip identity prefix that the LLM may echo back (e.g. '[agent]: ...')."""
+        if not text:
+            return text
+        stripped = text.lstrip()
+        if stripped.startswith("["):
+            import re
+            return re.sub(r'^\[[^\]]+\]:\s*', '', stripped)
+        return text
+
+    def _force_synthesis(self, messages, client, ctx, *, prompt: str,
+                         compact_client=None, use_streaming: bool = False,
+                         token_callback=None, tools_called: list = None,
+                         compact_threshold: float = 0.6,
+                         conversation_id: str = ""):
+        """Force a final synthesis from the LLM (no tools).
+
+        Returns (content, tokens_in, tokens_out, model).
+        """
+        messages.append(LLMMessage(role="user", content=prompt))
+        _cc = compact_client or client
+        synth_context = self._compact_if_needed(
+            list(messages), _cc,
+            ctx.get("context_max_tokens", 64000),
+            compact_threshold,
+            ctx.get("context_keep_recent", 6),
+            conversation_id=conversation_id,
+        )
+        model = ctx.get("model") or None
+        for _attempt in range(2):
+            try:
+                if use_streaming and token_callback:
+                    resp = client.complete_stream(
+                        messages=synth_context, model=model,
+                        temperature=ctx["temperature"],
+                        max_tokens=ctx["max_tokens"],
+                        tools=None, callback=token_callback,
+                    )
+                else:
+                    resp = client.complete(
+                        messages=synth_context, model=model,
+                        temperature=ctx["temperature"],
+                        max_tokens=ctx["max_tokens"],
+                        tools=None,
+                    )
+                messages.append(LLMMessage(role="assistant", content=resp.content))
+                return resp.content, resp.tokens_in, resp.tokens_out, resp.model
+            except Exception as synth_err:
+                err_str = str(synth_err)
+                if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
+                    logger.warning("[agent] synthesis overflow, forcing aggressive compaction...")
+                    synth_context = self._compact_if_needed(
+                        synth_context, _cc,
+                        ctx.get("context_max_tokens", 64000),
+                        0.4, ctx.get("context_keep_recent", 4),
+                        conversation_id=conversation_id,
+                    )
+                    continue
+                logger.error("Forced synthesis failed: %s", synth_err)
+                break
+        # Fallback
+        fallback = (
+            "I performed research but encountered an error generating the response.\n"
+            f"Tools used: {', '.join(tools_called or [])}"
+        )
+        return fallback, 0, 0, ""
+
+    def _execute_tool_calls(self, tool_calls, registry, consecutive_tracker: dict,
+                            max_consecutive: int, *, parallel: bool = True,
+                            agent_name: str = "assistant", agent_svc: str = ""):
+        """Execute tool calls with consecutive-call limiting.
+
+        Returns list of (tool_call, result_text) in original order.
+        """
+        # Determine blocked tools
+        blocked = set()
+        if max_consecutive > 0:
+            for tc in tool_calls:
+                consecutive_tracker[tc.name] = consecutive_tracker.get(tc.name, 0) + 1
+                for tn in list(consecutive_tracker):
+                    if tn != tc.name:
+                        consecutive_tracker[tn] = 0
+                if consecutive_tracker[tc.name] > max_consecutive:
+                    blocked.add(tc.name)
+
+        def _exec_one(tc):
+            if tc.name in blocked:
+                return tc, (
+                    f"Tool '{tc.name}' has been called {consecutive_tracker.get(tc.name, 0)} times "
+                    f"consecutively (limit: {max_consecutive}). "
+                    f"Stop and explain to the user what you've tried so far, "
+                    f"and ask if they want you to continue."
+                )
+            # Re-inject thread-local source agent (needed in pool threads)
+            from core.tool_registry import SpawnAgentsHandler
+            for h in registry.list_tools():
+                if isinstance(h, SpawnAgentsHandler):
+                    h.set_source_agent(agent_name, agent_svc)
+                    break
+            try:
+                logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
+                return tc, registry.execute(tc.name, tc.arguments) or ""
+            except Exception as e:
+                logger.error("Tool '%s' failed: %s", tc.name, e)
+                return tc, f"Error: {e}"
+
+        if not parallel or len(tool_calls) == 1:
+            return [_exec_one(tc) for tc in tool_calls]
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(max_workers=len(tool_calls)) as pool:
+            futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
+            results_map = {}
+            for future in as_completed(futures):
+                tc, result_text = future.result()
+                results_map[tc.id] = (tc, result_text)
+        return [results_map[tc.id] for tc in tool_calls]
+
+    def _handle_response_no_tools(self, response_text: str, client_provider: str,
+                                  tool_defs, need_more_retried: bool,
+                                  source: dict = None):
+        """Handle an LLM response with no tool calls.
+
+        Returns (action, msgs_to_append, final_text, need_more_retried).
+        - action="continue": append msgs_to_append and loop again
+        - action="break": final_text is the agent's response; append msgs_to_append
+        """
+        # [NEED_MORE] signal: model requests another turn
+        if "[NEED_MORE]" in response_text:
+            clean = self._strip_echo_prefix(response_text.replace("[NEED_MORE]", "").strip())
+            msgs = []
+            if clean:
+                msgs.append(LLMMessage(role="assistant", content=clean, source=source))
+            msgs.append(LLMMessage(role="system", content=(
+                "Continue. You have another turn. "
+                "Use <tool_call> tags if you need tools, "
+                "or provide your final answer."
+            )))
+            return "continue", msgs, "", need_more_retried
+
+        # Heuristic: tool mentioned by name without <tool_call> tag
+        if client_provider in ("claude-code", "gemini-cli") and tool_defs:
+            tool_names = [td.name for td in tool_defs]
+            mentioned = [tn for tn in tool_names if tn in response_text]
+            if mentioned and not need_more_retried:
+                msgs = [
+                    LLMMessage(role="assistant", content=response_text, source=source),
+                    LLMMessage(role="system", content=(
+                        f"You mentioned tool(s) {mentioned} but did not emit <tool_call> tags. "
+                        "You MUST use <tool_call> tags to invoke tools. Example:\n"
+                        '<tool_call>{"name": "' + mentioned[0] + '", "arguments": {...}}</tool_call>\n'
+                        "Please emit the correct <tool_call> tag(s) now, "
+                        "or provide your final answer without mentioning tools."
+                    )),
+                ]
+                return "continue", msgs, "", True
+
+        # Final response
+        final = self._strip_echo_prefix(response_text)
+        msgs = [LLMMessage(role="assistant", content=final, source=source)]
+        return "break", msgs, final, need_more_retried
+
     def _prepare_agent_context(self, flowfile: FlowFile):
         """Extract common context from flowfile and config for both sync and streaming modes."""
         model = self.config.get("model", "")
@@ -349,48 +710,14 @@ class AgentLoopTask(BaseTask):
 
         # LLM service routing — all LLM access goes through services
         task_llm_service = self.config.get("llm_service", "")
-        # If expression was not resolved (no global param set), fallback to "default"
         if not task_llm_service or "${" in task_llm_service:
             task_llm_service = "default"
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
-        resolved_client, resolved_svc = self._resolve_llm_service(
+        client, resolved_svc = self._resolve_client(
             task_llm_service, _user_id_for_svc,
+            resolve_expressions=False, raise_on_missing=True,
+            default_model=model,
         )
-        if resolved_client:
-            client = resolved_client
-        elif self.config.get("api_key"):
-            # Legacy inline config — for flows that embed provider/api_key directly
-            client = LLMClient(
-                provider=self.config.get("provider", "openai"),
-                api_key=self.config["api_key"],
-                base_url=self.config.get("base_url", ""),
-                default_model=model,
-                timeout=int(self.config.get("timeout", 120)),
-            )
-            resolved_svc = None
-        else:
-            raise ValueError(
-                f"LLM service '{task_llm_service}' not found. "
-                f"Define it in global services or set 'llm.default.service' "
-                f"in config/global_parameters.json."
-            )
-
-        # Resolve image service (same pattern as LLM service above)
-        img_svc_id = self.config.get("image_service", "")
-        if img_svc_id and "${" in img_svc_id:
-            from core.expression import resolve_expression as _re
-            _img_params = self._parameter_context._params if hasattr(self, '_parameter_context') and self._parameter_context else None
-            img_svc_id = _re(img_svc_id, parameters=_img_params)
-            if "${" in img_svc_id:
-                img_svc_id = ""
-        img_svc = self._resolve_image_service(img_svc_id, _user_id_for_svc)
-        if img_svc:
-            from core.tool_registry import ImageGenerationHandler
-            registry = self.get_tool_registry()
-            for h in registry.list_tools():
-                if isinstance(h, ImageGenerationHandler):
-                    h.set_service(img_svc)
-                    break
 
         registry = self.get_tool_registry()
         # conversation_id/user_id not yet known — will be set in _execute_streaming
@@ -785,28 +1112,24 @@ class AgentLoopTask(BaseTask):
                 h.set_llm_service(_active_llm_service)
                 break
 
-        # Inject identity block into system prompt: real name + nickname
-        _real_name = (_active_agent_name or "assistant")
+        # Inject identity block into system prompt
+        _nicknames = {}
         if conversation_id:
             from core.conversation_store import ConversationStore as _CSNick
             _nicknames = _CSNick.instance().get_extra(conversation_id, "agent_nicknames") or {}
-            _nick_key = _real_name.lower()
-            _nickname = next((v for k, v in _nicknames.items() if k.lower() == _nick_key), None)
-            if _nickname:
-                system_prompt = (
-                    f"[IDENTITY] Your real agent id is \"{_real_name}\". "
-                    f"The user has given you the nickname \"{_nickname}\". "
-                    f"When other agents or tools refer to \"{_real_name}\" or "
-                    f"\"{_nickname}\" (case-insensitive), they mean YOU.\n\n"
-                ) + system_prompt
-            else:
-                system_prompt = (
-                    f"[IDENTITY] Your agent id is \"{_real_name}\".\n\n"
-                ) + system_prompt
-        else:
-            system_prompt = (
-                f"[IDENTITY] Your agent id is \"{_real_name}\".\n\n"
-            ) + system_prompt
+        system_prompt = self._build_identity_block(
+            _active_agent_name, conversation_id, _nicknames,
+        ) + system_prompt
+
+        # Re-configure handlers now that conversation_id/user_id are known
+        if conversation_id or user_id:
+            self._configure_tool_handlers(
+                registry, conversation_id=conversation_id or "",
+                user_id=user_id or "",
+                llm_client=client, llm_model=model_name,
+                agent_name=_active_agent_name or "assistant",
+                agent_svc=_active_llm_service or "",
+            )
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
@@ -2476,10 +2799,16 @@ class AgentLoopTask(BaseTask):
         if action == "list_memories":
             try:
                 from core.memory_store import MemoryStore
-                entries = MemoryStore.instance().list_all(user_id)
+                ms = MemoryStore.instance()
+                agent_filter = body.get("agent_name")  # None = all
+                if agent_filter is not None:
+                    entries = ms.list_by_agent(user_id, agent_filter)
+                else:
+                    entries = ms.list_all(user_id)
                 result = [{
                     "id": e.id, "text": e.text, "tags": e.tags,
-                    "created_at": e.created_at, "source": e.source,
+                    "created_at": e.created_at, "updated_at": e.updated_at,
+                    "source": e.source, "agent": e.agent,
                 } for e in entries]
                 flowfile.set_content(json.dumps({
                     "memories": result, "count": len(result),
@@ -2500,6 +2829,40 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"deleted": deleted}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "edit_memory":
+            memory_id = body.get("memory_id", "")
+            if not memory_id:
+                flowfile.set_content(json.dumps({"error": "Missing memory_id"}).encode())
+                return [flowfile]
+            from core.memory_store import MemoryStore
+            ms = MemoryStore.instance()
+            updated = False
+            if "text" in body:
+                updated = ms.update_text(user_id, memory_id, body["text"]) or updated
+            if "tags" in body:
+                updated = ms.update_tags(user_id, memory_id, body["tags"]) or updated
+            if "agent" in body:
+                updated = ms.update_agent(user_id, memory_id, body["agent"]) or updated
+            flowfile.set_content(json.dumps({"updated": updated}).encode())
+            return [flowfile]
+
+        if action == "add_memory":
+            text = body.get("text", "")
+            if not text:
+                flowfile.set_content(json.dumps({"error": "Missing text"}).encode())
+                return [flowfile]
+            tags = body.get("tags", [])
+            agent = body.get("agent", "")
+            from core.memory_store import MemoryStore
+            entry = MemoryStore.instance().remember(
+                user_id, text, tags, source="user", agent=agent,
+            )
+            flowfile.set_content(json.dumps({
+                "id": entry.id, "text": entry.text,
+                "tags": entry.tags, "agent": entry.agent,
+            }, ensure_ascii=False).encode())
             return [flowfile]
 
         if action == "install_tool":
@@ -2556,6 +2919,53 @@ class AgentLoopTask(BaseTask):
                 }, ensure_ascii=False).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        # ── User tool call ─────────────────────────────────────────
+        if action == "get_tool_schemas":
+            # Return all builtin tool definitions for /call help
+            registry = self.get_tool_registry()
+            tools = [{
+                "name": h.name,
+                "description": h.description,
+                "parameters": h.parameters_schema,
+            } for h in registry.list_tools()]
+            flowfile.set_content(json.dumps({"tools": tools}, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "call_tool":
+            tool_name = body.get("tool_name", "")
+            tool_args = body.get("arguments", {})
+            if not tool_name:
+                flowfile.set_content(json.dumps({"error": "Missing tool_name"}).encode())
+                return [flowfile]
+            registry = self.get_tool_registry()
+            # Configure handlers with conversation context
+            conv_id = body.get("conversation_id", "")
+            if conv_id or user_id:
+                self._configure_tool_handlers(
+                    registry, conversation_id=conv_id, user_id=user_id,
+                )
+            # Find and execute
+            handler = None
+            for h in registry.list_tools():
+                if h.name == tool_name:
+                    handler = h
+                    break
+            if not handler:
+                flowfile.set_content(json.dumps({
+                    "error": f"Tool '{tool_name}' not found",
+                }).encode())
+                return [flowfile]
+            try:
+                result = registry.execute(tool_name, tool_args)
+                flowfile.set_content(json.dumps({
+                    "tool": tool_name, "result": result,
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({
+                    "tool": tool_name, "error": str(e),
+                }).encode())
             return [flowfile]
 
         # ── User services ─────────────────────────────────────────
@@ -2708,6 +3118,104 @@ class AgentLoopTask(BaseTask):
 
         if action == "random_thought":
             return self._handle_random_thought(body, body.get("conversation_id", ""), user_id, flowfile)
+
+        # ── Image service management ──────────────────────────────────
+        if action == "list_image_services":
+            from services.base_image_generation import BaseImageGenerationService
+            services = self._discover_media_services(user_id, BaseImageGenerationService)
+            conv_id = body.get("conversation_id", "")
+            prefs = {}
+            if conv_id:
+                prefs = store.get_extra(conv_id, "image_services") or {}
+            result = [{
+                "id": sid, "type": stype, "scope": scope,
+                "selected_for": [
+                    k for k, v in prefs.items() if v == sid
+                ],
+            } for sid, stype, scope in services]
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "set_image_service":
+            conv_id = body.get("conversation_id", "")
+            service_name = body.get("service_name", "")
+            agent = body.get("agent_name", "*")
+            if not conv_id or not service_name:
+                flowfile.set_content(json.dumps({
+                    "error": "conversation_id and service_name required",
+                }).encode())
+                return [flowfile]
+            prefs = store.get_extra(conv_id, "image_services") or {}
+            prefs[agent] = service_name
+            store.set_extra(conv_id, "image_services", prefs)
+            flowfile.set_content(json.dumps({
+                "ok": True, "service": service_name, "agent": agent,
+            }).encode())
+            return [flowfile]
+
+        if action == "clear_image_service":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({
+                    "error": "conversation_id required",
+                }).encode())
+                return [flowfile]
+            if agent:
+                prefs = store.get_extra(conv_id, "image_services") or {}
+                prefs.pop(agent, None)
+                store.set_extra(conv_id, "image_services", prefs)
+            else:
+                store.set_extra(conv_id, "image_services", {})
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
+        # ── Video service management ──────────────────────────────────
+        if action == "list_video_services":
+            from services.base_video_generation import BaseVideoGenerationService
+            services = self._discover_media_services(user_id, BaseVideoGenerationService)
+            conv_id = body.get("conversation_id", "")
+            prefs = store.get_extra(conv_id, "video_services") or {} if conv_id else {}
+            result = [{
+                "id": sid, "type": stype, "scope": scope,
+                "selected_for": [k for k, v in prefs.items() if v == sid],
+            } for sid, stype, scope in services]
+            flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "set_video_service":
+            conv_id = body.get("conversation_id", "")
+            service_name = body.get("service_name", "")
+            agent = body.get("agent_name", "*")
+            if not conv_id or not service_name:
+                flowfile.set_content(json.dumps({
+                    "error": "conversation_id and service_name required",
+                }).encode())
+                return [flowfile]
+            prefs = store.get_extra(conv_id, "video_services") or {}
+            prefs[agent] = service_name
+            store.set_extra(conv_id, "video_services", prefs)
+            flowfile.set_content(json.dumps({
+                "ok": True, "service": service_name, "agent": agent,
+            }).encode())
+            return [flowfile]
+
+        if action == "clear_video_service":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({
+                    "error": "conversation_id required",
+                }).encode())
+                return [flowfile]
+            if agent:
+                prefs = store.get_extra(conv_id, "video_services") or {}
+                prefs.pop(agent, None)
+                store.set_extra(conv_id, "video_services", prefs)
+            else:
+                store.set_extra(conv_id, "video_services", {})
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
 
         return None  # Unknown action — treat as normal message
 
@@ -3021,44 +3529,16 @@ class AgentLoopTask(BaseTask):
             finish_reason = response.finish_reason
 
             if not response.tool_calls:
-                _resp_text_ns = response.content or ""
-
-                # [NEED_MORE] signal: model requests another turn
-                if "[NEED_MORE]" in _resp_text_ns:
-                    _clean_ns = _resp_text_ns.replace("[NEED_MORE]", "").strip()
-                    if _clean_ns:
-                        messages.append(LLMMessage(role="assistant", content=_clean_ns))
-                    messages.append(LLMMessage(role="system", content=(
-                        "Continue. You have another turn. "
-                        "Use <tool_call> tags if you need tools, "
-                        "or provide your final answer."
-                    )))
-                    continue
-
-                # Heuristic: tool mentioned by name without <tool_call> tag
-                if _client_provider_ns in ("claude-code", "gemini-cli") and tool_defs:
-                    _tool_names_ns = [td.name for td in tool_defs]
-                    _mentioned_ns = [tn for tn in _tool_names_ns if tn in _resp_text_ns]
-                    if _mentioned_ns and not _need_more_retried_ns:
-                        _need_more_retried_ns = True
-                        messages.append(LLMMessage(role="assistant", content=_resp_text_ns))
-                        messages.append(LLMMessage(role="system", content=(
-                            f"You mentioned tool(s) {_mentioned_ns} but did not emit <tool_call> tags. "
-                            "You MUST use <tool_call> tags to invoke tools. Example:\n"
-                            '<tool_call>{"name": "' + _mentioned_ns[0] + '", "arguments": {...}}</tool_call>\n'
-                            "Please emit the correct <tool_call> tag(s) now, "
-                            "or provide your final answer without mentioning tools."
-                        )))
-                        continue
-
-                _resp_clean_ns = (response.content or "").lstrip()
-                if _resp_clean_ns.startswith("["):
-                    import re as _re_strip_ns
-                    _resp_clean_ns = _re_strip_ns.sub(r'^\[[^\]]+\]:\s*', '', _resp_clean_ns)
                 _source_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
-                messages.append(LLMMessage(role="assistant", content=_resp_clean_ns, source=_source_ns))
-                response_content = _resp_clean_ns
-                break
+                action, msgs, final, _need_more_retried_ns = self._handle_response_no_tools(
+                    response.content or "", _client_provider_ns, tool_defs,
+                    _need_more_retried_ns, source=_source_ns,
+                )
+                messages.extend(msgs)
+                if action == "break":
+                    response_content = final
+                    break
+                continue
 
             _need_more_retried_ns = False  # reset on successful tool_call
             _source_tc_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
@@ -3068,119 +3548,53 @@ class AgentLoopTask(BaseTask):
                 source=_source_tc_ns,
             ))
 
-            # Re-inject executor before tool calls (fixes race condition)
-            for tc in response.tool_calls:
+            results = self._execute_tool_calls(
+                response.tool_calls, registry, _consecutive_tool, _max_consec,
+                parallel=False,
+                agent_name=ctx.get("active_agent_name") or "assistant",
+                agent_svc=ctx.get("active_llm_service", ""),
+            )
+            for tc, result_text in results:
                 tools_called.append(tc.name)
-
-                # Track consecutive calls per tool
-                if _max_consec > 0:
-                    _consecutive_tool[tc.name] = _consecutive_tool.get(tc.name, 0) + 1
-                    # Reset counters for other tools
-                    for _tn in list(_consecutive_tool):
-                        if _tn != tc.name:
-                            _consecutive_tool[_tn] = 0
-                    if _consecutive_tool[tc.name] > _max_consec:
-                        result_text = (
-                            f"Tool '{tc.name}' has been called {_consecutive_tool[tc.name]} times "
-                            f"consecutively (limit: {_max_consec}). "
-                            f"Stop and explain to the user what you've tried so far, "
-                            f"and ask if they want you to continue."
-                        )
-                        messages.append(LLMMessage(
-                            role="tool", content=result_text, tool_call_id=tc.id,
-                        ))
-                        continue
-
-                logger.info(f"Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
-                try:
-                    result_text = registry.execute(tc.name, tc.arguments) or ""
-                except Exception as _te:
-                    result_text = f"Error: {_te}"
-                    logger.error(f"Tool '{tc.name}' failed: {_te}")
                 messages.append(LLMMessage(
                     role="tool", content=result_text, tool_call_id=tc.id,
                 ))
         else:
-            logger.warning(f"Agent reached max iterations ({ctx['max_iterations']}), "
-                           f"forcing final synthesis")
-            messages.append(LLMMessage(
-                role="user",
-                content=(
+            logger.warning("Agent reached max iterations (%d), forcing synthesis",
+                           ctx["max_iterations"])
+            content, ti, to, fm = self._force_synthesis(
+                messages, client, ctx,
+                prompt=(
                     "[System: You have reached the maximum number of tool calls. "
                     "You MUST now provide your final response to the user. "
                     "Synthesize all the information you gathered from your tool calls "
                     "and present a clear, comprehensive answer. Do NOT call any more tools.]"
                 ),
-            ))
-            try:
-                final_resp = client.complete(
-                    messages=messages,
-                    model=model or None,
-                    temperature=ctx["temperature"],
-                    max_tokens=ctx["max_tokens"],
-                    tools=None,
-                )
-                messages.append(LLMMessage(role="assistant", content=final_resp.content))
-                response_content = final_resp.content
-                total_tokens_in += final_resp.tokens_in
-                total_tokens_out += final_resp.tokens_out
-                final_model = final_resp.model
-            except Exception as synth_err:
-                logger.error(f"Final synthesis failed: {synth_err}")
-                response_content = messages[-1].content if messages else "Max iterations reached"
+                tools_called=tools_called, compact_threshold=1.0,
+            )
+            response_content = content
+            total_tokens_in += ti
+            total_tokens_out += to
+            if fm:
+                final_model = fm
 
         # If the agent produced no final text, force a synthesis
         if not response_content:
-            logger.warning(f"[agent] empty response — forcing synthesis")
-            messages.append(LLMMessage(
-                role="user",
-                content=(
+            logger.warning("[agent] empty response — forcing synthesis")
+            content, ti, to, fm = self._force_synthesis(
+                messages, client, ctx,
+                prompt=(
                     "[System: You did not provide a response to the user. "
                     "You MUST respond now. Synthesize any information you have and present "
                     "a clear answer. Do NOT call any tools.]"
                 ),
-            ))
-            synth_context = self._compact_if_needed(
-                list(messages), client,
-                ctx.get("context_max_tokens", 64000),
-                0.6,
-                ctx.get("context_keep_recent", 6),
+                tools_called=tools_called,
             )
-            synth_ok = False
-            for _attempt in range(2):
-                try:
-                    synth_resp = client.complete(
-                        messages=synth_context,
-                        model=model or None,
-                        temperature=ctx["temperature"],
-                        max_tokens=ctx["max_tokens"],
-                        tools=None,
-                    )
-                    messages.append(LLMMessage(role="assistant", content=synth_resp.content))
-                    response_content = synth_resp.content
-                    total_tokens_in += synth_resp.tokens_in
-                    total_tokens_out += synth_resp.tokens_out
-                    final_model = synth_resp.model
-                    synth_ok = True
-                    break
-                except Exception as synth_err:
-                    err_str = str(synth_err)
-                    if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
-                        logger.warning(f"[agent] synthesis overflow, forcing aggressive compaction...")
-                        synth_context = self._compact_if_needed(
-                            synth_context, client,
-                            ctx.get("context_max_tokens", 64000),
-                            0.4,
-                            ctx.get("context_keep_recent", 4),
-                        )
-                        continue
-                    logger.error(f"Forced synthesis failed: {synth_err}")
-                    break
-            if not synth_ok:
-                response_content = (
-                    "I performed research but encountered an error generating the response.\n"
-                    f"Tools used: {', '.join(tools_called)}"
-                )
+            response_content = content
+            total_tokens_in += ti
+            total_tokens_out += to
+            if fm:
+                final_model = fm
 
         duration_ms = (time.time() - start_time) * 1000
         flowfile.set_attribute("agent.iterations", str(iteration))
@@ -3192,18 +3606,14 @@ class AgentLoopTask(BaseTask):
         flowfile.set_attribute("agent.finish_reason", finish_reason)
 
         # Track token usage
-        try:
-            from core.token_tracker import TokenTracker
-            tracker_user = ctx.get("user_id", "anonymous")
-            TokenTracker.instance().track(
-                tracker_user, total_tokens_in, total_tokens_out,
-                model=final_model or _client_model,
-                agent_name=ctx.get("active_agent_name", "") or "assistant",
-                llm_service=ctx.get("active_llm_service", ""),
-            )
-            TokenTracker.instance().flush()
-        except Exception:
-            pass
+        _client_model = getattr(client, "default_model", "") or ""
+        self._track_tokens(
+            ctx.get("user_id", "anonymous"),
+            total_tokens_in, total_tokens_out,
+            model=final_model or _client_model,
+            agent_name=ctx.get("active_agent_name", "") or "assistant",
+            llm_service=ctx.get("active_llm_service", ""),
+        )
 
         if use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
@@ -3281,43 +3691,6 @@ class AgentLoopTask(BaseTask):
                 }).encode())
                 flowfile.set_attribute("http.response.status", "409")
                 return [flowfile]
-
-        # Configure conversation-aware handlers with runtime context
-        from core.tool_registry import (
-            AskAgentHandler, CreatePlanHandler, FilesystemToolHandler,
-            FlowManagerHandler,
-            LocalFilesHandler, NotifyUserHandler, ScheduleRecheckHandler,
-            SpawnAgentsHandler, UpdatePlanHandler,
-        )
-        for h in ctx["registry"].list_tools():
-            if isinstance(h, ScheduleRecheckHandler):
-                h.set_conversation_id(conversation_id)
-                h.set_user_id(ctx.get("user_id", ""))
-            elif isinstance(h, LocalFilesHandler):
-                h.set_conversation_id(conversation_id)
-            elif isinstance(h, AskAgentHandler):
-                h.set_conversation_id(conversation_id)
-                h.set_llm_client(ctx["client"], ctx.get("model", ""))
-            elif isinstance(h, FlowManagerHandler):
-                h.set_conversation_id(conversation_id)
-                h.set_user_id(ctx.get("user_id", ""))
-            elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler)):
-                h.set_conversation_id(conversation_id)
-            elif isinstance(h, NotifyUserHandler):
-                h.set_conversation_id(conversation_id)
-            elif isinstance(h, SpawnAgentsHandler):
-                h.set_conversation_id(conversation_id)
-                h.set_source_agent(
-                    ctx.get("active_agent_name", "") or "assistant",
-                    ctx.get("active_llm_service", ""),
-                )
-            elif isinstance(h, FilesystemToolHandler):
-                h.set_user_id(ctx.get("user_id", ""))
-                fs_svc = self._find_filesystem_service()
-                if fs_svc:
-                    if hasattr(fs_svc, 'set_user_id') and ctx.get("user_id"):
-                        fs_svc.set_user_id(ctx["user_id"])
-                    h.set_fs_service(fs_svc)
 
         # Bump generation counter — any older thread (e.g. poller) for this
         # conversation will see the mismatch and skip its save.
@@ -3769,15 +4142,7 @@ class AgentLoopTask(BaseTask):
                 "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_base_url) if _client_base_url else "",
             }
 
-        def _strip_echo_prefix(text: str) -> str:
-            """Strip identity prefix that the LLM may echo back."""
-            if not text:
-                return text
-            stripped = text.lstrip()
-            if stripped.startswith("["):
-                import re as _re_strip
-                return _re_strip.sub(r'^\[[^\]]+\]:\s*', '', stripped)
-            return text
+        _strip_echo_prefix = self._strip_echo_prefix
 
         def _append(msg: LLMMessage):
             """Append a message to both the LLM context and the new-messages list."""
@@ -4022,47 +4387,17 @@ class AgentLoopTask(BaseTask):
                                 f"finish={finish_reason}, content_len={len(response.content or '')}")
 
                     if not response.tool_calls:
-                        _resp_text = response.content or ""
-
-                        # [NEED_MORE] signal: model requests another turn
-                        if "[NEED_MORE]" in _resp_text:
-                            _clean = _strip_echo_prefix(_resp_text.replace("[NEED_MORE]", "").strip())
-                            if _clean:
-                                _append(LLMMessage(role="assistant", content=_clean, source=_agent_source()))
-                                if callback:
-                                    callback(_clean)
-                            _append(LLMMessage(role="system", content=(
-                                "Continue. You have another turn. "
-                                "Use <tool_call> tags if you need tools, "
-                                "or provide your final answer."
-                            )))
-                            logger.info(f"[agent:{conversation_id[:8]}] [NEED_MORE] detected, granting extra turn")
-                            continue
-
-                        # Heuristic: model mentions a tool by name without emitting <tool_call>
-                        # Only for text-based tool providers (claude-code, gemini-cli)
-                        if _client_provider in ("claude-code", "gemini-cli") and tool_defs:
-                            _tool_names = [td.name for td in tool_defs]
-                            _mentioned = [tn for tn in _tool_names if tn in _resp_text]
-                            if _mentioned and not _need_more_retried:
-                                _need_more_retried = True
-                                _append(LLMMessage(role="assistant", content=_resp_text, source=_agent_source()))
-                                _append(LLMMessage(role="system", content=(
-                                    f"You mentioned tool(s) {_mentioned} but did not emit <tool_call> tags. "
-                                    "You MUST use <tool_call> tags to invoke tools. Example:\n"
-                                    '<tool_call>{"name": "' + _mentioned[0] + '", "arguments": {...}}</tool_call>\n'
-                                    "Please emit the correct <tool_call> tag(s) now, "
-                                    "or provide your final answer without mentioning tools."
-                                )))
-                                logger.info(f"[agent:{conversation_id[:8]}] tool mention without <tool_call> detected: "
-                                            f"{_mentioned}, injecting reminder")
-                                continue
-
-                        _resp_clean = _strip_echo_prefix(response.content or "")
-                        _append(LLMMessage(role="assistant", content=_resp_clean, source=_agent_source()))
-                        response_content = _resp_clean
-                        _flush_new()
-                        break
+                        action, msgs, final, _need_more_retried = self._handle_response_no_tools(
+                            response.content or "", _client_provider, tool_defs,
+                            _need_more_retried, source=_agent_source(),
+                        )
+                        for _m in msgs:
+                            _append(_m)
+                        if action == "break":
+                            response_content = final
+                            _flush_new()
+                            break
+                        continue
 
                     # Tool calls
                     _need_more_retried = False  # reset on successful tool_call
@@ -4082,8 +4417,11 @@ class AgentLoopTask(BaseTask):
                         })
 
                     # Publish all tool_call events upfront
+                    _sub_count = bus.subscriber_count(conversation_id)
                     for tc in response.tool_calls:
                         tools_called.append(tc.name)
+                        logger.info(f"[agent:{conversation_id[:8]}] publishing tool_call SSE: "
+                                    f"tool={tc.name}, subscribers={_sub_count}")
                         bus.publish_event(conversation_id, "tool_call", {
                             "tool": tc.name, "arguments": tc.arguments,
                             "agent_name": _agent_name or "assistant",
@@ -4094,51 +4432,13 @@ class AgentLoopTask(BaseTask):
                         status="tool_call",
                     )
 
-                    # Check consecutive tool call limit
-                    _blocked_tools = set()
-                    if _max_consec_s > 0:
-                        for tc in response.tool_calls:
-                            _consecutive_tool_s[tc.name] = _consecutive_tool_s.get(tc.name, 0) + 1
-                            for _tn in list(_consecutive_tool_s):
-                                if _tn != tc.name:
-                                    _consecutive_tool_s[_tn] = 0
-                            if _consecutive_tool_s[tc.name] > _max_consec_s:
-                                _blocked_tools.add(tc.name)
-
-                    # Execute tools — parallel if multiple, direct if single
-                    def _exec_one(tc):
-                        if tc.name in _blocked_tools:
-                            return tc, (
-                                f"Tool '{tc.name}' has been called {_consecutive_tool_s.get(tc.name, 0)} times "
-                                f"consecutively (limit: {_max_consec_s}). "
-                                f"Stop and explain to the user what you've tried so far, "
-                                f"and ask if they want you to continue."
-                            )
-                        # Re-inject thread-local source agent (needed in pool threads)
-                        from core.tool_registry import SpawnAgentsHandler as _SAH_exec
-                        for _hp in registry.list_tools():
-                            if isinstance(_hp, _SAH_exec):
-                                _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
-                                break
-                        try:
-                            return tc, registry.execute(tc.name, tc.arguments) or ""
-                        except Exception as e:
-                            logger.error(f"Tool '{tc.name}' failed: {e}")
-                            return tc, f"Error: {e}"
-
-                    if len(response.tool_calls) == 1:
-                        # Single tool — direct execution (no thread overhead)
-                        results_ordered = [_exec_one(response.tool_calls[0])]
-                    else:
-                        # Multiple tools — parallel execution
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
-                        with ThreadPoolExecutor(max_workers=len(response.tool_calls)) as pool:
-                            futures = {pool.submit(_exec_one, tc): tc for tc in response.tool_calls}
-                            results_map = {}
-                            for future in as_completed(futures):
-                                tc, result_text = future.result()
-                                results_map[tc.id] = (tc, result_text)
-                        results_ordered = [(results_map[tc.id]) for tc in response.tool_calls]
+                    # Execute tools with consecutive-call limiting
+                    results_ordered = self._execute_tool_calls(
+                        response.tool_calls, registry, _consecutive_tool_s,
+                        _max_consec_s, parallel=True,
+                        agent_name=_agent_name or "assistant",
+                        agent_svc=_agent_svc or "",
+                    )
 
                     # Process results in original order
                     for tc, result_text in results_ordered:
@@ -4170,42 +4470,35 @@ class AgentLoopTask(BaseTask):
                     # Flush tool calls + results to disk after each iteration
                     _flush_new()
                 else:
-                    # Max iterations reached with tool calls still active.
-                    # Force one final LLM call WITHOUT tools to get a synthesis.
-                    logger.warning(f"Agent reached max iterations ({ctx['max_iterations']}), "
-                                   f"forcing final synthesis")
+                    # Max iterations reached — force synthesis
+                    logger.warning("Agent reached max iterations (%d), forcing synthesis",
+                                   ctx["max_iterations"])
                     bus.publish_event(conversation_id, "thinking", {
-                        "iteration": iteration + 1,
-                        "round": current_round,
+                        "iteration": iteration + 1, "round": current_round,
                         "agent_name": _agent_name or "",
                     })
-                    _append(LLMMessage(
-                        role="user",
-                        content=(
+                    _pre = len(messages)
+                    content, ti, to, fm = self._force_synthesis(
+                        messages, client, ctx,
+                        prompt=(
                             "[System: You have reached the maximum number of tool calls. "
                             "You MUST now provide your final response to the user. "
                             "Synthesize all the information you gathered from your tool calls "
                             "and present a clear, comprehensive answer. Do NOT call any more tools.]"
                         ),
-                    ))
-                    try:
-                        final_resp = client.complete_stream(
-                            messages=messages,
-                            model=model or None,
-                            temperature=ctx["temperature"],
-                            max_tokens=ctx["max_tokens"],
-                            tools=None,  # No tools — force text response
-                            callback=lambda text: bus.publish_event(
-                                conversation_id, "token", {"text": text}),
-                        )
-                        _append(LLMMessage(role="assistant", content=final_resp.content))
-                        response_content = final_resp.content
-                        total_tokens_in += final_resp.tokens_in
-                        total_tokens_out += final_resp.tokens_out
-                        final_model = final_resp.model
-                    except Exception as synth_err:
-                        logger.error(f"Final synthesis failed: {synth_err}")
-                        response_content = messages[-1].content if messages else "Max iterations reached"
+                        compact_client=compact_client,
+                        use_streaming=True,
+                        token_callback=lambda text: bus.publish_event(
+                            conversation_id, "token", {"text": text}),
+                        tools_called=tools_called, compact_threshold=1.0,
+                        conversation_id=conversation_id,
+                    )
+                    new_messages.extend(messages[_pre:])
+                    response_content = content
+                    total_tokens_in += ti
+                    total_tokens_out += to
+                    if fm:
+                        final_model = fm
 
                 # Flush any remaining new messages to the canonical history
                 _flush_new()
@@ -4213,24 +4506,13 @@ class AgentLoopTask(BaseTask):
                 # Check if continuation was requested
                 if continuation_plan and current_round < max_rounds:
                     # Publish intermediate done so the UI shows the current response
-                    duration_ms = (time.time() - start_time) * 1000
-                    from core.conversation_store import ConversationStore as _CS2
-                    bus.publish_event(conversation_id, "done", {
-                        "response": response_content,
-                        "conversation_id": conversation_id,
-                        "agent_name": _agent_name or "assistant",
-                        "model": final_model or _client_model,
-                        "provider": _client_provider,
-                        "base_url": _agent_source().get("base_url", ""),
-                        "tokens_in": total_tokens_in,
-                        "tokens_out": total_tokens_out,
-                        "tools_called": tools_called,
-                        "iterations": iteration,
-                        "duration_ms": round(duration_ms, 1),
-                        "continuing": True,
-                        "message_count": _CS2.instance().message_count(conversation_id),
-                        "source": _agent_source(),
-                    })
+                    bus.publish_event(conversation_id, "done", self._build_done_event(
+                        conversation_id, response_content, _agent_name,
+                        final_model or _client_model, _client_provider,
+                        total_tokens_in, total_tokens_out, tools_called,
+                        iteration, start_time, source=_agent_source(),
+                        continuing=True,
+                    ))
 
                     logger.info(f"[agent:{conversation_id[:8]}] continuation scheduled: "
                                 f"plan='{continuation_plan}', delay={continuation_delay}s, "
@@ -4261,67 +4543,31 @@ class AgentLoopTask(BaseTask):
             if not response_content:
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")
                 bus.publish_event(conversation_id, "thinking", {
-                    "iteration": iteration + 1,
-                    "round": "synthesis",
+                    "iteration": iteration + 1, "round": "synthesis",
                     "agent_name": _agent_name or "",
                 })
-                _append(LLMMessage(
-                    role="user",
-                    content=(
+                _pre = len(messages)
+                content, ti, to, fm = self._force_synthesis(
+                    messages, client, ctx,
+                    prompt=(
                         "[System: You did not provide a response to the user. "
                         "You MUST respond now. Synthesize any information you have and present "
                         "a clear answer. Do NOT call any tools.]"
                     ),
-                ))
-                # Compact before synthesis — context may be huge after many tool calls
-                synth_context = self._compact_if_needed(
-                    list(messages), compact_client,
-                    ctx.get("context_max_tokens", 64000),
-                    0.6,  # aggressive threshold for synthesis
-                    ctx.get("context_keep_recent", 6),
+                    compact_client=compact_client,
+                    use_streaming=True,
+                    token_callback=lambda text: bus.publish_event(
+                        conversation_id, "token", {"text": text}),
+                    tools_called=tools_called,
+                    conversation_id=conversation_id,
                 )
-                synth_ok = False
-                for _attempt in range(2):
-                    try:
-                        synth_resp = client.complete_stream(
-                            messages=synth_context,
-                            model=model or None,
-                            temperature=ctx["temperature"],
-                            max_tokens=ctx["max_tokens"],
-                            tools=None,
-                            callback=lambda text: bus.publish_event(
-                                conversation_id, "token", {"text": text}),
-                        )
-                        _append(LLMMessage(role="assistant", content=synth_resp.content))
-                        response_content = synth_resp.content
-                        total_tokens_in += synth_resp.tokens_in
-                        total_tokens_out += synth_resp.tokens_out
-                        final_model = synth_resp.model
-                        logger.info(f"[agent:{conversation_id[:8]}] forced synthesis produced "
-                                    f"{len(response_content)} chars")
-                        _flush_new()
-                        synth_ok = True
-                        break
-                    except Exception as synth_err:
-                        err_str = str(synth_err)
-                        if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
-                            logger.warning(f"[agent:{conversation_id[:8]}] synthesis overflow, "
-                                           f"forcing aggressive compaction and retrying...")
-                            synth_context = self._compact_if_needed(
-                                synth_context, compact_client,
-                                ctx.get("context_max_tokens", 64000),
-                                0.4,  # very aggressive
-                                ctx.get("context_keep_recent", 4),
-                            )
-                            continue
-                        logger.error(f"[agent:{conversation_id[:8]}] forced synthesis failed: {synth_err}")
-                        break
-                if not synth_ok:
-                    response_content = (
-                        "I performed the following research but encountered an error "
-                        f"generating the final response.\n\n"
-                        f"Tools used: {', '.join(tools_called)}"
-                    )
+                new_messages.extend(messages[_pre:])
+                response_content = content
+                total_tokens_in += ti
+                total_tokens_out += to
+                if fm:
+                    final_model = fm
+                _flush_new()
 
             # Handle [NO_PENDING_WORK] / [RECHECK_IN:...] tags
             if "[NO_PENDING_WORK]" in (response_content or ""):
@@ -4398,40 +4644,23 @@ class AgentLoopTask(BaseTask):
                         _flush_new()
 
             # Publish final done event
-            duration_ms = (time.time() - start_time) * 1000
             logger.info(f"[agent:{conversation_id[:8]}] done: response_len={len(response_content or '')}, "
                         f"tools={tools_called}")
-            from core.conversation_store import ConversationStore as _CS3
-            _source = _agent_source()
-            bus.publish_event(conversation_id, "done", {
-                "response": response_content,
-                "conversation_id": conversation_id,
-                "agent_name": _agent_name or "assistant",
-                "model": final_model or _client_model,
-                "provider": _client_provider,
-                "base_url": _source.get("base_url", ""),
-                "tokens_in": total_tokens_in,
-                "tokens_out": total_tokens_out,
-                "tools_called": tools_called,
-                "iterations": iteration,
-                "duration_ms": round(duration_ms, 1),
-                "message_count": _CS3.instance().message_count(conversation_id),
-                "source": _source,
-            })
+            bus.publish_event(conversation_id, "done", self._build_done_event(
+                conversation_id, response_content, _agent_name,
+                final_model or _client_model, _client_provider,
+                total_tokens_in, total_tokens_out, tools_called,
+                iteration, start_time, source=_agent_source(),
+            ))
 
             # Track token usage
-            try:
-                from core.token_tracker import TokenTracker
-                tracker_user = ctx.get("user_id", "anonymous")
-                TokenTracker.instance().track(
-                    tracker_user, total_tokens_in, total_tokens_out,
-                    model=final_model or _client_model,
-                    agent_name=_agent_name or "assistant",
-                    llm_service=_agent_svc or "",
-                )
-                TokenTracker.instance().flush()
-            except Exception:
-                pass
+            self._track_tokens(
+                ctx.get("user_id", "anonymous"),
+                total_tokens_in, total_tokens_out,
+                model=final_model or _client_model,
+                agent_name=_agent_name or "assistant",
+                llm_service=_agent_svc or "",
+            )
 
             # Update conversation status — idle unless tools were used (active = may need follow-up)
             from core.conversation_store import ConversationStore as _CS
@@ -4441,27 +4670,14 @@ class AgentLoopTask(BaseTask):
             )
 
         except _InterruptComplete:
-            # Interrupt synthesis completed — fall through to normal "done" publishing
-            duration_ms = (time.time() - start_time) * 1000
             logger.info(f"[agent:{conversation_id[:8]}] interrupt synthesis done")
-            from core.conversation_store import ConversationStore as _CS3i
-            _source = _agent_source()
-            bus.publish_event(conversation_id, "done", {
-                "response": response_content,
-                "conversation_id": conversation_id,
-                "agent_name": _agent_name or "assistant",
-                "model": final_model or _client_model,
-                "provider": _client_provider,
-                "base_url": _source.get("base_url", ""),
-                "tokens_in": total_tokens_in,
-                "tokens_out": total_tokens_out,
-                "tools_called": tools_called,
-                "iterations": iteration,
-                "duration_ms": round(duration_ms, 1),
-                "message_count": _CS3i.instance().message_count(conversation_id),
-                "source": _source,
-                "interrupted": True,
-            })
+            bus.publish_event(conversation_id, "done", self._build_done_event(
+                conversation_id, response_content, _agent_name,
+                final_model or _client_model, _client_provider,
+                total_tokens_in, total_tokens_out, tools_called,
+                iteration, start_time, source=_agent_source(),
+                interrupted=True,
+            ))
             from core.conversation_store import ConversationStore as _CSi
             _CSi.instance().set_status(conversation_id, "active")
         except AgentCancelled:
@@ -4478,21 +4694,7 @@ class AgentLoopTask(BaseTask):
                 "conversation_id": conversation_id,
             })
         finally:
-            with self._active_lock:
-                rc = self._active_conversations.get(conversation_id, 1) - 1
-                if rc <= 0:
-                    self._active_conversations.pop(conversation_id, None)
-                else:
-                    self._active_conversations[conversation_id] = rc
-                if not ctx.get("is_poll"):
-                    self._user_active_conversations.discard(conversation_id)
-                _tk = ctx.get("_thought_key")
-                if _tk:
-                    self._active_thoughts.discard(_tk)
-            # Remove interaction tracking
-            gen_key = ctx.get("_gen_key", conversation_id)
-            with self._interactions_lock:
-                self._active_interactions.pop(gen_key, None)
+            self._decrement_active(conversation_id, ctx)
 
             # Auto-reschedule random thought if still enabled
             if ctx.get("is_random_thought"):
@@ -4568,14 +4770,9 @@ class AgentLoopTask(BaseTask):
             task_llm_service = self.config.get("llm_service", "")
             if not task_llm_service or "${" in task_llm_service:
                 task_llm_service = "default"
-            client, _ = self._resolve_llm_service(task_llm_service, user_id)
-            if not client and self.config.get("api_key"):
-                client = LLMClient(
-                    provider=self.config.get("provider", "openai"),
-                    api_key=self.config["api_key"],
-                    base_url=self.config.get("base_url", ""),
-                    timeout=int(self.config.get("timeout", 120)),
-                )
+            client, _ = self._resolve_client(
+                task_llm_service, user_id, resolve_expressions=False,
+            )
             if not client:
                 bus.publish_event(conversation_id, "error_event", {
                     "message": "No LLM service available for broadcast.",
@@ -5021,15 +5218,10 @@ class AgentLoopTask(BaseTask):
                 except Exception as _e:
                     logger.debug(f"[poll] Could not resolve agent '{_active_agent}': {_e}")
 
-        client, _poll_svc = self._resolve_llm_service(svc_id, _poll_uid)
-        if not client and self.config.get("api_key"):
-            client = LLMClient(
-                provider=self.config.get("provider", "openai"),
-                api_key=self.config["api_key"],
-                base_url=self.config.get("base_url", ""),
-                default_model=model,
-                timeout=int(self.config.get("timeout", 120)),
-            )
+        client, _poll_svc = self._resolve_client(
+            svc_id, _poll_uid, resolve_expressions=False,
+            default_model=model,
+        )
         if not client:
             logger.warning("Poll: LLM service '%s' not found", svc_id)
             return None
@@ -5088,22 +5280,11 @@ class AgentLoopTask(BaseTask):
         from datetime import datetime
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         # Inject identity block into thought agent's system prompt
-        _thought_real = _active_agent or "assistant"
         from core.conversation_store import ConversationStore as _CS3
         _nicknames = _CS3.instance().get_extra(conversation_id, "agent_nicknames") or {}
-        _nick_key = _thought_real.lower()
-        _nickname = next((v for k, v in _nicknames.items() if k.lower() == _nick_key), None)
-        if _nickname:
-            system_prompt = (
-                f"[IDENTITY] Your real agent id is \"{_thought_real}\". "
-                f"The user has given you the nickname \"{_nickname}\". "
-                f"When other agents or tools refer to \"{_thought_real}\" or "
-                f"\"{_nickname}\" (case-insensitive), they mean YOU.\n\n"
-            ) + system_prompt
-        else:
-            system_prompt = (
-                f"[IDENTITY] Your agent id is \"{_thought_real}\".\n\n"
-            ) + system_prompt
+        system_prompt = self._build_identity_block(
+            _active_agent, conversation_id, _nicknames,
+        ) + system_prompt
         _context_data = _CS3.instance().load_context(conversation_id)
         _context_diverged = False
         try:
@@ -5227,6 +5408,8 @@ class AgentLoopTask(BaseTask):
     def _configure_tool_handlers(
         self, registry: ToolRegistry,
         conversation_id: str = "", user_id: str = "",
+        llm_client=None, llm_model: str = "",
+        agent_name: str = "", agent_svc: str = "",
     ) -> None:
         """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
         from core.tool_registry import (
@@ -5234,7 +5417,8 @@ class AgentLoopTask(BaseTask):
             CreatePlanHandler,
             CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
             FlowManagerHandler,
-            ForgetHandler, GetAgentResultsHandler, ImageGenerationHandler,
+            ForgetHandler, GetAgentResultsHandler,
+            ImageGenerationHandler, VideoGenerationHandler,
             LinkIdentityHandler, LocalFilesHandler, ManageResourceHandler,
             NotifyUserHandler,
             RecallHandler, RememberHandler, RemoteExecutorHandler,
@@ -5265,6 +5449,17 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ImageGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                if conversation_id or user_id:
+                    h.set_service_resolver(self._make_image_resolver(
+                        user_id, conversation_id, agent_name,
+                    ))
+            elif isinstance(h, VideoGenerationHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+                if conversation_id or user_id:
+                    h.set_service_resolver(self._make_video_resolver(
+                        user_id, conversation_id, agent_name,
+                    ))
             elif isinstance(h, ScheduleRecheckHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
@@ -5276,6 +5471,8 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
                 if user_id:
                     h.set_user_id(user_id)
+                if agent_name and isinstance(h, RememberHandler):
+                    h.set_agent_name(agent_name)
             elif isinstance(h, BrowserActionHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
@@ -5311,6 +5508,8 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, AskAgentHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
+                if llm_client:
+                    h.set_llm_client(llm_client, llm_model)
             elif isinstance(h, ManageResourceHandler):
                 if user_id:
                     h.set_user_id(user_id)
@@ -5322,6 +5521,8 @@ class AgentLoopTask(BaseTask):
                 if isinstance(h, SpawnAgentsHandler):
                     if conversation_id:
                         h.set_conversation_id(conversation_id)
+                    if agent_name:
+                        h.set_source_agent(agent_name, agent_svc)
                 # SubAgentExecutor is set up lazily in _prepare_agent_context
             elif isinstance(h, ShowFileHandler):
                 if file_base_url:
@@ -5997,13 +6198,50 @@ class AgentLoopTask(BaseTask):
                     if m.get("timestamp"):
                         _tc_entry["timestamp"] = m["timestamp"]
                     result.append(_tc_entry)
+                _tc_source = m.get("source")
                 for tc in tool_calls:
+                    # Build rich display matching SSE tool_call format
+                    _tc_name = tc.get("name", "?")
+                    _tc_args = tc.get("arguments", {})
+                    _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
+                    # Format source label
+                    _src_agent = (_tc_source or {}).get("name", "assistant") if _tc_source else "assistant"
+                    _src_svc = (_tc_source or {}).get("llm_service", "") if _tc_source else ""
+                    _src_label = _src_agent
+                    if _src_svc:
+                        _src_label += f" via {_src_svc}"
+                    # Special formatting for spawn_agents
+                    if _tc_name == "spawn_agents" and isinstance(_tc_args, dict):
+                        tasks = _tc_args.get("tasks", [])
+                        if tasks and isinstance(tasks, list):
+                            lines = []
+                            for t in tasks:
+                                dst = t.get("agent", "?")
+                                preview = (t.get("message", "") or "")[:80]
+                                lines.append(f"➡ {_src_label} → {dst}" + (f": {preview}" if preview else ""))
+                            _display = "\n".join(lines)
+                        else:
+                            _display = f"🔧 [{_src_label}] {_tc_name}"
+                    else:
+                        # Format args preview
+                        _args_preview = ""
+                        if isinstance(_tc_args, dict) and _tc_args:
+                            _parts = []
+                            for k, v in _tc_args.items():
+                                vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
+                                _parts.append(f"{k}={vs}")
+                            _args_preview = ", ".join(_parts)
+                            if len(_args_preview) > 120:
+                                _args_preview = _args_preview[:120] + "..."
+                        _display = f"🔧 [{_src_label}] {_tc_name}"
+                        if _args_preview:
+                            _display += f"({_args_preview})"
                     result.append({
                         "type": "tool_call", "role": "assistant",
-                        "content": f"🔧 {tc.get('name', '?')}",
-                        "tool_name": tc.get("name", ""),
-                        "tool_args": json.dumps(tc.get("arguments", {}),
-                                                ensure_ascii=False)[:500],
+                        "content": _display,
+                        "tool_name": _tc_name,
+                        "tool_args": _tc_args_str,
+                        "source": _tc_source,
                     })
             elif role == "tool" and tool_call_id:
                 # Tool result message

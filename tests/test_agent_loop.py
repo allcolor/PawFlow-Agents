@@ -317,7 +317,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 31  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity + remote_exec
+        assert len(defs) == 32  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -420,7 +420,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 31  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity + remote_exec
+        assert len(registry.list_tools()) == 32  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pyfi2_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})
@@ -1775,10 +1775,10 @@ class TestRandomThought(unittest.TestCase):
 
 
 class TestImageServiceResolution(unittest.TestCase):
-    """Tests for image generation service architecture."""
+    """Tests for image generation service discovery architecture."""
 
-    def test_image_handler_delegates_to_service(self):
-        """ImageGenerationHandler delegates to injected service."""
+    def test_image_handler_delegates_via_resolver(self):
+        """ImageGenerationHandler delegates to resolver-provided service."""
         from core.tool_registry import ImageGenerationHandler
 
         handler = ImageGenerationHandler()
@@ -1787,7 +1787,7 @@ class TestImageServiceResolution(unittest.TestCase):
             "image_bytes": b"\x89PNG fake",
             "content_type": "image/png",
         }
-        handler.set_service(mock_service)
+        handler.set_service_resolver(lambda: (mock_service, None))
         handler.set_base_url("http://localhost:9090")
 
         with patch("core.file_store.FileStore.instance") as mock_fs:
@@ -1801,56 +1801,112 @@ class TestImageServiceResolution(unittest.TestCase):
         assert "file123" in result
         assert "Image generated" in result
 
-    def test_image_handler_no_service_returns_error(self):
-        """Without a service, handler returns a clear error message."""
+    def test_image_handler_no_resolver_returns_error(self):
+        """Without a resolver, handler returns a clear error message."""
         from core.tool_registry import ImageGenerationHandler
 
         handler = ImageGenerationHandler()
         result = handler.execute({"prompt": "a cat"})
-        assert "no image generation service configured" in result
+        assert "no image service resolver configured" in result
 
-    def test_image_service_schema(self):
-        """AgentLoopTask schema has image_service, not pixazo_api_key."""
+    def test_image_handler_resolver_error(self):
+        """When resolver returns error, handler propagates it."""
+        from core.tool_registry import ImageGenerationHandler
+
+        handler = ImageGenerationHandler()
+        handler.set_service_resolver(
+            lambda: (None, "Multiple services: pixazo, dalle3. Use /imgservice select")
+        )
+        result = handler.execute({"prompt": "a cat"})
+        assert "Multiple services" in result
+
+    def test_image_service_schema_no_image_service_param(self):
+        """AgentLoopTask schema does not have image_service (discovery-based)."""
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask({"system_prompt": "test"})
         schema = task.get_parameter_schema()
-        assert "image_service" in schema
+        assert "image_service" not in schema
         assert "pixazo_api_key" not in schema
 
-    def test_resolve_image_service_from_flow(self):
-        """_resolve_image_service finds service in flow-level services."""
+    def test_discover_image_services(self):
+        """_discover_media_services finds image services from global registry."""
+        from tasks.ai.agent_loop import AgentLoopTask
+        from services.base_image_generation import BaseImageGenerationService
+        task = AgentLoopTask.__new__(AgentLoopTask)
+
+        mock_pixazo_def = MagicMock(enabled=True, service_type="pixazoImageGeneration")
+        mock_llm_def = MagicMock(enabled=True, service_type="llmConnection")
+
+        with patch("gui.services.global_service_registry.GlobalServiceRegistry") as mock_glob:
+            mock_glob.get_instance.return_value.get_all_definitions.return_value = {
+                "pixazo": mock_pixazo_def,
+                "llm_svc": mock_llm_def,
+            }
+            with patch.object(AgentLoopTask, '_is_media_service_type',
+                              side_effect=lambda t, bc: t == "pixazoImageGeneration"):
+                result = task._discover_media_services("", BaseImageGenerationService)
+
+        assert len(result) == 1
+        assert result[0][0] == "pixazo"
+
+    def test_make_image_resolver_single_service(self):
+        """With one image service, resolver auto-selects it."""
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
+
         mock_svc = MagicMock()
         mock_svc.generate = MagicMock()
-        task._services = {"my_img_svc": mock_svc}
 
-        result = task._resolve_image_service("my_img_svc", "user1")
-        assert result is mock_svc
+        with patch.object(task, '_discover_media_services', return_value=[
+            ("pixazo", "pixazoImageGeneration", "global"),
+        ]):
+            with patch.object(task, '_resolve_media_service_by_id', return_value=mock_svc):
+                resolver = task._make_image_resolver("user1", "conv1", "assistant")
+                svc, err = resolver()
 
-    def test_resolve_image_service_none(self):
-        """_resolve_image_service returns None for empty service_id."""
+        assert svc is mock_svc
+        assert err is None
+
+    def test_make_image_resolver_multiple_no_pref(self):
+        """With multiple services and no preference, resolver returns error listing."""
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
-        task._services = {}
-        assert task._resolve_image_service("", "user1") is None
 
-    def test_resolve_image_service_from_global(self):
-        """_resolve_image_service falls through to GlobalServiceRegistry."""
+        with patch.object(task, '_discover_media_services', return_value=[
+            ("pixazo", "pixazoImageGeneration", "global"),
+            ("dalle3", "dalleImageGeneration", "user"),
+        ]):
+            with patch("core.conversation_store.ConversationStore") as mock_cs:
+                mock_cs.instance.return_value.get_extra.return_value = {}
+                resolver = task._make_image_resolver("user1", "conv1", "assistant")
+                svc, err = resolver()
+
+        assert svc is None
+        assert "pixazo" in err and "dalle3" in err
+        assert "/imgservice" in err
+
+    def test_make_image_resolver_with_agent_pref(self):
+        """Per-agent preference selects the right service."""
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
-        task._services = {}
 
         mock_svc = MagicMock()
         mock_svc.generate = MagicMock()
 
-        with patch("gui.services.user_service_registry.UserServiceRegistry") as mock_usr:
-            mock_usr.get_instance.return_value.get_live_instance.return_value = None
-            with patch("gui.services.global_service_registry.GlobalServiceRegistry") as mock_glob:
-                mock_glob.get_instance.return_value.get_live_instance.return_value = mock_svc
-                result = task._resolve_image_service("pixazo_svc", "user1")
+        with patch.object(task, '_discover_media_services', return_value=[
+            ("pixazo", "pixazoImageGeneration", "global"),
+            ("dalle3", "dalleImageGeneration", "user"),
+        ]):
+            with patch("core.conversation_store.ConversationStore") as mock_cs:
+                mock_cs.instance.return_value.get_extra.return_value = {
+                    "grok": "dalle3",
+                }
+                with patch.object(task, '_resolve_media_service_by_id', return_value=mock_svc):
+                    resolver = task._make_image_resolver("user1", "conv1", "grok")
+                    svc, err = resolver()
 
-        assert result is mock_svc
+        assert svc is mock_svc
+        assert err is None
 
 
 if __name__ == "__main__":

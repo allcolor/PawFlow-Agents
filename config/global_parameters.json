@@ -8,9 +8,8 @@
   "oauth_default_role": "operator",
   "grok_llm_service": "grok_llm_service",
   "grok_llm_base_url": "https://api.x.ai",
-  "grok_llm_model": "grok-4-latest",
+  "grok_llm_model": "grok-4-1-fast-reasoning",
   "claude_code_service": "claude_llm_service",
   "llm_default_service": "llm_default_service",
-  "claude_llm_service": "claude_llm_service",
-  "image_default_service": "image_default_service"
+  "claude_llm_service": "claude_llm_service"
 }

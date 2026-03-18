@@ -1185,6 +1185,12 @@ class LLMClient:
             "--output-format", "json",
             "--model", model or "sonnet",
             "--max-turns", "1",
+            # Disable all native Claude Code tools — the model must only
+            # respond with text (and optionally <tool_call> tags that we
+            # parse ourselves).  Without this, Claude Code tries to execute
+            # tools interactively (Read, Write, Bash...) which triggers
+            # permission prompts and causes timeouts.
+            "--allowedTools", "",
         ]
         # Note: Claude CLI has no --max-tokens flag (only --max-budget-usd)
 

@@ -281,6 +281,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" title="My Flows">&#x26A1;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
+    <button class="btn" id="memoryBtn" onclick="cmdShowMemories()" style="display:none" title="View agent memories">&#x1F9E0;</button>
     <button class="btn" id="exportConvBtn" onclick="exportConversation()" style="display:none" title="Export conversation">&#x1F4E5;</button>
     <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
     <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
@@ -651,6 +652,7 @@ function newChat() {
   document.getElementById('deleteConvBtn').style.display = 'none';
   document.getElementById('exportConvBtn').style.display = 'none';
   document.getElementById('contextBtn').style.display = 'none';
+  document.getElementById('memoryBtn').style.display = '';
   document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
   document.getElementById('flowsPanel').style.display = 'none';
@@ -667,6 +669,7 @@ function updateDeleteBtn() {
   document.getElementById('deleteConvBtn').style.display = show;
   document.getElementById('exportConvBtn').style.display = show;
   document.getElementById('contextBtn').style.display = show;
+  document.getElementById('memoryBtn').style.display = '';
   document.getElementById('refreshConvBtn').style.display = show;
   document.getElementById('filesBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
@@ -1412,19 +1415,31 @@ function trackAgentStart(agentName, msgPreview) {
   updateActivePanel();
   if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
 }
-function trackAgentTool(agentName, toolName) {
+function _ensureInteraction(agentName) {
+  // Ensure an activeInteractions entry exists (creates one if done event cleared it)
   const key = agentKey(agentName);
-  if (activeInteractions[key]) {
-    activeInteractions[key].lastTool = toolName;
-    activeInteractions[key].status = toolName;
-    // Track concurrent tools — add if not already present
-    const at = activeInteractions[key].activeTools;
-    if (at.indexOf(toolName) === -1) at.push(toolName);
+  if (!activeInteractions[key]) {
+    activeInteractions[key] = {
+      name: agentName || 'assistant',
+      startedAt: Date.now(), lastTool: '', activeTools: [], status: 'thinking', msgPreview: '',
+      updatedAt: Date.now(),
+    };
+    if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
   }
+  // Ensure activeTools exists (backward compat)
+  if (!activeInteractions[key].activeTools) activeInteractions[key].activeTools = [];
+  return key;
+}
+function trackAgentTool(agentName, toolName) {
+  const key = _ensureInteraction(agentName);
+  activeInteractions[key].lastTool = toolName;
+  activeInteractions[key].status = toolName;
+  const at = activeInteractions[key].activeTools;
+  if (at.indexOf(toolName) === -1) at.push(toolName);
   updateActivePanel();
 }
 function trackAgentToolDone(agentName, toolName) {
-  const key = agentKey(agentName);
+  const key = _ensureInteraction(agentName);
   if (activeInteractions[key]) {
     const at = activeInteractions[key].activeTools;
     const idx = at.indexOf(toolName);
@@ -1990,12 +2005,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
-    const src = data.source_agent ? displayAgentName(data.source_agent) : '?';
-    const srcSvc = data.source_llm_service ? ' via ' + data.source_llm_service : '';
-    const dst = displayAgentName(data.agent_name);
-    const dstSvc = data.llm_service ? ' via ' + data.llm_service : '';
-    addMsg('system', '\u27A1 ' + src + srcSvc + ' \u2192 ' + dst + dstSvc);
-    scrollBottom();
+    showTyping();
   });
 
   eventSource.addEventListener('sub_agent_iteration', (e) => {
@@ -2044,14 +2054,15 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
     const tcAgent = data.agent_name || 'assistant';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
-      // Keep the streaming element visible (it has the partial response text),
-      // but detach it from the per-agent stream state so done handler won't
-      // try to remove it again.
-      tcs.el = null; tcs.text = ''; tcs.chunks = [];
+      // Detach the current streaming element so new tokens create a fresh one,
+      // but KEEP it in chunks so the done handler can clean it up later.
+      tcs.el = null; tcs.text = '';
+      // Do NOT clear tcs.chunks — done handler needs them to remove DOM elements
     }
     trackAgentTool(tcAgent, data.tool);
     const srcLabel = displayAgentName(tcAgent) + (data.llm_service ? ' via ' + data.llm_service : '');
@@ -2084,6 +2095,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    console.log('[SSE] tool_result received:', data.tool, (data.result || '').substring(0, 100));
     // spawn_agents: responses are shown via sub_agent_done events in real-time
     // tool_result just shows a compact summary (don't duplicate responses)
     if (data.tool === 'spawn_agents' && data.result) {
@@ -2151,10 +2163,18 @@ function connectSSE(cid) {
     console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count to prevent poll from re-fetching these messages
     if (data.message_count) serverMsgCount = data.message_count;
-    // Remove ONLY this agent's streaming chunks (not other agents')
+    // Remove ONLY this agent's streaming chunks (not other agents').
+    // Use both the tracked chunks AND a DOM scan, because tool_call
+    // events may have cleared the JS references while leaving DOM elements.
     const s = streams[doneAgent.toLowerCase()] || { el: null, text: '', chunks: [] };
+    const removedEls = new Set();
     for (const chunk of s.chunks) {
-      if (chunk && chunk.parentNode) chunk.remove();
+      if (chunk && chunk.parentNode) { chunk.remove(); removedEls.add(chunk); }
+    }
+    // Also remove any streaming element that was detached from tracking
+    // (happens when tool_call clears tcs.el/chunks mid-stream)
+    if (s.el && !removedEls.has(s.el) && s.el.parentNode) {
+      s.el.remove();
     }
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
@@ -2709,6 +2729,39 @@ const HELP_DATA = {
     short: 'Side-channel question to an agent (shortcut for /agent btw)',
     detail: 'Ask a quick question to an agent without interrupting its current work.\n\nExamples:\n  /btw claude What is the time complexity?\n  /btw ALL Any thoughts on this?',
   },
+  '/call': {
+    usage: '/call tool_name(key=value, ...) or /call tool_name {"key": "value"}',
+    short: 'Call a tool directly',
+    detail: 'Execute any agent tool from the chat.\n\n'
+      + 'Syntax:\n'
+      + '  /call web_search(query="quantum computing")         \u2014 function-call style\n'
+      + '  /call fetch_http(url="https://example.com")         \u2014 named params\n'
+      + '  /call remember(text="important fact", tags=["note"]) \u2014 with array param\n'
+      + '  /call web_search {"query": "quantum computing"}     \u2014 JSON style\n\n'
+      + 'Help:\n'
+      + '  /help call              \u2014 this help\n'
+      + '  /help call <toolname>   \u2014 show tool parameters and description\n',
+  },
+  '/vidservice': {
+    usage: '/vidservice [list | select <name> [agent] | clear [agent]]',
+    short: 'Manage video generation service',
+    detail: 'Choose which video generation service to use in this conversation.\n\n'
+      + '  /vidservice list                  \u2014 Show available video services\n'
+      + '  /vidservice select <name>         \u2014 Set default for all agents\n'
+      + '  /vidservice select <name> <agent> \u2014 Set for a specific agent\n'
+      + '  /vidservice clear                 \u2014 Remove all preferences (auto-select)\n'
+      + '  /vidservice clear <agent>         \u2014 Remove preference for one agent\n',
+  },
+  '/imgservice': {
+    usage: '/imgservice [list | select <name> [agent] | clear [agent]]',
+    short: 'Manage image generation service',
+    detail: 'Choose which image generation service to use in this conversation.\n\n'
+      + '  /imgservice list                  \u2014 Show available image services\n'
+      + '  /imgservice select <name>         \u2014 Set default for all agents\n'
+      + '  /imgservice select <name> <agent> \u2014 Set for a specific agent\n'
+      + '  /imgservice clear                 \u2014 Remove all preferences (auto-select)\n'
+      + '  /imgservice clear <agent>         \u2014 Remove preference for one agent\n',
+  },
   '/agent': {
     usage: '/agent list | create | select | delete | msg | interrupt | btw | resume | setname',
     short: 'Manage AI agents',
@@ -2859,11 +2912,16 @@ const HELP_DATA = {
     detail: 'Displays token usage for the current conversation (prompt tokens, completion tokens, total).',
   },
   '/memory': {
-    usage: '/memory list | del <id>',
-    short: 'Manage conversation memories',
-    detail: 'List or delete persistent memories stored by the agent.\n\n'
-      + '  /memory list     — List all stored memories\n'
-      + '  /memory del <id> — Delete a memory by ID',
+    usage: '/memory [list [agent] | add | edit | del | search | panel]',
+    short: 'Manage agent memories',
+    detail: 'View, add, edit and delete persistent agent memories.\n\n'
+      + '  /memory                              \u2014 Open memory panel (visual editor)\n'
+      + '  /memory list                         \u2014 List all memories\n'
+      + '  /memory list <agent>                 \u2014 List memories for an agent\n'
+      + '  /memory add <text> [#tag1] [@agent]  \u2014 Add a memory manually\n'
+      + '  /memory edit <id> <new text>         \u2014 Edit a memory\n'
+      + '  /memory del <id>                     \u2014 Delete a memory\n'
+      + '  /memory search <query>               \u2014 Search memories by text',
   },
   '/install': {
     usage: '/install <filename.py>',
@@ -2946,6 +3004,16 @@ function cmdHelp(topic) {
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
   } else {
+    // Handle /help call [toolname] — show tool schema or list
+    const helpParts = topic.split(/\s+/);
+    if (helpParts[0] === 'call') {
+      if (helpParts[1]) {
+        cmdHelpTool(helpParts[1]);
+      } else {
+        cmdHelpToolList();
+      }
+      return;
+    }
     const key = topic.startsWith('/') ? topic : '/' + topic;
     const h = HELP_DATA[key];
     if (!h) {
@@ -2962,6 +3030,75 @@ function cmdHelp(topic) {
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
   }
+}
+
+async function cmdHelpToolList() {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_tool_schemas' }),
+    });
+    const data = await resp.json();
+    const tools = (data.tools || []).sort((a, b) => a.name.localeCompare(b.name));
+    let lines = ['<b>Available tools for /call:</b>', ''];
+    for (const t of tools) {
+      const params = t.parameters?.properties ? Object.keys(t.parameters.properties) : [];
+      const paramStr = params.length ? '(' + params.join(', ') + ')' : '()';
+      lines.push('  <code>' + t.name + paramStr + '</code> — ' + escapeHtml((t.description || '').substring(0, 80)));
+    }
+    lines.push('', 'Type <code>/help call &lt;toolname&gt;</code> for detailed parameter info.');
+    const el = addMsg('system', '');
+    el.innerHTML = lines.join('<br>');
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdHelpTool(toolName) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_tool_schemas' }),
+    });
+    const data = await resp.json();
+    const tools = data.tools || [];
+    const tool = tools.find(t => t.name === toolName);
+    if (!tool) {
+      // Show all available tools
+      const names = tools.map(t => t.name).sort();
+      addMsg('system', 'Tool "' + toolName + '" not found. Available tools:\n' + names.map(n => '  \u2022 ' + n).join('\n'));
+      return;
+    }
+    const params = tool.parameters || {};
+    const props = params.properties || {};
+    const required = params.required || [];
+    let lines = [
+      '<b>/call ' + tool.name + '</b>',
+      '',
+      '<span style="color:#a0a0c0">' + escapeHtml(tool.description) + '</span>',
+      '',
+      '<b>Parameters:</b>',
+    ];
+    for (const [key, schema] of Object.entries(props)) {
+      const req = required.includes(key) ? '<span style="color:#e74c3c">*</span>' : '';
+      const type = schema.type || '?';
+      const desc = schema.description || '';
+      lines.push('  <code>' + key + '</code> (' + type + ')' + req + ' — ' + escapeHtml(desc));
+    }
+    if (Object.keys(props).length === 0) {
+      lines.push('  <i>(no parameters)</i>');
+    }
+    lines.push('', '<b>Example:</b>');
+    // Build example call
+    const exArgs = [];
+    for (const [key, schema] of Object.entries(props)) {
+      if (required.includes(key)) {
+        const ex = schema.type === 'string' ? '"..."' : schema.type === 'integer' ? '0' : schema.type === 'boolean' ? 'true' : '...';
+        exArgs.push(key + '=' + ex);
+      }
+    }
+    lines.push('  <code>/call ' + tool.name + '(' + exArgs.join(', ') + ')</code>');
+    const el = addMsg('system', '');
+    el.innerHTML = lines.join('<br>');
+  } catch (e) { addMsg('error', 'Failed to load tool schema: ' + e.message); }
 }
 
 function resolveAgentName(nameOrNick) {
@@ -3205,6 +3342,174 @@ async function handleSlashCommand(text) {
     return true;
   }
 
+  if (cmd === '/call') {
+    const callText = text.replace(/^\/call\s+/, '').trim();
+    if (!callText) {
+      addMsg('system', 'Usage: /call tool_name(key=value, ...) or /call tool_name {"key": "value"}\nType /help call for details.');
+      return true;
+    }
+    // Parse: tool_name(...) or tool_name {...}
+    const parsed = _parseToolCall(callText);
+    if (parsed.error) {
+      addMsg('system', 'Parse error: ' + parsed.error + '\nType /help call <toolname> for parameter info.');
+      return true;
+    }
+    addMsg('tool', '\u{1F527} /call ' + parsed.name + '(' + Object.entries(parsed.args).map(([k,v]) => k + '=' + JSON.stringify(v)).join(', ').substring(0, 120) + ')');
+    showTyping();
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: 'call_tool',
+          tool_name: parsed.name,
+          arguments: parsed.args,
+          conversation_id: conversationId,
+        }),
+      });
+      hideTyping();
+      const data = await resp.json();
+      if (data.error) {
+        addMsg('error', data.error);
+      } else {
+        const result = data.result || '(empty result)';
+        addMsg('tool', '\u2705 ' + parsed.name + ': ' + result);
+      }
+    } catch (e) { hideTyping(); addMsg('error', 'Tool call failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/vidservice') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'list_video_services', conversation_id: conversationId }),
+        });
+        const services = await resp.json();
+        if (!Array.isArray(services) || services.length === 0) {
+          addMsg('system', 'No video generation services deployed.');
+        } else {
+          const lines = services.map(s => {
+            let line = '  \u2022 ' + s.id + ' (' + s.type + ', ' + s.scope + ')';
+            if (s.selected_for && s.selected_for.length > 0) {
+              line += ' \u2190 selected for: ' + s.selected_for.join(', ');
+            }
+            return line;
+          });
+          addMsg('system', 'Video services available:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'select' && parts[2]) {
+      const serviceName = parts[2];
+      const agentName = parts[3] || '*';
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: 'set_video_service', conversation_id: conversationId,
+            service_name: serviceName, agent_name: agentName,
+          }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          const target = agentName === '*' ? 'all agents' : agentName;
+          addMsg('system', 'Video service set to "' + serviceName + '" for ' + target + '.');
+        } else {
+          addMsg('error', data.error || 'Failed to set video service');
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'clear') {
+      const agentName = parts[2] || '';
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: 'clear_video_service', conversation_id: conversationId,
+            agent_name: agentName,
+          }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          addMsg('system', agentName
+            ? 'Video service preference cleared for ' + agentName + '.'
+            : 'All video service preferences cleared.');
+        } else {
+          addMsg('error', data.error || 'Failed to clear');
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else {
+      addMsg('system', 'Usage: /vidservice list | select <name> [agent] | clear [agent]');
+    }
+    return true;
+  }
+
+  if (cmd === '/imgservice') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'list_image_services', conversation_id: conversationId }),
+        });
+        const services = await resp.json();
+        if (!Array.isArray(services) || services.length === 0) {
+          addMsg('system', 'No image generation services deployed.');
+        } else {
+          const lines = services.map(s => {
+            let line = '  \u2022 ' + s.id + ' (' + s.type + ', ' + s.scope + ')';
+            if (s.selected_for && s.selected_for.length > 0) {
+              line += ' \u2190 selected for: ' + s.selected_for.join(', ');
+            }
+            return line;
+          });
+          addMsg('system', 'Image services available:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'select' && parts[2]) {
+      const serviceName = parts[2];
+      const agentName = parts[3] || '*';
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: 'set_image_service', conversation_id: conversationId,
+            service_name: serviceName, agent_name: agentName,
+          }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          const target = agentName === '*' ? 'all agents' : agentName;
+          addMsg('system', 'Image service set to "' + serviceName + '" for ' + target + '.');
+        } else {
+          addMsg('error', data.error || 'Failed to set image service');
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'clear') {
+      const agentName = parts[2] || '';
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: 'clear_image_service', conversation_id: conversationId,
+            agent_name: agentName,
+          }),
+        });
+        const data = await resp.json();
+        if (data.ok) {
+          addMsg('system', agentName
+            ? 'Image service preference cleared for ' + agentName + '.'
+            : 'All image service preferences cleared.');
+        } else {
+          addMsg('error', data.error || 'Failed to clear');
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else {
+      addMsg('system', 'Usage: /imgservice list | select <name> [agent] | clear [agent]');
+    }
+    return true;
+  }
+
   if (cmd === '/agent') {
     const qargs = parseQuotedArgs(text);  // handles "quoted agent names"
     const sub = (qargs[1] || 'list').toLowerCase();
@@ -3274,15 +3579,57 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/memory') {
-    const sub = (parts[1] || 'list').toLowerCase();
-    if (sub === 'list') {
-      await cmdMemoryList();
+    const sub = (parts[1] || '').toLowerCase();
+    if (!sub || sub === 'panel') {
+      // No subcommand or /memory panel → open overlay
+      await cmdShowMemories();
+    } else if (sub === 'list') {
+      const agentFilter = parts[2] || null;
+      await cmdMemoryList(agentFilter);
     } else if (sub === 'del' || sub === 'delete') {
       const memId = parts[2];
       if (!memId) { addMsg('system', 'Usage: /memory del <memory_id>'); }
       else { await cmdMemoryDel(memId); }
+    } else if (sub === 'add') {
+      // /memory add text here #tag1 #tag2 @agent
+      const rest = text.replace(/^\/memory\s+add\s*/i, '');
+      if (!rest.trim()) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
+      // Extract @agent from end
+      const agentMatch = rest.match(/@(\S+)\s*$/);
+      let agent = '';
+      let memText = rest;
+      if (agentMatch) { agent = agentMatch[1]; memText = rest.slice(0, agentMatch.index).trim(); }
+      // Extract #tags
+      const tagMatches = memText.match(/#(\S+)/g) || [];
+      const tags = tagMatches.map(t => t.slice(1));
+      memText = memText.replace(/#\S+/g, '').trim();
+      if (!memText) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'add_memory', text: memText, tags, agent }),
+        });
+        const data = await resp.json();
+        addMsg('system', 'Memory added (id: ' + (data.id || '?') + ', agent: ' + (data.agent || 'global') + ')');
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'edit') {
+      const memId = parts[2];
+      const newText = parts.slice(3).join(' ');
+      if (!memId || !newText) { addMsg('system', 'Usage: /memory edit <id> <new text>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'edit_memory', memory_id: memId, text: newText }),
+        });
+        const data = await resp.json();
+        addMsg('system', data.updated ? 'Memory updated.' : 'Memory not found.');
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'search') {
+      const query = parts.slice(2).join(' ');
+      if (!query) { addMsg('system', 'Usage: /memory search <query>'); return true; }
+      await cmdMemoryList(null, query);
     } else {
-      addMsg('system', 'Usage: /memory list | /memory del <id>');
+      addMsg('system', 'Usage: /memory [list [agent] | add | edit | del | search | panel]');
     }
     return true;
   }
@@ -3839,22 +4186,31 @@ async function cmdAgentBtw(target, question) {
   } catch (e) { addMsg('error', 'BTW failed: ' + e.message); }
 }
 
-async function cmdMemoryList() {
+async function cmdMemoryList(agentFilter, searchQuery) {
   try {
+    const body = { action: 'list_memories' };
+    if (agentFilter !== undefined && agentFilter !== null) body.agent_name = agentFilter;
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_memories' }),
+      body: JSON.stringify(body),
     });
     const data = await resp.json();
-    const mems = data.memories || [];
+    let mems = data.memories || [];
+    // Client-side text search if query provided
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      mems = mems.filter(m => m.text.toLowerCase().includes(q) || (m.tags || []).some(t => t.includes(q)));
+    }
     if (mems.length === 0) {
-      addMsg('system', 'No memories stored. The agent can use the "remember" tool to store facts.');
+      addMsg('system', 'No memories found.' + (searchQuery ? ' Try a different query.' : ''));
     } else {
       const lines = mems.map(m => {
-        const tags = m.tags.length ? ` [${m.tags.join(', ')}]` : '';
-        return `\u2022 \`${m.id}\`${tags} \u2014 ${m.text}`;
+        const agent = m.agent ? '\u{1F916} ' + m.agent : '\u{1F310} global';
+        const tags = m.tags && m.tags.length ? ' [' + m.tags.join(', ') + ']' : '';
+        return '\u2022 `' + m.id + '` ' + agent + tags + ' \u2014 ' + m.text;
       });
-      addMsg('system', `${mems.length} memories:\n` + lines.join('\n'));
+      const title = searchQuery ? 'Search results' : (agentFilter !== null && agentFilter !== undefined ? 'Memories for ' + (agentFilter || 'global') : 'All memories');
+      addMsg('system', title + ' (' + mems.length + '):\n' + lines.join('\n'));
     }
   } catch (e) { addMsg('error', 'Failed to list memories: ' + e.message); }
 }
@@ -4154,6 +4510,224 @@ function showContextOverlay(data) {
     + '</div>';
   document.body.appendChild(overlay);
   overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+// ── Tool Call Parser ────────────────────────────────────────────
+function _parseToolCall(text) {
+  // Format 1: tool_name(key=value, key2=value2)
+  // Format 2: tool_name {"key": "value"}
+  // Format 3: tool_name key=value key2=value2
+  const nameMatch = text.match(/^(\w+)/);
+  if (!nameMatch) return { error: 'No tool name found' };
+  const name = nameMatch[1];
+  let rest = text.slice(name.length).trim();
+
+  // No args
+  if (!rest || rest === '()') return { name, args: {} };
+
+  // Format 2: JSON object
+  if (rest.startsWith('{')) {
+    try {
+      return { name, args: JSON.parse(rest) };
+    } catch (e) {
+      return { error: 'Invalid JSON: ' + e.message };
+    }
+  }
+
+  // Format 1: parenthesized args
+  if (rest.startsWith('(') && rest.endsWith(')')) {
+    rest = rest.slice(1, -1).trim();
+  }
+
+  // Parse key=value pairs (supports quoted strings, arrays, numbers, booleans)
+  const args = {};
+  // Regex: key = value where value can be "string", [array], number, true/false, or unquoted-string
+  const pairRe = /(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[.*?\]|\{.*?\}|true|false|null|\d+(?:\.\d+)?|[^\s,)]+)/g;
+  let m;
+  while ((m = pairRe.exec(rest)) !== null) {
+    const key = m[1];
+    let val = m[2];
+    // Parse the value
+    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+      val = val.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
+    } else if (val.startsWith('[') || val.startsWith('{')) {
+      try { val = JSON.parse(val); } catch(e) { /* keep as string */ }
+    } else if (val === 'true') { val = true; }
+    else if (val === 'false') { val = false; }
+    else if (val === 'null') { val = null; }
+    else if (/^\d+$/.test(val)) { val = parseInt(val); }
+    else if (/^\d+\.\d+$/.test(val)) { val = parseFloat(val); }
+    args[key] = val;
+  }
+  if (Object.keys(args).length === 0 && rest.trim()) {
+    return { error: 'Could not parse arguments: ' + rest.substring(0, 100) };
+  }
+  return { name, args };
+}
+
+// ── Agent Memories ──────────────────────────────────────────────
+let _memoryCache = [];
+let _memoryAgentFilter = null;  // null = all
+
+async function cmdShowMemories() {
+  try {
+    const body = { action: 'list_memories' };
+    if (_memoryAgentFilter !== null) body.agent_name = _memoryAgentFilter;
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    _memoryCache = data.memories || [];
+    showMemoryOverlay(_memoryCache);
+  } catch (e) { addMsg('error', 'Failed to load memories: ' + e.message); }
+}
+
+function showMemoryOverlay(memories) {
+  let overlay = document.getElementById('memoryOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'memoryOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
+
+  // Collect unique agent names for filter
+  const agents = [...new Set(memories.map(m => m.agent || ''))].sort();
+
+  // Filter dropdown
+  let filterHtml = '<select id="memAgentFilter" onchange="memFilterChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
+  filterHtml += '<option value="__all__"' + (_memoryAgentFilter === null ? ' selected' : '') + '>All</option>';
+  filterHtml += '<option value=""' + (_memoryAgentFilter === '' ? ' selected' : '') + '>Global only</option>';
+  for (const a of agents) {
+    if (a) filterHtml += '<option value="' + a + '"' + (_memoryAgentFilter === a ? ' selected' : '') + '>' + a + '</option>';
+  }
+  filterHtml += '</select>';
+
+  // Build memory rows
+  let msgsHtml = '';
+  if (memories.length === 0) {
+    msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">No memories stored.</div>';
+  } else {
+    memories.forEach((m, i) => {
+      const agentBadge = m.agent
+        ? '<span style="background:#1e3a5f;color:#4fc3f7;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + m.agent + '</span>'
+        : '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">global</span>';
+      const tagsHtml = (m.tags || []).map(t =>
+        '<span style="background:#2a2a4a;color:#a0a0c0;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:3px">' + t + '</span>'
+      ).join('');
+      const age = _formatAge(m.updated_at || m.created_at);
+      const editBtn = '<button onclick="event.stopPropagation();memEdit(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="Edit">&#9998;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const text = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
+        + '<div style="display:flex;align-items:center;gap:4px">' + agentBadge + tagsHtml
+        + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + age + '</span>'
+        + editBtn + delBtn + '</div>'
+        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'
+        + '<div class="mem-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto">' + text + '</div>'
+        + '</div>';
+    });
+  }
+
+  overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">Agent Memories</h3>'
+    + '<span style="color:#6c6c8a;font-size:12px">' + memories.length + ' entries</span>'
+    + filterHtml
+    + '<button onclick="memAddNew()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600;margin-left:auto">+ Add</button>'
+    + '<button onclick="document.getElementById(\'memoryOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px">&times;</button>'
+    + '</div>'
+    + '<div id="mem-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+}
+
+function _formatAge(ts) {
+  const s = Math.floor(Date.now() / 1000 - ts);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.floor(s / 60) + 'm ago';
+  if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+  return Math.floor(s / 86400) + 'd ago';
+}
+
+async function memFilterChanged() {
+  const val = document.getElementById('memAgentFilter').value;
+  _memoryAgentFilter = val === '__all__' ? null : val;
+  await cmdShowMemories();
+}
+
+async function memDelete(memId) {
+  if (!confirm('Delete this memory?')) return;
+  try {
+    await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_memory', memory_id: memId }),
+    });
+    await cmdShowMemories();
+  } catch (e) { addMsg('error', e.message); }
+}
+
+function memEdit(idx) {
+  const m = _memoryCache[idx];
+  if (!m) return;
+  const row = document.getElementById('mem-row-' + idx);
+  if (!row) return;
+  row.innerHTML = '<div style="padding:4px">'
+    + '<textarea id="mem-edit-text" style="width:100%;min-height:60px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical">' + (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</textarea>'
+    + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
+    + '<label style="color:#6c6c8a;font-size:11px">Tags:</label>'
+    + '<input id="mem-edit-tags" value="' + (m.tags || []).join(', ') + '" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<label style="color:#6c6c8a;font-size:11px">Agent:</label>'
+    + '<input id="mem-edit-agent" value="' + (m.agent || '') + '" placeholder="(global)" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<button onclick="memSaveEdit(\'' + m.id + '\')" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Save</button>'
+    + '<button onclick="cmdShowMemories()" style="background:#333;color:#aaa;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Cancel</button>'
+    + '</div></div>';
+}
+
+async function memSaveEdit(memId) {
+  const text = document.getElementById('mem-edit-text').value.trim();
+  const tagsRaw = document.getElementById('mem-edit-tags').value;
+  const agent = document.getElementById('mem-edit-agent').value.trim();
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t);
+  try {
+    await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'edit_memory', memory_id: memId, text, tags, agent }),
+    });
+    await cmdShowMemories();
+  } catch (e) { addMsg('error', e.message); }
+}
+
+function memAddNew() {
+  const list = document.getElementById('mem-list');
+  if (!list) return;
+  const form = document.createElement('div');
+  form.style.cssText = 'padding:8px;border-bottom:1px solid #444;background:#1a1a2e';
+  form.innerHTML = '<textarea id="mem-new-text" placeholder="Memory text..." style="width:100%;min-height:50px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:4px;font-size:12px;resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:6px;margin-top:4px;align-items:center">'
+    + '<label style="color:#6c6c8a;font-size:11px">Tags:</label>'
+    + '<input id="mem-new-tags" placeholder="tag1, tag2" style="flex:1;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<label style="color:#6c6c8a;font-size:11px">Agent:</label>'
+    + '<input id="mem-new-agent" placeholder="(global)" style="width:80px;background:#0d1117;color:#c0c0d0;border:1px solid #444;border-radius:4px;padding:2px 6px;font-size:11px">'
+    + '<button onclick="memSaveNew()" style="background:#1b4332;color:#52b788;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px">Add</button>'
+    + '</div>';
+  list.insertBefore(form, list.firstChild);
+  document.getElementById('mem-new-text').focus();
+}
+
+async function memSaveNew() {
+  const text = document.getElementById('mem-new-text').value.trim();
+  if (!text) return;
+  const tagsRaw = document.getElementById('mem-new-tags').value;
+  const agent = document.getElementById('mem-new-agent').value.trim();
+  const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t);
+  try {
+    await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'add_memory', text, tags, agent }),
+    });
+    await cmdShowMemories();
+  } catch (e) { addMsg('error', e.message); }
 }
 
 // ── Secrets & Variables ──────────────────────────────────────────

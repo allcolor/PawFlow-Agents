@@ -3166,14 +3166,23 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/restart_from' || cmd === '/restart') {
-    const n = parts[1] !== undefined ? parseInt(parts[1]) : 5;
+    // Parse: /restart_from [agent|ALL] [N]
+    let restartAgent = '';
+    let restartN = 5;
+    for (let i = 1; i < parts.length; i++) {
+      const v = parseInt(parts[i]);
+      if (!isNaN(v)) { restartN = v; }
+      else { restartAgent = parts[i]; }
+    }
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     contextOpInProgress = true;
     showContextOp('Restarting');
+    const restartBody = { action: 'restart_from', conversation_id: conversationId, keep_last: restartN };
+    if (restartAgent) restartBody.agent_name = restartAgent;
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'restart_from', conversation_id: conversationId, keep_last: n }),
+      body: JSON.stringify(restartBody),
       credentials: 'same-origin',
     }).then(r => r.json()).then(data => {
       if (data.ok) {
@@ -3197,14 +3206,24 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/summary') {
-    const n = parseInt(parts[1]) || 500;
+    // Parse: /summary [agent|ALL] [tokens]
+    let summaryAgent = '';
+    let summaryTokens = 500;
+    for (let i = 1; i < parts.length; i++) {
+      const v = parseInt(parts[i]);
+      if (!isNaN(v)) { summaryTokens = v; }
+      else { summaryAgent = parts[i]; }
+    }
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     contextOpInProgress = true;
-    showContextOp('Summarizing');
+    const label = summaryAgent ? 'Summarizing (' + summaryAgent + ')' : 'Summarizing';
+    showContextOp(label);
+    const summaryBody = { action: 'resume_conversation', conversation_id: conversationId, max_tokens: summaryTokens };
+    if (summaryAgent) summaryBody.agent_name = summaryAgent;
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'resume_conversation', conversation_id: conversationId, max_tokens: n }),
+      body: JSON.stringify(summaryBody),
       credentials: 'same-origin',
     }).then(r => r.json()).then(data => {
       if (data.ok) {
@@ -3244,7 +3263,7 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/rebuild') {
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-    cmdRebuild();
+    cmdRebuild(parts[1] || '');
     return true;
   }
 
@@ -4291,13 +4310,16 @@ function cmdCompact(agentName) {
     .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
 
-function cmdRebuild() {
+function cmdRebuild(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
   contextOpInProgress = true;
-  showContextOp('Rebuilding');
+  const label = agentName ? 'Rebuilding (' + agentName + ')' : 'Rebuilding';
+  showContextOp(label);
+  const body = { action: 'rebuild', conversation_id: conversationId };
+  if (agentName) body.agent_name = agentName;
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'rebuild', conversation_id: conversationId }),
+    body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); return; }
     addMsg('system', t('rebuilt', {action: data.action, before: data.before, after: data.after, tokens: data.token_estimate}));

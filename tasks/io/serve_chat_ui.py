@@ -2084,37 +2084,31 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // spawn_agents: try to parse results, show each agent's response
-    // Note: result may be truncated (>2000 chars) so JSON.parse can fail
+    // spawn_agents: responses are shown via sub_agent_done events in real-time
+    // tool_result just shows a compact summary (don't duplicate responses)
     if (data.tool === 'spawn_agents' && data.result) {
+      const srcAgent = displayAgentName(data.agent_name || 'assistant');
+      const srcSvc = data.llm_service ? ' via ' + data.llm_service : '';
       try {
         const agents = JSON.parse(data.result);
         if (Array.isArray(agents)) {
-          for (const a of agents) {
-            const name = displayAgentName(a.agent || '?');
-            if (a.status === 'completed' && a.response) {
-              const extra = { source: { type: 'agent', name: a.agent } };
-              addMsg('assistant', a.response, extra);
-            } else if (a.status === 'error') {
-              addMsg('tool', '\u274C ' + name + ': ' + (a.error || 'failed'));
-            } else {
-              addMsg('tool', '\u2705 ' + name + ': ' + a.status);
-            }
-          }
-          showTyping();
-          return;
+          const summary = agents.map(a => displayAgentName(a.agent || '?') + ': ' + a.status).join(', ');
+          addMsg('tool', '\u2705 [' + srcAgent + srcSvc + '] spawn_agents: ' + summary);
+        } else {
+          addMsg('tool', '\u2705 [' + srcAgent + srcSvc + '] spawn_agents: ' + data.result.substring(0, 200));
         }
       } catch(ex) {
-        // JSON truncated — responses already shown via sub_agent_done events
-        // Just show a compact summary
-        addMsg('tool', '\u2705 spawn_agents: completed (see agent responses above)');
-        showTyping();
-        return;
+        // Result is an error string (e.g. self-call), not JSON
+        addMsg('tool', '\u2705 [' + srcAgent + srcSvc + '] spawn_agents: ' + data.result.substring(0, 200));
       }
+      showTyping();
+      return;
     }
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
+    const resultAgent = displayAgentName(data.agent_name || 'assistant');
+    const resultSvc = data.llm_service ? ' via ' + data.llm_service : '';
     const preview = (data.result || '').substring(0, 200);
-    addMsg('tool', t('toolResult', {tool: data.tool, result: preview + (data.result && data.result.length > 200 ? '...' : '')}));
+    addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + preview + (data.result && data.result.length > 200 ? '...' : ''));
     showTyping();
   });
 

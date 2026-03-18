@@ -4113,6 +4113,7 @@ class AgentLoopTask(BaseTask):
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": _result_preview,
                             "agent_name": _agent_name or "assistant",
+                            "llm_service": _agent_svc or "",
                         })
                         bus.publish_event(conversation_id, "iteration_status", {
                             "agent_name": _agent_name or "assistant",
@@ -4143,6 +4144,7 @@ class AgentLoopTask(BaseTask):
                                 bus.publish_event(conversation_id, "tool_result", {
                                     "tool": tc.name, "result": result_text[:2000],
                                     "agent_name": _agent_name or "assistant",
+                                    "llm_service": _agent_svc or "",
                                 })
 
                         # Append results in original order (LLM expects consistent ordering)

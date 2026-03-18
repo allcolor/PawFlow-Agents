@@ -800,7 +800,7 @@ class AgentLoopTask(BaseTask):
         try:
             from core.resource_store import ResourceStore
             _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
-            _agent_names = [a["name"] for a in _all_agents]
+            _agent_names = ["assistant"] + [a["name"] for a in _all_agents]
         except Exception:
             _agent_names = []
 
@@ -1052,9 +1052,11 @@ class AgentLoopTask(BaseTask):
                         # Identity is injected later (with nickname awareness)
 
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                        # List other available agents (user + global)
+                        # List other available agents (user + global + assistant)
                         all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
                         others = [a["name"] for a in all_agents if a["name"] != selected]
+                        if selected != "assistant" and "assistant" not in others:
+                            others.insert(0, "assistant")
                         if others:
                             system_prompt += (
                                 f"\n\nOther agents available: "

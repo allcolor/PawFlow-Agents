@@ -225,9 +225,16 @@ class SubAgentExecutor:
         sys_prompt = task.system_prompt
         if task.source_agent:
             src_svc = f" via {task.source_llm_service}" if task.source_llm_service else ""
-            src_nick = f" (nickname: \"{task.source_agent_nickname}\")" if task.source_agent_nickname else ""
+            if task.source_agent_nickname:
+                src_id = (
+                    f"agent '{task.source_agent}' (real name) "
+                    f"also known as \"{task.source_agent_nickname}\" (nickname). "
+                    f"When referring to them, use their nickname \"{task.source_agent_nickname}\""
+                )
+            else:
+                src_id = f"agent '{task.source_agent}'"
             sys_prompt += (
-                f"\n\n[CONTEXT] You were spawned by agent '{task.source_agent}'{src_nick}{src_svc}. "
+                f"\n\n[CONTEXT] You were spawned by {src_id}{src_svc}. "
                 f"They sent you a message and expect a response. "
                 f"Answer their request directly."
             )

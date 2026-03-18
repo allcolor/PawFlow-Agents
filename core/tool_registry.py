@@ -843,6 +843,10 @@ class ScheduleRecheckHandler(ToolHandler):
                     "type": "string",
                     "description": "What to do when the recheck fires (e.g. 'check stock price of AAPL')",
                 },
+                "agent": {
+                    "type": "string",
+                    "description": "Agent to wake up (e.g. 'grok', 'qwen'). Default: whichever agent is active.",
+                },
             },
             "required": ["reason"],
         }
@@ -859,6 +863,7 @@ class ScheduleRecheckHandler(ToolHandler):
         reason = arguments.get("reason", "scheduled recheck")
         at_str = arguments.get("at", "")
         delay = arguments.get("delay_seconds", 0)
+        agent = arguments.get("agent", "")
 
         if not self._conversation_id:
             return "Error: no conversation context — cannot schedule recheck"
@@ -880,16 +885,22 @@ class ScheduleRecheckHandler(ToolHandler):
         else:
             return "Error: provide either 'delay_seconds' or 'at'"
 
+        # If agent specified, encode it in reason so poller wakes the right agent
+        sched_reason = reason
+        if agent:
+            sched_reason = f"[scheduled:{agent}] {reason}"
+
         scheduler.schedule(
             conversation_id=self._conversation_id,
             recheck_at=recheck_at,
             user_id=self._user_id,
-            reason=reason,
+            reason=sched_reason,
         )
 
         from datetime import datetime, timezone as tz
         dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        return f"Recheck scheduled for {dt_str}. Reason: {reason}"
+        agent_info = f" Agent: {agent}" if agent else ""
+        return f"Recheck scheduled for {dt_str}.{agent_info} Reason: {reason}"
 
 
 class LocalFilesHandler(ToolHandler):

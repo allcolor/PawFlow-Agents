@@ -335,18 +335,11 @@ class AgentLoopTask(BaseTask):
 
     # ── Media service discovery (generic for image/video) ───────────
 
-    @staticmethod
-    def _is_media_service_type(service_type: str, base_class) -> bool:
-        """Check if a service_type inherits from base_class via ServiceFactory."""
-        try:
-            from core import ServiceFactory
-            cls = ServiceFactory.get(service_type)
-            return cls is not None and issubclass(cls, base_class)
-        except Exception:
-            return False
-
     def _discover_media_services(self, user_id: str, base_class) -> list:
         """Discover all deployed services inheriting from base_class.
+
+        Checks live instances via the registry — if a service has a
+        ``generate`` method and is an instance of base_class, it qualifies.
 
         Returns list of (service_id, service_type, scope) tuples.
         """
@@ -358,8 +351,9 @@ class AgentLoopTask(BaseTask):
             for sid, sdef in greg.get_all_definitions().items():
                 if not getattr(sdef, "enabled", True):
                     continue
-                stype = getattr(sdef, "service_type", "") or ""
-                if self._is_media_service_type(stype, base_class):
+                svc = greg.get_live_instance(sid)
+                if svc and isinstance(svc, base_class):
+                    stype = getattr(sdef, "service_type", "") or ""
                     results.append((sid, stype, "global"))
                     seen.add(sid)
         except Exception:
@@ -373,8 +367,9 @@ class AgentLoopTask(BaseTask):
                         continue
                     if not getattr(sdef, "enabled", True):
                         continue
-                    stype = getattr(sdef, "service_type", "") or ""
-                    if self._is_media_service_type(stype, base_class):
+                    svc = ureg.get_live_instance(user_id, sid)
+                    if svc and isinstance(svc, base_class):
+                        stype = getattr(sdef, "service_type", "") or ""
                         results.append((sid, stype, "user"))
             except Exception:
                 pass
@@ -5279,6 +5274,12 @@ class AgentLoopTask(BaseTask):
             for _sr in scheduled_reasons:
                 if "[random_thought]" in _sr and "(" in _sr:
                     _active_agent = _sr.rsplit("(", 1)[-1].rstrip(")")
+                    break
+                # [scheduled:agent_name] reason text
+                import re as _re_sched
+                _sched_match = _re_sched.match(r'\[scheduled:(\w+)\]', _sr)
+                if _sched_match:
+                    _active_agent = _sched_match.group(1)
                     break
             if _active_agent and _active_agent != "assistant":
                 try:

@@ -54,23 +54,28 @@ class GrokImageService(BaseImageGenerationService):
         pass
 
     def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
-                 **_) -> dict:
+                 aspect_ratio="", resolution="", **_) -> dict:
         if not prompt:
             raise ServiceError("No prompt provided")
         self.ensure_connected()
 
-        # Map width/height to aspect_ratio
-        aspect_ratio = "1:1"
-        if width and height:
-            ratio = width / height
-            if ratio > 1.4:
-                aspect_ratio = "16:9"
-            elif ratio < 0.7:
-                aspect_ratio = "9:16"
-            elif 1.2 < ratio <= 1.4:
-                aspect_ratio = "4:3"
-            elif 0.7 <= ratio < 0.85:
-                aspect_ratio = "3:4"
+        # Use explicit aspect_ratio if provided, else derive from width/height
+        if not aspect_ratio:
+            aspect_ratio = "1:1"
+            if width and height:
+                ratio = width / height
+                if ratio > 1.8:
+                    aspect_ratio = "2:1"
+                elif ratio > 1.4:
+                    aspect_ratio = "16:9"
+                elif ratio > 1.2:
+                    aspect_ratio = "4:3"
+                elif ratio < 0.55:
+                    aspect_ratio = "1:2"
+                elif ratio < 0.7:
+                    aspect_ratio = "9:16"
+                elif ratio < 0.85:
+                    aspect_ratio = "3:4"
 
         body = {
             "model": self.model,
@@ -79,6 +84,8 @@ class GrokImageService(BaseImageGenerationService):
             "aspect_ratio": aspect_ratio,
             "response_format": "url",
         }
+        if resolution in ("1k", "2k"):
+            body["resolution"] = resolution
 
         logger.info("[GROK-IMAGE] Generating: prompt=%s..., model=%s, aspect=%s",
                     prompt[:80], self.model, aspect_ratio)

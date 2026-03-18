@@ -49,20 +49,6 @@ import threading
 
 def _graceful_shutdown():
     """Stop all running executors cleanly on server shutdown."""
-    # Dump all threads for debugging blocked shutdown
-    import sys
-    import traceback
-    print("\n=== Active threads at shutdown ===", file=sys.stderr)
-    for thread_id, frame in sys._current_frames().items():
-        name = ""
-        for t in threading.enumerate():
-            if t.ident == thread_id:
-                name = t.name
-                break
-        print(f"\nThread {thread_id} ({name}):", file=sys.stderr)
-        traceback.print_stack(frame, file=sys.stderr)
-    print("=== End threads ===\n", file=sys.stderr)
-
     try:
         reg = ExecutorRegistry.get_instance()
         for fid, ex in list(reg.get_all().items()):

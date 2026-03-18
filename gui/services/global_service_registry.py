@@ -53,7 +53,7 @@ class GlobalServiceRegistry:
     def __init__(self):
         self._definitions: Dict[str, GlobalServiceDef] = {}
         self._live_instances: Dict[str, Service] = {}
-        self._data_lock = threading.Lock()
+        self._data_lock = threading.RLock()
         self._loaded = False
 
     @classmethod

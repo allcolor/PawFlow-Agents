@@ -235,30 +235,82 @@ class ResourceStore:
         return results
 
     def list_all(self, resource_type: str,
-                 user_id: str) -> List[Dict[str, Any]]:
-        """List user resources merged with global resources.
+                 user_id: str,
+                 conversation_id: str = "") -> List[Dict[str, Any]]:
+        """List resources: conversation → user → global (with dedup and disable filter).
 
-        User resources take precedence over global ones with the same name.
+        Conversation agents are stored in ConversationStore extras.
+        Disabled agents (per-conversation) are filtered out.
         """
         user_items = self.list(resource_type, user_id=user_id)
         if user_id == GLOBAL_USER_ID:
-            return user_items
-        global_items = self.list(resource_type, user_id=GLOBAL_USER_ID)
-        seen = {item["name"] for item in user_items}
-        for gi in global_items:
-            if gi["name"] not in seen:
-                gi["_global"] = True
-                user_items.append(gi)
-        return user_items
+            result = user_items
+        else:
+            global_items = self.list(resource_type, user_id=GLOBAL_USER_ID)
+            seen = {item["name"] for item in user_items}
+            for gi in global_items:
+                if gi["name"] not in seen:
+                    gi["_scope"] = "global"
+                    user_items.append(gi)
+            # Tag user items
+            for ui in user_items:
+                if "_scope" not in ui:
+                    ui["_scope"] = "user"
+            result = user_items
+
+        # Add conversation-scoped resources
+        if conversation_id and resource_type == "agent":
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                conv_agents = store.get_extra(conversation_id, "conversation_agents") or {}
+                disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+                seen_names = {item["name"] for item in result}
+                for name, data in conv_agents.items():
+                    if name not in seen_names:
+                        entry = dict(data)
+                        entry["name"] = name
+                        entry["_scope"] = "conversation"
+                        result.append(entry)
+                # Filter disabled
+                result = [r for r in result if r["name"] not in disabled]
+            except Exception:
+                pass
+
+        return result
 
     def get_any(self, resource_type: str, name: str,
-                user_id: str) -> Optional[Dict[str, Any]]:
-        """Get a resource by name, trying user scope first then global."""
+                user_id: str,
+                conversation_id: str = "") -> Optional[Dict[str, Any]]:
+        """Get a resource by name: conversation → user → global."""
+        # 1. Conversation-scoped
+        if conversation_id and resource_type == "agent":
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                # Check disabled
+                disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+                if name in disabled:
+                    return None
+                conv_agents = store.get_extra(conversation_id, "conversation_agents") or {}
+                if name in conv_agents:
+                    entry = dict(conv_agents[name])
+                    entry["name"] = name
+                    entry["_scope"] = "conversation"
+                    return entry
+            except Exception:
+                pass
+        # 2. User-scoped
         result = self.get(resource_type, name, user_id)
         if result is not None:
+            result["_scope"] = "user"
             return result
+        # 3. Global
         if user_id != GLOBAL_USER_ID:
-            return self.get(resource_type, name, GLOBAL_USER_ID)
+            result = self.get(resource_type, name, GLOBAL_USER_ID)
+            if result is not None:
+                result["_scope"] = "global"
+                return result
         return None
 
     def exists(self, resource_type: str, name: str,

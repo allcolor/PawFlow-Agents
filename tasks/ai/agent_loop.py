@@ -1025,7 +1025,8 @@ class AgentLoopTask(BaseTask):
                 # Active agent overrides system prompt (target_agent takes priority)
                 selected = _target_agent or active_res.get("agent", "")
                 if selected:
-                    agent_def = rs.get_any("agent", selected, _uid)
+                    agent_def = rs.get_any("agent", selected, _uid,
+                                           conversation_id=conversation_id)
                     if not agent_def and _target_agent:
                         # "assistant" is the default persona, not a ResourceStore agent
                         if _target_agent != "assistant":
@@ -1038,7 +1039,7 @@ class AgentLoopTask(BaseTask):
 
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
                         # List other available agents (user + global)
-                        all_agents = rs.list_all("agent", _uid)
+                        all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
                         others = [a["name"] for a in all_agents if a["name"] != selected]
                         if others:
                             system_prompt += (
@@ -1048,7 +1049,7 @@ class AgentLoopTask(BaseTask):
                             )
                 else:
                     # No agent selected — still list available agents so default can use spawn_agents
-                    all_agents = rs.list_all("agent", _uid)
+                    all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
                     if all_agents:
                         agent_lines = []
                         for a in all_agents:
@@ -2605,7 +2606,8 @@ class AgentLoopTask(BaseTask):
             conv_id = body.get("conversation_id", "")
             from core.resource_store import ResourceStore
             uid = user_id or "anonymous"
-            agents_list = ResourceStore.instance().list_all("agent", uid)
+            agents_list = ResourceStore.instance().list_all("agent", uid,
+                                                           conversation_id=conv_id)
             agents = {a["name"]: a for a in agents_list}
             # Get selected agent from active_resources
             selected = ""
@@ -2615,6 +2617,81 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps({
                 "agents": agents, "selected": selected,
             }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "agent_disable":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            if not conv_id or not agent:
+                flowfile.set_content(json.dumps({"error": "Missing params"}).encode())
+                return [flowfile]
+            disabled = store.get_extra(conv_id, "disabled_agents") or []
+            if agent not in disabled:
+                disabled.append(agent)
+                store.set_extra(conv_id, "disabled_agents", disabled)
+            flowfile.set_content(json.dumps({"result": f"Agent '{agent}' disabled in this conversation."}).encode())
+            return [flowfile]
+
+        if action == "agent_enable":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            if not conv_id or not agent:
+                flowfile.set_content(json.dumps({"error": "Missing params"}).encode())
+                return [flowfile]
+            disabled = store.get_extra(conv_id, "disabled_agents") or []
+            if agent in disabled:
+                disabled.remove(agent)
+                store.set_extra(conv_id, "disabled_agents", disabled)
+            flowfile.set_content(json.dumps({"result": f"Agent '{agent}' enabled in this conversation."}).encode())
+            return [flowfile]
+
+        if action == "agent_promote":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            target_scope = body.get("target_scope", "user")
+            if not agent:
+                flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore, GLOBAL_USER_ID
+            rs = ResourceStore.instance()
+            item = rs.get_any("agent", agent, user_id, conversation_id=conv_id)
+            if not item:
+                flowfile.set_content(json.dumps({"error": f"Agent '{agent}' not found"}).encode())
+                return [flowfile]
+            current_scope = item.get("_scope", "user")
+            promote_data = {k: v for k, v in item.items() if not k.startswith("_") and k != "name"}
+            if target_scope == "user":
+                rs.create("agent", agent, user_id, promote_data)
+            elif target_scope == "global":
+                rs.create("agent", agent, GLOBAL_USER_ID, promote_data)
+            elif target_scope == "conversation" and conv_id:
+                conv_agents = store.get_extra(conv_id, "conversation_agents") or {}
+                conv_agents[agent] = promote_data
+                store.set_extra(conv_id, "conversation_agents", conv_agents)
+            flowfile.set_content(json.dumps({
+                "result": f"Agent '{agent}' promoted from {current_scope} to {target_scope}."
+            }).encode())
+            return [flowfile]
+
+        if action == "create_agent":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("name", "")
+            prompt = body.get("prompt", "")
+            scope = body.get("scope", "user")
+            if not agent or not prompt:
+                flowfile.set_content(json.dumps({"error": "Missing name or prompt"}).encode())
+                return [flowfile]
+            agent_data = {"prompt": prompt}
+            if scope == "conversation" and conv_id:
+                conv_agents = store.get_extra(conv_id, "conversation_agents") or {}
+                conv_agents[agent] = agent_data
+                store.set_extra(conv_id, "conversation_agents", conv_agents)
+            else:
+                from core.resource_store import ResourceStore
+                ResourceStore.instance().create("agent", agent, user_id, agent_data)
+            flowfile.set_content(json.dumps({
+                "result": f"Agent '{agent}' created (scope: {scope})."
+            }).encode())
             return [flowfile]
 
         if action == "select_agent":

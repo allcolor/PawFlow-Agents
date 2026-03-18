@@ -3771,8 +3771,51 @@ async function handleSlashCommand(text) {
       } else {
         await cmdAgentSetname(realName, nickname || realName);
       }
+    } else if (sub === 'disable' && parts[2]) {
+      try {
+        const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'manage_resource', resource_type: 'agent', name: parts[2],
+            data: {}, conversation_id: conversationId, _action: 'disable' }),
+        });
+        // manage_resource doesn't have direct disable — use dedicated action
+        const resp2 = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'agent_disable', agent_name: parts[2], conversation_id: conversationId }),
+        });
+        const data = await resp2.json();
+        addMsg('system', data.result || data.error || 'Agent disabled.');
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'enable' && parts[2]) {
+      try {
+        const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'agent_enable', agent_name: parts[2], conversation_id: conversationId }),
+        });
+        const data = await resp.json();
+        addMsg('system', data.result || data.error || 'Agent enabled.');
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'promote' && parts[2] && parts[3]) {
+      try {
+        const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'agent_promote', agent_name: parts[2], target_scope: parts[3],
+            conversation_id: conversationId }),
+        });
+        const data = await resp.json();
+        addMsg('system', data.result || data.error || 'Agent promoted.');
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'create-conv') {
+      const qargs = parseQuotedArgs(text);
+      const cname = qargs[2] || '';
+      const cprompt = qargs[3] || '';
+      if (!cname || !cprompt) { addMsg('system', 'Usage: /agent create-conv <name> "<prompt>"'); return true; }
+      try {
+        const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'create_agent', conversation_id: conversationId,
+            name: cname, prompt: cprompt, scope: 'conversation' }),
+        });
+        const data = await resp.json();
+        addMsg('system', data.result || data.error || 'Agent created.');
+      } catch (e) { addMsg('error', e.message); }
     } else {
-      addMsg('system', 'Usage: /agent list | create | select | default | delete | msg | interrupt | btw | resume | setname');
+      addMsg('system', 'Usage: /agent list | create | create-conv | select | delete | msg | disable | enable | promote | setname');
     }
     return true;
   }
@@ -4190,10 +4233,13 @@ async function cmdAgentList() {
     if (names.length === 0) {
       addMsg('system', 'No agents defined. Use /agent create to add one.');
     } else {
+      const scopeIcons = {'global': '\u{1F310}', 'user': '\u{1F464}', 'conversation': '\u{1F4AC}'};
       const lines = names.map(n => {
+        const a = agents[n];
         const marker = n === selected ? ' \u2705' : '';
-        const prompt = agents[n].prompt.substring(0, 80);
-        return `\u2022 **${n}**${marker} \u2014 ${prompt}...`;
+        const scope = scopeIcons[a._scope || ''] || '';
+        const prompt = (a.prompt || '').substring(0, 80);
+        return `\u2022 ${scope} **${n}**${marker} \u2014 ${prompt}...`;
       });
       addMsg('system', `Agents (${selected ? 'active: ' + selected : 'none selected'}):\n` + lines.join('\n'));
     }

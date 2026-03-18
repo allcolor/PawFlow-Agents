@@ -3974,17 +3974,23 @@ class ManageResourceHandler(ToolHandler):
             if action == "create":
                 if not name:
                     return "Error: 'name' is required for create"
-                # Ownership tracking for agent/skill
+                scope = data.pop("scope", "user") if isinstance(data, dict) else "user"
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
-                # Auto-inherit llm_service for new agents
                 if rtype == "agent" and not data.get("llm_service") and self._llm_service:
                     data["llm_service"] = self._llm_service
-                entry = store.create(rtype, name, user_id, data)
-                # Auto-activate in current conversation
+                if scope == "conversation" and self._conversation_id:
+                    # Store in conversation extras
+                    from core.conversation_store import ConversationStore
+                    cs = ConversationStore.instance()
+                    conv_agents = cs.get_extra(self._conversation_id, "conversation_agents") or {}
+                    conv_agents[name] = data
+                    cs.set_extra(self._conversation_id, "conversation_agents", conv_agents)
+                else:
+                    store.create(rtype, name, user_id, data)
                 self._activate_resource(rtype, name)
-                creator = f" (created by {self._agent_name})" if self._agent_name else ""
-                return f"Created {rtype} '{name}' successfully.{creator}"
+                creator = f" (by {self._agent_name})" if self._agent_name else ""
+                return f"Created {rtype} '{name}' (scope: {scope}).{creator}"
 
             elif action == "update":
                 if not name:
@@ -4009,21 +4015,25 @@ class ManageResourceHandler(ToolHandler):
                 return f"{rtype} '{name}' not found."
 
             elif action == "list":
-                items = store.list_all(rtype, user_id)
+                items = store.list_all(rtype, user_id,
+                                       conversation_id=self._conversation_id)
                 if not items:
                     return f"No {rtype}s found."
+                scope_icons = {"global": "🌐", "user": "👤", "conversation": "💬"}
                 lines = [f"Your {rtype}s ({len(items)}):"]
                 for item in items:
                     desc = item.get("description", "") or item.get("prompt", "")[:60]
-                    creator = item.get("created_by", "")
+                    scope = scope_icons.get(item.get("_scope", ""), "")
+                    creator = item.get("_created_by", "")
                     suffix = f" [by {creator}]" if creator else ""
-                    lines.append(f"- {item['name']}: {desc}{suffix}")
+                    lines.append(f"- {scope} {item['name']}: {desc}{suffix}")
                 return "\n".join(lines)
 
             elif action == "get":
                 if not name:
                     return "Error: 'name' is required for get"
-                item = store.get_any(rtype, name, user_id)
+                item = store.get_any(rtype, name, user_id,
+                                     conversation_id=self._conversation_id)
                 if not item:
                     return f"{rtype} '{name}' not found."
                 return json.dumps(item, ensure_ascii=False, indent=2)
@@ -4041,6 +4051,55 @@ class ManageResourceHandler(ToolHandler):
                     return "Error: 'name' is required for deactivate"
                 self._deactivate_resource(rtype, name)
                 return f"Deactivated {rtype} '{name}' from this conversation."
+
+            elif action == "disable":
+                if not name or not self._conversation_id:
+                    return "Error: 'name' and conversation required"
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                disabled = cs.get_extra(self._conversation_id, "disabled_agents") or []
+                if name not in disabled:
+                    disabled.append(name)
+                    cs.set_extra(self._conversation_id, "disabled_agents", disabled)
+                return f"Agent '{name}' disabled in this conversation."
+
+            elif action == "enable":
+                if not name or not self._conversation_id:
+                    return "Error: 'name' and conversation required"
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                disabled = cs.get_extra(self._conversation_id, "disabled_agents") or []
+                if name in disabled:
+                    disabled.remove(name)
+                    cs.set_extra(self._conversation_id, "disabled_agents", disabled)
+                return f"Agent '{name}' enabled in this conversation."
+
+            elif action == "promote":
+                if not name:
+                    return "Error: 'name' is required"
+                target_scope = data.get("target_scope", "user")
+                # Get the agent from any scope
+                item = store.get_any(rtype, name, user_id,
+                                     conversation_id=self._conversation_id)
+                if not item:
+                    return f"{rtype} '{name}' not found."
+                current_scope = item.get("_scope", "user")
+                # Remove scope metadata before copying
+                promote_data = {k: v for k, v in item.items()
+                                if not k.startswith("_") and k != "name"}
+                if target_scope == "user":
+                    store.create(rtype, name, user_id, promote_data)
+                elif target_scope == "global":
+                    store.create(rtype, name, GLOBAL_USER_ID, promote_data)
+                elif target_scope == "conversation" and self._conversation_id:
+                    from core.conversation_store import ConversationStore
+                    cs = ConversationStore.instance()
+                    conv_agents = cs.get_extra(self._conversation_id, "conversation_agents") or {}
+                    conv_agents[name] = promote_data
+                    cs.set_extra(self._conversation_id, "conversation_agents", conv_agents)
+                else:
+                    return f"Invalid target scope: {target_scope}"
+                return f"{rtype} '{name}' promoted from {current_scope} to {target_scope}."
 
             else:
                 return f"Unknown action: {action}"

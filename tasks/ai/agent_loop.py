@@ -2172,32 +2172,45 @@ class AgentLoopTask(BaseTask):
             if not source_data or len(source_data) < 4:
                 flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
                 return [flowfile]
-            # Run compaction
-            svc_id = self.config.get("llm_service", "")
-            if not svc_id or "${" in svc_id:
-                svc_id = "default"
-            _uid = user_id or ""
-            _client, _ = self._resolve_llm_service(svc_id, _uid)
-            if _client:
-                client = _client
-            elif self.config.get("api_key"):
-                client = LLMClient(
-                    provider=self.config.get("provider", "openai"),
-                    api_key=self.config["api_key"],
-                    base_url=self.config.get("base_url", ""),
-                    default_model=self.config.get("model", ""),
-                    timeout=int(self.config.get("timeout", 120)),
-                )
+            # Resolve compaction client — use summarizer if available, else default
+            _summ_client, _summ_max = self._get_summarizer_client(user_id)
+            if _summ_client:
+                client = _summ_client
             else:
-                flowfile.set_content(json.dumps({"error": f"LLM service '{svc_id}' not found"}).encode())
-                return [flowfile]
+                svc_id = self.config.get("llm_service", "")
+                if not svc_id or "${" in svc_id:
+                    svc_id = "default"
+                client, _ = self._resolve_client(
+                    svc_id, user_id, resolve_expressions=False,
+                )
+                if not client:
+                    flowfile.set_content(json.dumps({"error": f"LLM service not found"}).encode())
+                    return [flowfile]
+            # Resolve context_max_tokens for the target agent's LLM service
+            _compact_max = int(self.config.get("context_max_tokens", 64000))
+            if _ctx_agent:
+                try:
+                    from core.resource_store import ResourceStore
+                    _adef = ResourceStore.instance().get_any("agent", _ctx_agent, user_id)
+                    if _adef and _adef.get("llm_service"):
+                        _agent_svc_id = _adef["llm_service"]
+                        if "${" in _agent_svc_id:
+                            from core.expression import resolve_expression
+                            _agent_svc_id = resolve_expression(_agent_svc_id, owner=user_id)
+                        if _agent_svc_id and "${" not in _agent_svc_id:
+                            _, _agent_svc = self._resolve_llm_service(_agent_svc_id, user_id)
+                            if _agent_svc:
+                                _svc_max = int((getattr(_agent_svc, 'config', {}) or {}).get("max_tokens", 0))
+                                if _svc_max:
+                                    _compact_max = _svc_max
+                except Exception:
+                    pass
             try:
                 msgs = self._deserialize_messages(source_data)
                 before_count = len(msgs)
-                # Force compaction (persisted by _compact_if_needed via save_context)
                 compacted = self._compact_if_needed(
                     msgs, client,
-                    int(self.config.get("context_max_tokens", 64000)),
+                    _compact_max,
                     0.5,  # aggressive
                     int(self.config.get("context_keep_recent", 6)),
                     conversation_id=conv_id,

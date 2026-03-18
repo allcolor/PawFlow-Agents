@@ -4495,9 +4495,18 @@ async function ctxSaveReplaceAll() {
 function _buildCtxAgentDropdown(data) {
   const agents = data.agent_contexts || {};
   const names = Object.keys(agents).filter(n => n !== '*').sort();
+  console.log('[ctx-dropdown] agents:', JSON.stringify(agents), 'names:', names, 'filter:', _ctxAgentFilter);
+  // Always show dropdown if there are per-agent contexts or if a filter is active
   if (names.length === 0 && !_ctxAgentFilter) return '';
+  // Ensure current filter is in the list (may not be diverged yet)
+  if (_ctxAgentFilter && !names.includes(_ctxAgentFilter)) {
+    names.push(_ctxAgentFilter);
+    names.sort();
+  }
+  const sharedStatus = agents['*'] || 'messages';
+  const sharedLabel = 'Shared' + (sharedStatus === 'diverged' ? ' \u2733' : '');
   let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
-  html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>Shared</option>';
+  html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
     const label = n + (status === 'diverged' ? ' \u2733' : '');

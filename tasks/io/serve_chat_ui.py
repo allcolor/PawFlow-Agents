@@ -4410,28 +4410,26 @@ function cmdAgentInterrupt(target) {
   if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
   const isAll = target.toUpperCase() === 'ALL';
   addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'assistant') + '...'));
-  try {
-    if (isAll) {
-      // Interrupt all: fetch agent list then interrupt each
-      const listResp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-      });
-      const listData = await listResp.json();
-      const agents = (listData.agents || []).map(a => a.name);
-      // Interrupt default + each agent
-      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: '' }) });
-      for (const name of agents) {
-        await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: name }) });
+  if (isAll) {
+    // Interrupt default + all agents
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: '' }),
+    }).catch(e => addMsg('error', 'Interrupt failed: ' + e.message));
+    // Also interrupt each known agent
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
+    }).then(r => r.json()).then(data => {
+      for (const name of Object.keys(data.agents || {})) {
+        fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: name }),
+        }).catch(() => {});
       }
-    } else {
-      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: target || '' }),
-      });
-    }
-  } catch (e) { addMsg('error', 'Interrupt failed: ' + e.message); }
+    }).catch(() => {});
+  } else {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: target || '' }),
+    }).catch(e => addMsg('error', 'Interrupt failed: ' + e.message));
+  }
 }
 
 function cmdAgentBtw(target, question) {

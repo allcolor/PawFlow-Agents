@@ -6133,9 +6133,11 @@ class AgentLoopTask(BaseTask):
         old_messages = messages[start_idx:split_point]
         recent_messages = messages[split_point:]
 
-        # Summarize old messages (chunked if too large for LLM context)
+        # Summarize old messages — target = 1/4 of context max
+        _summary_target = max(500, int(max_tokens / 4))
         try:
-            summary = self._summarize_messages(old_messages, client, max_tokens)
+            summary = self._summarize_messages(old_messages, client, max_tokens,
+                                               target_tokens=_summary_target)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
             return messages  # Keep original if summarization fails
@@ -6178,50 +6180,62 @@ class AgentLoopTask(BaseTask):
         old_messages: List[LLMMessage],
         client: LLMClient,
         max_tokens: int,
+        target_tokens: int = 0,
     ) -> str:
         """Summarize messages, chunking if the text is too large for the LLM.
+
+        Args:
+            max_tokens: context window of the summarizer LLM
+            target_tokens: desired output size (0 = max_tokens/4)
 
         Strategy: estimate how many tokens the summary request will use.
         If it exceeds ~70% of max_tokens, split messages in half, summarize
         each half recursively, combine, and do a final summary pass.
         """
+        if not target_tokens:
+            target_tokens = max(500, int(max_tokens / 4))
+
         summary_text = self._sanitize_for_llm(self._messages_to_text(old_messages))
-        # Estimate: system prompt (~100 tokens) + summary_text + output (2000)
         text_tokens = self._estimate_tokens([LLMMessage(role="user", content=summary_text)])
         safe_limit = int(max_tokens * 0.65)  # leave room for system prompt + output
 
         if text_tokens <= safe_limit:
-            # Fits in one call
-            return self._call_summarize(client, summary_text)
+            return self._call_summarize(client, summary_text, target_tokens)
 
         # Too large — split in half and summarize each part recursively
         mid = len(old_messages) // 2
         if mid == 0:
-            # Single huge message — just hard-truncate it
-            truncated = summary_text[:safe_limit * 3]  # ~safe_limit tokens at 3 chars/token
-            return self._call_summarize(client, truncated)
+            truncated = summary_text[:safe_limit * 3]
+            return self._call_summarize(client, truncated, target_tokens)
 
         logger.info(f"[compact] Text too large ({text_tokens} tokens > {safe_limit}), "
-                    f"splitting {len(old_messages)} messages into 2 chunks of {mid} + {len(old_messages) - mid}")
+                    f"splitting {len(old_messages)} messages into 2 chunks")
 
-        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens)
-        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens)
+        # Each chunk gets half the target budget
+        chunk_target = max(250, target_tokens // 2)
+        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens, chunk_target)
+        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens, chunk_target)
 
-        # Combine both summaries and do a final reduction pass
         combined = f"Part 1:\n{summary_a}\n\nPart 2:\n{summary_b}"
         combined_tokens = self._estimate_tokens([LLMMessage(role="user", content=combined)])
 
         if combined_tokens <= safe_limit:
-            return self._call_summarize(client, combined)
+            return self._call_summarize(client, combined, target_tokens)
         else:
             # Still too big — just concatenate (will be compacted on next cycle)
             logger.warning(f"[compact] Combined summaries still large ({combined_tokens} tokens), concatenating")
             return combined
 
-    def _call_summarize(self, client: LLMClient, text: str) -> str:
+    def _call_summarize(self, client: LLMClient, text: str,
+                        target_tokens: int = 0) -> str:
         """Single LLM call to summarize text."""
-        # Double-sanitize: the text may contain tool results with weird chars
+        if not target_tokens:
+            target_tokens = 2000
         clean_text = self._sanitize_for_llm(text)
+        target_instruction = (
+            f"Target length: approximately {target_tokens} tokens. "
+            f"Use the full budget — do not produce a shorter summary than needed."
+        )
         try:
             response = client.complete(
                 messages=[
@@ -6229,12 +6243,13 @@ class AgentLoopTask(BaseTask):
                         "You are a conversation summarizer. Summarize the following conversation "
                         "exchange concisely, preserving all key facts, decisions, research findings, "
                         "URLs discovered, tool results, and any important context. "
-                        "Do NOT lose any factual information. Be concise but complete."
+                        "Do NOT lose any factual information. Be concise but complete. "
+                        + target_instruction
                     )),
                     LLMMessage(role="user", content=clean_text),
                 ],
                 temperature=0.3,
-                max_tokens=2000,
+                max_tokens=min(target_tokens * 2, 16000),
             )
         except Exception as e:
             err_str = str(e)

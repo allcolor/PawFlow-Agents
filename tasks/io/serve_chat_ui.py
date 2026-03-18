@@ -115,20 +115,20 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg-actions button { background: rgba(255,255,255,0.1); border: none; color: #aaa; cursor: pointer;
                       font-size: 12px; padding: 2px 6px; border-radius: 4px; line-height: 1; }
 .msg-actions button:hover { background: rgba(255,255,255,0.2); color: #fff; }
-.active-panel { display: none; background: #0f1629; border: 1px solid #0f3460; border-radius: 8px;
-                margin: 0 20px 8px; padding: 8px 12px; font-size: 12px; color: #a0a0c0; }
+.active-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
+                padding: 6px 10px; font-size: 11px; color: #a0a0c0;
+                position: fixed; bottom: 70px; right: 20px; z-index: 50; max-width: 350px; backdrop-filter: blur(4px); }
 .active-panel.visible { display: block; }
-.active-panel-title { font-size: 11px; color: #6c6c8a; margin-bottom: 4px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-.active-row { display: flex; align-items: center; gap: 8px; padding: 4px 0; border-top: 1px solid rgba(255,255,255,0.05); }
-.active-row:first-of-type { border-top: none; }
-.active-row .a-spinner { animation: spin 1.2s linear infinite; font-style: normal; }
-.active-row .a-name { font-weight: 600; color: #e0e0f0; min-width: 80px; }
-.active-row .a-msg { flex: 1; color: #6c6c8a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
-.active-row .a-status { color: #4ecdc4; min-width: 80px; }
-.active-row .a-time { color: #808090; min-width: 35px; text-align: right; }
-.active-row .a-actions { display: flex; gap: 4px; }
+.active-panel-title { font-size: 10px; color: #6c6c8a; margin-bottom: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
+.active-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.active-row .a-spinner { animation: spin 1.2s linear infinite; font-style: normal; font-size: 10px; }
+.active-row .a-name { font-weight: 600; color: #e0e0f0; }
+.active-row .a-msg { display: none; }
+.active-row .a-status { color: #4ecdc4; font-size: 10px; }
+.active-row .a-time { color: #808090; font-size: 10px; }
+.active-row .a-actions { display: flex; gap: 2px; }
 .active-row .a-actions button { background: none; border: 1px solid #333; color: #aaa; cursor: pointer;
-                                 border-radius: 4px; font-size: 11px; padding: 1px 6px; line-height: 1.4; }
+                                 border-radius: 3px; font-size: 10px; padding: 0 4px; line-height: 1.4; }
 .active-row .a-actions button:hover { background: rgba(255,255,255,0.1); color: #fff; }
 .active-row .a-actions button.btn-stop { border-color: #993333; color: #ff6b6b; }
 .active-row .a-actions button.btn-stop:hover { background: #993333; color: #fff; }
@@ -1438,10 +1438,13 @@ function updateActivePanel() {
   if (names.length === 0) {
     if (wasVisible) {
       panel.classList.remove('visible');
+      hideTyping();
       if (wasAtBottom) scrollBottom(true);
     }
     return;
   }
+  // Active agents → ensure thinking indicator is visible
+  if (!document.getElementById('typing')) showTyping();
   panel.classList.add('visible');
   const now = Date.now();
   rows.innerHTML = names.map(key => {
@@ -1799,9 +1802,9 @@ function randomColor() {
 }
 
 function showTyping() {
+  // If already showing, don't recreate (avoids layout thrashing)
+  if (document.getElementById('typing')) return;
   if (typingInterval) { clearInterval(typingInterval); typingInterval = null; }
-  const old = document.getElementById('typing');
-  if (old) old.remove();
   const el = document.createElement('div');
   el.className = 'typing';
   el.id = 'typing';
@@ -1962,7 +1965,11 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
-    addMsg('system', t('subAgentStarted', {agent: displayAgentName(data.agent_name)}));
+    const src = data.source_agent ? displayAgentName(data.source_agent) : '?';
+    const srcSvc = data.source_llm_service ? ' via ' + data.source_llm_service : '';
+    const dst = displayAgentName(data.agent_name);
+    const dstSvc = data.llm_service ? ' via ' + data.llm_service : '';
+    addMsg('system', '\u27A1 ' + src + srcSvc + ' \u2192 ' + dst + dstSvc);
     scrollBottom();
   });
 
@@ -1995,8 +2002,14 @@ function connectSSE(cid) {
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent);
     hideTyping();
+    const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
+    const srcInfo = data.source_agent ? displayAgentName(data.source_agent) + ' \u2192 ' : '';
+    const header = srcInfo + displayAgentName(agent) + svcInfo;
     if (data.response) {
-      addMsg('agent-result', data.response, agent);
+      const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
+      if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
+      if (data.duration_s) extra.duration_ms = data.duration_s * 1000;
+      addMsg('assistant', data.response, extra);
     } else if (data.error) {
       addMsg('agent-result', 'Error: ' + data.error, agent);
     }
@@ -3322,7 +3335,18 @@ async function handleSlashCommand(text) {
         addMsg('system', t('thoughtDisabled', { agent: agents.map(displayAgentName).join(', ') }));
       }
       else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: displayAgentName(data.agent) })); }
-      else { addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) })); }
+      else {
+        if (data.agents && Array.isArray(data.agents)) {
+          const lines = data.agents.map(a =>
+            a.enabled
+              ? t('thoughtStatus', { agent: displayAgentName(a.agent), freq: a.frequency, delay: a.next_in_seconds })
+              : t('thoughtStatusOff', { agent: displayAgentName(a.agent) })
+          );
+          addMsg('system', lines.join('\n'));
+        } else {
+          addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) }));
+        }
+      }
     } catch (e) { addMsg('error', 'Failed: ' + e.message); }
     return true;
   }

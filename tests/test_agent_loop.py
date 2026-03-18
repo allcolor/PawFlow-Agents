@@ -1728,7 +1728,7 @@ class TestRandomThought(unittest.TestCase):
         result2 = task.execute(ff2)
         data2 = json.loads(result2[0].get_content())
         assert data2["enabled"] is True
-        assert data2["next_in_seconds"] is not None
+        assert data2["agents"][0]["next_in_seconds"] is not None
 
     def test_random_thought_now(self):
         """Action 'now' creates an immediate schedule."""

@@ -50,6 +50,7 @@ class AgentTask:
     llm_service: str = ""  # service ID for LLM routing
     user_id: str = ""  # user ID for service resolution
     source_agent: str = ""  # name of the parent agent (for identity tracking)
+    source_llm_service: str = ""  # LLM service of the parent agent
 
 
 @dataclass
@@ -185,6 +186,9 @@ class SubAgentExecutor:
             "agent_name": task.agent_name,
             "task_id": task.id,
             "message": task.message,
+            "source_agent": task.source_agent,
+            "source_llm_service": task.source_llm_service,
+            "llm_service": task.llm_service,
         })
         deadline = start + (task.timeout or self._default_timeout)
         max_iter = task.max_iterations or self._default_max_iterations
@@ -328,6 +332,9 @@ class SubAgentExecutor:
             "duration_s": round(result.duration_ms / 1000, 1),
             "iterations": result.iterations,
             "tools_called": result.tools_called,
+            "source_agent": task.source_agent,
+            "source_llm_service": task.source_llm_service,
+            "llm_service": task.llm_service,
         })
         return result
 

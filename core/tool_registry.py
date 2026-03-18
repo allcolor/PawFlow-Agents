@@ -3510,15 +3510,16 @@ class SpawnAgentsHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
-        self._source_agent = ""  # agent currently calling this tool
         self._executor = None  # type: Optional[SubAgentExecutor]
         self._available_agents: List[str] = []
+        self._local = threading.local()  # thread-safe source agent
 
     def set_conversation_id(self, conversation_id: str) -> None:
         self._conversation_id = conversation_id
 
-    def set_source_agent(self, agent_name: str) -> None:
-        self._source_agent = agent_name
+    def set_source_agent(self, agent_name: str, llm_service: str = "") -> None:
+        self._local.source_agent = agent_name
+        self._local.source_llm_service = llm_service
 
     def set_available_agents(self, names: List[str]):
         """Set the list of available agent names (for description injection)."""
@@ -3597,15 +3598,18 @@ class SpawnAgentsHandler(ToolHandler):
         wait = arguments.get("wait", True)
         user_id = self._user_id or "anonymous"
 
+        # Thread-safe source agent (each agent loop runs in its own thread)
+        _src_agent = getattr(self._local, 'source_agent', '') or ''
+        _src_svc = getattr(self._local, 'source_llm_service', '') or ''
+
         # Resolve self-name and nicknames to detect self-calls
-        _self_names = {self._source_agent.lower()} if self._source_agent else set()
-        if self._conversation_id and self._source_agent:
+        _self_names = {_src_agent.lower()} if _src_agent else set()
+        if self._conversation_id and _src_agent:
             try:
                 from core.conversation_store import ConversationStore
                 _nicks = ConversationStore.instance().get_extra(
                     self._conversation_id, "agent_nicknames") or {}
-                # Add nickname of source agent
-                _self_nick = _nicks.get(self._source_agent, "")
+                _self_nick = _nicks.get(_src_agent, "")
                 if _self_nick:
                     _self_names.add(_self_nick.lower())
             except Exception:
@@ -3617,15 +3621,19 @@ class SpawnAgentsHandler(ToolHandler):
             message = spec.get("message", "")
             task_id = spec.get("id", uuid.uuid4().hex[:8])
 
-            # Prevent agent from calling itself
-            if agent_name.lower() in _self_names:
-                return (f"Error: You cannot call yourself ('{agent_name}'). "
-                        f"Use a different agent or respond directly.")
-
             try:
                 task = resolve_agent_task(agent_name, message, user_id,
                                          conversation_id=self._conversation_id)
                 task.id = task_id
+                task.source_agent = _src_agent
+                task.source_llm_service = _src_svc
+
+                # Prevent agent from calling itself
+                if agent_name.lower() in _self_names:
+                    return (f"Error: You ('{_src_agent}' via {_src_svc}) "
+                            f"cannot call yourself as '{agent_name}' (via {task.llm_service}). "
+                            f"Use a different agent or respond directly.")
+
                 agent_tasks.append(task)
             except KeyError as e:
                 return f"Error: {e}"

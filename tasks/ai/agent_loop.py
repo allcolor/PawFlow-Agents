@@ -2901,52 +2901,44 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         if sub == "now":
-            scheduler.schedule_delay(
-                conv_id, 1, key=thought_key,
-                reason=f"[random_thought] manual trigger ({agent_name})",
-                user_id=user_id,
-            )
+            for _tgt in target_agents:
+                _tgt_key = _tgt.lower()
+                _tgt_thought_key = f"{conv_id}::thought::{_tgt_key}"
+                scheduler.schedule_delay(
+                    conv_id, 1, key=_tgt_thought_key,
+                    reason=f"[random_thought] manual trigger ({_tgt})",
+                    user_id=user_id,
+                )
             store.set_status(conv_id, "active")
             flowfile.set_content(json.dumps({
                 "ok": True, "agent": agent_name, "triggered": True,
+                "agents": target_agents,
             }).encode())
             return [flowfile]
 
         # sub == "status" (default)
-        # If no specific agent requested, scan all known thought agents
-        _status_config = store.get_extra(conv_id, extra_key)
-        if not _status_config or not _status_config.get("enabled"):
-            if not body.get("agent"):
-                # Scan for any enabled thought config (try common agent names)
-                all_data = store.load(conv_id) if conv_id else None
-                if hasattr(store, '_conversations'):
-                    with store._store_lock:
-                        store._ensure_loaded()
-                        entry = store._conversations.get(conv_id, {})
-                        all_extra = entry.get("extra", {})
-                        for k, v in all_extra.items():
-                            if (k.startswith("random_thought::")
-                                    and isinstance(v, dict) and v.get("enabled")):
-                                agent_name = k.split("::", 1)[1]
-                                thought_key = f"{conv_id}::thought::{agent_name}"
-                                _status_config = v
-                                break
-
-        sched = scheduler.get(thought_key)
-        if _status_config and _status_config.get("enabled"):
-            import time as _t
+        import time as _t
+        statuses = []
+        for _tgt in target_agents:
+            _tgt_key = _tgt.lower()
+            _tgt_extra_key = f"random_thought::{_tgt_key}"
+            _tgt_thought_key = f"{conv_id}::thought::{_tgt_key}"
+            cfg = store.get_extra(conv_id, _tgt_extra_key)
+            enabled = bool(cfg and cfg.get("enabled"))
+            sched = scheduler.get(_tgt_thought_key)
             next_at = sched["recheck_at"] if sched else None
             next_in = int(next_at - _t.time()) if next_at else None
-            flowfile.set_content(json.dumps({
-                "enabled": True, "agent": agent_name,
-                "frequency": _status_config.get("frequency", ""),
-                "next_at": next_at,
+            statuses.append({
+                "agent": _tgt, "enabled": enabled,
+                "frequency": cfg.get("frequency", "") if cfg else "",
                 "next_in_seconds": max(0, next_in) if next_in is not None else None,
-            }).encode())
-        else:
-            flowfile.set_content(json.dumps({
-                "enabled": False, "agent": agent_name,
-            }).encode())
+            })
+
+        any_enabled = any(s["enabled"] for s in statuses)
+        flowfile.set_content(json.dumps({
+            "enabled": any_enabled, "agent": agent_name,
+            "agents": statuses,
+        }).encode())
         return [flowfile]
 
     def _execute_sync(self, flowfile: FlowFile) -> List[FlowFile]:
@@ -3288,7 +3280,10 @@ class AgentLoopTask(BaseTask):
                 h.set_conversation_id(conversation_id)
             elif isinstance(h, SpawnAgentsHandler):
                 h.set_conversation_id(conversation_id)
-                h.set_source_agent(ctx.get("active_agent_name", "") or "assistant")
+                h.set_source_agent(
+                    ctx.get("active_agent_name", "") or "assistant",
+                    ctx.get("active_llm_service", ""),
+                )
             elif isinstance(h, FilesystemToolHandler):
                 h.set_user_id(ctx.get("user_id", ""))
                 fs_svc = self._find_filesystem_service()
@@ -3714,6 +3709,13 @@ class AgentLoopTask(BaseTask):
         # Source metadata for identity tracking
         _agent_name = ctx.get("active_agent_name", "")
         _agent_svc = ctx.get("active_llm_service", "")
+
+        # Set source agent on SpawnAgentsHandler in THIS thread (thread-local)
+        from core.tool_registry import SpawnAgentsHandler as _SAH_stream
+        for _h in registry.list_tools():
+            if isinstance(_h, _SAH_stream):
+                _h.set_source_agent(_agent_name or "assistant", _agent_svc)
+                break
         # LLM client metadata for traceability
         _client_provider = getattr(client, "provider", "")
         _client_base_url = getattr(client, "base_url", "")
@@ -4785,6 +4787,19 @@ class AgentLoopTask(BaseTask):
                 ctx["_generation"] = gen
                 ctx["_gen_key"] = conversation_id
 
+                # Register in active interactions
+                _poll_agent = ctx.get("active_agent_name", "") or "assistant"
+                with self._interactions_lock:
+                    self._active_interactions[conversation_id] = {
+                        "agent_name": _poll_agent,
+                        "message_preview": ", ".join(reasons)[:80] if reasons else "poll",
+                        "started_at": time.time(),
+                        "iteration": 0,
+                        "last_tool": "",
+                        "status": "thinking",
+                        "conversation_id": conversation_id,
+                    }
+
                 bus.publish_event(conversation_id, "thinking", {
                     "iteration": 0,
                     "poll": True,
@@ -4856,6 +4871,18 @@ class AgentLoopTask(BaseTask):
                 ctx["_generation"] = gen
                 ctx["_gen_key"] = _thought_gen_key
                 ctx["_thought_key"] = entry_key
+
+                # Register in active interactions so list_active reports it
+                with self._interactions_lock:
+                    self._active_interactions[_thought_gen_key] = {
+                        "agent_name": _thought_agent,
+                        "message_preview": reason[:80],
+                        "started_at": time.time(),
+                        "iteration": 0,
+                        "last_tool": "",
+                        "status": "thinking",
+                        "conversation_id": cid,
+                    }
 
                 bus.publish_event(cid, "thinking", {
                     "iteration": 0,
@@ -5014,9 +5041,10 @@ class AgentLoopTask(BaseTask):
         # Set source agent on SpawnAgentsHandler for self-call prevention
         from core.tool_registry import SpawnAgentsHandler as _SAH
         _poll_source = _active_agent or "assistant"
+        _poll_svc = svc_id or ""
         for h in registry.list_tools():
             if isinstance(h, _SAH):
-                h.set_source_agent(_poll_source)
+                h.set_source_agent(_poll_source, _poll_svc)
                 break
 
         tool_defs = [

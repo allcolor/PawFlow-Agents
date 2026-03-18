@@ -5147,6 +5147,37 @@ class AgentLoopTask(BaseTask):
                 except Exception as _rt_err:
                     logger.warning(f"[agent] Failed to reschedule thought: {_rt_err}")
 
+            # Auto-reschedule active tasks if agent didn't call complete_task
+            if not _was_cancelled:
+                try:
+                    from core.conversation_store import ConversationStore as _CSat
+                    from core.poll_scheduler import PollScheduler as _PSat
+                    _at_store = _CSat.instance()
+                    _at_sched = _PSat.instance()
+                    _at_all = _at_store.get_extra(conversation_id, "agent_tasks") or {}
+                    _at_agent = ctx.get("active_agent_name") or "assistant"
+                    for _at_tid, _at_task in _at_all.items():
+                        if not isinstance(_at_task, dict):
+                            continue
+                        if _at_task.get("agent") != _at_agent:
+                            continue
+                        if _at_task.get("status") != "active":
+                            continue
+                        _at_key = f"{conversation_id}::task::{_at_tid}"
+                        if _at_sched.get(_at_key):
+                            continue  # already scheduled
+                        _at_interval = _at_task.get("interval", 60)
+                        _at_sched.schedule_delay(
+                            conversation_id, _at_interval,
+                            key=_at_key,
+                            reason=f"[agent_task:{_at_tid}] auto-reschedule ({_at_agent})",
+                            user_id=ctx.get("user_id", ""),
+                        )
+                        logger.info(f"[task] Auto-rescheduled {_at_tid} for {_at_agent} "
+                                    f"(agent didn't call complete_task)")
+                except Exception as _at_err:
+                    logger.warning(f"[agent] Failed to auto-reschedule tasks: {_at_err}")
+
     def _broadcast_agents(self, conversation_id: str, message: str,
                           user_id: str) -> None:
         """Send a message to ALL defined agents in parallel.

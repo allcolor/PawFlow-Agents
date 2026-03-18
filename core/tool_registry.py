@@ -1628,13 +1628,12 @@ class NotifyUserHandler(ToolHandler):
 
         sent_channels = []
 
-        # Channel 1: SSE (conversation event bus)
+        # Channel 1: SSE (conversation event bus — buffered if no subscriber)
         if self._conversation_id:
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 bus = ConversationEventBus.instance()
-                bus.publish(self._conversation_id, {
-                    "type": "notification",
+                bus.publish_event(self._conversation_id, "notification", {
                     "message": message,
                     "urgency": urgency,
                 })

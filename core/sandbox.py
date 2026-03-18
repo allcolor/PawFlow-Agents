@@ -29,6 +29,9 @@ SAFE_MODULES = frozenset({
     "numpy", "csv", "io", "operator", "copy",
     "struct", "html", "xml", "xml.etree", "xml.etree.ElementTree",
     "requests",
+    "zipfile", "gzip", "bz2", "lzma", "tarfile",
+    "pathlib", "fnmatch", "glob", "difflib",
+    "pprint", "enum", "dataclasses", "typing",
 })
 
 # Sub-imports allowed from these prefixes

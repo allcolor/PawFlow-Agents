@@ -77,7 +77,7 @@ def global_services_dialog():
                     st.button("⚙️", key=f"gsvc_cfg_{sid}_{gen}",
                               help=t("common.edit"),
                               on_click=lambda _s=sid: st.session_state.update({
-                                  "_gsvc_edit": _s, "_gsvc_gen": gen + 1}))
+                                  "_gsvc_edit": _s}))
                 with hdr_cols[3]:
                     st.button("🗑️", key=f"gsvc_del_{sid}_{gen}",
                               help=t("common.delete"),

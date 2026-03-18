@@ -52,11 +52,12 @@ def render_schema_fields(
         label = f"{param_name}{'*' if required else ''}"
 
         # Conditional visibility: show_when = {"field": ["val1", "val2"]}
+        # Instead of skipping hidden fields (which changes widget count and
+        # breaks Streamlit dialogs), we render them but skip adding to result.
         show_when = param_schema.get("show_when")
+        _hidden = False
         if show_when:
-            visible = True
             for dep_field, allowed_vals in show_when.items():
-                # Check rendered result first, then current_values, then schema default
                 actual = result.get(dep_field)
                 if actual is None:
                     actual = current_values.get(dep_field)
@@ -64,10 +65,16 @@ def render_schema_fields(
                     dep_schema = schema.get(dep_field, {})
                     actual = dep_schema.get("default", "")
                 if actual not in allowed_vals:
-                    visible = False
+                    _hidden = True
                     break
-            if not visible:
-                continue
+        if _hidden:
+            # Still render to keep widget count stable, but skip result
+            # Use a unique key so it doesn't conflict
+            _hidden_key = f"{key}_hidden"
+            st.text_input(label, value=str(default) if default else "",
+                          key=_hidden_key, disabled=True,
+                          label_visibility="collapsed")
+            continue
 
         if param_type == "select":
             options = param_schema.get("options", [])

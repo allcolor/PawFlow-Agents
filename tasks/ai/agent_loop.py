@@ -6711,14 +6711,9 @@ class AgentLoopTask(BaseTask):
             try:
                 from core.conversation_store import ConversationStore
                 serialized = self._serialize_messages(compacted)
-                # Use per-conversation write lock to prevent concurrent compaction
-                # of the same shared context by two agent threads
-                store = ConversationStore.instance()
-                _wlock = store._get_write_lock(conversation_id)
-                with _wlock:
-                    store.save_agent_context(
-                        conversation_id, agent_name, serialized,
-                    )
+                ConversationStore.instance().save_agent_context(
+                    conversation_id, agent_name, serialized,
+                )
                 logger.info(f"[compact] Persisted context for {conversation_id[:8]} "
                             f"({len(compacted)} messages)")
             except Exception as e:

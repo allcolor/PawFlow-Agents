@@ -3686,7 +3686,7 @@ class GetAgentResultsHandler(ToolHandler):
     """Retrieve results from previously spawned background agents."""
 
     def __init__(self):
-        self._local = threading.local()
+        pass
 
     @property
     def name(self) -> str:
@@ -3713,18 +3713,8 @@ class GetAgentResultsHandler(ToolHandler):
             "required": ["task_ids"],
         }
 
-    def set_executor(self, executor):
-        self._local.executor = executor
-
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if not getattr(self._local, 'executor', None):
-            return "Error: Agent executor not configured."
-
-        task_ids = arguments.get("task_ids", [])
-        results = self._local.executor.get_results(task_ids)
-
-        output = [r.to_dict() for r in results]
-        return json.dumps(output, ensure_ascii=False, indent=2)
+        return "Error: get_agent_results is not supported. Use spawn_agents with wait=true (default)."
 
 
 class UseSkillHandler(ToolHandler):
@@ -3732,7 +3722,8 @@ class UseSkillHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
-        self._local = threading.local()
+        self._client_resolver = None  # callable(svc_id, uid) -> (client, svc)
+        self._default_client = None
 
     @property
     def name(self) -> str:
@@ -3771,12 +3762,14 @@ class UseSkillHandler(ToolHandler):
     def set_user_id(self, uid: str):
         self._user_id = uid
 
-    def set_executor(self, executor):
-        self._local.executor = executor
+    def set_spawn_deps(self, client, client_resolver):
+        """Set dependencies for LLM calls."""
+        self._default_client = client
+        self._client_resolver = client_resolver
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if not getattr(self._local, 'executor', None):
-            return "Error: Agent executor not configured."
+        if not self._default_client:
+            return "Error: LLM client not configured."
 
         from core.resource_store import ResourceStore
 
@@ -3790,16 +3783,21 @@ class UseSkillHandler(ToolHandler):
         if skill_def is None:
             return f"Error: Skill '{skill_name}' not found."
 
-        result = self._local.executor.execute_skill(
-            skill_prompt=skill_def.get("prompt", ""),
-            input_text=input_text,
-            model=model,
-        )
-
-        if result.status == "error":
-            return f"Skill error: {result.error}"
-
-        return result.response
+        from core.llm_client import LLMMessage
+        try:
+            messages = [
+                LLMMessage(role="system", content=skill_def.get("prompt", "")),
+                LLMMessage(role="user", content=input_text),
+            ]
+            response = self._default_client.complete(
+                messages=messages,
+                model=model or None,
+                temperature=0.7,
+                max_tokens=4096,
+            )
+            return response.content or ""
+        except Exception as e:
+            return f"Skill error: {e}"
 
 
 class ShowFileHandler(ToolHandler):

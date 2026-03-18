@@ -430,12 +430,12 @@ class AgentLoopTask(BaseTask):
             _agent_names = []
 
         for h in registry.list_tools():
-            if isinstance(h, (GetAgentResultsHandler, UseSkillHandler)):
-                h.set_executor(sub_executor)
             if isinstance(h, SpawnAgentsHandler):
                 h.set_spawn_deps(client, _client_resolver, _sub_on_event)
                 if _agent_names:
                     h.set_available_agents(_agent_names)
+            elif isinstance(h, UseSkillHandler):
+                h.set_spawn_deps(client, _client_resolver)
 
         user_role = flowfile.get_attribute("http.auth.roles") or ""
         if user_role:
@@ -3069,10 +3069,6 @@ class AgentLoopTask(BaseTask):
             ))
 
             # Re-inject executor before tool calls (fixes race condition)
-            _sub_exec = ctx.get("sub_executor")
-            if _sub_exec:
-                self._inject_executor(registry, _sub_exec)
-
             for tc in response.tool_calls:
                 tools_called.append(tc.name)
 
@@ -3412,15 +3408,6 @@ class AgentLoopTask(BaseTask):
 
         return [flowfile]
 
-    @staticmethod
-    def _inject_executor(registry: ToolRegistry, sub_executor):
-        """Inject sub_executor into get_agent_results/use_skill handlers (thread-local)."""
-        from core.tool_registry import (
-            GetAgentResultsHandler, UseSkillHandler,
-        )
-        for h in registry.list_tools():
-            if isinstance(h, (GetAgentResultsHandler, UseSkillHandler)):
-                h.set_executor(sub_executor)
 
     def _is_current_generation(self, conversation_id: str, generation: int) -> bool:
         """Check if this thread's generation is still current.
@@ -3758,10 +3745,7 @@ class AgentLoopTask(BaseTask):
         _agent_name = ctx.get("active_agent_name", "")
         _agent_svc = ctx.get("active_llm_service", "")
 
-        # Set thread-local state on handlers (executor + source agent)
-        _sub_exec = ctx.get("sub_executor")
-        if _sub_exec:
-            self._inject_executor(registry, _sub_exec)
+        # Set thread-local source agent on SpawnAgentsHandler
         from core.tool_registry import SpawnAgentsHandler as _SAH_stream
         for _h in registry.list_tools():
             if isinstance(_h, _SAH_stream):
@@ -4097,11 +4081,6 @@ class AgentLoopTask(BaseTask):
                             "agent_name": _agent_name or "",
                         })
 
-                    # Re-inject executor before tool calls (fixes race condition)
-                    _sub_exec = ctx.get("sub_executor")
-                    if _sub_exec:
-                        self._inject_executor(registry, _sub_exec)
-
                     # Publish all tool_call events upfront
                     for tc in response.tool_calls:
                         tools_called.append(tc.name)
@@ -4166,9 +4145,7 @@ class AgentLoopTask(BaseTask):
                         from concurrent.futures import ThreadPoolExecutor, as_completed
 
                         def _exec_tool(tc):
-                            # Re-inject thread-local state in pool thread
-                            if _sub_exec:
-                                self._inject_executor(registry, _sub_exec)
+                            # Re-inject thread-local source agent in pool thread
                             from core.tool_registry import SpawnAgentsHandler as _SAH_pool
                             for _hp in registry.list_tools():
                                 if isinstance(_hp, _SAH_pool):
@@ -5103,17 +5080,16 @@ class AgentLoopTask(BaseTask):
             client_resolver=_client_resolver,
             on_event=_poll_on_event,
         )
-        self._inject_executor(registry, sub_executor)
-
-        # Set spawn dependencies on SpawnAgentsHandler
-        from core.tool_registry import SpawnAgentsHandler as _SAH
+        # Set spawn dependencies on SpawnAgentsHandler and UseSkillHandler
+        from core.tool_registry import SpawnAgentsHandler as _SAH, UseSkillHandler as _USH
         _poll_source = _active_agent or "assistant"
         _poll_svc = svc_id or ""
         for h in registry.list_tools():
             if isinstance(h, _SAH):
                 h.set_spawn_deps(client, _client_resolver, _poll_on_event)
                 h.set_source_agent(_poll_source, _poll_svc)
-                break
+            elif isinstance(h, _USH):
+                h.set_spawn_deps(client, _client_resolver)
 
         tool_defs = [
             LLMToolDefinition(

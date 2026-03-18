@@ -36,7 +36,14 @@ def user_services_dialog(user_id: str):
     registry = UserServiceRegistry.get_instance()
     definitions = registry.get_all_for_user(user_id)
 
+    # Counter to make widget keys unique after each action
+    if "_usvc_gen" not in st.session_state:
+        st.session_state["_usvc_gen"] = 0
+    gen = st.session_state["_usvc_gen"]
+
     st.markdown(f"**{t('runtime.user_services_desc', username=user_id)}**")
+
+    editing = st.session_state.get("_usvc_edit")
 
     # --- Existing services ---
     if definitions:
@@ -56,153 +63,203 @@ def user_services_dialog(user_id: str):
                         st.caption(sdef.description)
                 with hdr_cols[1]:
                     if sdef.enabled:
-                        if st.button("\u23f8\ufe0f", key=f"usvc_dis_{user_id}_{sid}",
-                                     help=t("common.disabled")):
-                            registry.disable(user_id, sid)
-                            st.rerun(scope="fragment")
+                        def _do_disable(_uid=user_id, _sid=sid):
+                            registry.disable(_uid, _sid)
+                            st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
+
+                        st.button("\u23f8\ufe0f", key=f"usvc_dis_{user_id}_{sid}_{gen}",
+                                  help=t("common.disabled"), on_click=_do_disable)
                     else:
-                        if st.button("\u25b6\ufe0f", key=f"usvc_en_{user_id}_{sid}",
-                                     help=t("common.enabled")):
-                            registry.enable(user_id, sid)
-                            st.rerun(scope="fragment")
+                        def _do_enable(_uid=user_id, _sid=sid):
+                            registry.enable(_uid, _sid)
+                            st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
+
+                        st.button("\u25b6\ufe0f", key=f"usvc_en_{user_id}_{sid}_{gen}",
+                                  help=t("common.enabled"), on_click=_do_enable)
                 with hdr_cols[2]:
-                    if st.button("\u2699\ufe0f", key=f"usvc_cfg_{user_id}_{sid}",
-                                 help=t("common.edit")):
-                        st.session_state["_usvc_edit"] = sid
-                        st.rerun(scope="fragment")
+                    def _do_edit(_sid=sid):
+                        st.session_state["_usvc_edit"] = _sid
+                        st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
+
+                    st.button("\u2699\ufe0f", key=f"usvc_cfg_{user_id}_{sid}_{gen}",
+                              help=t("common.edit"), on_click=_do_edit)
                 with hdr_cols[3]:
-                    if st.button("\U0001f5d1\ufe0f", key=f"usvc_del_{user_id}_{sid}",
-                                 help=t("common.delete")):
-                        registry.uninstall(user_id, sid)
-                        st.rerun()
+                    def _do_delete(_uid=user_id, _sid=sid):
+                        registry.uninstall(_uid, _sid)
+                        st.session_state["_usvc_gen"] = st.session_state.get("_usvc_gen", 0) + 1
+
+                    st.button("\U0001f5d1\ufe0f", key=f"usvc_del_{user_id}_{sid}_{gen}",
+                              help=t("common.delete"), on_click=_do_delete)
 
                 # Inline config editor if this service is being edited
-                if st.session_state.get("_usvc_edit") == sid:
-                    _render_config_editor(registry, user_id, sdef)
+                if editing == sid:
+                    _render_config_editor(registry, user_id, sdef, gen)
     else:
         st.info(t("runtime.user_services_empty"))
 
     # --- Install new service ---
-    st.markdown("---")
-    st.markdown(f"**{t('runtime.user_services_add')}**")
+    if not editing:
+        st.markdown("---")
+        st.markdown(f"**{t('runtime.user_services_add')}**")
 
-    service_types = _get_available_service_types()
-    if not service_types:
-        st.warning("No service types registered.")
-        return
-
-    icols = st.columns([3, 3, 4])
-    with icols[0]:
-        new_id = st.text_input(
-            t("common.name"), key="usvc_new_id", placeholder="my_postgres"
-        )
-    with icols[1]:
-        new_type = st.selectbox(
-            t("common.type"), options=service_types, key="usvc_new_type"
-        )
-    with icols[2]:
-        new_desc = st.text_input(
-            "Description", key="usvc_new_desc", placeholder="My personal DB"
-        )
-
-    # Show schema for the selected type
-    new_config = {}
-    if new_type:
-        schema = _get_service_schema(new_type)
-        if schema:
-            from gui.components.schema_form import render_schema_fields
-            new_config = render_schema_fields(schema, {}, key_prefix="usvc_new_cfg")
+        service_types = _get_available_service_types()
+        if not service_types:
+            st.warning("No service types registered.")
         else:
-            st.caption(t("runtime.global_services_no_schema"))
-
-    if st.button(f"\u2795 {t('runtime.global_services_install')}",
-                 key="usvc_install", type="primary"):
-        if not new_id or not new_id.strip():
-            st.warning(t("runtime.service_name_required"))
-        elif new_id.strip() in definitions:
-            st.warning(t("runtime.global_services_exists"))
-        else:
-            try:
-                registry.install(
-                    user_id=user_id,
-                    service_id=new_id.strip(),
-                    service_type=new_type,
-                    config=new_config if new_type else {},
-                    description=new_desc,
-                    enabled=True,
+            icols = st.columns([3, 3, 4])
+            with icols[0]:
+                st.text_input(
+                    t("common.name"), key=f"usvc_new_id_{gen}", placeholder="my_postgres"
                 )
-                st.rerun()
-            except Exception as e:
-                st.error(f"{t('common.error')}: {e}")
+            with icols[1]:
+                st.selectbox(
+                    t("common.type"), options=service_types, key=f"usvc_new_type_{gen}"
+                )
+            with icols[2]:
+                st.text_input(
+                    "Description", key=f"usvc_new_desc_{gen}", placeholder="My personal DB"
+                )
+
+            # Show schema for the selected type
+            new_type = st.session_state.get(f"usvc_new_type_{gen}")
+            if new_type:
+                schema = _get_service_schema(new_type)
+                if schema:
+                    from gui.components.schema_form import render_schema_fields
+                    render_schema_fields(schema, {}, key_prefix=f"usvc_new_cfg_{gen}")
+                else:
+                    st.caption(t("runtime.global_services_no_schema"))
+
+            def _do_install():
+                g = st.session_state.get("_usvc_gen", 0)
+                new_id = st.session_state.get(f"usvc_new_id_{g}", "").strip()
+                ntype = st.session_state.get(f"usvc_new_type_{g}", "")
+                new_desc = st.session_state.get(f"usvc_new_desc_{g}", "")
+
+                if not new_id:
+                    st.session_state["_usvc_error"] = t("runtime.service_name_required")
+                    return
+                if new_id in definitions:
+                    st.session_state["_usvc_error"] = t("runtime.global_services_exists")
+                    return
+
+                # Read schema config from session_state
+                new_config = {}
+                if ntype:
+                    s = _get_service_schema(ntype)
+                    if s:
+                        for param_name in s:
+                            wk = f"usvc_new_cfg_{g}_{param_name}"
+                            if wk in st.session_state:
+                                new_config[param_name] = st.session_state[wk]
+
+                try:
+                    registry.install(
+                        user_id=user_id,
+                        service_id=new_id,
+                        service_type=ntype,
+                        config=new_config if ntype else {},
+                        description=new_desc,
+                        enabled=True,
+                    )
+                    st.session_state["_usvc_gen"] = g + 1
+                    st.session_state.pop("_usvc_error", None)
+                except Exception as e:
+                    st.session_state["_usvc_error"] = f"{t('common.error')}: {e}"
+
+            st.button(f"\u2795 {t('runtime.global_services_install')}",
+                      key=f"usvc_install_{gen}", type="primary", on_click=_do_install)
+
+            # Show error from previous callback
+            if "_usvc_error" in st.session_state:
+                st.warning(st.session_state.pop("_usvc_error"))
 
     # Close button at bottom of dialog
     st.markdown("---")
-    if st.button(t("common.close"), key="usvc_close", type="primary"):
+
+    def _do_close():
         st.session_state.pop("_show_user_services", None)
+        st.session_state.pop("_usvc_edit", None)
+
+    if st.button(t("common.close"), key=f"usvc_close_{gen}", type="primary",
+                 on_click=_do_close):
         st.rerun()
 
 
-def _render_config_editor(registry, user_id: str, sdef):
+def _render_config_editor(registry, user_id: str, sdef, gen):
     """Inline config editor for an existing user service."""
+    sid = sdef.service_id
+    name_key = f"usvc_rename_{user_id}_{sid}_{gen}"
+    desc_key = f"usvc_edesc_{user_id}_{sid}_{gen}"
+    prefix = f"usvc_edit_{user_id}_{sid}_{gen}"
+
+    # Check if save was just executed (via callback)
+    if st.session_state.pop("_usvc_saved", None) == sid:
+        st.success(f"Saved {sid}")
+        return
+
     st.markdown(f"--- *{t('common.edit')}: {sdef.service_id}*")
 
     # Rename
-    new_name = st.text_input(
-        t("common.name"), value=sdef.service_id,
-        key=f"usvc_rename_{user_id}_{sdef.service_id}"
+    st.text_input(
+        t("common.name"), value=sdef.service_id, key=name_key
     )
 
     schema = _get_service_schema(sdef.service_type)
+    cfg_keys = []
     if schema:
         from gui.components.schema_form import render_schema_fields
-        edited = render_schema_fields(
-            schema, sdef.config, key_prefix=f"usvc_edit_{user_id}_{sdef.service_id}"
-        )
+        render_schema_fields(schema, sdef.config, key_prefix=prefix)
     else:
-        edited = {}
         for cfg_key, cfg_val in sdef.config.items():
+            k = f"usvc_ecfg_{user_id}_{sid}_{cfg_key}_{gen}"
+            cfg_keys.append((cfg_key, k))
             if isinstance(cfg_val, bool):
-                edited[cfg_key] = st.checkbox(
-                    cfg_key, value=cfg_val,
-                    key=f"usvc_ecfg_{user_id}_{sdef.service_id}_{cfg_key}")
+                st.checkbox(cfg_key, value=cfg_val, key=k)
             elif isinstance(cfg_val, (int, float)):
-                edited[cfg_key] = st.number_input(
-                    cfg_key, value=cfg_val,
-                    key=f"usvc_ecfg_{user_id}_{sdef.service_id}_{cfg_key}")
+                st.number_input(cfg_key, value=cfg_val, key=k)
             else:
-                edited[cfg_key] = st.text_input(
-                    cfg_key, value=str(cfg_val),
-                    key=f"usvc_ecfg_{user_id}_{sdef.service_id}_{cfg_key}")
+                st.text_input(cfg_key, value=str(cfg_val), key=k)
 
     # Description
-    new_desc = st.text_input(
-        "Description", value=sdef.description,
-        key=f"usvc_edesc_{user_id}_{sdef.service_id}"
+    st.text_input(
+        "Description", value=sdef.description, key=desc_key
     )
+
+    def _do_save():
+        new_name = st.session_state.get(name_key, sid).strip()
+        new_desc = st.session_state.get(desc_key, sdef.description)
+        edited = {}
+        if schema:
+            for param_name in schema:
+                wk = f"{prefix}_{param_name}"
+                if wk in st.session_state:
+                    edited[param_name] = st.session_state[wk]
+        else:
+            for cfg_key, k in cfg_keys:
+                if k in st.session_state:
+                    edited[cfg_key] = st.session_state[k]
+        if new_name and new_name != sid:
+            try:
+                registry.rename(user_id, sid, new_name)
+                registry.update_config(user_id, new_name, edited)
+                if new_desc != sdef.description:
+                    registry.update_description(user_id, new_name, new_desc)
+            except (KeyError, ValueError):
+                pass
+        else:
+            registry.update_config(user_id, sid, edited)
+            if new_desc != sdef.description:
+                registry.update_description(user_id, sid, new_desc)
+        st.session_state.pop("_usvc_edit", None)
+        st.session_state["_usvc_saved"] = sid
 
     save_cols = st.columns([1, 1])
     with save_cols[0]:
-        if st.button(f"\U0001f4be {t('common.save')}",
-                     key=f"usvc_save_{user_id}_{sdef.service_id}",
-                     type="primary"):
-            renamed_id = new_name.strip() if new_name else ""
-            if renamed_id and renamed_id != sdef.service_id:
-                try:
-                    registry.rename(user_id, sdef.service_id, renamed_id)
-                except (KeyError, ValueError) as e:
-                    st.error(str(e))
-                    return
-                registry.update_config(user_id, renamed_id, edited)
-                if new_desc != sdef.description:
-                    registry.update_description(user_id, renamed_id, new_desc)
-            else:
-                registry.update_config(user_id, sdef.service_id, edited)
-                if new_desc != sdef.description:
-                    registry.update_description(user_id, sdef.service_id, new_desc)
-            st.session_state.pop("_usvc_edit", None)
-            st.rerun(scope="fragment")
+        st.button(f"\U0001f4be {t('common.save')}",
+                  key=f"usvc_save_{user_id}_{sid}_{gen}",
+                  type="primary", on_click=_do_save)
     with save_cols[1]:
-        if st.button(t("common.cancel"),
-                     key=f"usvc_cancel_{user_id}_{sdef.service_id}"):
-            st.session_state.pop("_usvc_edit", None)
-            st.rerun(scope="fragment")
+        st.button(t("common.cancel"),
+                  key=f"usvc_cancel_{user_id}_{sid}_{gen}",
+                  on_click=lambda: st.session_state.pop("_usvc_edit", None))

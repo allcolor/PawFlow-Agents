@@ -68,6 +68,11 @@ def global_params_dialog():
     """CRUD dialog for global parameters."""
     params = ConfigStore.load_params(_GLOBAL_PARAMS_FILE)
 
+    # Counter to make widget keys unique after each action
+    if "_gp_gen" not in st.session_state:
+        st.session_state["_gp_gen"] = 0
+    gen = st.session_state["_gp_gen"]
+
     st.markdown(f"**{t('runtime.global_params_desc')}**")
     st.caption(t("runtime.global_params_usage"))
 
@@ -82,7 +87,7 @@ def global_params_dialog():
             with cols[0]:
                 st.text_input(
                     "Key", value=key, disabled=True,
-                    key=f"gp_key_{key}", label_visibility="collapsed"
+                    key=f"gp_key_{key}_{gen}", label_visibility="collapsed"
                 )
             with cols[1]:
                 if cv.is_large:
@@ -90,18 +95,18 @@ def global_params_dialog():
                 else:
                     new_val = st.text_input(
                         "Value", value=str(cv),
-                        key=f"gp_val_{key}", label_visibility="collapsed"
+                        key=f"gp_val_{key}_{gen}", label_visibility="collapsed"
                     )
                     edited[key] = ConfigValue(value=new_val)
             with cols[2]:
-                if st.button("🗑️", key=f"gp_del_{key}"):
-                    to_delete.append(key)
+                def _do_delete_param(_key=key):
+                    p = ConfigStore.load_params(_GLOBAL_PARAMS_FILE)
+                    p.pop(_key, None)
+                    ConfigStore.save_params(_GLOBAL_PARAMS_FILE, p)
+                    st.session_state["_gp_gen"] = st.session_state.get("_gp_gen", 0) + 1
 
-        if to_delete:
-            for k in to_delete:
-                edited.pop(k, None)
-            ConfigStore.save_params(_GLOBAL_PARAMS_FILE, edited)
-            st.rerun()
+                st.button("\U0001f5d1\ufe0f", key=f"gp_del_{key}_{gen}",
+                          on_click=_do_delete_param)
 
         # Auto-save edits (compare string values for small values)
         if any(str(edited.get(k)) != str(params.get(k))
@@ -115,36 +120,52 @@ def global_params_dialog():
     st.markdown(f"**{t('runtime.global_params_add')}**")
 
     upload_file = st.file_uploader(
-        "Upload large value", key="gp_upload",
+        "Upload large value", key=f"gp_upload_{gen}",
         help="Upload a file as a parameter value (certificates, large configs)"
     )
 
     add_cols = st.columns([3, 5, 1])
     with add_cols[0]:
-        new_key = st.text_input(
-            t("common.name"), key="gp_new_key", placeholder="my_param"
+        st.text_input(
+            t("common.name"), key=f"gp_new_key_{gen}", placeholder="my_param"
         )
     with add_cols[1]:
-        new_value = st.text_input(
-            "Value", key="gp_new_value", placeholder="value"
+        st.text_input(
+            "Value", key=f"gp_new_value_{gen}", placeholder="value"
         )
     with add_cols[2]:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕", key="gp_add"):
-            if new_key and new_key.strip():
-                if upload_file is not None:
-                    data = upload_file.read()
-                    params[new_key.strip()] = ConfigValue(data=data)
-                else:
-                    params[new_key.strip()] = ConfigValue(value=new_value)
-                ConfigStore.save_params(_GLOBAL_PARAMS_FILE, params)
-                st.rerun()
+
+        def _do_add_param():
+            g = st.session_state.get("_gp_gen", 0)
+            new_key = st.session_state.get(f"gp_new_key_{g}", "").strip()
+            new_value = st.session_state.get(f"gp_new_value_{g}", "")
+            up = st.session_state.get(f"gp_upload_{g}")
+            if not new_key:
+                st.session_state["_gp_error"] = t("runtime.all_fields_required")
+                return
+            p = ConfigStore.load_params(_GLOBAL_PARAMS_FILE)
+            if up is not None:
+                data = up.read()
+                p[new_key] = ConfigValue(data=data)
             else:
-                st.warning(t("runtime.all_fields_required"))
+                p[new_key] = ConfigValue(value=new_value)
+            ConfigStore.save_params(_GLOBAL_PARAMS_FILE, p)
+            st.session_state["_gp_gen"] = g + 1
+            st.session_state.pop("_gp_error", None)
+
+        st.button("\u2795", key=f"gp_add_{gen}", on_click=_do_add_param)
+
+        if "_gp_error" in st.session_state:
+            st.warning(st.session_state.pop("_gp_error"))
 
     st.markdown("---")
-    if st.button(t("common.close"), key="gp_close", type="primary"):
+
+    def _do_close_gp():
         st.session_state.pop("_show_global_params", None)
+
+    if st.button(t("common.close"), key=f"gp_close_{gen}", type="primary",
+                 on_click=_do_close_gp):
         st.rerun()
 
 
@@ -153,48 +174,50 @@ def global_secrets_dialog():
     """CRUD dialog for global secrets."""
     raw_secrets = ConfigStore.load_secrets_raw(_GLOBAL_SECRETS_FILE)
 
+    # Counter to make widget keys unique after each action
+    if "_gs_gen" not in st.session_state:
+        st.session_state["_gs_gen"] = 0
+    gen = st.session_state["_gs_gen"]
+
     st.markdown(f"**{t('runtime.global_secrets_desc')}**")
     st.caption(t("runtime.global_secrets_usage"))
 
     # Existing secrets
     if raw_secrets:
-        to_delete = []
-
         for key in sorted(raw_secrets.keys()):
             entry = raw_secrets[key]
             cols = st.columns([3, 5, 1])
             with cols[0]:
                 st.text_input(
                     "Key", value=key, disabled=True,
-                    key=f"gs_key_{key}", label_visibility="collapsed"
+                    key=f"gs_key_{key}_{gen}", label_visibility="collapsed"
                 )
             with cols[1]:
                 # Large spilled secret
                 if isinstance(entry, dict) and entry.get("$type") == "spilled":
                     st.caption(f"Large secret ({_format_size(entry.get('size', 0))})")
-                    st.info("Encrypted large value — download to view")
+                    st.info("Encrypted large value \u2014 download to view")
                 else:
                     decrypted = _decrypt_value(entry)
                     new_val = st.text_input(
                         "Value", value=decrypted, type="password",
-                        key=f"gs_val_{key}", label_visibility="collapsed"
+                        key=f"gs_val_{key}_{gen}", label_visibility="collapsed"
                     )
                     if new_val != decrypted:
                         raw_secrets[key] = _encrypt_value(new_val)
                         ConfigStore.save_secrets_raw(_GLOBAL_SECRETS_FILE, raw_secrets)
             with cols[2]:
-                if st.button("🗑️", key=f"gs_del_{key}"):
-                    to_delete.append(key)
+                def _do_delete_secret(_key=key):
+                    rs = ConfigStore.load_secrets_raw(_GLOBAL_SECRETS_FILE)
+                    rs.pop(_key, None)
+                    ConfigStore.save_secrets_raw(_GLOBAL_SECRETS_FILE, rs)
+                    ConfigStore.cleanup_sidecars(
+                        _GLOBAL_SECRETS_FILE, set(rs.keys())
+                    )
+                    st.session_state["_gs_gen"] = st.session_state.get("_gs_gen", 0) + 1
 
-        if to_delete:
-            for k in to_delete:
-                raw_secrets.pop(k, None)
-            ConfigStore.save_secrets_raw(_GLOBAL_SECRETS_FILE, raw_secrets)
-            # Also cleanup orphan sidecars
-            ConfigStore.cleanup_sidecars(
-                _GLOBAL_SECRETS_FILE, set(raw_secrets.keys())
-            )
-            st.rerun()
+                st.button("\U0001f5d1\ufe0f", key=f"gs_del_{key}_{gen}",
+                          on_click=_do_delete_secret)
     else:
         st.info(t("runtime.global_secrets_empty"))
 
@@ -203,42 +226,57 @@ def global_secrets_dialog():
     st.markdown(f"**{t('runtime.global_secrets_add')}**")
 
     upload_file = st.file_uploader(
-        "Upload large secret", key="gs_upload",
+        "Upload large secret", key=f"gs_upload_{gen}",
         help="Upload a file as a secret value (certificates, tokens)"
     )
 
     add_cols = st.columns([3, 5, 1])
     with add_cols[0]:
-        new_key = st.text_input(
-            t("common.name"), key="gs_new_key", placeholder="api_key"
+        st.text_input(
+            t("common.name"), key=f"gs_new_key_{gen}", placeholder="api_key"
         )
     with add_cols[1]:
-        new_value = st.text_input(
-            "Value", key="gs_new_value", type="password", placeholder="secret_value"
+        st.text_input(
+            "Value", key=f"gs_new_value_{gen}", type="password", placeholder="secret_value"
         )
     with add_cols[2]:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕", key="gs_add"):
-            if new_key and new_key.strip():
-                if upload_file is not None:
-                    data = upload_file.read()
-                    # Save via ConfigStore which handles spill + encryption
-                    secrets_cv = ConfigStore.load_secrets(_GLOBAL_SECRETS_FILE)
-                    secrets_cv[new_key.strip()] = ConfigValue(data=data)
-                    ConfigStore.save_secrets(_GLOBAL_SECRETS_FILE, secrets_cv)
-                elif new_value:
-                    raw_secrets[new_key.strip()] = _encrypt_value(new_value)
-                    ConfigStore.save_secrets_raw(_GLOBAL_SECRETS_FILE, raw_secrets)
-                else:
-                    st.warning(t("runtime.all_fields_required"))
-                    return
-                st.rerun()
+
+        def _do_add_secret():
+            g = st.session_state.get("_gs_gen", 0)
+            new_key = st.session_state.get(f"gs_new_key_{g}", "").strip()
+            new_value = st.session_state.get(f"gs_new_value_{g}", "")
+            up = st.session_state.get(f"gs_upload_{g}")
+            if not new_key:
+                st.session_state["_gs_error"] = t("runtime.all_fields_required")
+                return
+            if up is not None:
+                data = up.read()
+                secrets_cv = ConfigStore.load_secrets(_GLOBAL_SECRETS_FILE)
+                secrets_cv[new_key] = ConfigValue(data=data)
+                ConfigStore.save_secrets(_GLOBAL_SECRETS_FILE, secrets_cv)
+            elif new_value:
+                rs = ConfigStore.load_secrets_raw(_GLOBAL_SECRETS_FILE)
+                rs[new_key] = _encrypt_value(new_value)
+                ConfigStore.save_secrets_raw(_GLOBAL_SECRETS_FILE, rs)
             else:
-                st.warning(t("runtime.all_fields_required"))
+                st.session_state["_gs_error"] = t("runtime.all_fields_required")
+                return
+            st.session_state["_gs_gen"] = g + 1
+            st.session_state.pop("_gs_error", None)
+
+        st.button("\u2795", key=f"gs_add_{gen}", on_click=_do_add_secret)
+
+        if "_gs_error" in st.session_state:
+            st.warning(st.session_state.pop("_gs_error"))
 
     st.markdown("---")
-    if st.button(t("common.close"), key="gs_close", type="primary"):
+
+    def _do_close_gs():
         st.session_state.pop("_show_global_secrets", None)
+
+    if st.button(t("common.close"), key=f"gs_close_{gen}", type="primary",
+                 on_click=_do_close_gs):
         st.rerun()
 
 
@@ -250,11 +288,15 @@ def user_params_dialog(username: str):
     path = _USER_CONFIG_DIR / username / "parameters.json"
     params = ConfigStore.load_params(path)
 
+    # Counter to make widget keys unique after each action
+    if "_up_gen" not in st.session_state:
+        st.session_state["_up_gen"] = 0
+    gen = st.session_state["_up_gen"]
+
     st.markdown(f"**{t('runtime.user_params_desc', username=username)}**")
     st.caption(t("runtime.user_params_usage"))
 
     if params:
-        to_delete = []
         edited = dict(params)
 
         for key in sorted(params.keys()):
@@ -263,7 +305,7 @@ def user_params_dialog(username: str):
             with cols[0]:
                 st.text_input(
                     "Key", value=key, disabled=True,
-                    key=f"up_key_{key}", label_visibility="collapsed"
+                    key=f"up_key_{key}_{gen}", label_visibility="collapsed"
                 )
             with cols[1]:
                 if cv.is_large:
@@ -271,18 +313,18 @@ def user_params_dialog(username: str):
                 else:
                     new_val = st.text_input(
                         "Value", value=str(cv),
-                        key=f"up_val_{key}", label_visibility="collapsed"
+                        key=f"up_val_{key}_{gen}", label_visibility="collapsed"
                     )
                     edited[key] = ConfigValue(value=new_val)
             with cols[2]:
-                if st.button("🗑️", key=f"up_del_{key}"):
-                    to_delete.append(key)
+                def _do_delete_param(_key=key, _path=path):
+                    p = ConfigStore.load_params(_path)
+                    p.pop(_key, None)
+                    ConfigStore.save_params(_path, p)
+                    st.session_state["_up_gen"] = st.session_state.get("_up_gen", 0) + 1
 
-        if to_delete:
-            for k in to_delete:
-                edited.pop(k, None)
-            ConfigStore.save_params(path, edited)
-            st.rerun()
+                st.button("\U0001f5d1\ufe0f", key=f"up_del_{key}_{gen}",
+                          on_click=_do_delete_param)
 
         if any(str(edited.get(k)) != str(params.get(k))
                for k in edited if not edited[k].is_large):
@@ -295,36 +337,52 @@ def user_params_dialog(username: str):
     st.markdown(f"**{t('runtime.global_params_add')}**")
 
     upload_file = st.file_uploader(
-        "Upload large value", key="up_upload",
+        "Upload large value", key=f"up_upload_{gen}",
         help="Upload a file as a parameter value"
     )
 
     add_cols = st.columns([3, 5, 1])
     with add_cols[0]:
-        new_key = st.text_input(
-            t("common.name"), key="up_new_key", placeholder="my_param"
+        st.text_input(
+            t("common.name"), key=f"up_new_key_{gen}", placeholder="my_param"
         )
     with add_cols[1]:
-        new_value = st.text_input(
-            "Value", key="up_new_value", placeholder="value"
+        st.text_input(
+            "Value", key=f"up_new_value_{gen}", placeholder="value"
         )
     with add_cols[2]:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕", key="up_add"):
-            if new_key and new_key.strip():
-                if upload_file is not None:
-                    data = upload_file.read()
-                    params[new_key.strip()] = ConfigValue(data=data)
-                else:
-                    params[new_key.strip()] = ConfigValue(value=new_value)
-                ConfigStore.save_params(path, params)
-                st.rerun()
+
+        def _do_add_param():
+            g = st.session_state.get("_up_gen", 0)
+            new_key = st.session_state.get(f"up_new_key_{g}", "").strip()
+            new_value = st.session_state.get(f"up_new_value_{g}", "")
+            up = st.session_state.get(f"up_upload_{g}")
+            if not new_key:
+                st.session_state["_up_error"] = t("runtime.all_fields_required")
+                return
+            p = ConfigStore.load_params(path)
+            if up is not None:
+                data = up.read()
+                p[new_key] = ConfigValue(data=data)
             else:
-                st.warning(t("runtime.all_fields_required"))
+                p[new_key] = ConfigValue(value=new_value)
+            ConfigStore.save_params(path, p)
+            st.session_state["_up_gen"] = g + 1
+            st.session_state.pop("_up_error", None)
+
+        st.button("\u2795", key=f"up_add_{gen}", on_click=_do_add_param)
+
+        if "_up_error" in st.session_state:
+            st.warning(st.session_state.pop("_up_error"))
 
     st.markdown("---")
-    if st.button(t("common.close"), key="up_close", type="primary"):
+
+    def _do_close_up():
         st.session_state.pop("_show_user_params", None)
+
+    if st.button(t("common.close"), key=f"up_close_{gen}", type="primary",
+                 on_click=_do_close_up):
         st.rerun()
 
 
@@ -334,43 +392,46 @@ def user_secrets_dialog(username: str):
     path = _USER_CONFIG_DIR / username / "secrets.json"
     raw_secrets = ConfigStore.load_secrets_raw(path)
 
+    # Counter to make widget keys unique after each action
+    if "_us_gen" not in st.session_state:
+        st.session_state["_us_gen"] = 0
+    gen = st.session_state["_us_gen"]
+
     st.markdown(f"**{t('runtime.user_secrets_desc', username=username)}**")
     st.caption(t("runtime.user_secrets_usage"))
 
     if raw_secrets:
-        to_delete = []
-
         for key in sorted(raw_secrets.keys()):
             entry = raw_secrets[key]
             cols = st.columns([3, 5, 1])
             with cols[0]:
                 st.text_input(
                     "Key", value=key, disabled=True,
-                    key=f"us_key_{key}", label_visibility="collapsed"
+                    key=f"us_key_{key}_{gen}", label_visibility="collapsed"
                 )
             with cols[1]:
                 if isinstance(entry, dict) and entry.get("$type") == "spilled":
                     st.caption(f"Large secret ({_format_size(entry.get('size', 0))})")
-                    st.info("Encrypted large value — download to view")
+                    st.info("Encrypted large value \u2014 download to view")
                 else:
                     decrypted = _decrypt_value(entry)
                     new_val = st.text_input(
                         "Value", value=decrypted, type="password",
-                        key=f"us_val_{key}", label_visibility="collapsed"
+                        key=f"us_val_{key}_{gen}", label_visibility="collapsed"
                     )
                     if new_val != decrypted:
                         raw_secrets[key] = _encrypt_value(new_val)
                         ConfigStore.save_secrets_raw(path, raw_secrets)
             with cols[2]:
-                if st.button("🗑️", key=f"us_del_{key}"):
-                    to_delete.append(key)
+                def _do_delete_secret(_key=key, _path=path):
+                    rs = ConfigStore.load_secrets_raw(_path)
+                    rs.pop(_key, None)
+                    ConfigStore.save_secrets_raw(_path, rs)
+                    ConfigStore.cleanup_sidecars(_path, set(rs.keys()))
+                    st.session_state["_us_gen"] = st.session_state.get("_us_gen", 0) + 1
 
-        if to_delete:
-            for k in to_delete:
-                raw_secrets.pop(k, None)
-            ConfigStore.save_secrets_raw(path, raw_secrets)
-            ConfigStore.cleanup_sidecars(path, set(raw_secrets.keys()))
-            st.rerun()
+                st.button("\U0001f5d1\ufe0f", key=f"us_del_{key}_{gen}",
+                          on_click=_do_delete_secret)
     else:
         st.info(t("runtime.user_secrets_empty"))
 
@@ -379,39 +440,55 @@ def user_secrets_dialog(username: str):
     st.markdown(f"**{t('runtime.global_secrets_add')}**")
 
     upload_file = st.file_uploader(
-        "Upload large secret", key="us_upload",
+        "Upload large secret", key=f"us_upload_{gen}",
         help="Upload a file as a secret value"
     )
 
     add_cols = st.columns([3, 5, 1])
     with add_cols[0]:
-        new_key = st.text_input(
-            t("common.name"), key="us_new_key", placeholder="api_key"
+        st.text_input(
+            t("common.name"), key=f"us_new_key_{gen}", placeholder="api_key"
         )
     with add_cols[1]:
-        new_value = st.text_input(
-            "Value", key="us_new_value", type="password", placeholder="secret_value"
+        st.text_input(
+            "Value", key=f"us_new_value_{gen}", type="password", placeholder="secret_value"
         )
     with add_cols[2]:
         st.markdown("<br>", unsafe_allow_html=True)
-        if st.button("➕", key="us_add"):
-            if new_key and new_key.strip():
-                if upload_file is not None:
-                    data = upload_file.read()
-                    secrets_cv = ConfigStore.load_secrets(path)
-                    secrets_cv[new_key.strip()] = ConfigValue(data=data)
-                    ConfigStore.save_secrets(path, secrets_cv)
-                elif new_value:
-                    raw_secrets[new_key.strip()] = _encrypt_value(new_value)
-                    ConfigStore.save_secrets_raw(path, raw_secrets)
-                else:
-                    st.warning(t("runtime.all_fields_required"))
-                    return
-                st.rerun()
+
+        def _do_add_secret():
+            g = st.session_state.get("_us_gen", 0)
+            new_key = st.session_state.get(f"us_new_key_{g}", "").strip()
+            new_value = st.session_state.get(f"us_new_value_{g}", "")
+            up = st.session_state.get(f"us_upload_{g}")
+            if not new_key:
+                st.session_state["_us_error"] = t("runtime.all_fields_required")
+                return
+            if up is not None:
+                data = up.read()
+                secrets_cv = ConfigStore.load_secrets(path)
+                secrets_cv[new_key] = ConfigValue(data=data)
+                ConfigStore.save_secrets(path, secrets_cv)
+            elif new_value:
+                rs = ConfigStore.load_secrets_raw(path)
+                rs[new_key] = _encrypt_value(new_value)
+                ConfigStore.save_secrets_raw(path, rs)
             else:
-                st.warning(t("runtime.all_fields_required"))
+                st.session_state["_us_error"] = t("runtime.all_fields_required")
+                return
+            st.session_state["_us_gen"] = g + 1
+            st.session_state.pop("_us_error", None)
+
+        st.button("\u2795", key=f"us_add_{gen}", on_click=_do_add_secret)
+
+        if "_us_error" in st.session_state:
+            st.warning(st.session_state.pop("_us_error"))
 
     st.markdown("---")
-    if st.button(t("common.close"), key="us_close", type="primary"):
+
+    def _do_close_us():
         st.session_state.pop("_show_user_secrets", None)
+
+    if st.button(t("common.close"), key=f"us_close_{gen}", type="primary",
+                 on_click=_do_close_us):
         st.rerun()

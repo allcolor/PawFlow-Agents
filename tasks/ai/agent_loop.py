@@ -1692,7 +1692,25 @@ class AgentLoopTask(BaseTask):
                 # Filter out system messages for summarization
                 content_msgs = [m for m in deserialized if m.role != "system"]
                 model = self.config.get("model", "")
+                # Use agent's LLM service max_tokens as context window
                 context_max = int(self.config.get("context_max_tokens", 64000))
+                if _ctx_agent:
+                    try:
+                        from core.resource_store import ResourceStore as _RS_resume
+                        _adef_r = _RS_resume.instance().get_any("agent", _ctx_agent, user_id)
+                        if _adef_r and _adef_r.get("llm_service"):
+                            _svc_r = _adef_r["llm_service"]
+                            if "${" in _svc_r:
+                                from core.expression import resolve_expression as _re_r
+                                _svc_r = _re_r(_svc_r, owner=user_id)
+                            if _svc_r and "${" not in _svc_r:
+                                _, _rsvc = self._resolve_llm_service(_svc_r, user_id)
+                                if _rsvc:
+                                    _v = int((getattr(_rsvc, 'config', {}) or {}).get("max_tokens", 0))
+                                    if _v:
+                                        context_max = _v
+                    except Exception:
+                        pass
                 summary = self._summarize_messages(content_msgs, client, context_max)
                 # Truncate summary to approximate token budget
                 if len(summary) > max_summary_tokens * 4:  # ~4 chars per token
@@ -2156,6 +2174,57 @@ class AgentLoopTask(BaseTask):
             else:
                 store.save_context(conv_id, data)
 
+        def _resolve_agent_max_tokens(agent_name):
+            """Get max_tokens from an agent's LLM service config."""
+            try:
+                from core.resource_store import ResourceStore
+                adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
+                if adef and adef.get("llm_service"):
+                    svc_id = adef["llm_service"]
+                    if "${" in svc_id:
+                        from core.expression import resolve_expression
+                        svc_id = resolve_expression(svc_id, owner=user_id)
+                    if svc_id and "${" not in svc_id:
+                        _, svc = self._resolve_llm_service(svc_id, user_id)
+                        if svc:
+                            v = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+                            if v:
+                                return v
+            except Exception:
+                pass
+            return 0
+
+        def _ctx_max_tokens(agent_name=""):
+            """Get context_max_tokens for an agent or shared context.
+
+            For a specific agent: use that agent's LLM service max_tokens.
+            For shared ("" or "ALL"): use the LARGEST max_tokens among all
+            agents (the shared context must fit the biggest consumer).
+            """
+            flow_default = int(self.config.get("context_max_tokens", 64000))
+            if agent_name and agent_name not in ("", "ALL"):
+                return _resolve_agent_max_tokens(agent_name) or flow_default
+            # Shared: max of all agent LLM services
+            try:
+                from core.resource_store import ResourceStore
+                all_agents = ResourceStore.instance().list_all("agent", user_id)
+                max_val = 0
+                for a in all_agents:
+                    v = _resolve_agent_max_tokens(a["name"])
+                    if v > max_val:
+                        max_val = v
+                # Also check the default LLM service
+                default_svc = self.config.get("llm_service", "default")
+                if default_svc and "${" not in default_svc:
+                    _, svc = self._resolve_llm_service(default_svc, user_id)
+                    if svc:
+                        v = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+                        if v > max_val:
+                            max_val = v
+                return max_val or flow_default
+            except Exception:
+                return flow_default
+
         if action == "compact":
             conv_id = body.get("conversation_id", "")
             _ctx_agent = body.get("agent_name", "")
@@ -2186,25 +2255,7 @@ class AgentLoopTask(BaseTask):
                 if not client:
                     flowfile.set_content(json.dumps({"error": f"LLM service not found"}).encode())
                     return [flowfile]
-            # Resolve context_max_tokens for the target agent's LLM service
-            _compact_max = int(self.config.get("context_max_tokens", 64000))
-            if _ctx_agent:
-                try:
-                    from core.resource_store import ResourceStore
-                    _adef = ResourceStore.instance().get_any("agent", _ctx_agent, user_id)
-                    if _adef and _adef.get("llm_service"):
-                        _agent_svc_id = _adef["llm_service"]
-                        if "${" in _agent_svc_id:
-                            from core.expression import resolve_expression
-                            _agent_svc_id = resolve_expression(_agent_svc_id, owner=user_id)
-                        if _agent_svc_id and "${" not in _agent_svc_id:
-                            _, _agent_svc = self._resolve_llm_service(_agent_svc_id, user_id)
-                            if _agent_svc:
-                                _svc_max = int((getattr(_agent_svc, 'config', {}) or {}).get("max_tokens", 0))
-                                if _svc_max:
-                                    _compact_max = _svc_max
-                except Exception:
-                    pass
+            _compact_max = _ctx_max_tokens(_ctx_agent)
             try:
                 msgs = self._deserialize_messages(source_data)
                 before_count = len(msgs)
@@ -2238,7 +2289,7 @@ class AgentLoopTask(BaseTask):
                 return [flowfile]
             deserialized = self._deserialize_messages(all_msgs)
             estimated = self._estimate_tokens(deserialized)
-            context_max = int(self.config.get("context_max_tokens", 64000))
+            context_max = _ctx_max_tokens(_ctx_agent)
             limit = int(context_max * 0.8)
             if estimated <= limit:
                 # Full restore — everything fits

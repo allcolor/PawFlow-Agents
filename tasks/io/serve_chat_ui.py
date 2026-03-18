@@ -2166,6 +2166,25 @@ function connectSSE(cid) {
     }
   });
 
+  eventSource.addEventListener('task_progress', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = displayAgentName(data.agent || '?');
+    if (data.stage === 'assigned') {
+      const v = data.verifier ? ' (verifier: ' + displayAgentName(data.verifier) + ')' : '';
+      addMsg('system', '\u{1F4CB} Task assigned to ' + agent + v + ': ' + (data.task || '').substring(0, 150));
+    } else if (data.stage === 'verified') {
+      const icon = data.approved ? '\u2705' : '\u274C';
+      const verifier = displayAgentName(data.verifier || '?');
+      addMsg('system', icon + ' Task for ' + agent + (data.approved ? ' approved' : ' rejected') + ' by ' + verifier + (data.reason ? ': ' + data.reason : ''));
+    } else if (data.done) {
+      addMsg('system', '\u2705 Task complete (' + agent + '): ' + (data.result || data.progress || ''));
+    } else if (data.progress) {
+      addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
+    }
+    scrollBottom();
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -2793,6 +2812,18 @@ const HELP_DATA = {
       + '  /vidservice select <name> <agent> \u2014 Set for a specific agent\n'
       + '  /vidservice clear                 \u2014 Remove all preferences (auto-select)\n'
       + '  /vidservice clear <agent>         \u2014 Remove preference for one agent\n',
+  },
+  '/task': {
+    usage: '/task assign <agent> <description> [options] | status | pause | resume | cancel',
+    short: 'Assign and manage agent tasks',
+    detail: 'Assign autonomous tasks to agents. They work at intervals until done.\n\n'
+      + '  /task assign <agent> "<task>" [--interval 60] [--max 50] [--verifier <agent>] [--criteria "<criteria>"]\n'
+      + '  /task status                  \u2014 Show all active tasks\n'
+      + '  /task pause <agent>           \u2014 Pause an agent\'s task\n'
+      + '  /task resume <agent>          \u2014 Resume a paused task\n'
+      + '  /task cancel <agent>          \u2014 Cancel an agent\'s task\n\n'
+      + 'The task description and criteria can be multi-line (use quotes).\n'
+      + 'Example: /task assign grok "Scrape the top 100 HN posts and summarize each" --verifier claude --interval 120',
   },
   '/imgservice': {
     usage: '/imgservice [list | select <name> [agent] | clear [agent]]',
@@ -3423,6 +3454,80 @@ async function handleSlashCommand(text) {
       await cmdAgentBtw('', target + ' ' + bargs.slice(2).join(' '));
     } else {
       await cmdAgentBtw(target, btwText);
+    }
+    return true;
+  }
+
+  if (cmd === '/task') {
+    const sub = (parts[1] || 'status').toLowerCase();
+    if (sub === 'assign') {
+      // Parse: /task assign <agent> "<task>" [--interval N] [--max N] [--verifier <agent>] [--criteria "<text>"]
+      const qargs = parseQuotedArgs(text);
+      // qargs[0]=/task, qargs[1]=assign, qargs[2]=agent, qargs[3]=task description
+      const taskAgent = qargs[2] || '';
+      const taskDesc = qargs[3] || '';
+      if (!taskAgent || !taskDesc) {
+        addMsg('system', 'Usage: /task assign <agent> "<task description>" [--interval 60] [--verifier <agent>] [--criteria "<criteria>"]');
+        return true;
+      }
+      // Parse options from remaining args
+      let interval = 60, maxIter = 50, verifier = '', criteria = '';
+      for (let i = 4; i < qargs.length; i++) {
+        if (qargs[i] === '--interval' && qargs[i+1]) { interval = parseInt(qargs[++i]) || 60; }
+        else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 50; }
+        else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
+        else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
+      }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: 'assign_task', conversation_id: conversationId,
+            agent_name: taskAgent, task: taskDesc,
+            completion_criteria: criteria, interval, max_iterations: maxIter, verifier,
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', data.result || 'Task assigned.'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'status') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'task_status', conversation_id: conversationId }),
+        });
+        const data = await resp.json();
+        const tasks = data.tasks || [];
+        if (tasks.length === 0) { addMsg('system', 'No active tasks.'); }
+        else {
+          const lines = tasks.map(t => {
+            let line = '\u2022 ' + t.agent + ': ' + t.task.substring(0, 80);
+            line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ']';
+            if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
+            if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
+            return line;
+          });
+          addMsg('system', 'Tasks:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
+      const taskAgent = parts[2];
+      if (!taskAgent) { addMsg('system', 'Usage: /task ' + sub + ' <agent>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({
+            action: sub + '_task', conversation_id: conversationId,
+            agent_name: taskAgent,
+          }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else {
+      addMsg('system', 'Usage: /task assign | status | pause | resume | cancel');
     }
     return true;
   }

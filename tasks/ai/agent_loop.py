@@ -3397,6 +3397,86 @@ class AgentLoopTask(BaseTask):
         if action == "random_thought":
             return self._handle_random_thought(body, body.get("conversation_id", ""), user_id, flowfile)
 
+        # ── Task management ───────────────────────────────────────────
+        if action == "assign_task":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            task_desc = body.get("task", "")
+            if not conv_id or not agent or not task_desc:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or task"}).encode())
+                return [flowfile]
+            from core.tool_registry import AssignTaskHandler
+            h = AssignTaskHandler()
+            h.set_conversation_id(conv_id)
+            h.set_agent_name("user")
+            h.set_user_id(user_id)
+            result = h.execute({
+                "agent": agent, "task": task_desc,
+                "completion_criteria": body.get("completion_criteria", ""),
+                "interval": body.get("interval", 60),
+                "max_iterations": body.get("max_iterations", 50),
+                "verifier": body.get("verifier", ""),
+            })
+            flowfile.set_content(json.dumps({"ok": True, "result": result}).encode())
+            return [flowfile]
+
+        if action == "task_status":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                return [flowfile]
+            tasks_out = []
+            # Scan all extras for agent_task:: keys
+            entry = store._conversations.get(conv_id, {})
+            for k, v in entry.get("extra", {}).items():
+                if k.startswith("agent_task::") and isinstance(v, dict):
+                    agent = k.replace("agent_task::", "")
+                    tasks_out.append({
+                        "agent": agent, "task": v.get("task", ""),
+                        "status": v.get("status", ""), "iterations": v.get("iterations_done", 0),
+                        "max_iterations": v.get("max_iterations", 50),
+                        "last_result": v.get("last_result", ""),
+                        "verifier": v.get("verifier", ""),
+                        "interval": v.get("interval", 60),
+                    })
+            flowfile.set_content(json.dumps({"tasks": tasks_out}).encode())
+            return [flowfile]
+
+        if action in ("pause_task", "resume_task", "cancel_task"):
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "")
+            if not conv_id or not agent:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
+                return [flowfile]
+            task_key = f"agent_task::{agent}"
+            task = store.get_extra(conv_id, task_key)
+            if not task:
+                flowfile.set_content(json.dumps({"error": f"No task for agent '{agent}'"}).encode())
+                return [flowfile]
+            if action == "cancel_task":
+                task["status"] = "cancelled"
+                store.set_extra(conv_id, task_key, task)
+                # Cancel schedule
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().cancel(f"{conv_id}::task::{agent}")
+                PollScheduler.instance().cancel(f"{conv_id}::task_verify::{agent}")
+            elif action == "pause_task":
+                task["status"] = "paused"
+                store.set_extra(conv_id, task_key, task)
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().cancel(f"{conv_id}::task::{agent}")
+            elif action == "resume_task":
+                task["status"] = "active"
+                store.set_extra(conv_id, task_key, task)
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().schedule_delay(
+                    conv_id, 0, key=f"{conv_id}::task::{agent}",
+                    reason=f"[agent_task] resumed ({agent})",
+                    user_id=user_id,
+                )
+            flowfile.set_content(json.dumps({"ok": True, "status": task["status"]}).encode())
+            return [flowfile]
+
         # ── Image service management ──────────────────────────────────
         if action == "list_image_services":
             from services.base_image_generation import BaseImageGenerationService
@@ -5501,7 +5581,8 @@ class AgentLoopTask(BaseTask):
         _active_agent = None
         if scheduled_reasons:
             for _sr in scheduled_reasons:
-                if "[random_thought]" in _sr and "(" in _sr:
+                # Extract agent name from reason patterns
+                if ("[random_thought]" in _sr or "[agent_task]" in _sr) and "(" in _sr:
                     _active_agent = _sr.rsplit("(", 1)[-1].rstrip(")")
                     break
                 # [scheduled:agent_name] reason text
@@ -5509,6 +5590,11 @@ class AgentLoopTask(BaseTask):
                 _sched_match = _re_sched.match(r'\[scheduled:(\w+)\]', _sr)
                 if _sched_match:
                     _active_agent = _sched_match.group(1)
+                    break
+                # [task_verify:agent] verify by verifier
+                _tv_match = _re_sched.match(r'\[task_verify:(\w+)\].*by (\w+)', _sr)
+                if _tv_match:
+                    _active_agent = _tv_match.group(2)  # verifier is the active agent
                     break
             if _active_agent and _active_agent != "assistant":
                 try:
@@ -5616,44 +5702,114 @@ class AgentLoopTask(BaseTask):
             messages[0] = LLMMessage(role="system", content=system_prompt)
 
         # Inject poll check-in prompt (not persisted unless real work happens)
-        is_random_thought = any(
-            r.startswith("[random_thought]") for r in (scheduled_reasons or [])
+
+        # Check for agent task wake-up
+        _is_task = any(
+            r.startswith("[agent_task]") for r in (scheduled_reasons or [])
         )
-        if is_random_thought:
+        _is_task_verify = any(
+            r.startswith("[task_verify:") for r in (scheduled_reasons or [])
+        )
+
+        if _is_task:
+            # Load the task from extras
+            _task_agent = _active_agent or "assistant"
+            _task_key = f"agent_task::{_task_agent}"
+            _task_data = _CS3.instance().get_extra(conversation_id, _task_key) or {}
+            _task_desc = _task_data.get("task", "Unknown task")
+            _task_criteria = _task_data.get("completion_criteria", "")
+            _task_iter = _task_data.get("iterations_done", 0)
+            _task_max = _task_data.get("max_iterations", 50)
+            _task_last = _task_data.get("last_result", "")
+            _task_rejection = _task_data.get("last_rejection")
+            _rejection_text = ""
+            if _task_rejection:
+                _rejection_text = (
+                    f"\n\n[TASK REJECTION] Your previous completion was rejected by "
+                    f"{_task_rejection.get('by', '?')}:\n"
+                    f"\"{_task_rejection.get('reason', 'no reason given')}\"\n"
+                    f"Address this feedback in your next attempt."
+                )
             checkin_content = (
-                "[System: You are continuing the conversation naturally.]\n"
-                "Think about what has been discussed so far. If something comes to mind — "
-                "a follow-up, a question, a new angle, something you forgot to mention, "
-                "a connection you just made — share it directly.\n"
-                "Respond as if you're still in the conversation, not arriving from somewhere else. "
-                "No preamble like 'a thought occurred to me' or 'while thinking about it'. "
-                "Just say what you have to say, naturally.\n"
-                "You can also engage other agents via spawn_agents if you want their perspective.\n"
-                "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
+                f"[System: Assigned Task — iteration {_task_iter + 1}/{_task_max}]\n\n"
+                f"**Task:** {_task_desc}\n"
+                + (f"**Completion criteria:** {_task_criteria}\n" if _task_criteria else "")
+                + (f"**Previous progress:** {_task_last}\n" if _task_last else "")
+                + _rejection_text + "\n\n"
+                "Work on this task using your tools. When done, call "
+                "complete_task(done=true, result='...', progress='...'). "
+                "If not done yet, call complete_task(done=false, progress='...').\n"
+                "Do NOT respond with [NO_PENDING_WORK]."
             )
-        elif scheduled_reasons:
-            # This wake-up was explicitly scheduled — tell the agent why
-            reasons_text = "\n".join(f"- {r}" for r in scheduled_reasons)
+            # Check max iterations
+            if _task_iter >= _task_max:
+                _task_data["status"] = "failed"
+                _task_data["last_result"] = f"Max iterations ({_task_max}) reached"
+                _CS3.instance().set_extra(conversation_id, _task_key, _task_data)
+                checkin_content = (
+                    f"[System: Task failed — max iterations ({_task_max}) reached]\n"
+                    f"Task: {_task_desc}\n"
+                    f"Last progress: {_task_last}\n"
+                    "Inform the user that the task could not be completed within the limit."
+                )
+        elif _is_task_verify:
+            # Verification wake-up — find which agent's task to verify
+            _verify_reason = next(
+                (r for r in scheduled_reasons if r.startswith("[task_verify:")), ""
+            )
+            import re as _re_tv
+            _tv_match = _re_tv.match(r'\[task_verify:(\w+)\]', _verify_reason)
+            _verified_agent = _tv_match.group(1) if _tv_match else ""
+            _task_key = f"agent_task::{_verified_agent}"
+            _task_data = _CS3.instance().get_extra(conversation_id, _task_key) or {}
             checkin_content = (
-                "[System: Scheduled wake-up]\n"
-                f"You are being woken up because of scheduled reminder(s):\n"
-                f"{reasons_text}\n\n"
-                "Act on these scheduled reasons. Respond to the user accordingly.\n"
-                "If the reason is a reminder, remind the user.\n"
-                "If the reason is to continue work, continue using your tools.\n"
-                "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
-                "addressed all scheduled reasons above."
+                f"[System: Task verification request]\n\n"
+                f"Agent '{_verified_agent}' claims to have completed a task.\n\n"
+                f"**Task:** {_task_data.get('task', '?')}\n"
+                f"**Completion criteria:** {_task_data.get('completion_criteria', 'none specified')}\n"
+                f"**Agent's result:** {_task_data.get('last_result', 'no result provided')}\n\n"
+                f"Review the result against the criteria. Call "
+                f"verify_task(agent='{_verified_agent}', approved=true/false, reason='...')."
             )
         else:
-            checkin_content = (
-                "[System: Autonomous check-in]\n"
-                "Review the conversation above. Is there pending research or work "
-                "that you started but didn't finish? If yes, continue working on it "
-                "using your available tools.\n"
-                "If everything is complete, respond with [NO_PENDING_WORK].\n"
-                "You can also use the schedule_recheck tool to schedule a future check-in "
-                "at a specific time or after a delay."
+
+            is_random_thought = any(
+                r.startswith("[random_thought]") for r in (scheduled_reasons or [])
             )
+            if is_random_thought:
+                checkin_content = (
+                    "[System: You are continuing the conversation naturally.]\n"
+                    "Think about what has been discussed so far. If something comes to mind — "
+                    "a follow-up, a question, a new angle, something you forgot to mention, "
+                    "a connection you just made — share it directly.\n"
+                    "Respond as if you're still in the conversation, not arriving from somewhere else. "
+                    "No preamble like 'a thought occurred to me' or 'while thinking about it'. "
+                    "Just say what you have to say, naturally.\n"
+                    "You can also engage other agents via spawn_agents if you want their perspective.\n"
+                    "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
+                )
+            elif scheduled_reasons:
+                reasons_text = "\n".join(f"- {r}" for r in scheduled_reasons)
+                checkin_content = (
+                    "[System: Scheduled wake-up]\n"
+                    f"You are being woken up because of scheduled reminder(s):\n"
+                    f"{reasons_text}\n\n"
+                    "Act on these scheduled reasons. Respond to the user accordingly.\n"
+                    "If the reason is a reminder, remind the user.\n"
+                    "If the reason is to continue work, continue using your tools.\n"
+                    "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
+                    "addressed all scheduled reasons above."
+                )
+            else:
+                checkin_content = (
+                    "[System: Autonomous check-in]\n"
+                    "Review the conversation above. Is there pending research or work "
+                    "that you started but didn't finish? If yes, continue working on it "
+                    "using your available tools.\n"
+                    "If everything is complete, respond with [NO_PENDING_WORK].\n"
+                    "You can also use the schedule_recheck tool to schedule a future check-in "
+                    "at a specific time or after a delay."
+                )
         messages.append(LLMMessage(role="user", content=checkin_content))
         # Set base count AFTER check-in prompt so it's not treated as "new"
         # and won't be persisted unless the agent does real work after it.
@@ -5747,6 +5903,7 @@ class AgentLoopTask(BaseTask):
             NotifyUserHandler,
             RecallHandler, RememberHandler, RemoteExecutorHandler,
             SemanticRecallHandler,
+            AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler,
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
@@ -5796,6 +5953,15 @@ class AgentLoopTask(BaseTask):
                     h.set_conversation_id(conversation_id)
             elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
                 h.set_user_id(user_id)
+                if hasattr(h, 'set_agent_name'):
+                    h.set_agent_name(agent_name)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):
+                h.set_conversation_id(conversation_id)
+                h.set_agent_name(agent_name)
+                if hasattr(h, 'set_user_id'):
+                    h.set_user_id(user_id)
                 if hasattr(h, 'set_agent_name'):
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):

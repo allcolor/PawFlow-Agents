@@ -3434,20 +3434,41 @@ class AgentLoopTask(BaseTask):
                     "agent_name": agent_name if _is_named else "all",
                 }
             )
+        # Also cancel thought threads and schedules for this agent
+        from core.poll_scheduler import PollScheduler
+        scheduler = PollScheduler.instance()
+        if _is_named:
+            # Cancel specific agent's thought
+            _thought_key = f"{conversation_id}::thought::{agent_name.lower()}"
+            with self._conv_gen_lock:
+                self._conv_generation[_thought_key] = \
+                    self._conv_generation.get(_thought_key, 0) + 1
+            with self._interrupt_lock:
+                self._conv_interrupt[_thought_key] = True
+            scheduler.cancel(_thought_key)
+        else:
+            # Cancel ALL thought threads for this conversation
+            with self._conv_gen_lock:
+                for k in list(self._conv_generation):
+                    if "::thought::" in k and k.startswith(conversation_id):
+                        self._conv_generation[k] += 1
+            for k in list(scheduler._schedules):
+                if k.startswith(conversation_id + "::thought::"):
+                    scheduler.cancel(k)
+
         # Reset status
         from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "idle")
-        # Remove from interaction tracker
-        if _is_named:
-            key = f"{conversation_id}:{agent_name}"
-        else:
-            key = conversation_id
+        # Remove from interaction tracker (including thought entries)
         with self._interactions_lock:
-            self._active_interactions.pop(key, None)
-            if not _is_named:
-                # Also clear any per-agent interactions for this conversation
-                for k in list(self._active_interactions):
-                    if k.startswith(conversation_id + ":"):
+            for k in list(self._active_interactions):
+                if _is_named:
+                    if k == f"{conversation_id}:{agent_name}" or \
+                       k == f"{conversation_id}::thought::{agent_name.lower()}":
+                        self._active_interactions.pop(k, None)
+                else:
+                    if k == conversation_id or k.startswith(conversation_id + ":") or \
+                       k.startswith(conversation_id + "::"):
                         self._active_interactions.pop(k, None)
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")

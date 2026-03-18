@@ -159,6 +159,10 @@ class ConversationStore:
                     "context": None,
                 }
                 self._conversations[conversation_id] = entry
+            now = time.time()
+            for msg in new_messages:
+                if "timestamp" not in msg:
+                    msg["timestamp"] = now
             entry["messages"].extend(new_messages)
             entry["updated_at"] = time.time()
             if user_id:
@@ -265,6 +269,105 @@ class ConversationStore:
             entry["updated_at"] = time.time()
         self._save_to_disk(conversation_id)
         return True
+
+    # ── Per-agent context ──────────────────────────────────────────
+
+    def load_agent_context(self, conversation_id: str,
+                           agent_name: str) -> Optional[List[Dict[str, Any]]]:
+        """Load per-agent context, falling back to shared context then messages.
+
+        Resolution order:
+        1. agent_contexts[agent_name] (if exists and not None)
+        2. entry["context"] (shared diverged context)
+        3. None (caller should use messages)
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return None
+            # 1. Per-agent context
+            agent_ctxs = entry.get("agent_contexts") or {}
+            agent_ctx = agent_ctxs.get(agent_name)
+            if agent_ctx is not None:
+                return list(agent_ctx)
+            # 2. Shared context
+            shared = entry.get("context")
+            if shared is not None:
+                return list(shared)
+            # 3. Not diverged
+            return None
+
+    def save_agent_context(self, conversation_id: str,
+                           agent_name: str,
+                           context_messages: List[Dict[str, Any]]) -> bool:
+        """Save diverged context for a specific agent.
+
+        If agent_name is empty, saves to the shared context (backward compat).
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            if not agent_name:
+                entry["context"] = list(context_messages)
+            else:
+                agent_ctxs = entry.setdefault("agent_contexts", {})
+                agent_ctxs[agent_name] = list(context_messages)
+            entry["updated_at"] = time.time()
+        self._save_to_disk(conversation_id)
+        return True
+
+    def append_to_agent_context(self, conversation_id: str,
+                                agent_name: str,
+                                new_messages: List[Dict[str, Any]]) -> bool:
+        """Append to an agent's diverged context.
+
+        If the agent has its own context → append there.
+        If shared context exists → fork it for this agent, then append.
+        If no context diverged → no-op (returns False).
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            agent_ctxs = entry.get("agent_contexts") or {}
+            agent_ctx = agent_ctxs.get(agent_name)
+            if agent_ctx is not None:
+                # Agent has its own context — append
+                agent_ctx.extend(new_messages)
+                entry["updated_at"] = time.time()
+            elif entry.get("context") is not None:
+                # Shared context exists — fork for this agent
+                agent_ctxs = entry.setdefault("agent_contexts", {})
+                agent_ctxs[agent_name] = list(entry["context"]) + list(new_messages)
+                entry["updated_at"] = time.time()
+            else:
+                return False
+        self._save_to_disk(conversation_id)
+        return True
+
+    def list_agent_contexts(self, conversation_id: str) -> Dict[str, str]:
+        """Return {agent_name: status} where status is 'diverged', 'shared', or 'messages'.
+
+        Also includes '*' for the shared context status.
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return {}
+            result = {}
+            has_shared = entry.get("context") is not None
+            result["*"] = "diverged" if has_shared else "messages"
+            agent_ctxs = entry.get("agent_contexts") or {}
+            for name, ctx in agent_ctxs.items():
+                result[name] = "diverged" if ctx is not None else (
+                    "shared" if has_shared else "messages"
+                )
+            return result
 
     def set_extra(self, conversation_id: str, key: str, value: Any) -> bool:
         """Store arbitrary extra data on a conversation (plan, state, etc.)."""

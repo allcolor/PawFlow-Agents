@@ -3226,7 +3226,7 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/compact') {
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-    cmdCompact();
+    cmdCompact(parts[1] || '');
     return true;
   }
 
@@ -3285,7 +3285,7 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/context') {
-    await cmdShowContext();
+    await cmdShowContext(parts[1] || '');
     return true;
   }
 
@@ -4261,16 +4261,20 @@ async function cmdUninstallTool(toolName) {
   } catch (e) { addMsg('error', 'Failed to uninstall tool: ' + e.message); }
 }
 
-function cmdCompact() {
+function cmdCompact(agentName) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
   contextOpInProgress = true;
-  showContextOp('Compacting');
+  const label = agentName ? 'Compacting (' + agentName + ')' : 'Compacting';
+  showContextOp(label);
+  const body = { action: 'compact', conversation_id: conversationId };
+  if (agentName) body.agent_name = agentName;
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'compact', conversation_id: conversationId }),
+    body: JSON.stringify(body),
   }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', 'Compaction failed: ' + data.error); return; }
-    addMsg('system', `Compacted: ${data.before} messages \u2192 ${data.after} messages`);
+    const target = agentName ? ' (' + agentName + ')' : '';
+    addMsg('system', 'Compacted' + target + ': ' + data.before + ' messages \u2192 ' + data.after + ' messages');
   }).catch(e => addMsg('error', 'Compaction failed: ' + e.message))
     .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
@@ -4303,15 +4307,21 @@ function cmdRebuildClean() {
     .finally(() => { hideContextOp(); contextOpInProgress = false; });
 }
 
-async function cmdShowContext() {
+let _ctxAgentFilter = '';  // '' = shared/default, 'grok' = per-agent
+
+async function cmdShowContext(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
+  if (agentName) _ctxAgentFilter = agentName;
   try {
+    const body = { action: 'get_context', conversation_id: conversationId };
+    if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_context', conversation_id: conversationId }),
+      body: JSON.stringify(body),
     });
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
+    data._agent_filter = _ctxAgentFilter;
     showContextOverlay(data);
   } catch (e) { addMsg('error', 'Failed to load context: ' + e.message); }
 }
@@ -4319,10 +4329,11 @@ async function cmdShowContext() {
 let _ctxFullData = null;
 
 async function ctxLoadFull() {
-  if (_ctxFullData) return _ctxFullData;
+  const body = { action: 'get_context_full', conversation_id: conversationId };
+  if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
   const resp = await fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'get_context_full', conversation_id: conversationId }),
+    body: JSON.stringify(body),
   });
   _ctxFullData = await resp.json();
   return _ctxFullData;
@@ -4469,6 +4480,26 @@ async function ctxSaveReplaceAll() {
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
 
+function _buildCtxAgentDropdown(data) {
+  const agents = data.agent_contexts || {};
+  const names = Object.keys(agents).filter(n => n !== '*').sort();
+  if (names.length === 0 && !_ctxAgentFilter) return '';
+  let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
+  html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>Shared</option>';
+  for (const n of names) {
+    const status = agents[n] || 'messages';
+    const label = n + (status === 'diverged' ? ' \u2733' : '');
+    html += '<option value="' + n + '"' + (_ctxAgentFilter === n ? ' selected' : '') + '>' + label + '</option>';
+  }
+  html += '</select>';
+  return html;
+}
+async function ctxAgentChanged() {
+  _ctxAgentFilter = document.getElementById('ctxAgentFilter').value;
+  _ctxFullData = null;
+  await cmdShowContext(_ctxAgentFilter);
+}
+
 function showContextOverlay(data) {
   let overlay = document.getElementById('contextOverlay');
   if (overlay) overlay.remove();
@@ -4502,6 +4533,7 @@ function showContextOverlay(data) {
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'
     + '<h3 style="margin:0;color:#e0e0e0;font-size:16px">' + t('contextTitle') + '</h3>'
     + statusBadge
+    + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
     + '<button onclick="document.getElementById(\'contextOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'

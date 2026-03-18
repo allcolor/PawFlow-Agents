@@ -220,10 +220,15 @@ class SubAgentExecutor:
         # Build tool definitions (filtered if agent specifies a whitelist)
         tool_defs, tool_handlers = self._build_tools(task.tools)
 
-        # Build system prompt with source context
+        # Build system prompt with spawn context
         sys_prompt = task.system_prompt
         if task.source_agent:
-            sys_prompt += f"\n\n[You are talking to agent '{task.source_agent}']"
+            src_svc = f" via {task.source_llm_service}" if task.source_llm_service else ""
+            sys_prompt += (
+                f"\n\n[CONTEXT] You were spawned by agent '{task.source_agent}'{src_svc}. "
+                f"They sent you a message and expect a response. "
+                f"Answer their request directly."
+            )
 
         # Add source metadata to messages
         user_source = (

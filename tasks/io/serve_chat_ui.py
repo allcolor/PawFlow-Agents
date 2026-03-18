@@ -302,8 +302,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 <div class="messages-wrap">
   <div class="messages" id="messages"></div>
   <div class="scroll-nav" id="scrollNav">
-    <button onclick="document.getElementById('messages').scrollTop=0" title="Scroll to top">&#x2191;</button>
-    <button onclick="scrollBottom(true)" title="Scroll to bottom">&#x2193;</button>
+    <button onclick="document.getElementById('messages').scrollTop=0;document.getElementById('input').focus()" title="Scroll to top">&#x2191;</button>
+    <button onclick="scrollBottom(true);document.getElementById('input').focus()" title="Scroll to bottom">&#x2193;</button>
   </div>
 </div>
 <div class="active-panel" id="activePanel">
@@ -4573,7 +4573,7 @@ async function send() {
   // Intercept slash commands
   if (text.startsWith('/')) {
     const handled = await handleSlashCommand(text);
-    if (handled) { input.value = ''; input.style.height = 'auto'; return; }
+    if (handled) { input.value = ''; input.style.height = 'auto'; input.focus(); return; }
   }
 
   // Capture and clear attachments

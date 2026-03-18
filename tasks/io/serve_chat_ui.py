@@ -3517,29 +3517,25 @@ async function handleSlashCommand(text) {
         else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
         else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
       }
-      try {
-        const resp = await fetch(API, {
-          method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({
-            action: 'assign_task', conversation_id: conversationId,
-            agent_name: taskAgent, task: taskDesc,
-            completion_criteria: criteria, interval, max_iterations: maxIter, verifier,
-          }),
-        });
-        const data = await resp.json();
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: 'assign_task', conversation_id: conversationId,
+          agent_name: taskAgent, task: taskDesc,
+          completion_criteria: criteria, interval, max_iterations: maxIter, verifier,
+        }),
+      }).then(r => r.json()).then(data => {
         if (data.error) { addMsg('error', data.error); }
         else { addMsg('system', data.result || 'Task assigned.'); }
-      } catch (e) { addMsg('error', e.message); }
+      }).catch(e => addMsg('error', e.message));
     } else if (sub === 'status' || sub === 'list') {
       const listAgent = parts[2] || '';
-      try {
-        const listBody = { action: 'task_status', conversation_id: conversationId };
-        if (listAgent) listBody.agent_name = listAgent;
-        const resp = await fetch(API, {
-          method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify(listBody),
-        });
-        const data = await resp.json();
+      const listBody = { action: 'task_status', conversation_id: conversationId };
+      if (listAgent) listBody.agent_name = listAgent;
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify(listBody),
+      }).then(r => r.json()).then(data => {
         const tasks = data.tasks || [];
         if (tasks.length === 0) { addMsg('system', 'No active tasks.'); }
         else {
@@ -3553,23 +3549,21 @@ async function handleSlashCommand(text) {
           });
           addMsg('system', 'Tasks:\n' + lines.join('\n'));
         }
-      } catch (e) { addMsg('error', e.message); }
+      }).catch(e => addMsg('error', e.message));
     } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
       const taskAgent = parts[2];
       if (!taskAgent) { addMsg('system', 'Usage: /task ' + sub + ' <agent>'); return true; }
-      try {
-        const resp = await fetch(API, {
-          method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({
-            action: sub + '_task', conversation_id: conversationId,
-            task_id: taskAgent.startsWith('t_') ? taskAgent : '',
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: sub + '_task', conversation_id: conversationId,
+          task_id: taskAgent.startsWith('t_') ? taskAgent : '',
             agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
           }),
-        });
-        const data = await resp.json();
-        if (data.error) { addMsg('error', data.error); }
-        else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
-      } catch (e) { addMsg('error', e.message); }
+        }).then(r => r.json()).then(data => {
+          if (data.error) { addMsg('error', data.error); }
+          else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
+        }).catch(e => addMsg('error', e.message));
     } else {
       addMsg('system', 'Usage: /task assign | status | pause | resume | cancel');
     }

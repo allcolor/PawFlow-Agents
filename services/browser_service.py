@@ -324,9 +324,8 @@ class BrowserService:
 
         # Store in FileStore
         from core.file_store import FileStore
-        file_id = FileStore.instance().store(
-            png_bytes, "screenshot.png", ttl=3600,
-        )
+        file_id = FileStore.instance().store("screenshot.png", png_bytes,
+                                              content_type="image/png")
         b64 = base64.b64encode(png_bytes).decode("ascii")
         return f"Screenshot taken (file_id: {file_id}, size: {len(png_bytes)} bytes, base64 length: {len(b64)})"
 

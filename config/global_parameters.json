@@ -11,5 +11,8 @@
   "grok_llm_model": "grok-4-1-fast-reasoning",
   "claude_code_service": "claude_llm_service",
   "llm_default_service": "llm_default_service",
-  "claude_llm_service": "claude_llm_service"
+  "claude_llm_service": "claude_llm_service",
+  "qwen_llm_service": "qwen_llm_service",
+  "qwen_llm_base_url": "http://127.0.0.1:8080",
+  "qwen_llm_model": "qwen3.5"
 }

@@ -3205,7 +3205,7 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/help') {
-    cmdHelp(parts[1] || '');
+    cmdHelp(parts.slice(1).join(' '));
     return true;
   }
 

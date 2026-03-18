@@ -3764,6 +3764,15 @@ class AgentLoopTask(BaseTask):
         _sub_exec = ctx.get("sub_executor")
         if _sub_exec:
             self._inject_executor(registry, _sub_exec)
+            # Verify it worked
+            from core.tool_registry import SpawnAgentsHandler as _SAH_verify
+            for _hv in registry.list_tools():
+                if isinstance(_hv, _SAH_verify):
+                    _has = getattr(_hv._local, 'executor', None)
+                    print(f"[DEBUG] SpawnAgentsHandler executor after inject: {_has is not None} (thread={threading.current_thread().name})", flush=True)
+                    break
+        else:
+            print(f"[WARN] No sub_executor in ctx for {conversation_id[:8]}", flush=True)
         from core.tool_registry import SpawnAgentsHandler as _SAH_stream
         for _h in registry.list_tools():
             if isinstance(_h, _SAH_stream):

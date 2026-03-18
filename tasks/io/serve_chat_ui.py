@@ -2742,13 +2742,18 @@ const HELP_DATA = {
       + '  /restart_from 0    — Empty context (fresh start, keeps system prompt)\n\n'
       + 'Useful when the conversation gets too long or the agent loses focus.',
   },
-  '/resume': {
-    usage: '/resume [tokens]',
+  '/summary': {
+    usage: '/summary [tokens]',
     short: 'Summarize conversation to N tokens and restart from summary',
     detail: 'Asks the LLM to summarize the entire conversation to approximately N tokens (default 500), then restarts from that summary.\n\n'
-      + '  /resume       — Summarize to ~500 tokens\n'
-      + '  /resume 1000  — Summarize to ~1000 tokens\n\n'
+      + '  /summary       — Summarize to ~500 tokens\n'
+      + '  /summary 1000  — Summarize to ~1000 tokens\n\n'
       + 'The summary replaces all previous context. New messages build on top of it.',
+  },
+  '/resume': {
+    usage: '/resume <agent|ALL>',
+    short: 'Tell an agent to continue from where it stopped',
+    detail: 'Resumes an agent that was interrupted or stopped.\n\nExamples:\n  /resume grok\n  /resume ALL',
   },
   '/compact': {
     usage: '/compact',
@@ -2960,11 +2965,21 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/resume') {
+    const rargs = parseQuotedArgs(text);
+    const target = resolveAgentName(rargs[1] || '');
+    if (!target) { addMsg('system', 'Usage: /resume <agent|ALL>'); return true; }
+    const resumeMsg = rargs.slice(2).join(' ') || 'Continue from where you left off.';
+    if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(resumeMsg); }
+    else { await cmdAgentMsg(target, resumeMsg); }
+    return true;
+  }
+
+  if (cmd === '/summary') {
     const n = parseInt(parts[1]) || 500;
     if (!conversationId) { addMsg('system', t('noConv')); return true; }
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     contextOpInProgress = true;
-    showContextOp('Resuming');
+    showContextOp('Summarizing');
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'resume_conversation', conversation_id: conversationId, max_tokens: n }),

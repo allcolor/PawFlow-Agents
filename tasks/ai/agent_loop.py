@@ -1350,16 +1350,40 @@ class AgentLoopTask(BaseTask):
             return body.get("conversation_id") or None
         return None
 
+    @staticmethod
+    def _is_action_flowfile(ff) -> bool:
+        """Check if a FlowFile is an action request (no LLM needed)."""
+        try:
+            raw = ff.get_content().decode("utf-8", errors="replace")
+            if raw.strip().startswith("{"):
+                body = json.loads(raw)
+                return isinstance(body, dict) and "action" in body
+        except Exception:
+            pass
+        return False
+
     def select_processable(self, connections):
         """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services
         or conversations with a context operation in progress.
 
+        Action FlowFiles (JSON with "action" key) are always processable —
+        they don't need LLM capacity and should never be blocked.
+
         Called by ContinuousFlowExecutor instead of peek-first.
         Returns (FlowFile, Connection) or None if nothing is processable.
         """
+        # Pass 1: prioritize action FlowFiles (no LLM needed, always process)
         for conn in connections:
             for ff in conn.peek_all():
-                # Skip FlowFiles whose conversation has a context op in progress
+                if self._is_action_flowfile(ff):
+                    conv_id = self._extract_conversation_id(ff)
+                    if conv_id and not self._is_context_op_free(conv_id):
+                        continue
+                    return ff, conn
+
+        # Pass 2: normal FlowFiles (need LLM capacity)
+        for conn in connections:
+            for ff in conn.peek_all():
                 conv_id = self._extract_conversation_id(ff)
                 if conv_id and not self._is_context_op_free(conv_id):
                     continue

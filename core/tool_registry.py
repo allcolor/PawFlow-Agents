@@ -2898,17 +2898,17 @@ class AssignTaskHandler(ToolHandler):
         max_iter = int(arguments.get("max_iterations", 50))
         verifier = arguments.get("verifier", "")
 
-        task_key = f"agent_task::{target}"
+        import uuid as _uuid
+        task_id = "t_" + _uuid.uuid4().hex[:8]
+
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
 
-        # Check if agent already has an active task
-        existing = store.get_extra(self._conversation_id, task_key)
-        if existing and existing.get("status") in ("active", "verifying"):
-            return (f"Agent '{target}' already has an active task: "
-                    f"'{existing['task'][:80]}'. Cancel it first with /task cancel.")
-
+        # Store in agent_tasks dict (multiple tasks per agent)
+        all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
         task_data = {
+            "task_id": task_id,
+            "agent": target,
             "task": task_desc,
             "completion_criteria": criteria,
             "status": "active",
@@ -2920,14 +2920,15 @@ class AssignTaskHandler(ToolHandler):
             "created_at": _t.time(),
             "last_result": "",
         }
-        store.set_extra(self._conversation_id, task_key, task_data)
+        all_tasks[task_id] = task_data
+        store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
 
-        # Schedule immediate first wake-up
+        # Schedule first wake-up at the configured interval
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(
-            self._conversation_id, 0,
-            key=f"{self._conversation_id}::task::{target}",
-            reason=f"[agent_task] assigned task ({target})",
+            self._conversation_id, interval,
+            key=f"{self._conversation_id}::task::{task_id}",
+            reason=f"[agent_task:{task_id}] assigned task ({target})",
             user_id=self._user_id,
         )
 
@@ -2936,7 +2937,7 @@ class AssignTaskHandler(ToolHandler):
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
                 self._conversation_id, "task_progress", {
-                    "agent": target, "stage": "assigned",
+                    "task_id": task_id, "agent": target, "stage": "assigned",
                     "task": task_desc[:200], "verifier": verifier,
                     "assigned_by": self._agent_name or "user",
                 },
@@ -2945,7 +2946,7 @@ class AssignTaskHandler(ToolHandler):
             pass
 
         v_info = f" (verifier: {verifier})" if verifier else ""
-        return f"Task assigned to '{target}'{v_info}. First wake-up: now."
+        return f"Task {task_id} assigned to '{target}'{v_info}. First wake-up in {interval}s."
 
 
 class CompleteTaskHandler(ToolHandler):
@@ -2976,6 +2977,10 @@ class CompleteTaskHandler(ToolHandler):
         return {
             "type": "object",
             "properties": {
+                "task_id": {
+                    "type": "string",
+                    "description": "Task ID to update (optional if you have only one active task)",
+                },
                 "done": {
                     "type": "boolean",
                     "description": "True if the task is complete, false if still in progress",
@@ -3000,6 +3005,7 @@ class CompleteTaskHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _t
+        task_id = arguments.get("task_id", "")
         done = arguments.get("done", False)
         progress = arguments.get("progress", "")
         result = arguments.get("result", "")
@@ -3008,24 +3014,37 @@ class CompleteTaskHandler(ToolHandler):
             return "Error: no conversation context"
 
         agent = self._agent_name or "assistant"
-        task_key = f"agent_task::{agent}"
-
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        task = store.get_extra(self._conversation_id, task_key)
+        all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+
+        # Find the task — by ID or by agent (if only one active)
+        task = None
+        if task_id:
+            task = all_tasks.get(task_id)
+        else:
+            # Find active tasks for this agent
+            my_tasks = [t for t in all_tasks.values()
+                        if t.get("agent") == agent and t.get("status") in ("active",)]
+            if len(my_tasks) == 1:
+                task = my_tasks[0]
+                task_id = task["task_id"]
+            elif len(my_tasks) > 1:
+                ids = [t["task_id"] for t in my_tasks]
+                return f"Multiple active tasks. Specify task_id: {', '.join(ids)}"
+
         if not task or task.get("status") not in ("active", "verifying"):
-            return "No active task assigned to you."
+            return "No active task found."
 
         task["iterations_done"] = task.get("iterations_done", 0) + 1
         task["last_result"] = result if done else progress
         task["last_update"] = _t.time()
 
-        # Publish progress SSE
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
                 self._conversation_id, "task_progress", {
-                    "agent": agent, "done": done,
+                    "task_id": task_id, "agent": agent, "done": done,
                     "progress": progress, "result": result,
                     "iterations": task["iterations_done"],
                 },
@@ -3036,36 +3055,36 @@ class CompleteTaskHandler(ToolHandler):
         if done:
             verifier = task.get("verifier", "")
             if verifier:
-                # Send to verifier agent
                 task["status"] = "verifying"
-                store.set_extra(self._conversation_id, task_key, task)
-                # Spawn verifier via schedule
+                all_tasks[task_id] = task
+                store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().schedule_delay(
                     self._conversation_id, 0,
-                    key=f"{self._conversation_id}::task_verify::{agent}",
-                    reason=f"[task_verify:{agent}] verify completion by {verifier}",
+                    key=f"{self._conversation_id}::task_verify::{task_id}",
+                    reason=f"[task_verify:{task_id}] verify by {verifier} ({agent})",
                     user_id=task.get("assigned_by", ""),
                 )
-                return f"Task marked as done. Sending to verifier '{verifier}' for approval."
+                return f"Task {task_id} marked done. Verifier '{verifier}' will check."
             else:
                 task["status"] = "completed"
                 task["completed_at"] = _t.time()
-                store.set_extra(self._conversation_id, task_key, task)
-                return "Task completed successfully."
+                all_tasks[task_id] = task
+                store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+                return f"Task {task_id} completed."
         else:
-            # Still in progress — reschedule
             task["status"] = "active"
-            store.set_extra(self._conversation_id, task_key, task)
+            all_tasks[task_id] = task
+            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
             interval = task.get("interval", 60)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().schedule_delay(
                 self._conversation_id, interval,
-                key=f"{self._conversation_id}::task::{agent}",
-                reason=f"[agent_task] continue task ({agent})",
+                key=f"{self._conversation_id}::task::{task_id}",
+                reason=f"[agent_task:{task_id}] continue ({agent})",
                 user_id=task.get("assigned_by", ""),
             )
-            return f"Progress noted. Will continue in {interval}s."
+            return f"Task {task_id} progress noted. Next in {interval}s."
 
 
 class VerifyTaskHandler(ToolHandler):
@@ -3091,9 +3110,9 @@ class VerifyTaskHandler(ToolHandler):
         return {
             "type": "object",
             "properties": {
-                "agent": {
+                "task_id": {
                     "type": "string",
-                    "description": "Name of the agent whose task you are verifying",
+                    "description": "Task ID to verify",
                 },
                 "approved": {
                     "type": "boolean",
@@ -3104,7 +3123,7 @@ class VerifyTaskHandler(ToolHandler):
                     "description": "Explanation (required if rejecting)",
                 },
             },
-            "required": ["agent", "approved"],
+            "required": ["task_id", "approved"],
         }
 
     def set_conversation_id(self, cid: str):
@@ -3115,25 +3134,27 @@ class VerifyTaskHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _t
-        target_agent = arguments.get("agent", "")
+        task_id = arguments.get("task_id", "")
         approved = arguments.get("approved", False)
         reason = arguments.get("reason", "")
 
-        if not self._conversation_id or not target_agent:
-            return "Error: missing conversation or agent name"
+        if not self._conversation_id or not task_id:
+            return "Error: missing conversation or task_id"
 
-        task_key = f"agent_task::{target_agent}"
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        task = store.get_extra(self._conversation_id, task_key)
+        all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+        task = all_tasks.get(task_id)
         if not task:
-            return f"No task found for agent '{target_agent}'"
+            return f"Task '{task_id}' not found"
+        target_agent = task.get("agent", "?")
 
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
                 self._conversation_id, "task_progress", {
-                    "agent": target_agent, "verifier": self._agent_name,
+                    "task_id": task_id, "agent": target_agent,
+                    "verifier": self._agent_name,
                     "approved": approved, "reason": reason,
                     "stage": "verified",
                 },
@@ -3145,26 +3166,24 @@ class VerifyTaskHandler(ToolHandler):
             task["status"] = "completed"
             task["completed_at"] = _t.time()
             task["verified_by"] = self._agent_name
-            store.set_extra(self._conversation_id, task_key, task)
-            return f"Task for '{target_agent}' approved and marked complete."
+            all_tasks[task_id] = task
+            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+            return f"Task {task_id} approved and completed."
         else:
-            # Reject — reschedule the original agent with feedback
             task["status"] = "active"
             task["last_rejection"] = {
-                "by": self._agent_name,
-                "reason": reason,
-                "at": _t.time(),
+                "by": self._agent_name, "reason": reason, "at": _t.time(),
             }
-            store.set_extra(self._conversation_id, task_key, task)
-            interval = task.get("interval", 60)
+            all_tasks[task_id] = task
+            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().schedule_delay(
-                self._conversation_id, 0,  # immediate reschedule
-                key=f"{self._conversation_id}::task::{target_agent}",
-                reason=f"[agent_task] rejected by {self._agent_name}: {reason[:100]} ({target_agent})",
+                self._conversation_id, 0,
+                key=f"{self._conversation_id}::task::{task_id}",
+                reason=f"[agent_task:{task_id}] rejected: {reason[:80]} ({target_agent})",
                 user_id=task.get("assigned_by", ""),
             )
-            return f"Task rejected. Agent '{target_agent}' will be rescheduled with your feedback."
+            return f"Task {task_id} rejected. Agent '{target_agent}' rescheduled."
 
 
 class PyFi2HelpHandler(ToolHandler):

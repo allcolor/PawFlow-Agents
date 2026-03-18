@@ -3436,56 +3436,67 @@ class AgentLoopTask(BaseTask):
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 return [flowfile]
+            all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+            agent_filter = body.get("agent_name", "")
             tasks_out = []
-            # Scan all extras for agent_task:: keys
-            entry = store._conversations.get(conv_id, {})
-            for k, v in entry.get("extra", {}).items():
-                if k.startswith("agent_task::") and isinstance(v, dict):
-                    agent = k.replace("agent_task::", "")
-                    tasks_out.append({
-                        "agent": agent, "task": v.get("task", ""),
-                        "status": v.get("status", ""), "iterations": v.get("iterations_done", 0),
-                        "max_iterations": v.get("max_iterations", 50),
-                        "last_result": v.get("last_result", ""),
-                        "verifier": v.get("verifier", ""),
-                        "interval": v.get("interval", 60),
-                    })
+            for tid, t in all_tasks.items():
+                if not isinstance(t, dict):
+                    continue
+                if agent_filter and t.get("agent") != agent_filter:
+                    continue
+                tasks_out.append({
+                    "task_id": tid, "agent": t.get("agent", ""),
+                    "task": t.get("task", ""), "status": t.get("status", ""),
+                    "iterations": t.get("iterations_done", 0),
+                    "max_iterations": t.get("max_iterations", 50),
+                    "last_result": t.get("last_result", ""),
+                    "verifier": t.get("verifier", ""),
+                    "interval": t.get("interval", 60),
+                })
             flowfile.set_content(json.dumps({"tasks": tasks_out}).encode())
             return [flowfile]
 
         if action in ("pause_task", "resume_task", "cancel_task"):
             conv_id = body.get("conversation_id", "")
-            agent = body.get("agent_name", "")
-            if not conv_id or not agent:
-                flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
+            target = body.get("task_id", "") or body.get("agent_name", "")
+            if not conv_id or not target:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id/agent_name"}).encode())
                 return [flowfile]
-            task_key = f"agent_task::{agent}"
-            task = store.get_extra(conv_id, task_key)
-            if not task:
-                flowfile.set_content(json.dumps({"error": f"No task for agent '{agent}'"}).encode())
+            all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+            # Find tasks: by task_id or by agent_name (all tasks of that agent)
+            matched = {}
+            if target in all_tasks:
+                matched[target] = all_tasks[target]
+            else:
+                for tid, t in all_tasks.items():
+                    if isinstance(t, dict) and t.get("agent") == target:
+                        matched[tid] = t
+            if not matched:
+                flowfile.set_content(json.dumps({"error": f"No task found for '{target}'"}).encode())
                 return [flowfile]
-            if action == "cancel_task":
-                task["status"] = "cancelled"
-                store.set_extra(conv_id, task_key, task)
-                # Cancel schedule
-                from core.poll_scheduler import PollScheduler
-                PollScheduler.instance().cancel(f"{conv_id}::task::{agent}")
-                PollScheduler.instance().cancel(f"{conv_id}::task_verify::{agent}")
-            elif action == "pause_task":
-                task["status"] = "paused"
-                store.set_extra(conv_id, task_key, task)
-                from core.poll_scheduler import PollScheduler
-                PollScheduler.instance().cancel(f"{conv_id}::task::{agent}")
-            elif action == "resume_task":
-                task["status"] = "active"
-                store.set_extra(conv_id, task_key, task)
-                from core.poll_scheduler import PollScheduler
-                PollScheduler.instance().schedule_delay(
-                    conv_id, 0, key=f"{conv_id}::task::{agent}",
-                    reason=f"[agent_task] resumed ({agent})",
-                    user_id=user_id,
-                )
-            flowfile.set_content(json.dumps({"ok": True, "status": task["status"]}).encode())
+            from core.poll_scheduler import PollScheduler
+            scheduler = PollScheduler.instance()
+            for tid, task in matched.items():
+                if action == "cancel_task":
+                    task["status"] = "cancelled"
+                    scheduler.cancel(f"{conv_id}::task::{tid}")
+                    scheduler.cancel(f"{conv_id}::task_verify::{tid}")
+                elif action == "pause_task":
+                    task["status"] = "paused"
+                    scheduler.cancel(f"{conv_id}::task::{tid}")
+                elif action == "resume_task":
+                    task["status"] = "active"
+                    scheduler.schedule_delay(
+                        conv_id, task.get("interval", 60),
+                        key=f"{conv_id}::task::{tid}",
+                        reason=f"[agent_task:{tid}] resumed ({task.get('agent', '?')})",
+                        user_id=user_id,
+                    )
+                all_tasks[tid] = task
+            store.set_extra(conv_id, "agent_tasks", all_tasks)
+            flowfile.set_content(json.dumps({
+                "ok": True, "affected": list(matched.keys()),
+            }).encode())
             return [flowfile]
 
         # ── Image service management ──────────────────────────────────
@@ -5272,6 +5283,42 @@ class AgentLoopTask(BaseTask):
                 "message": f"Broadcast failed: {e}",
             })
 
+    def _reschedule_active_tasks(self):
+        """On poller startup, reschedule any active tasks that survived a restart."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        store = ConversationStore.instance()
+        scheduler = PollScheduler.instance()
+        count = 0
+        for conv in store.list_conversations():
+            cid = conv["conversation_id"]
+            entry = store._conversations.get(cid, {})
+            all_tasks = entry.get("extra", {}).get("agent_tasks", {})
+            if not isinstance(all_tasks, dict):
+                continue
+            for task_id, task in all_tasks.items():
+                if not isinstance(task, dict):
+                    continue
+                if task.get("status") not in ("active", "verifying"):
+                    continue
+                agent = task.get("agent", "assistant")
+                sched_key = f"{cid}::task::{task_id}"
+                existing = scheduler.get(sched_key)
+                if existing:
+                    continue
+                interval_s = task.get("interval", 60)
+                scheduler.schedule_delay(
+                    cid, interval_s,
+                    key=sched_key,
+                    reason=f"[agent_task:{task_id}] resumed after restart ({agent})",
+                    user_id=task.get("assigned_by", ""),
+                )
+                count += 1
+                logger.info(f"[task] Rescheduled {task_id} for {agent} "
+                            f"in conv {cid[:8]} (interval={interval_s}s)")
+        if count:
+            logger.info(f"[task] Rescheduled {count} active task(s) on startup")
+
     def _poll_conversations(self, interval: int) -> None:
         """Background poller: periodically check active conversations for pending work.
 
@@ -5283,6 +5330,12 @@ class AgentLoopTask(BaseTask):
         from core.conversation_store import ConversationStore
 
         logger.info(f"Agent poller running (interval={interval}s)")
+
+        # On startup: reschedule any active tasks that have no pending schedule
+        try:
+            self._reschedule_active_tasks()
+        except Exception as e:
+            logger.warning(f"Failed to reschedule active tasks on startup: {e}")
 
         while not self._poller_stop.wait(interval):
             try:
@@ -5592,20 +5645,24 @@ class AgentLoopTask(BaseTask):
         _active_agent = None
         if scheduled_reasons:
             for _sr in scheduled_reasons:
+                import re as _re_sched
                 # Extract agent name from reason patterns
-                if ("[random_thought]" in _sr or "[agent_task]" in _sr) and "(" in _sr:
+                if "[random_thought]" in _sr and "(" in _sr:
                     _active_agent = _sr.rsplit("(", 1)[-1].rstrip(")")
                     break
+                # [agent_task:task_id] ... (agent_name)
+                if "[agent_task:" in _sr and "(" in _sr:
+                    _active_agent = _sr.rsplit("(", 1)[-1].rstrip(")")
+                    break
+                # [task_verify:task_id] verify by verifier (agent)
+                _tv_match = _re_sched.search(r'\[task_verify:(\w+)\].*by (\w+)', _sr)
+                if _tv_match:
+                    _active_agent = _tv_match.group(2)
+                    break
                 # [scheduled:agent_name] reason text
-                import re as _re_sched
                 _sched_match = _re_sched.match(r'\[scheduled:(\w+)\]', _sr)
                 if _sched_match:
                     _active_agent = _sched_match.group(1)
-                    break
-                # [task_verify:agent] verify by verifier
-                _tv_match = _re_sched.match(r'\[task_verify:(\w+)\].*by (\w+)', _sr)
-                if _tv_match:
-                    _active_agent = _tv_match.group(2)  # verifier is the active agent
                     break
             if _active_agent and _active_agent != "assistant":
                 try:
@@ -5716,66 +5773,82 @@ class AgentLoopTask(BaseTask):
 
         # Check for agent task wake-up
         _is_task = any(
-            r.startswith("[agent_task]") for r in (scheduled_reasons or [])
+            "[agent_task:" in r for r in (scheduled_reasons or [])
         )
         _is_task_verify = any(
-            r.startswith("[task_verify:") for r in (scheduled_reasons or [])
+            "[task_verify:" in r for r in (scheduled_reasons or [])
         )
 
         if _is_task:
-            # Load the task from extras
+            # Load ALL active tasks for this agent from agent_tasks dict
             _task_agent = _active_agent or "assistant"
-            _task_key = f"agent_task::{_task_agent}"
-            _task_data = _CS3.instance().get_extra(conversation_id, _task_key) or {}
-            _task_desc = _task_data.get("task", "Unknown task")
-            _task_criteria = _task_data.get("completion_criteria", "")
-            _task_iter = _task_data.get("iterations_done", 0)
-            _task_max = _task_data.get("max_iterations", 50)
-            _task_last = _task_data.get("last_result", "")
-            _task_rejection = _task_data.get("last_rejection")
-            _rejection_text = ""
-            if _task_rejection:
-                _rejection_text = (
-                    f"\n\n[TASK REJECTION] Your previous completion was rejected by "
-                    f"{_task_rejection.get('by', '?')}:\n"
-                    f"\"{_task_rejection.get('reason', 'no reason given')}\"\n"
-                    f"Address this feedback in your next attempt."
-                )
-            checkin_content = (
-                f"[System: Assigned Task — iteration {_task_iter + 1}/{_task_max}]\n\n"
-                f"**Task:** {_task_desc}\n"
-                + (f"**Completion criteria:** {_task_criteria}\n" if _task_criteria else "")
-                + (f"**Previous progress:** {_task_last}\n" if _task_last else "")
-                + _rejection_text + "\n\n"
-                "Work on this task using your tools. When done, call "
-                "complete_task(done=true, result='...', progress='...'). "
-                "If not done yet, call complete_task(done=false, progress='...').\n"
-                "Do NOT respond with [NO_PENDING_WORK]."
-            )
-            # Check max iterations
-            if _task_iter >= _task_max:
-                _task_data["status"] = "failed"
-                _task_data["last_result"] = f"Max iterations ({_task_max}) reached"
-                _CS3.instance().set_extra(conversation_id, _task_key, _task_data)
+            _all_tasks = _CS3.instance().get_extra(conversation_id, "agent_tasks") or {}
+            _my_tasks = [t for t in _all_tasks.values()
+                         if isinstance(t, dict) and t.get("agent") == _task_agent
+                         and t.get("status") in ("active",)]
+            if not _my_tasks:
+                checkin_content = "[System: No active tasks found.]"
+            elif len(_my_tasks) == 1:
+                _td = _my_tasks[0]
+                _tid = _td["task_id"]
+                _iter = _td.get("iterations_done", 0)
+                _max = _td.get("max_iterations", 50)
+                _rejection = _td.get("last_rejection")
+                _rej_text = ""
+                if _rejection:
+                    _rej_text = (
+                        f"\n\n[REJECTION] Rejected by {_rejection.get('by', '?')}: "
+                        f"\"{_rejection.get('reason', '')}\". Address this."
+                    )
+                if _iter >= _max:
+                    _td["status"] = "failed"
+                    _all_tasks[_tid] = _td
+                    _CS3.instance().set_extra(conversation_id, "agent_tasks", _all_tasks)
+                    checkin_content = (
+                        f"[System: Task {_tid} failed — max iterations ({_max}) reached]\n"
+                        f"Inform the user."
+                    )
+                else:
+                    checkin_content = (
+                        f"[System: Task {_tid} — iteration {_iter + 1}/{_max}]\n\n"
+                        f"**Task:** {_td.get('task', '?')}\n"
+                        + (f"**Criteria:** {_td.get('completion_criteria', '')}\n" if _td.get("completion_criteria") else "")
+                        + (f"**Progress:** {_td.get('last_result', '')}\n" if _td.get("last_result") else "")
+                        + _rej_text + "\n\n"
+                        f"Call complete_task(task_id=\"{_tid}\", done=true/false, progress=\"...\").\n"
+                        "Do NOT respond with [NO_PENDING_WORK]."
+                    )
+            else:
+                # Multiple tasks
+                lines = []
+                for _td in _my_tasks:
+                    _tid = _td["task_id"]
+                    _iter = _td.get("iterations_done", 0)
+                    _max = _td.get("max_iterations", 50)
+                    lines.append(
+                        f"- **{_tid}** (iter {_iter + 1}/{_max}): {_td.get('task', '?')[:100]}"
+                        + (f" | Progress: {_td.get('last_result', '')[:60]}" if _td.get("last_result") else "")
+                    )
                 checkin_content = (
-                    f"[System: Task failed — max iterations ({_task_max}) reached]\n"
-                    f"Task: {_task_desc}\n"
-                    f"Last progress: {_task_last}\n"
-                    "Inform the user that the task could not be completed within the limit."
+                    f"[System: {len(_my_tasks)} active tasks]\n\n"
+                    + "\n".join(lines) + "\n\n"
+                    "Work on your tasks. Call complete_task(task_id=\"...\", done=true/false, progress=\"...\") for each.\n"
+                    "Do NOT respond with [NO_PENDING_WORK]."
                 )
         elif _is_task_verify:
-            # Verification wake-up — find which agent's task to verify
-            _verify_reason = next(
-                (r for r in scheduled_reasons if r.startswith("[task_verify:")), ""
-            )
+            # Find the task_id from the reason
             import re as _re_tv
-            _tv_match = _re_tv.match(r'\[task_verify:(\w+)\]', _verify_reason)
-            _verified_agent = _tv_match.group(1) if _tv_match else ""
-            _task_key = f"agent_task::{_verified_agent}"
-            _task_data = _CS3.instance().get_extra(conversation_id, _task_key) or {}
+            _verify_reason = next(
+                (r for r in scheduled_reasons if "[task_verify:" in r), ""
+            )
+            _tv_match = _re_tv.search(r'\[task_verify:(t_\w+)\]', _verify_reason)
+            _verify_tid = _tv_match.group(1) if _tv_match else ""
+            _all_tasks = _CS3.instance().get_extra(conversation_id, "agent_tasks") or {}
+            _task_data = _all_tasks.get(_verify_tid, {})
+            _verified_agent = _task_data.get("agent", "?")
             checkin_content = (
                 f"[System: Task verification request]\n\n"
-                f"Agent '{_verified_agent}' claims to have completed a task.\n\n"
+                f"Agent '{_verified_agent}' claims to have completed task {_verify_tid}.\n\n"
                 f"**Task:** {_task_data.get('task', '?')}\n"
                 f"**Completion criteria:** {_task_data.get('completion_criteria', 'none specified')}\n"
                 f"**Agent's result:** {_task_data.get('last_result', 'no result provided')}\n\n"

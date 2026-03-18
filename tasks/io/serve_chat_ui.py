@@ -3502,8 +3502,8 @@ async function handleSlashCommand(text) {
         if (tasks.length === 0) { addMsg('system', 'No active tasks.'); }
         else {
           const lines = tasks.map(t => {
-            let line = '\u2022 ' + t.agent + ': ' + t.task.substring(0, 80);
-            line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ']';
+            let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
+            line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ', every ' + t.interval + 's]';
             if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
             if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
             return line;
@@ -3519,7 +3519,8 @@ async function handleSlashCommand(text) {
           method: 'POST', headers: getAuthHeaders(),
           body: JSON.stringify({
             action: sub + '_task', conversation_id: conversationId,
-            agent_name: taskAgent,
+            task_id: taskAgent.startsWith('t_') ? taskAgent : '',
+            agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
           }),
         });
         const data = await resp.json();

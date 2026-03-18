@@ -357,31 +357,33 @@ class AgentLoopTask(BaseTask):
     # ── Media service discovery (generic for image/video) ───────────
 
     @staticmethod
-    def _is_service_subclass(service_type: str, base_class) -> bool:
-        """Check if a service_type's class inherits from base_class."""
-        from core import ServiceFactory
-        cls = ServiceFactory._services.get(service_type)
-        if cls is None:
-            return False
-        try:
-            return issubclass(cls, base_class)
-        except TypeError:
-            return False
-
-    def _discover_media_services(self, user_id: str, base_class) -> list:
-        """Discover all deployed services whose type inherits from base_class.
-
-        Checks the service definitions (global + user) — no instantiation.
-        Uses ServiceFactory class hierarchy to determine type.
-
-        Returns list of (service_id, service_type, scope) tuples.
-        """
-        # Ensure all service modules are registered in ServiceFactory
+    def _get_media_types(base_class) -> set:
+        """Get all registered service_type strings that inherit from base_class."""
         try:
             from tasks import _register_all_services
             _register_all_services()
-        except Exception as e:
-            logger.warning("_register_all_services failed: %s", e)
+        except Exception:
+            pass
+        from core import ServiceFactory
+        types = set()
+        for stype, sclass in ServiceFactory._services.items():
+            try:
+                if issubclass(sclass, base_class):
+                    types.add(stype)
+            except TypeError:
+                pass
+        return types
+
+    def _discover_media_services(self, user_id: str, base_class) -> list:
+        """Discover all deployed and enabled services of a given type.
+
+        Uses the service definitions from global + user registries.
+        Matches service_type against known types for the base_class.
+        Rechecked every time (services can be added at runtime).
+
+        Returns list of (service_id, service_type, scope) tuples.
+        """
+        valid_types = self._get_media_types(base_class)
 
         results = []
         seen = set()
@@ -392,7 +394,7 @@ class AgentLoopTask(BaseTask):
                 if not getattr(sdef, "enabled", True):
                     continue
                 stype = getattr(sdef, "service_type", "") or ""
-                if self._is_service_subclass(stype, base_class):
+                if stype in valid_types:
                     results.append((sid, stype, "global"))
                     seen.add(sid)
         except Exception as e:
@@ -407,13 +409,10 @@ class AgentLoopTask(BaseTask):
                     if not getattr(sdef, "enabled", True):
                         continue
                     stype = getattr(sdef, "service_type", "") or ""
-                    if self._is_service_subclass(stype, base_class):
+                    if stype in valid_types:
                         results.append((sid, stype, "user"))
             except Exception as e:
                 logger.error("User service discovery failed: %s", e, exc_info=True)
-        if not results:
-            logger.warning("No %s services found (checked global + user)",
-                          base_class.__name__)
         return results
 
     @staticmethod

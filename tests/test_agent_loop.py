@@ -1842,8 +1842,8 @@ class TestImageServiceResolution(unittest.TestCase):
                 "pixazo": mock_pixazo_def,
                 "llm_svc": mock_llm_def,
             }
-            with patch.object(AgentLoopTask, '_is_service_subclass',
-                              side_effect=lambda t, bc: t == "pixazoImageGeneration"):
+            with patch.object(AgentLoopTask, '_get_media_types',
+                              return_value={"pixazoImageGeneration"}):
                 result = task._discover_media_services("", BaseImageGenerationService)
 
         assert len(result) == 1

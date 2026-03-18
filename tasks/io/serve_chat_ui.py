@@ -2055,8 +2055,11 @@ function connectSSE(cid) {
     }
     trackAgentTool(tcAgent, data.tool);
     const srcLabel = displayAgentName(tcAgent) + (data.llm_service ? ' via ' + data.llm_service : '');
-    if (data.tool === 'spawn_agents' && data.arguments && data.arguments.tasks) {
-      const lines = data.arguments.tasks.map(task => {
+    // Parse arguments if string (some LLM providers return args as JSON string)
+    let args = data.arguments || {};
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+    if (data.tool === 'spawn_agents' && args && args.tasks) {
+      const lines = args.tasks.map(task => {
         const dst = displayAgentName(task.agent || '?');
         const preview = (task.message || '').substring(0, 80);
         return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
@@ -2064,7 +2067,6 @@ function connectSSE(cid) {
       addMsg('tool', lines.join('\n'));
     } else {
       // Show agent source + tool name + arguments preview
-      const args = data.arguments || {};
       const argKeys = Object.keys(args);
       let argPreview = '';
       if (argKeys.length > 0) {
@@ -2082,7 +2084,8 @@ function connectSSE(cid) {
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // spawn_agents: parse results and display each agent's response
+    // spawn_agents: try to parse results, show each agent's response
+    // Note: result may be truncated (>2000 chars) so JSON.parse can fail
     if (data.tool === 'spawn_agents' && data.result) {
       try {
         const agents = JSON.parse(data.result);
@@ -2101,7 +2104,13 @@ function connectSSE(cid) {
           showTyping();
           return;
         }
-      } catch(ex) { /* fall through to default */ }
+      } catch(ex) {
+        // JSON truncated — responses already shown via sub_agent_done events
+        // Just show a compact summary
+        addMsg('tool', '\u2705 spawn_agents: completed (see agent responses above)');
+        showTyping();
+        return;
+      }
     }
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
     const preview = (data.result || '').substring(0, 200);

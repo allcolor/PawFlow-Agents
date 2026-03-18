@@ -4083,8 +4083,9 @@ class AgentLoopTask(BaseTask):
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
+                        _result_preview = result_text if tc.name == "spawn_agents" else result_text[:2000]
                         bus.publish_event(conversation_id, "tool_result", {
-                            "tool": tc.name, "result": result_text[:2000],
+                            "tool": tc.name, "result": _result_preview,
                             "agent_name": _agent_name or "assistant",
                         })
                         bus.publish_event(conversation_id, "iteration_status", {

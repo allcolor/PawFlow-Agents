@@ -13,8 +13,10 @@ from core import FlowFile
 def _register_all_services():
     """Import all service modules to trigger ServiceFactory registration."""
     from core import ServiceFactory
-    if "llmConnection" in ServiceFactory.list_types():
-        return  # Already registered
+    # Check a late-registered type to know if ALL modules are loaded
+    # (llmConnection alone is not enough — image/video may be missing)
+    if "pixazoImageGeneration" in ServiceFactory.list_types():
+        return  # All modules already registered
 
     # Force project root into sys.path — always, no conditional check
     # (Windows path comparison is unreliable: C:\x vs C:/x vs c:\x)

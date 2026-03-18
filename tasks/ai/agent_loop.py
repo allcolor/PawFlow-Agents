@@ -250,6 +250,10 @@ class AgentLoopTask(BaseTask):
                 "type": "integer", "required": False, "default": 6,
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
             },
+            "summarizer_service": {
+                "type": "string", "required": False, "default": "${global.summarizer_service}",
+                "description": "Dedicated LLM service for context compaction/summary. If empty, uses the default client.",
+            },
             "llm_service": {
                 "type": "string", "required": False, "default": "${global.llm_default_service}",
                 "description": "LLM service ID (from global/user services). Defaults to ${global.llm_default_service}.",
@@ -332,6 +336,23 @@ class AgentLoopTask(BaseTask):
         except Exception as e:
             logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
+
+    def _get_summarizer_client(self, user_id: str = ""):
+        """Resolve a dedicated summarizer LLM service for compaction/summary.
+
+        Returns (client, max_context_tokens) or (None, 0) if not configured.
+        """
+        svc_id = self.config.get("summarizer_service", "")
+        if svc_id and "${" in svc_id:
+            from core.expression import resolve_expression
+            svc_id = resolve_expression(svc_id, owner=user_id)
+        if not svc_id or "${" in svc_id:
+            return None, 0
+        client, svc = self._resolve_llm_service(svc_id, user_id)
+        if client and svc:
+            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_tokens", 0))
+            return client, ctx_max
+        return None, 0
 
     # ── Media service discovery (generic for image/video) ───────────
 
@@ -1179,6 +1200,7 @@ class AgentLoopTask(BaseTask):
             "active_llm_service": _active_llm_service,
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
+            "summarizer": self._get_summarizer_client(user_id),
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
@@ -4408,11 +4430,12 @@ class AgentLoopTask(BaseTask):
                     hb_thread.start()
 
                     # Compact context if approaching token limit.
-                    # Compaction works on a COPY — the canonical `messages` list
-                    # is never modified so it stays consistent for persistence.
-                    # Always use the default LLM client for compaction (not the
-                    # agent-switched one which may be slow/expensive).
-                    compact_client = ctx.get("default_client") or client
+                    # Use summarizer service if available, else default client.
+                    _summ = ctx.get("summarizer", (None, 0))
+                    if _summ[0]:
+                        compact_client = _summ[0]
+                    else:
+                        compact_client = ctx.get("default_client") or client
                     _pre_compact_len = len(messages)
                     llm_context = self._compact_if_needed(
                         list(messages), compact_client,

@@ -359,11 +359,13 @@ class AgentLoopTask(BaseTask):
     @staticmethod
     def _is_service_subclass(service_type: str, base_class) -> bool:
         """Check if a service_type's class inherits from base_class."""
+        from core import ServiceFactory
+        cls = ServiceFactory._services.get(service_type)
+        if cls is None:
+            return False
         try:
-            from core import ServiceFactory
-            cls = ServiceFactory.get(service_type)
-            return cls is not None and issubclass(cls, base_class)
-        except Exception:
+            return issubclass(cls, base_class)
+        except TypeError:
             return False
 
     def _discover_media_services(self, user_id: str, base_class) -> list:
@@ -378,8 +380,8 @@ class AgentLoopTask(BaseTask):
         try:
             from tasks import _register_all_services
             _register_all_services()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("_register_all_services failed: %s", e)
 
         results = []
         seen = set()
@@ -393,8 +395,8 @@ class AgentLoopTask(BaseTask):
                 if self._is_service_subclass(stype, base_class):
                     results.append((sid, stype, "global"))
                     seen.add(sid)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error("Global service discovery failed: %s", e, exc_info=True)
         if user_id:
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
@@ -407,8 +409,11 @@ class AgentLoopTask(BaseTask):
                     stype = getattr(sdef, "service_type", "") or ""
                     if self._is_service_subclass(stype, base_class):
                         results.append((sid, stype, "user"))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("User service discovery failed: %s", e, exc_info=True)
+        if not results:
+            logger.warning("No %s services found (checked global + user)",
+                          base_class.__name__)
         return results
 
     @staticmethod
@@ -3977,10 +3982,15 @@ class AgentLoopTask(BaseTask):
         _is_named = agent_name and agent_name not in ("", "assistant")
         with self._conv_gen_lock:
             if _is_named:
-                # Cancel only this specific sub-agent
+                # Cancel this agent — it may be running under either:
+                #   gen_key = "conv:agent" (from /agent msg)
+                #   gen_key = "conv" (from selected agent, normal message)
+                # Bump BOTH to be safe.
                 key = f"{conversation_id}:{agent_name}"
                 self._conv_generation[key] = \
                     self._conv_generation.get(key, 0) + 1
+                self._conv_generation[conversation_id] = \
+                    self._conv_generation.get(conversation_id, 0) + 1
             else:
                 # Cancel default assistant + all per-agent threads
                 # but NOT thought threads (they manage their own lifecycle)

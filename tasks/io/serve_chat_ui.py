@@ -1340,13 +1340,30 @@ function renderMarkdown(text) {
   return parts.join('');
 }
 
-function isNearBottom() {
+// Auto-scroll state: true by default, turned off when user scrolls up manually
+let _autoScroll = true;
+function isNearBottom() { return _autoScroll; }
+
+// Detect manual scroll-up by user
+(function() {
   const m = document.getElementById('messages');
-  return m.scrollHeight - m.scrollTop - m.clientHeight <= 2;
-}
+  if (!m) return;
+  let _lastScrollTop = 0;
+  m.addEventListener('scroll', () => {
+    const atBottom = m.scrollHeight - m.scrollTop - m.clientHeight <= 5;
+    if (atBottom) {
+      _autoScroll = true;
+    } else if (m.scrollTop < _lastScrollTop) {
+      // User scrolled UP → disable auto-scroll
+      _autoScroll = false;
+    }
+    _lastScrollTop = m.scrollTop;
+  });
+})();
 
 function scrollBottom(force) {
-  if (force || isNearBottom()) {
+  if (force) _autoScroll = true;
+  if (_autoScroll) {
     const m = document.getElementById('messages');
     m.scrollTop = m.scrollHeight;
   }

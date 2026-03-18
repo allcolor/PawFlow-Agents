@@ -147,6 +147,29 @@ class LLMClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.claude_binary = claude_binary
+        # Token tracking callback — set by LLMConnectionService
+        self._on_tokens = None  # callable(tokens_in, tokens_out, model)
+
+    def _report_tokens(self, response, messages):
+        """Report token usage via callback if set. Estimates if not returned by provider."""
+        if not self._on_tokens:
+            return
+        tokens_in = response.tokens_in
+        tokens_out = response.tokens_out
+        # Estimate if provider didn't return counts
+        if not tokens_in and messages:
+            total_chars = sum(
+                len(m.content) if isinstance(m.content, str)
+                else sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                else 0 for m in messages
+            )
+            tokens_in = total_chars // 4
+        if not tokens_out and response.content:
+            tokens_out = len(response.content) // 4
+        try:
+            self._on_tokens(tokens_in, tokens_out, response.model or self.default_model)
+        except Exception:
+            pass
         self.gemini_binary = gemini_binary
         self.refresh_token = refresh_token
         self.token_expires_at = token_expires_at
@@ -213,6 +236,7 @@ class LLMClient:
                 else:
                     result = self._complete_anthropic(messages, model, temperature, max_tokens, tools)
                 result.duration_ms = (time.time() - start) * 1000
+                self._report_tokens(result, messages)
                 return result
             except LLMClientError:
                 raise
@@ -257,6 +281,7 @@ class LLMClient:
             raise LLMClientError(f"Unknown provider '{self.provider}'")
 
         result.duration_ms = (time.time() - start) * 1000
+        self._report_tokens(result, messages)
         return result
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback) -> LLMResponse:

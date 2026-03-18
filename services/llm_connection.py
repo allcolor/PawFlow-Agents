@@ -53,6 +53,8 @@ class LLMConnectionService(BaseService):
         self._total_tokens_in = 0
         self._total_tokens_out = 0
         self._call_count = 0
+        # Wire tracking callback into the client
+        self._client._on_tokens = self._on_client_tokens
 
     def _create_connection(self):
         """Validate config and return a marker (actual HTTP is per-request)."""
@@ -115,6 +117,12 @@ class LLMConnectionService(BaseService):
             return resp
         except LLMClientError as e:
             raise ServiceError(str(e))
+
+    def _on_client_tokens(self, tokens_in: int, tokens_out: int, model: str):
+        """Callback from LLMClient — tracks every LLM call through this service."""
+        self._total_tokens_in += tokens_in
+        self._total_tokens_out += tokens_out
+        self._call_count += 1
 
     def _track_tokens(self, response: LLMResponse, messages: List[LLMMessage]):
         """Track token usage at the service level."""

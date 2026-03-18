@@ -1601,36 +1601,54 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         if action == "cost":
-            # Get stats from live LLM service instances (source of truth)
+            # Read persistent stats from TokenTracker (survives restarts)
+            from core.token_tracker import TokenTracker
             from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            stats = []
-            for svc_id, svc_def in greg.get_all_definitions().items():
-                if svc_def.service_type != "llmConnection":
-                    continue
-                svc = greg.get_live_instance(svc_id)
-                if svc and hasattr(svc, 'get_token_stats'):
-                    s = svc.get_token_stats()
-                    s["llm_service"] = svc_id
-                    s["model"] = getattr(svc, 'default_model', '') or ''
-                    s["provider"] = getattr(svc, 'provider', '') or ''
-                    # Cost calculation
-                    cost_in_1m = float(svc_def.config.get("cost_per_1m_input", 0) or 0)
-                    cost_out_1m = float(svc_def.config.get("cost_per_1m_output", 0) or 0)
-                    if cost_in_1m or cost_out_1m:
-                        s["cost"] = round(
-                            s["tokens_in"] / 1_000_000 * cost_in_1m +
-                            s["tokens_out"] / 1_000_000 * cost_out_1m, 6)
-                        s["cost_per_1m_input"] = cost_in_1m
-                        s["cost_per_1m_output"] = cost_out_1m
-                    stats.append(s)
-
-            # Filter by agent if requested (via TokenTracker for agent→service mapping)
+            tracker = TokenTracker.instance()
+            usage = tracker.get_usage(user_id)
+            agents_data = usage.get("agents", {})
             req_agent = body.get("agent", "ALL")
-            if req_agent.upper() != "ALL":
-                req_agent = self._resolve_agent_name(req_agent, body.get("conversation_id", ""))
 
-            flowfile.set_content(json.dumps({"services": stats}, ensure_ascii=False).encode())
+            # Build service cost info from registry
+            greg = GlobalServiceRegistry.get_instance()
+            svc_costs = {}
+            for svc_id, svc_def in greg.get_all_definitions().items():
+                if getattr(svc_def, "service_type", "") == "llmConnection":
+                    svc_costs[svc_id] = {
+                        "cost_per_1m_input": float(svc_def.config.get("cost_per_1m_input", 0) or 0),
+                        "cost_per_1m_output": float(svc_def.config.get("cost_per_1m_output", 0) or 0),
+                    }
+
+            stats = []
+            for key, agent_stats in agents_data.items():
+                agent_name = agent_stats.get("agent", "assistant")
+                svc_id = agent_stats.get("llm_service", "default")
+                # Filter by agent
+                if req_agent.upper() != "ALL" and agent_name.lower() != req_agent.lower():
+                    continue
+                tok_in = agent_stats.get("in", 0)
+                tok_out = agent_stats.get("out", 0)
+                calls = agent_stats.get("calls", 0)
+                costs = svc_costs.get(svc_id, {})
+                cost_in_1m = costs.get("cost_per_1m_input", 0)
+                cost_out_1m = costs.get("cost_per_1m_output", 0)
+                cost = 0.0
+                if cost_in_1m or cost_out_1m:
+                    cost = round(tok_in / 1_000_000 * cost_in_1m +
+                                 tok_out / 1_000_000 * cost_out_1m, 6)
+                stats.append({
+                    "agent": agent_name, "llm_service": svc_id,
+                    "tokens_in": tok_in, "tokens_out": tok_out,
+                    "calls": calls, "cost": cost,
+                    "cost_per_1m_input": cost_in_1m,
+                    "cost_per_1m_output": cost_out_1m,
+                })
+
+            flowfile.set_content(json.dumps({
+                "services": stats,
+                "total_in": usage.get("total_in", 0),
+                "total_out": usage.get("total_out", 0),
+            }, ensure_ascii=False).encode())
             return [flowfile]
 
         if action == "list_active":

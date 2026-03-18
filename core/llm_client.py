@@ -392,11 +392,19 @@ class LLMClient:
                     args = {}
                 tool_calls.append(LLMToolCall(id=tc["id"], name=tc["name"], arguments=args))
 
+            content = "".join(content_parts)
+            # Estimate tokens if not returned by provider
+            est_in = sum(len(m.content) if isinstance(m.content, str) else
+                         sum(len(str(p)) for p in m.content) if isinstance(m.content, list) else 0
+                         for m in messages) // 4
+            est_out = len(content) // 4
             return LLMResponse(
-                content="".join(content_parts),
+                content=content,
                 model=resp_model,
                 finish_reason=finish_reason,
                 tool_calls=tool_calls,
+                tokens_in=est_in,
+                tokens_out=est_out,
             )
         finally:
             conn.close()

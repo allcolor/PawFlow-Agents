@@ -3586,12 +3586,6 @@ class AgentLoopTask(BaseTask):
                 return [flowfile]
             all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
             agent_filter = body.get("agent_name", "")
-            # Clean up completed/cancelled tasks (legacy from before auto-removal)
-            _cleaned = {k: v for k, v in all_tasks.items()
-                        if isinstance(v, dict) and v.get("status") not in ("completed", "cancelled")}
-            if len(_cleaned) != len(all_tasks):
-                store.set_extra(conv_id, "agent_tasks", _cleaned)
-                all_tasks = _cleaned
             tasks_out = []
             for tid, t in all_tasks.items():
                 if not isinstance(t, dict):

@@ -3417,6 +3417,18 @@ class AgentLoopTask(BaseTask):
                 "max_iterations": body.get("max_iterations", 50),
                 "verifier": body.get("verifier", ""),
             })
+            # Ensure poller is running (task needs it for scheduled wake-ups)
+            poll_interval = int(self.config.get("poll_interval", 0))
+            if poll_interval > 0 and not self._poller_started:
+                self._poller_started = True
+                poller_thread = threading.Thread(
+                    target=self._poll_conversations,
+                    args=(poll_interval,),
+                    daemon=True,
+                    name="agent-poller",
+                )
+                poller_thread.start()
+                logger.info("Agent poller started (triggered by task assignment)")
             flowfile.set_content(json.dumps({"ok": True, "result": result}).encode())
             return [flowfile]
 

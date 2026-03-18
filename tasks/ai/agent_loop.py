@@ -4789,7 +4789,9 @@ class AgentLoopTask(BaseTask):
             self._decrement_active(conversation_id, ctx)
 
             # Auto-reschedule random thought if still enabled
-            if ctx.get("is_random_thought"):
+            # BUT NOT if the agent was cancelled (generation is stale)
+            _was_cancelled = not self._is_current_generation(gen_key, my_generation)
+            if ctx.get("is_random_thought") and not _was_cancelled:
                 try:
                     from core.conversation_store import ConversationStore as _CSrt
                     from core.poll_scheduler import PollScheduler as _PSrt

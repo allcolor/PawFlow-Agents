@@ -2725,12 +2725,12 @@ const HELP_DATA = {
       + '  /schedules del            — Delete all schedules',
   },
   '/stop': {
-    usage: '/stop [agent] [-f]',
+    usage: '/stop <agent|ALL> [-f]',
     short: 'Stop an agent — asks it to respond immediately',
     detail: 'Interrupts the agent and asks it to give its best answer now.\n\n'
-      + '  /stop              — Stop all agents (they respond with what they have)\n'
+      + '  /stop ALL          — Stop all agents (they respond with what they have)\n'
       + '  /stop grok         — Stop only grok\n'
-      + '  /stop -f           — Force stop all (immediate cancel, no response)\n'
+      + '  /stop ALL -f       — Force stop all (immediate cancel, no response)\n'
       + '  /stop grok -f      — Force stop grok (immediate cancel)',
   },
   '/restart_from': {
@@ -2846,17 +2846,16 @@ const HELP_DATA = {
     detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
   },
   '/autoconv': {
-    usage: '/autoconv on [agent] [freq] | off [agent] | status [agent] | now [agent]',
+    usage: '/autoconv <on|off|status|now> <agent|ALL> [freq]',
     short: 'Auto-conversation — agents contribute to the conversation autonomously',
     detail: 'Enable autonomous conversation contributions from an agent.\n\n'
-      + '  /autoconv on                — Assistant, default 6/1m (6 per minute)\n'
-      + '  /autoconv on 2-3/h          — Assistant, 2-3 times per hour\n'
-      + '  /autoconv on researcher 1/2h — "researcher" agent, once per 2h\n'
-      + '  /autoconv on 5-10/d         — 5-10 times per day\n'
-      + '  /autoconv off               — Disable for assistant\n'
-      + '  /autoconv off researcher    — Disable for "researcher"\n'
-      + '  /autoconv status            — Show config and next trigger\n'
-      + '  /autoconv now               — Trigger immediately\n\n'
+      + '  /autoconv on ALL              — All agents, default 6/1m\n'
+      + '  /autoconv on grok 2-3/h       — Grok, 2-3 times per hour\n'
+      + '  /autoconv on ALL 1/2h         — All agents, once per 2h\n'
+      + '  /autoconv off ALL             — Disable for all agents\n'
+      + '  /autoconv off grok            — Disable for grok\n'
+      + '  /autoconv status ALL          — Show config for all agents\n'
+      + '  /autoconv now ALL             — Trigger all immediately\n\n'
       + 'Frequency format: <min>[-<max>]/<duration>. Units: s, m, h, d.\n'
       + 'Only one schedule per agent — re-running /autoconv on replaces the previous.\n'
       + 'Only fires when the conversation is idle (no active interaction).',
@@ -2929,7 +2928,8 @@ async function handleSlashCommand(text) {
   if (cmd === '/stop') {
     const force = parts.includes('-f') || parts.includes('--force');
     const targetParts = parts.slice(1).filter(p => p !== '-f' && p !== '--force');
-    const target = targetParts.length > 0 ? resolveAgentName(targetParts[0]) : 'ALL';
+    if (targetParts.length === 0) { addMsg('system', 'Usage: /stop <agent|ALL> [-f]'); return true; }
+    const target = resolveAgentName(targetParts[0]);
     if (force) {
       await cancelAgent(target);
     } else {
@@ -3313,19 +3313,28 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/autoconv') {
     if (!conversationId) { addMsg('system', t('thoughtNoConv')); return true; }
-    const qargs = parseQuotedArgs(text);  // ['/autoconv', 'on', agentOrFreq, freq]
-    const sub = (qargs[1] || 'status').toLowerCase();
+    const qargs = parseQuotedArgs(text);  // ['/autoconv', sub, agent, freq]
+    const sub = (qargs[1] || '').toLowerCase();
+    if (!sub || !['on', 'off', 'status', 'now'].includes(sub)) {
+      addMsg('system', 'Usage: /autoconv <on|off|status|now> <agent|ALL> [freq]');
+      return true;
+    }
     const body = { action: 'random_thought', conversation_id: conversationId, sub };
     const freqPattern = /^\d+(-\d+)?\/\d*[smhd]$/;
     if (sub === 'on') {
-      if (qargs[2] && !freqPattern.test(qargs[2])) {
-        body.agent = resolveAgentName(qargs[2]);
-        body.frequency = qargs[3] || '6/1m';
-      } else {
-        body.frequency = qargs[2] || '6/1m';
+      // /autoconv on <agent> [freq] OR /autoconv on ALL [freq]
+      if (!qargs[2]) { addMsg('system', 'Usage: /autoconv on <agent|ALL> [freq]'); return true; }
+      if (freqPattern.test(qargs[2])) {
+        // /autoconv on 3/h — missing agent
+        addMsg('system', 'Usage: /autoconv on <agent|ALL> [freq]');
+        return true;
       }
-    } else if (sub === 'off' || sub === 'status' || sub === 'now') {
-      if (qargs[2]) body.agent = resolveAgentName(qargs[2]);
+      body.agent = resolveAgentName(qargs[2]);
+      body.frequency = qargs[3] || '6/1m';
+    } else {
+      // off, status, now — require agent
+      if (!qargs[2]) { addMsg('system', 'Usage: /autoconv ' + sub + ' <agent|ALL>'); return true; }
+      body.agent = resolveAgentName(qargs[2]);
     }
     try {
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });

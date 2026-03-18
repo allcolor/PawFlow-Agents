@@ -112,9 +112,14 @@ class ExecuteScriptHandler(ToolHandler):
     def __init__(self):
         self._vfs = {}
         self._vfs_lock = threading.Lock()
+        self._fs_resolver = None
 
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
+
+    def set_fs_resolver(self, resolver):
+        """Set filesystem service resolver: (service_id) -> service instance."""
+        self._fs_resolver = resolver
 
     @property
     def name(self) -> str:
@@ -123,11 +128,12 @@ class ExecuteScriptHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Execute Python code and return the result. Supports expressions, "
-            "statements, and file I/O via open(). "
-            "store_file(filename, data) → creates a downloadable file, returns "
-            "{url, file_id, filename}. "
-            "get_store_file(name_or_id) → reads a file from FileStore, returns bytes. "
+            "Execute Python code and return the result. "
+            "File I/O uses URL schemes: "
+            "open('filestore://name.zip', 'wb') to create downloadable files, "
+            "open('filestore://file_id_or_name', 'rb') to read from FileStore, "
+            "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
+            "Plain open('file.csv', 'w') uses in-memory sandbox. "
             "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc."
         )
 
@@ -162,6 +168,7 @@ class ExecuteScriptHandler(ToolHandler):
                     code,
                     base_url=self._base_url,
                     vfs=self._vfs,
+                    fs_resolver=self._fs_resolver,
                 )
         except Exception as e:
             return f"Error: {e}"

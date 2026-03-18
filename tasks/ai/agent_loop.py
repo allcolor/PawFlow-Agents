@@ -6097,6 +6097,21 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ExecuteScriptHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                # Inject filesystem service resolver for fs:// URLs in scripts
+                def _fs_resolver(svc_id):
+                    try:
+                        from gui.services.user_service_registry import UserServiceRegistry
+                        svc = UserServiceRegistry.get_instance().get_live_instance(user_id, svc_id)
+                        if svc:
+                            return svc
+                    except Exception:
+                        pass
+                    try:
+                        from gui.services.global_service_registry import GlobalServiceRegistry
+                        return GlobalServiceRegistry.get_instance().get_live_instance(svc_id)
+                    except Exception:
+                        return None
+                h.set_fs_resolver(_fs_resolver)
             elif isinstance(h, ImageGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)

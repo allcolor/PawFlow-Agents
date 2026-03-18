@@ -114,17 +114,159 @@ class SandboxFile:
 
 # ── Sandbox builder ──────────────────────────────────────────────────
 
+def _guess_content_type(filename: str) -> str:
+    """Guess MIME type from file extension."""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return {
+        "zip": "application/zip", "gz": "application/gzip",
+        "tar": "application/x-tar", "pdf": "application/pdf",
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "csv": "text/csv", "json": "application/json",
+        "txt": "text/plain", "html": "text/html", "md": "text/markdown",
+        "mp4": "video/mp4", "mp3": "audio/mpeg", "wav": "audio/wav",
+    }.get(ext, "application/octet-stream")
+
+
+class _FileStoreFile:
+    """File-like wrapper for FileStore read/write via filestore:// URLs."""
+
+    def __init__(self, path: str, mode: str, base_url: str, created_files: list):
+        self._path = path
+        self._mode = mode
+        self._base_url = base_url
+        self._created_files = created_files
+        self._closed = False
+        is_binary = "b" in mode
+
+        if any(c in mode for c in "ra"):
+            # Read from FileStore
+            from core.file_store import FileStore
+            fs = FileStore.instance()
+            data = None
+            # Try by file_id first
+            result = fs.get(path)
+            if result:
+                data = result[1]
+            else:
+                # Try by filename
+                for f in fs.list_files():
+                    if f["filename"] == path:
+                        r = fs.get(f["file_id"])
+                        if r:
+                            data = r[1]
+                        break
+            if data is None and "r" in mode:
+                raise FileNotFoundError(f"File '{path}' not found in FileStore")
+            self._buf = io.BytesIO(data or b"") if is_binary else io.StringIO(
+                (data or b"").decode("utf-8", errors="replace"))
+        else:
+            self._buf = io.BytesIO() if is_binary else io.StringIO()
+
+    def read(self, *a): return self._buf.read(*a)
+    def readline(self, *a): return self._buf.readline(*a)
+    def readlines(self, *a): return self._buf.readlines(*a)
+    def write(self, data): return self._buf.write(data)
+    def writelines(self, lines): return self._buf.writelines(lines)
+    def seek(self, *a): return self._buf.seek(*a)
+    def tell(self): return self._buf.tell()
+    def readable(self): return self._buf.readable()
+    def writable(self): return self._buf.writable()
+    def seekable(self): return self._buf.seekable()
+    def __iter__(self): return iter(self._buf)
+    def __next__(self): return next(self._buf)
+    def __enter__(self): return self
+    def __exit__(self, *exc): self.close()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        if any(c in self._mode for c in "wa+"):
+            self._buf.seek(0)
+            raw = self._buf.read()
+            content = raw if isinstance(raw, bytes) else raw.encode("utf-8")
+            if content:
+                from core.file_store import FileStore
+                ct = _guess_content_type(self._path)
+                file_id = FileStore.instance().store(self._path, content, ct)
+                url = f"{self._base_url}/files/{file_id}/{self._path}"
+                self._created_files.append(url)
+        self._buf.close()
+
+
+class _FilesystemServiceFile:
+    """File-like wrapper for filesystem service read/write via fs:// URLs."""
+
+    def __init__(self, service_id: str, path: str, mode: str, fs_resolver):
+        self._service_id = service_id
+        self._path = path
+        self._mode = mode
+        self._fs_resolver = fs_resolver
+        self._closed = False
+        is_binary = "b" in mode
+
+        if any(c in mode for c in "ra"):
+            svc = self._get_service()
+            data = svc.read(path)
+            if data is None:
+                raise FileNotFoundError(f"File '{path}' not found on '{service_id}'")
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            self._buf = io.BytesIO(data) if is_binary else io.StringIO(
+                data.decode("utf-8", errors="replace"))
+        else:
+            self._buf = io.BytesIO() if is_binary else io.StringIO()
+
+    def _get_service(self):
+        if not self._fs_resolver:
+            raise RuntimeError("No filesystem service resolver configured")
+        svc = self._fs_resolver(self._service_id)
+        if not svc:
+            raise RuntimeError(f"Filesystem service '{self._service_id}' not found")
+        return svc
+
+    def read(self, *a): return self._buf.read(*a)
+    def readline(self, *a): return self._buf.readline(*a)
+    def readlines(self, *a): return self._buf.readlines(*a)
+    def write(self, data): return self._buf.write(data)
+    def writelines(self, lines): return self._buf.writelines(lines)
+    def seek(self, *a): return self._buf.seek(*a)
+    def tell(self): return self._buf.tell()
+    def readable(self): return self._buf.readable()
+    def writable(self): return self._buf.writable()
+    def seekable(self): return self._buf.seekable()
+    def __iter__(self): return iter(self._buf)
+    def __next__(self): return next(self._buf)
+    def __enter__(self): return self
+    def __exit__(self, *exc): self.close()
+
+    def close(self):
+        if self._closed:
+            return
+        self._closed = True
+        if any(c in self._mode for c in "wa+"):
+            self._buf.seek(0)
+            raw = self._buf.read()
+            content = raw if isinstance(raw, bytes) else raw.encode("utf-8")
+            if content:
+                svc = self._get_service()
+                svc.write(self._path, content)
+        self._buf.close()
+
+
 def make_sandbox_open(
     base_url: str = "http://localhost:9090",
     created_files: Optional[List[str]] = None,
     vfs: Optional[Dict[str, bytes]] = None,
+    fs_resolver: Optional[Callable] = None,
 ) -> Callable:
-    """Create a sandboxed open() backed by FileStore.
+    """Create a sandboxed open() with URL scheme routing.
 
-    Args:
-        base_url: Base URL for download links.
-        created_files: List to append created file URLs to.
-        vfs: In-memory virtual filesystem (filename -> bytes).
+    Schemes:
+        filestore://path  — read/write FileStore
+        fs://service/path — read/write filesystem service
+        (no scheme)       — in-memory VFS sandbox
     """
     from core.file_store import FileStore
 
@@ -135,6 +277,19 @@ def make_sandbox_open(
         vfs = {}
 
     def sandbox_open(name, mode="r", **kwargs):
+        # Route by URL scheme
+        if name.startswith("filestore://"):
+            return _FileStoreFile(name[12:], mode, base_url, created_files)
+        if name.startswith("fs://"):
+            rest = name[5:]
+            sep = rest.find("/")
+            if sep <= 0:
+                raise ValueError(f"Invalid fs:// URL: '{name}'. Use fs://service_id/path")
+            svc_id = rest[:sep]
+            path = rest[sep + 1:]
+            return _FilesystemServiceFile(svc_id, path, mode, fs_resolver)
+
+        # Default: VFS sandbox (existing behavior)
         import os as _os
         safe_name = _os.path.basename(name) or "file"
 
@@ -159,9 +314,7 @@ def make_sandbox_open(
             store, base_url, created_files,
         )
 
-        # Capture written content into VFS on close
         _orig_close = sf.close
-
         def _vfs_close():
             if not sf._closed and any(c in mode for c in "wa+"):
                 sf._buf.seek(0)
@@ -170,7 +323,6 @@ def make_sandbox_open(
                 vfs[safe_name] = content
                 sf._buf.seek(0)
             _orig_close()
-
         sf.close = _vfs_close
         return sf
 
@@ -290,55 +442,6 @@ def build_sandbox_globals(
     safe_builtins["get_secret"] = _get_secret
     safe_builtins["get_variable"] = _get_variable
 
-    # FileStore access — lets scripts create downloadable binary files
-    _sb_base_url = base_url
-
-    _MIME_MAP = {
-        "zip": "application/zip", "gz": "application/gzip",
-        "tar": "application/x-tar", "pdf": "application/pdf",
-        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
-        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
-        "csv": "text/csv", "json": "application/json",
-        "txt": "text/plain", "html": "text/html", "md": "text/markdown",
-        "mp4": "video/mp4", "mp3": "audio/mpeg", "wav": "audio/wav",
-    }
-
-    def _store_file(filename: str, data, content_type: str = "") -> dict:
-        """Store a file in FileStore and return {url, file_id, filename}.
-
-        Args:
-            filename: Name for the file (e.g. 'archive.zip')
-            data: bytes or str content
-            content_type: MIME type (auto-detected if empty)
-        Returns:
-            dict with 'url', 'file_id', 'filename'
-        """
-        from core.file_store import FileStore
-        if isinstance(data, str):
-            data = data.encode("utf-8")
-        if not content_type:
-            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            content_type = _MIME_MAP.get(ext, "application/octet-stream")
-        file_id = FileStore.instance().store(filename, data, content_type=content_type)
-        url = f"{_sb_base_url}/files/{file_id}/{filename}"
-        return {"url": url, "file_id": file_id, "filename": filename}
-
-    def _get_store_file(name_or_id: str) -> bytes:
-        """Read a file from FileStore by filename or file_id. Returns bytes."""
-        from core.file_store import FileStore
-        fs = FileStore.instance()
-        result = fs.get(name_or_id)
-        if result:
-            return result[1]  # (filename, bytes)
-        # Try searching by filename
-        for fid in fs.list_files():
-            entry = fs.get(fid)
-            if entry and entry[0] == name_or_id:
-                return entry[1]
-        raise FileNotFoundError(f"File '{name_or_id}' not found in FileStore")
-
-    safe_builtins["store_file"] = _store_file
-    safe_builtins["get_store_file"] = _get_store_file
 
     globals_dict = {"__builtins__": safe_builtins}
 
@@ -353,6 +456,7 @@ def execute_sandboxed(
     local_vars: Optional[Dict[str, Any]] = None,
     base_url: str = "http://localhost:9090",
     vfs: Optional[Dict[str, bytes]] = None,
+    fs_resolver: Optional[Callable] = None,
 ) -> tuple:
     """Execute code in the sandbox.
 
@@ -375,6 +479,7 @@ def execute_sandboxed(
     sandbox_open = make_sandbox_open(
         base_url=base_url,
         created_files=created_files, vfs=vfs,
+        fs_resolver=fs_resolver,
     )
 
     globals_dict, print_buf = build_sandbox_globals(

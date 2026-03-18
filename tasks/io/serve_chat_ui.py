@@ -4781,9 +4781,17 @@ function showMemoryOverlay(memories) {
     msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">No memories stored.</div>';
   } else {
     memories.forEach((m, i) => {
-      const agentBadge = m.agent
-        ? '<span style="background:#1e3a5f;color:#4fc3f7;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">' + m.agent + '</span>'
-        : '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">global</span>';
+      // Scope badge: private (agent+conv), conversation, agent, global
+      let scopeBadge;
+      if (m.agent && m.conversation_id) {
+        scopeBadge = '<span style="background:#5a1a1a;color:#ff6b6b;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F512} ' + m.agent + '</span>';
+      } else if (m.conversation_id) {
+        scopeBadge = '<span style="background:#1a3a5a;color:#74b9ff;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F4AC} conv</span>';
+      } else if (m.agent) {
+        scopeBadge = '<span style="background:#1e3a5f;color:#4fc3f7;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F916} ' + m.agent + '</span>';
+      } else {
+        scopeBadge = '<span style="background:#1b4332;color:#52b788;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:600">\u{1F310} global</span>';
+      }
       const tagsHtml = (m.tags || []).map(t =>
         '<span style="background:#2a2a4a;color:#a0a0c0;padding:1px 5px;border-radius:4px;font-size:10px;margin-left:3px">' + t + '</span>'
       ).join('');
@@ -4792,7 +4800,7 @@ function showMemoryOverlay(memories) {
       const delBtn = '<button onclick="event.stopPropagation();memDelete(\'' + m.id + '\')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const text = (m.text || '').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       msgsHtml += '<div id="mem-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.mem-full\')&&(this.querySelector(\'.mem-full\').style.display=this.querySelector(\'.mem-full\').style.display===\'block\'?\'none\':\'block\')">'
-        + '<div style="display:flex;align-items:center;gap:4px">' + agentBadge + tagsHtml
+        + '<div style="display:flex;align-items:center;gap:4px">' + scopeBadge + tagsHtml
         + '<span style="color:#6c6c8a;font-size:10px;margin-left:auto">' + age + '</span>'
         + editBtn + delBtn + '</div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + text.slice(0, 200) + '</div>'

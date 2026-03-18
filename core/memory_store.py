@@ -24,21 +24,22 @@ class MemoryEntry:
     """A single memory entry."""
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
-                 "embedding", "agent")
+                 "embedding", "agent", "conversation_id")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
                  created_at: float = 0, updated_at: float = 0,
                  embedding: Optional[List[float]] = None,
-                 agent: str = ""):
+                 agent: str = "", conversation_id: str = ""):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
         self.created_at = created_at or time.time()
         self.updated_at = updated_at or self.created_at
-        self.source = source  # e.g. "conversation:abc123", "agent", "user"
-        self.embedding = embedding  # optional vector for semantic search
-        self.agent = agent  # agent name ("" = global memory)
+        self.source = source
+        self.embedding = embedding
+        self.agent = agent  # "" = not scoped to agent
+        self.conversation_id = conversation_id  # "" = not scoped to conversation
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -53,6 +54,8 @@ class MemoryEntry:
             d["embedding"] = self.embedding
         if self.agent:
             d["agent"] = self.agent
+        if self.conversation_id:
+            d["conversation_id"] = self.conversation_id
         return d
 
     @classmethod
@@ -66,6 +69,7 @@ class MemoryEntry:
             updated_at=data.get("updated_at", 0),
             embedding=data.get("embedding"),
             agent=data.get("agent", ""),
+            conversation_id=data.get("conversation_id", ""),
         )
 
     def matches(self, query: str) -> bool:
@@ -114,7 +118,7 @@ class MemoryStore:
     def remember(self, user_id: str, text: str, tags: List[str],
                  source: str = "",
                  embedding: Optional[List[float]] = None,
-                 agent: str = "") -> MemoryEntry:
+                 agent: str = "", conversation_id: str = "") -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -135,44 +139,81 @@ class MemoryStore:
                     return e
 
             entry = MemoryEntry(text=text, tags=tags, source=source,
-                                embedding=embedding, agent=agent)
+                                embedding=embedding, agent=agent,
+                                conversation_id=conversation_id)
             entries.append(entry)
             self._save_user(user_id)
             return entry
 
     def recall(self, user_id: str, query: str = "",
                tags: Optional[List[str]] = None,
-               limit: int = 20) -> List[MemoryEntry]:
-        """Retrieve memories matching query and/or tags."""
+               limit: int = 20,
+               agent_name: str = "",
+               conversation_id: str = "") -> List[MemoryEntry]:
+        """Retrieve memories matching query and/or tags.
+
+        Scoping: returns memories visible to this agent in this conversation.
+        Priority order: private (agent+conv) → conversation → agent → global.
+        """
         with self._store_lock:
             self._ensure_loaded(user_id)
             entries = self._memories.get(user_id, [])
 
-        results = []
+        # Filter to entries visible for this agent/conversation
+        visible = []
         for e in entries:
+            if not self._is_visible(e, agent_name, conversation_id):
+                continue
             if query and tags:
                 if e.matches(query) or e.matches_tags(tags):
-                    results.append(e)
+                    visible.append(e)
             elif query:
                 if e.matches(query):
-                    results.append(e)
+                    visible.append(e)
             elif tags:
                 if e.matches_tags(tags):
-                    results.append(e)
+                    visible.append(e)
             else:
-                results.append(e)
+                visible.append(e)
 
-        # Sort by relevance: exact query match first, then by recency
+        # Sort: private → conversation → agent → global, then relevance/recency
+        def _scope_priority(e):
+            if e.agent and e.conversation_id:
+                return 0  # private
+            if e.conversation_id:
+                return 1  # conversation
+            if e.agent:
+                return 2  # agent
+            return 3  # global
+
         if query:
             q_lower = query.lower()
-            results.sort(key=lambda e: (
+            visible.sort(key=lambda e: (
+                _scope_priority(e),
                 0 if q_lower in e.text.lower() else 1,
                 -e.updated_at,
             ))
         else:
-            results.sort(key=lambda e: -e.updated_at)
+            visible.sort(key=lambda e: (_scope_priority(e), -e.updated_at))
 
-        return results[:limit]
+        return visible[:limit]
+
+    @staticmethod
+    def _is_visible(entry: MemoryEntry, agent_name: str,
+                    conversation_id: str) -> bool:
+        """Check if a memory entry is visible for this agent/conversation."""
+        ea, ec = entry.agent, entry.conversation_id
+        # Global: visible to all
+        if not ea and not ec:
+            return True
+        # Agent-scoped: visible if agent matches (or no agent filter)
+        if ea and not ec:
+            return not agent_name or ea == agent_name
+        # Conversation-scoped: visible if conversation matches
+        if not ea and ec:
+            return ec == conversation_id
+        # Private (agent+conversation): visible only if both match
+        return ea == agent_name and ec == conversation_id
 
     def forget(self, user_id: str, memory_id: str) -> bool:
         """Delete a specific memory entry."""
@@ -258,11 +299,13 @@ class MemoryStore:
     # ── Semantic search ─────────────────────────────────────────
 
     def semantic_recall(self, user_id: str, query_embedding: List[float],
-                        limit: int = 10) -> List[Tuple[MemoryEntry, float]]:
+                        limit: int = 10,
+                        agent_name: str = "",
+                        conversation_id: str = "") -> List[Tuple[MemoryEntry, float]]:
         """Find memories by semantic similarity using embeddings.
 
+        Filters by visibility (same scoping as recall).
         Returns list of (entry, similarity_score) sorted by score descending.
-        Only considers entries that have embeddings.
         """
         from core.embeddings import cosine_similarity as cos_sim
 
@@ -272,7 +315,7 @@ class MemoryStore:
 
         results = []
         for e in entries:
-            if e.embedding is not None:
+            if e.embedding is not None and self._is_visible(e, agent_name, conversation_id):
                 try:
                     score = cos_sim(query_embedding, e.embedding)
                     results.append((e, score))

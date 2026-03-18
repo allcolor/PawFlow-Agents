@@ -2989,6 +2989,7 @@ class AgentLoopTask(BaseTask):
                     "id": e.id, "text": e.text, "tags": e.tags,
                     "created_at": e.created_at, "updated_at": e.updated_at,
                     "source": e.source, "agent": e.agent,
+                    "conversation_id": e.conversation_id,
                 } for e in entries]
                 flowfile.set_content(json.dumps({
                     "memories": result, "count": len(result),
@@ -3035,13 +3036,26 @@ class AgentLoopTask(BaseTask):
                 return [flowfile]
             tags = body.get("tags", [])
             agent = body.get("agent", "")
+            conv_id = body.get("conversation_id", "")
+            scope = body.get("scope", "agent")  # global/agent/conversation/private
+            # Resolve scope
+            if scope == "global":
+                agent, conv_id = "", ""
+            elif scope == "conversation":
+                agent = ""
+            elif scope == "private":
+                pass  # keep both
+            else:  # agent
+                conv_id = ""
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
-                user_id, text, tags, source="user", agent=agent,
+                user_id, text, tags, source="user",
+                agent=agent, conversation_id=conv_id,
             )
             flowfile.set_content(json.dumps({
                 "id": entry.id, "text": entry.text,
                 "tags": entry.tags, "agent": entry.agent,
+                "conversation_id": entry.conversation_id,
             }, ensure_ascii=False).encode())
             return [flowfile]
 
@@ -5781,10 +5795,11 @@ class AgentLoopTask(BaseTask):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
             elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
-                if user_id:
-                    h.set_user_id(user_id)
-                if agent_name and isinstance(h, RememberHandler):
+                h.set_user_id(user_id)
+                if hasattr(h, 'set_agent_name'):
                     h.set_agent_name(agent_name)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
             elif isinstance(h, BrowserActionHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)

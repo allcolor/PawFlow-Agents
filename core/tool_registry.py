@@ -2521,6 +2521,7 @@ class RememberHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._agent_name = ""
+        self._conversation_id = ""
         self._embed_fn = None
 
     @property
@@ -2551,9 +2552,10 @@ class RememberHandler(ToolHandler):
                     "items": {"type": "string"},
                     "description": "Tags for categorization and retrieval (e.g. 'preference', 'name', 'project')",
                 },
-                "global": {
-                    "type": "boolean",
-                    "description": "If true, memory is global (shared across all agents). Default: false (scoped to current agent).",
+                "scope": {
+                    "type": "string",
+                    "enum": ["conversation", "agent", "global", "private"],
+                    "description": "Where to store: conversation (this conv, all agents), agent (all convs, this agent), global (everywhere), private (this agent + this conv only). Default: agent.",
                 },
             },
             "required": ["text"],
@@ -2564,6 +2566,9 @@ class RememberHandler(ToolHandler):
 
     def set_agent_name(self, name: str):
         self._agent_name = name
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
 
     def set_embed_fn(self, fn):
         """Set embedding function for auto-embedding memories."""
@@ -2576,10 +2581,18 @@ class RememberHandler(ToolHandler):
         tags = arguments.get("tags", [])
         if not isinstance(tags, list):
             tags = [str(tags)]
-        is_global = arguments.get("global", False)
+        scope = arguments.get("scope", "agent")
 
         user_id = self._user_id or "anonymous"
-        agent = "" if is_global else (self._agent_name or "")
+        # Resolve scope to agent + conversation_id
+        if scope == "global":
+            agent, conv_id = "", ""
+        elif scope == "conversation":
+            agent, conv_id = "", self._conversation_id
+        elif scope == "private":
+            agent, conv_id = self._agent_name or "", self._conversation_id
+        else:  # "agent" (default)
+            agent, conv_id = self._agent_name or "", ""
         try:
             # Auto-embed if embed function is available
             embedding = None
@@ -2593,9 +2606,16 @@ class RememberHandler(ToolHandler):
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
                 embedding=embedding, agent=agent,
+                conversation_id=conv_id,
             )
-            scope = "global" if not agent else f"agent:{agent}"
-            return f"Remembered (id: {entry.id}, tags: {entry.tags}, scope: {scope})"
+            scope_label = scope
+            if scope == "private":
+                scope_label = f"private:{agent}@{conv_id[:8]}"
+            elif scope == "agent" and agent:
+                scope_label = f"agent:{agent}"
+            elif scope == "conversation":
+                scope_label = f"conv:{conv_id[:8]}"
+            return f"Remembered (id: {entry.id}, tags: {entry.tags}, scope: {scope_label})"
         except Exception as e:
             return f"Error storing memory: {e}"
 
@@ -2605,6 +2625,8 @@ class SemanticRecallHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
+        self._agent_name = ""
+        self._conversation_id = ""
         self._embed_fn = None
 
     @property
@@ -2639,6 +2661,12 @@ class SemanticRecallHandler(ToolHandler):
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
     def set_embed_fn(self, fn):
         """Set embedding function for query embedding."""
         self._embed_fn = fn
@@ -2658,6 +2686,8 @@ class SemanticRecallHandler(ToolHandler):
             from core.memory_store import MemoryStore
             results = MemoryStore.instance().semantic_recall(
                 user_id, query_embedding, limit=limit,
+                agent_name=self._agent_name,
+                conversation_id=self._conversation_id,
             )
             if not results:
                 return "No semantically similar memories found."
@@ -2676,6 +2706,8 @@ class RecallHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
+        self._agent_name = ""
+        self._conversation_id = ""
 
     @property
     def name(self) -> str:
@@ -2709,6 +2741,12 @@ class RecallHandler(ToolHandler):
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         query = arguments.get("query", "")
         tags = arguments.get("tags")
@@ -2720,6 +2758,8 @@ class RecallHandler(ToolHandler):
             from core.memory_store import MemoryStore
             entries = MemoryStore.instance().recall(
                 user_id, query=query, tags=tags, limit=20,
+                agent_name=self._agent_name,
+                conversation_id=self._conversation_id,
             )
             if not entries:
                 return "No memories found matching your query."
@@ -2727,7 +2767,10 @@ class RecallHandler(ToolHandler):
             lines = []
             for e in entries:
                 tag_str = ", ".join(e.tags) if e.tags else "none"
-                lines.append(f"- [{e.id}] ({tag_str}) {e.text}")
+                scope = "🌐" if not e.agent and not e.conversation_id else (
+                    "🔒" if e.agent and e.conversation_id else (
+                        "💬" if e.conversation_id else "🤖"))
+                lines.append(f"- [{e.id}] {scope} ({tag_str}) {e.text}")
             return f"Found {len(entries)} memories:\n" + "\n".join(lines)
         except Exception as e:
             return f"Error recalling memories: {e}"

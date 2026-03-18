@@ -2300,18 +2300,33 @@ class AgentLoopTask(BaseTask):
                     "token_estimate": estimated,
                 }).encode())
             else:
-                # Doesn't fit — inform user instead of silently compacting
-                flowfile.set_content(json.dumps({
-                    "ok": True, "action": "too_large",
-                    "before": len(all_msgs), "after": len(all_msgs),
-                    "token_estimate": estimated,
-                    "context_max": context_max,
-                    "message": (
-                        f"Conversation ({estimated} tokens) exceeds context "
-                        f"window ({context_max} tokens). Use /compact to "
-                        f"shrink it, or /rebuild-full to load it as-is."
-                    ),
-                }).encode())
+                # Doesn't fit — compact to make it fit
+                _summ_client, _ = self._get_summarizer_client(user_id)
+                if _summ_client:
+                    client = _summ_client
+                else:
+                    client, _ = self._resolve_client(
+                        self.config.get("llm_service", "default"),
+                        user_id, resolve_expressions=False,
+                    )
+                if not client:
+                    flowfile.set_content(json.dumps({"error": "No LLM service for compaction"}).encode())
+                    return [flowfile]
+                try:
+                    compacted = self._compact_if_needed(
+                        deserialized, client, context_max, 0.8,
+                        int(self.config.get("context_keep_recent", 6)),
+                        conversation_id=conv_id,
+                        agent_name=_ctx_agent,
+                    )
+                    new_estimate = self._estimate_tokens(compacted)
+                    flowfile.set_content(json.dumps({
+                        "ok": True, "action": "compacted",
+                        "before": len(all_msgs), "after": len(compacted),
+                        "token_estimate": new_estimate,
+                    }).encode())
+                except Exception as e:
+                    flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
         if action == "rebuild_clean":

@@ -50,6 +50,7 @@ class AgentTask:
     llm_service: str = ""  # service ID for LLM routing
     user_id: str = ""  # user ID for service resolution
     source_agent: str = ""  # name of the parent agent (for identity tracking)
+    source_agent_nickname: str = ""  # display name of the parent agent
     source_llm_service: str = ""  # LLM service of the parent agent
 
 
@@ -224,8 +225,9 @@ class SubAgentExecutor:
         sys_prompt = task.system_prompt
         if task.source_agent:
             src_svc = f" via {task.source_llm_service}" if task.source_llm_service else ""
+            src_nick = f" (nickname: \"{task.source_agent_nickname}\")" if task.source_agent_nickname else ""
             sys_prompt += (
-                f"\n\n[CONTEXT] You were spawned by agent '{task.source_agent}'{src_svc}. "
+                f"\n\n[CONTEXT] You were spawned by agent '{task.source_agent}'{src_nick}{src_svc}. "
                 f"They sent you a message and expect a response. "
                 f"Answer their request directly."
             )

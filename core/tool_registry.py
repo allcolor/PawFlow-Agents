@@ -3603,14 +3603,15 @@ class SpawnAgentsHandler(ToolHandler):
 
         # Resolve self-name and nicknames to detect self-calls
         _self_names = {_src_agent.lower()} if _src_agent else set()
+        _src_nickname = ""
         if self._conversation_id and _src_agent:
             try:
                 from core.conversation_store import ConversationStore
                 _nicks = ConversationStore.instance().get_extra(
                     self._conversation_id, "agent_nicknames") or {}
-                _self_nick = _nicks.get(_src_agent, "")
-                if _self_nick:
-                    _self_names.add(_self_nick.lower())
+                _src_nickname = _nicks.get(_src_agent, "")
+                if _src_nickname:
+                    _self_names.add(_src_nickname.lower())
             except Exception:
                 pass
 
@@ -3625,6 +3626,7 @@ class SpawnAgentsHandler(ToolHandler):
                                          conversation_id=self._conversation_id)
                 task.id = task_id
                 task.source_agent = _src_agent
+                task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
 
                 # Prevent agent from calling itself

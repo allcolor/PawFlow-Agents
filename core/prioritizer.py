@@ -130,7 +130,10 @@ class PrioritizedQueue:
         """Remove a specific FlowFile (for selective dequeue)."""
         with self._lock:
             if self._type == PrioritizerType.PRIORITY_ATTRIBUTE:
-                for prio, q in self._priority_queues.items():
+                for prio in list(self._priority_queues.keys()):
+                    q = self._priority_queues.get(prio)
+                    if not q:
+                        continue
                     try:
                         q.remove(flowfile)
                         self._total -= 1

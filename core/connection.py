@@ -148,26 +148,24 @@ class Connection:
     def remove(self, flowfile: FlowFile) -> bool:
         """Remove a specific FlowFile from the queue. Returns True on success."""
         with self._lock:
-            items = self._queue._items
-            for i, ff in enumerate(items):
-                if ff is flowfile:
-                    items.pop(i)
+            if self._queue.remove(flowfile):
+                self._total_bytes -= flowfile.size()
+                self._flowfiles_out += 1
+                self._enqueue_times.pop(flowfile.process_id, None)
+                return True
+            return False
+
+    def remove_by_index(self, index: int) -> bool:
+        """Remove a FlowFile by its position in the queue (priority-ordered)."""
+        with self._lock:
+            items = self._queue.peek_all(limit=index + 1)
+            if index < len(items):
+                ff = items[index]
+                if self._queue.remove(ff):
                     self._total_bytes -= ff.size()
                     self._flowfiles_out += 1
                     self._enqueue_times.pop(ff.process_id, None)
                     return True
-            return False
-
-    def remove_by_index(self, index: int) -> bool:
-        """Remove a FlowFile by its position in the queue. Returns True on success."""
-        with self._lock:
-            items = self._queue._items
-            if 0 <= index < len(items):
-                ff = items.pop(index)
-                self._total_bytes -= ff.size()
-                self._flowfiles_out += 1
-                self._enqueue_times.pop(ff.process_id, None)
-                return True
             return False
 
     def clear(self):

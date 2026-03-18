@@ -756,8 +756,7 @@ class AgentLoopTask(BaseTask):
         )
 
         registry = self.get_tool_registry()
-        # conversation_id/user_id not yet known — will be set in _execute_streaming
-        self._configure_tool_handlers(registry)
+        # Handlers are fully configured later (after conversation_id/user_id are known)
 
         # Wire embedding function for semantic memory handlers
         self._wire_embed_fn(registry, client)
@@ -1171,15 +1170,14 @@ class AgentLoopTask(BaseTask):
             _active_agent_name, conversation_id, _nicknames,
         ) + system_prompt
 
-        # Re-configure handlers now that conversation_id/user_id are known
-        if conversation_id or user_id:
-            self._configure_tool_handlers(
-                registry, conversation_id=conversation_id or "",
-                user_id=user_id or "",
-                llm_client=client, llm_model=model_name,
-                agent_name=_active_agent_name or "assistant",
-                agent_svc=_active_llm_service or "",
-            )
+        # Configure all handlers with full context
+        self._configure_tool_handlers(
+            registry, conversation_id=conversation_id or "",
+            user_id=user_id or "",
+            llm_client=client, llm_model=model_name,
+            agent_name=_active_agent_name or "assistant",
+            agent_svc=_active_llm_service or "",
+        )
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,

@@ -2037,17 +2037,27 @@ function connectSSE(cid) {
       tcs.el = null; tcs.text = ''; tcs.chunks = [];
     }
     trackAgentTool(tcAgent, data.tool);
+    const srcLabel = displayAgentName(tcAgent) + (data.llm_service ? ' via ' + data.llm_service : '');
     if (data.tool === 'spawn_agents' && data.arguments && data.arguments.tasks) {
-      // Show source → dest for each spawned agent
-      const src = displayAgentName(tcAgent);
-      const lines = data.arguments.tasks.map(t => {
-        const dst = displayAgentName(t.agent || '?');
-        const preview = (t.message || '').substring(0, 60);
-        return '\u27A1 ' + src + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
+      const lines = data.arguments.tasks.map(task => {
+        const dst = displayAgentName(task.agent || '?');
+        const preview = (task.message || '').substring(0, 80);
+        return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
       });
       addMsg('tool', lines.join('\n'));
     } else {
-      addMsg('tool', t('callingTool', {tool: data.tool}));
+      // Show agent source + tool name + arguments preview
+      const args = data.arguments || {};
+      const argKeys = Object.keys(args);
+      let argPreview = '';
+      if (argKeys.length > 0) {
+        argPreview = argKeys.map(k => {
+          const v = typeof args[k] === 'string' ? args[k].substring(0, 60) : JSON.stringify(args[k]).substring(0, 60);
+          return k + '=' + v;
+        }).join(', ');
+        if (argPreview.length > 120) argPreview = argPreview.substring(0, 120) + '...';
+      }
+      addMsg('tool', '\u{1F527} [' + srcLabel + '] ' + data.tool + (argPreview ? '(' + argPreview + ')' : ''));
     }
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });

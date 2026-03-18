@@ -4045,6 +4045,7 @@ class AgentLoopTask(BaseTask):
                         bus.publish_event(conversation_id, "tool_call", {
                             "tool": tc.name, "arguments": tc.arguments,
                             "agent_name": _agent_name or "assistant",
+                            "llm_service": _agent_svc or "",
                         })
                     _update_interaction(
                         iteration=iteration, last_tool=response.tool_calls[-1].name,

@@ -2914,7 +2914,7 @@ const HELP_DATA = {
     detail: 'Displays input/output tokens, call count, and estimated cost per agent.\n\n'
       + '  /cost ALL     — All agents\n'
       + '  /cost grok    — Specific agent\n\n'
-      + 'Cost is calculated from cost_per_1k_input/output on the LLM service.\n'
+      + 'Cost is calculated from cost_per_1m_input/output ($ per million tokens) on the LLM service.\n'
       + 'If not configured, shows "not configured".',
   },
   '/autoconv': {
@@ -3116,9 +3116,9 @@ async function handleSlashCommand(text) {
           const calls = a.calls || 0;
           let line = name + ' via ' + svc + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
           if (a.cost !== undefined) {
-            line += ' — $' + a.cost.toFixed(4);
-          } else if (a.cost_in_1k === undefined) {
-            line += ' — cost: not configured (set cost_per_1k_input/output on service)';
+            line += ' — $' + a.cost.toFixed(6);
+          } else if (a.cost_per_1m_input === undefined) {
+            line += ' — cost: not configured (set cost_per_1m_input/output on service)';
           }
           return line;
         });
@@ -3128,7 +3128,7 @@ async function handleSlashCommand(text) {
         const totalCost = agents.reduce((s, a) => s + (a.cost || 0), 0);
         lines.push('---');
         lines.push('Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out'
-          + (totalCost > 0 ? ' — $' + totalCost.toFixed(4) : ''));
+          + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
         addMsg('system', lines.join('\n'));
       }
     } catch (e) { addMsg('error', 'Failed: ' + e.message); }

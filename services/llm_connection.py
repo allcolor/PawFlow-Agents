@@ -197,17 +197,17 @@ class LLMConnectionService(BaseService):
                 "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",
             },
-            "cost_per_1k_input": {
-                "type": "float",
+            "cost_per_1m_input": {
+                "type": "string",
                 "required": False,
-                "default": 0.0,
-                "description": "Cost per 1K input tokens ($)",
+                "default": "0",
+                "description": "Cost per 1M input tokens ($), e.g. 0.20",
             },
-            "cost_per_1k_output": {
-                "type": "float",
+            "cost_per_1m_output": {
+                "type": "string",
                 "required": False,
-                "default": 0.0,
-                "description": "Cost per 1K output tokens ($)",
+                "default": "0",
+                "description": "Cost per 1M output tokens ($), e.g. 0.50",
             },
             "claude_binary": {
                 "type": "string",

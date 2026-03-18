@@ -1131,23 +1131,23 @@ class AgentLoopTask(BaseTask):
             # Enrich with cost from LLM service config
             for s in stats:
                 svc_id = s.get("llm_service", "")
-                cost_in_1k = 0.0
-                cost_out_1k = 0.0
+                cost_in_1m = 0.0
+                cost_out_1m = 0.0
                 if svc_id:
                     try:
                         from gui.services.global_service_registry import GlobalServiceRegistry
                         svc_def = GlobalServiceRegistry.get_instance().get_definition(svc_id)
                         if svc_def:
-                            cost_in_1k = float(svc_def.config.get("cost_per_1k_input", 0))
-                            cost_out_1k = float(svc_def.config.get("cost_per_1k_output", 0))
+                            cost_in_1m = float(svc_def.config.get("cost_per_1m_input", 0))
+                            cost_out_1m = float(svc_def.config.get("cost_per_1m_output", 0))
                     except Exception:
                         pass
                 tokens_in = s.get("in", 0)
                 tokens_out = s.get("out", 0)
-                if cost_in_1k or cost_out_1k:
-                    s["cost"] = round(tokens_in / 1000 * cost_in_1k + tokens_out / 1000 * cost_out_1k, 4)
-                    s["cost_in_1k"] = cost_in_1k
-                    s["cost_out_1k"] = cost_out_1k
+                if cost_in_1m or cost_out_1m:
+                    s["cost"] = round(tokens_in / 1_000_000 * cost_in_1m + tokens_out / 1_000_000 * cost_out_1m, 6)
+                    s["cost_per_1m_input"] = cost_in_1m
+                    s["cost_per_1m_output"] = cost_out_1m
 
             flowfile.set_content(json.dumps({"agents": stats}, ensure_ascii=False).encode())
             return [flowfile]

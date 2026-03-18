@@ -2893,8 +2893,16 @@ const HELP_DATA = {
   },
   '/rebuild_clean': {
     usage: '/rebuild_clean',
+    short: 'Set context = full conversation (no compaction, deprecated — use /rebuild-full)',
+    detail: 'Deprecated. Use /rebuild-full instead.',
+  },
+  '/rebuild-full': {
+    usage: '/rebuild-full [agent|ALL]',
     short: 'Set context = full conversation (no compaction)',
-    detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.',
+    detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.\n\n'
+      + '  /rebuild-full        \u2014 Rebuild shared context\n'
+      + '  /rebuild-full grok   \u2014 Rebuild grok\'s context\n'
+      + '  /rebuild-full ALL    \u2014 Rebuild all agents\' contexts',
   },
   '/context': {
     usage: '/context [agent]',
@@ -3309,9 +3317,24 @@ async function handleSlashCommand(text) {
     return true;
   }
 
-  if (cmd === '/rebuild_clean') {
+  if (cmd === '/rebuild_clean' || cmd === '/rebuild-full') {
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-    cmdRebuildClean();
+    const rfAgent = parts[1] || '';
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    contextOpInProgress = true;
+    const rfLabel = rfAgent ? 'Rebuilding full (' + rfAgent + ')' : 'Rebuilding full';
+    showContextOp(rfLabel);
+    const rfBody = { action: 'rebuild_full', conversation_id: conversationId };
+    if (rfAgent) rfBody.agent_name = rfAgent;
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(rfBody),
+    }).then(r => r.json()).then(data => {
+      if (data.error) { addMsg('error', 'Rebuild full failed: ' + data.error); return; }
+      const target = data.agent || 'shared';
+      addMsg('system', 'Context rebuilt (full): ' + data.messages + ' messages, ~' + data.token_estimate + ' tokens (' + target + ')');
+    }).catch(e => addMsg('error', 'Rebuild full failed: ' + e.message))
+      .finally(() => { hideContextOp(); contextOpInProgress = false; });
     return true;
   }
 

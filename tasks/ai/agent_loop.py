@@ -1249,7 +1249,7 @@ class AgentLoopTask(BaseTask):
             return evt.is_set()
 
     _CONTEXT_OPS = frozenset((
-        "compact", "rebuild", "rebuild_clean",
+        "compact", "rebuild", "rebuild_clean", "rebuild_full",
         "resume_conversation", "restart_from",
     ))
 
@@ -2320,9 +2320,10 @@ class AgentLoopTask(BaseTask):
                     return [flowfile]
                 try:
                     compacted = self._compact_if_needed(
-                        deserialized, client, context_max, 0.5,
+                        deserialized, client, context_max, 0.8,
                         int(self.config.get("context_keep_recent", 6)),
                         conversation_id=conv_id,
+                        agent_name=_ctx_agent,
                     )
                     new_estimate = self._estimate_tokens(compacted)
                     flowfile.set_content(json.dumps({
@@ -2354,6 +2355,38 @@ class AgentLoopTask(BaseTask):
                 "ok": True, "action": "clean_restore",
                 "messages": len(all_msgs),
                 "token_estimate": estimated,
+            }).encode())
+            return [flowfile]
+
+        if action == "rebuild_full":
+            conv_id = body.get("conversation_id", "")
+            _ctx_agent = body.get("agent_name", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            all_msgs = store.load(conv_id, user_id=user_id)
+            if not all_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            deserialized = self._deserialize_messages(all_msgs)
+            estimated = self._estimate_tokens(deserialized)
+            if _ctx_agent == "ALL":
+                # Rebuild all agent contexts + shared
+                agent_map = store.list_agent_contexts(conv_id)
+                for name in agent_map:
+                    if name == "*":
+                        store.save_context(conv_id, list(all_msgs))
+                    else:
+                        store.save_agent_context(conv_id, name, list(all_msgs))
+            else:
+                _ctx_save(conv_id, list(all_msgs), _ctx_agent)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "messages": len(all_msgs),
+                "token_estimate": estimated,
+                "agent": _ctx_agent or "shared",
             }).encode())
             return [flowfile]
 

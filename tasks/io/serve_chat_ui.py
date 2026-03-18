@@ -2729,7 +2729,7 @@ const HELP_DATA = {
       + '  /agent interrupt <name|ALL>       — Force agent to stop and respond immediately\n'
       + '  /agent btw <name|ALL> <text>      — Side-channel question (no interruption)\n'
       + '  /agent resume <name>              — Tell agent to continue from where it stopped\n'
-      + '  /agent setname <real> <nickname>  — Set display name (quotes for spaces)\n\n'
+      + '  /agent setname <real> [nickname]  — Set or reset display name (omit to reset)\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
@@ -3127,6 +3127,15 @@ async function handleSlashCommand(text) {
   }
 
 
+  if (cmd === '/setname') {
+    const sargs = parseQuotedArgs(text);
+    const realName = sargs[1] || '';
+    const nickname = sargs[2] || '';
+    if (!realName) { addMsg('system', 'Usage: /setname <agent> [nickname]  (omit nickname to reset)'); return true; }
+    await cmdAgentSetname(realName, nickname || realName);
+    return true;
+  }
+
   if (cmd === '/msg') {
     const margs = parseQuotedArgs(text);
     const target = resolveAgentName(margs[1] || '');
@@ -3208,10 +3217,10 @@ async function handleSlashCommand(text) {
       const qargs = parseQuotedArgs(text);  // ['/agent', 'setname', 'realname', 'nickname']
       const realName = qargs[2] || '';
       const nickname = qargs[3] || '';
-      if (!realName || !nickname) {
-        addMsg('system', 'Usage: /agent setname <realname> <nickname>  (use quotes for names with spaces)');
+      if (!realName) {
+        addMsg('system', 'Usage: /agent setname <realname> [nickname]  (omit nickname to reset)');
       } else {
-        await cmdAgentSetname(realName, nickname);
+        await cmdAgentSetname(realName, nickname || realName);
       }
     } else {
       addMsg('system', 'Usage: /agent list | create | select | default | delete | msg | interrupt | btw | resume | setname');

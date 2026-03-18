@@ -3104,28 +3104,28 @@ async function handleSlashCommand(text) {
         credentials: 'same-origin',
       });
       const data = await resp.json();
-      const agents = data.agents || [];
-      if (agents.length === 0) {
+      const services = data.services || [];
+      if (services.length === 0) {
         addMsg('system', 'No usage data found.');
       } else {
-        const lines = agents.map(a => {
-          const name = displayAgentName(a.agent || '?');
-          const svc = a.llm_service || 'default';
-          const tokIn = (a.in || 0).toLocaleString();
-          const tokOut = (a.out || 0).toLocaleString();
-          const calls = a.calls || 0;
-          let line = name + ' via ' + svc + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
-          if (a.cost !== undefined) {
-            line += ' — $' + a.cost.toFixed(6);
-          } else if (a.cost_per_1m_input === undefined) {
-            line += ' — cost: not configured (set cost_per_1m_input/output on service)';
+        const lines = services.map(s => {
+          const svc = s.llm_service || '?';
+          const model = s.model || '';
+          const provider = s.provider || '';
+          const tokIn = (s.tokens_in || 0).toLocaleString();
+          const tokOut = (s.tokens_out || 0).toLocaleString();
+          const calls = s.calls || 0;
+          let line = svc + (model ? ' (' + model + ')' : '') + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
+          if (s.cost !== undefined) {
+            line += ' — $' + s.cost.toFixed(6);
+          } else {
+            line += ' — cost: not configured';
           }
           return line;
         });
-        // Total
-        const totalIn = agents.reduce((s, a) => s + (a.in || 0), 0);
-        const totalOut = agents.reduce((s, a) => s + (a.out || 0), 0);
-        const totalCost = agents.reduce((s, a) => s + (a.cost || 0), 0);
+        const totalIn = services.reduce((sum, s) => sum + (s.tokens_in || 0), 0);
+        const totalOut = services.reduce((sum, s) => sum + (s.tokens_out || 0), 0);
+        const totalCost = services.reduce((sum, s) => sum + (s.cost || 0), 0);
         lines.push('---');
         lines.push('Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out'
           + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));

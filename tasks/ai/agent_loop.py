@@ -1118,38 +1118,36 @@ class AgentLoopTask(BaseTask):
             return [flowfile]
 
         if action == "cost":
-            agent_name = body.get("agent", "ALL")
-            from core.token_tracker import TokenTracker
-            tracker = TokenTracker.instance()
-            if agent_name.upper() == "ALL":
-                stats = tracker.get_agent_usage(user_id)
-            else:
-                # Resolve nickname
-                agent_name = self._resolve_agent_name(agent_name, body.get("conversation_id", ""))
-                stats = tracker.get_agent_usage(user_id, agent_name)
+            # Get stats from live LLM service instances (source of truth)
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            stats = []
+            for svc_id, svc_def in greg.get_all_definitions().items():
+                if svc_def.service_type != "llmConnection":
+                    continue
+                svc = greg.get_live_instance(svc_id)
+                if svc and hasattr(svc, 'get_token_stats'):
+                    s = svc.get_token_stats()
+                    s["llm_service"] = svc_id
+                    s["model"] = getattr(svc, 'default_model', '') or ''
+                    s["provider"] = getattr(svc, 'provider', '') or ''
+                    # Cost calculation
+                    cost_in_1m = float(svc_def.config.get("cost_per_1m_input", 0) or 0)
+                    cost_out_1m = float(svc_def.config.get("cost_per_1m_output", 0) or 0)
+                    if cost_in_1m or cost_out_1m:
+                        s["cost"] = round(
+                            s["tokens_in"] / 1_000_000 * cost_in_1m +
+                            s["tokens_out"] / 1_000_000 * cost_out_1m, 6)
+                        s["cost_per_1m_input"] = cost_in_1m
+                        s["cost_per_1m_output"] = cost_out_1m
+                    stats.append(s)
 
-            # Enrich with cost from LLM service config
-            for s in stats:
-                svc_id = s.get("llm_service", "")
-                cost_in_1m = 0.0
-                cost_out_1m = 0.0
-                if svc_id:
-                    try:
-                        from gui.services.global_service_registry import GlobalServiceRegistry
-                        svc_def = GlobalServiceRegistry.get_instance().get_definition(svc_id)
-                        if svc_def:
-                            cost_in_1m = float(svc_def.config.get("cost_per_1m_input", 0))
-                            cost_out_1m = float(svc_def.config.get("cost_per_1m_output", 0))
-                    except Exception:
-                        pass
-                tokens_in = s.get("in", 0)
-                tokens_out = s.get("out", 0)
-                if cost_in_1m or cost_out_1m:
-                    s["cost"] = round(tokens_in / 1_000_000 * cost_in_1m + tokens_out / 1_000_000 * cost_out_1m, 6)
-                    s["cost_per_1m_input"] = cost_in_1m
-                    s["cost_per_1m_output"] = cost_out_1m
+            # Filter by agent if requested (via TokenTracker for agent→service mapping)
+            req_agent = body.get("agent", "ALL")
+            if req_agent.upper() != "ALL":
+                req_agent = self._resolve_agent_name(req_agent, body.get("conversation_id", ""))
 
-            flowfile.set_content(json.dumps({"agents": stats}, ensure_ascii=False).encode())
+            flowfile.set_content(json.dumps({"services": stats}, ensure_ascii=False).encode())
             return [flowfile]
 
         if action == "list_active":

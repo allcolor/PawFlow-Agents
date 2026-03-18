@@ -49,6 +49,10 @@ class LLMConnectionService(BaseService):
         max_conc = int(self.config.get("max_concurrent", 0))
         self._semaphore = threading.Semaphore(max_conc) if max_conc > 0 else None
         self._max_concurrent = max_conc
+        # Token tracking (at service level — tracks ALL calls through this service)
+        self._total_tokens_in = 0
+        self._total_tokens_out = 0
+        self._call_count = 0
 
     def _create_connection(self):
         """Validate config and return a marker (actual HTTP is per-request)."""
@@ -85,19 +89,12 @@ class LLMConnectionService(BaseService):
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
     ) -> LLMResponse:
-        """Send a completion request to the LLM.
-
-        Args:
-            messages: Conversation messages.
-            model: Model name override.
-            temperature: Sampling temperature.
-            max_tokens: Max response tokens.
-            response_format: "json" for JSON mode.
-            tools: Tool definitions for function calling / tool_use.
-        """
+        """Send a completion request to the LLM."""
         self.ensure_connected()
         try:
-            return self._client.complete(messages, model, temperature, max_tokens, response_format, tools)
+            resp = self._client.complete(messages, model, temperature, max_tokens, response_format, tools)
+            self._track_tokens(resp, messages)
+            return resp
         except LLMClientError as e:
             raise ServiceError(str(e))
 
@@ -113,9 +110,39 @@ class LLMConnectionService(BaseService):
         """Streaming completion — delegates to LLMClient.complete_stream()."""
         self.ensure_connected()
         try:
-            return self._client.complete_stream(messages, model, temperature, max_tokens, tools, callback)
+            resp = self._client.complete_stream(messages, model, temperature, max_tokens, tools, callback)
+            self._track_tokens(resp, messages)
+            return resp
         except LLMClientError as e:
             raise ServiceError(str(e))
+
+    def _track_tokens(self, response: LLMResponse, messages: List[LLMMessage]):
+        """Track token usage at the service level."""
+        tokens_in = response.tokens_in
+        tokens_out = response.tokens_out
+
+        # Estimate if provider didn't return token counts
+        if not tokens_in and messages:
+            # Rough estimate: ~4 chars per token
+            total_chars = sum(len(m.content or "") if isinstance(m.content, str)
+                              else sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                              else 0 for m in messages)
+            tokens_in = total_chars // 4
+        if not tokens_out and response.content:
+            tokens_out = len(response.content) // 4
+
+        if tokens_in or tokens_out:
+            self._total_tokens_in += tokens_in
+            self._total_tokens_out += tokens_out
+            self._call_count += 1
+
+    def get_token_stats(self) -> Dict[str, Any]:
+        """Return token usage stats for this service instance."""
+        return {
+            "tokens_in": self._total_tokens_in,
+            "tokens_out": self._total_tokens_out,
+            "calls": self._call_count,
+        }
 
     def get_client(self) -> LLMClient:
         """Return the underlying LLMClient instance."""

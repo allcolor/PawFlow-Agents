@@ -5790,6 +5790,7 @@ class AgentLoopTask(BaseTask):
         _is_task_verify = any(
             "[task_verify:" in r for r in (scheduled_reasons or [])
         )
+        is_random_thought = False
 
         if _is_task:
             # Load ALL active tasks for this agent from agent_tasks dict

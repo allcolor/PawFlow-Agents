@@ -215,11 +215,8 @@ def _render_config_editor(registry, sdef, gen):
                 if new_desc != sdef.description:
                     registry.update_description(sdef.service_id, new_desc)
             st.session_state.pop("_gsvc_edit", None)
-            st.session_state["_gsvc_gen"] = gen + 1
-            st.rerun(scope="fragment")
+            st.success(f"Saved {sdef.service_id}")
     with save_cols[1]:
         if st.button(t("common.cancel"),
                      key=f"gsvc_cancel_{sdef.service_id}_{gen}"):
             st.session_state.pop("_gsvc_edit", None)
-            st.session_state["_gsvc_gen"] = gen + 1
-            st.rerun(scope="fragment")

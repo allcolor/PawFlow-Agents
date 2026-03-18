@@ -242,9 +242,32 @@ def cmd_serve(args):
 
 def cmd_gui(args):
     """Start the PyFi2 GUI."""
+    project_root = os.path.dirname(os.path.abspath(__file__))
+
+    # Auto-restore flows in a background thread that pokes Streamlit
+    # to trigger main.py execution (flows run inside the Streamlit process)
+    import threading
+    import urllib.request
+
+    def _trigger_restore():
+        """Wait for Streamlit to start, then poke it so main.py runs."""
+        import time
+        port = args.port
+        for _ in range(30):  # try for 30s
+            time.sleep(1)
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/_stcore/health", timeout=2)
+                # Streamlit is up — trigger main.py by visiting the app
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
+                return
+            except Exception:
+                continue
+
+    trigger = threading.Thread(target=_trigger_restore, daemon=True)
+    trigger.start()
+
     import subprocess
     # Ensure project root is in PYTHONPATH for the Streamlit subprocess
-    project_root = os.path.dirname(os.path.abspath(__file__))
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH", "")
     if project_root not in pythonpath.split(os.pathsep):

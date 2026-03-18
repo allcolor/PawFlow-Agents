@@ -970,6 +970,11 @@ class AgentLoopTask(BaseTask):
             from core.conversation_store import ConversationStore
             conversation_id = ConversationStore.instance().generate_id()
 
+        if use_conv_store and not conversation_id:
+            raise ValueError(
+                "BUG: no conversation_id after generate_id() — this should never happen"
+            )
+
         # target_agent: temporary agent override for /agent msg (not persisted)
         _target_agent = body_json.get("target_agent", "") if body_json else ""
         if _target_agent and conversation_id:

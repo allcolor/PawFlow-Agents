@@ -1258,7 +1258,8 @@ class AgentLoopTask(BaseTask):
             return evt.is_set()
 
     _CONTEXT_OPS = frozenset((
-        "compact", "rebuild", "rebuild_clean", "rebuild_full",
+        # compact manages its own lock (background thread)
+        "rebuild", "rebuild_clean", "rebuild_full",
         "resume_conversation", "restart_from",
     ))
 
@@ -2267,10 +2268,20 @@ class AgentLoopTask(BaseTask):
             _compact_agent_name = _ctx_agent
             _compact_keep = int(self.config.get("context_keep_recent", 6))
 
-            # Run compaction in background — publish SSE progress events
+            # Run compaction in background — holds context op lock until done
+            _self_ref = self
+
             def _run_compact():
                 from core.conversation_event_bus import ConversationEventBus
                 bus = ConversationEventBus.instance()
+                # Acquire context op lock (blocks incoming FlowFiles for this conv)
+                _self_ref.cancel_agent(_compact_conv, silent=True)
+                if not _self_ref._acquire_context_op(_compact_conv, timeout=60.0):
+                    bus.publish_event(_compact_conv, "compact_progress", {
+                        "stage": "error",
+                        "error": "Timeout waiting for active agent to finish",
+                    })
+                    return
                 try:
                     msgs = self._deserialize_messages(_compact_source)
                     before_count = len(msgs)
@@ -2300,6 +2311,8 @@ class AgentLoopTask(BaseTask):
                         "stage": "error", "error": str(e),
                     })
                     logger.error("Compact failed: %s", e, exc_info=True)
+                finally:
+                    _self_ref._release_context_op(_compact_conv)
 
             thread = threading.Thread(target=_run_compact, daemon=True,
                                       name=f"compact-{conv_id[:8]}")

@@ -488,7 +488,10 @@ class AgentLoopTask(BaseTask):
 
     @staticmethod
     def _build_identity_block(agent_name: str, conversation_id: str = "",
-                              nicknames: dict = None) -> str:
+                              nicknames: dict = None,
+                              llm_service: str = "",
+                              model: str = "",
+                              provider: str = "") -> str:
         """Build the [IDENTITY] prefix for a system prompt."""
         real_name = agent_name or "assistant"
         if conversation_id and nicknames is None:
@@ -496,6 +499,17 @@ class AgentLoopTask(BaseTask):
             nicknames = ConversationStore.instance().get_extra(
                 conversation_id, "agent_nicknames",
             ) or {}
+
+        # Build service info line
+        svc_parts = []
+        if llm_service:
+            svc_parts.append(f"llm_service: {llm_service}")
+        if model:
+            svc_parts.append(f"model: {model}")
+        if provider:
+            svc_parts.append(f"provider: {provider}")
+        svc_info = (" (" + ", ".join(svc_parts) + ")") if svc_parts else ""
+
         if nicknames:
             nick_key = real_name.lower()
             nickname = next(
@@ -503,12 +517,12 @@ class AgentLoopTask(BaseTask):
             )
             if nickname:
                 return (
-                    f"[IDENTITY] Your real agent id is \"{real_name}\". "
+                    f"[IDENTITY] Your real agent id is \"{real_name}\"{svc_info}. "
                     f"The user has given you the nickname \"{nickname}\". "
                     f"When other agents or tools refer to \"{real_name}\" or "
                     f"\"{nickname}\" (case-insensitive), they mean YOU.\n\n"
                 )
-        return f"[IDENTITY] Your agent id is \"{real_name}\".\n\n"
+        return f"[IDENTITY] Your agent id is \"{real_name}\"{svc_info}.\n\n"
 
     def _build_done_event(self, conversation_id: str, response_content: str,
                          agent_name: str, model: str, provider: str,
@@ -1176,8 +1190,13 @@ class AgentLoopTask(BaseTask):
         if conversation_id:
             from core.conversation_store import ConversationStore as _CSNick
             _nicknames = _CSNick.instance().get_extra(conversation_id, "agent_nicknames") or {}
+        _client_model_name = getattr(client, "default_model", "") or model_name or ""
+        _client_provider_name = getattr(client, "provider", "") or ""
         system_prompt = self._build_identity_block(
             _active_agent_name, conversation_id, _nicknames,
+            llm_service=_active_llm_service,
+            model=_client_model_name,
+            provider=_client_provider_name,
         ) + system_prompt
 
         # Configure all handlers with full context
@@ -5951,8 +5970,13 @@ class AgentLoopTask(BaseTask):
         # Inject identity block into thought agent's system prompt
         from core.conversation_store import ConversationStore as _CS3
         _nicknames = _CS3.instance().get_extra(conversation_id, "agent_nicknames") or {}
+        _poll_model = getattr(client, "default_model", "") or model or ""
+        _poll_provider = getattr(client, "provider", "") or ""
         system_prompt = self._build_identity_block(
             _active_agent, conversation_id, _nicknames,
+            llm_service=svc_id,
+            model=_poll_model,
+            provider=_poll_provider,
         ) + system_prompt
         _poll_agent_key = _active_agent or "assistant"
         _context_data = _CS3.instance().load_agent_context(conversation_id, _poll_agent_key)

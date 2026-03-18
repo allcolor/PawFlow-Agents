@@ -4105,83 +4105,59 @@ class AgentLoopTask(BaseTask):
                             if _consecutive_tool_s[tc.name] > _max_consec_s:
                                 _blocked_tools.add(tc.name)
 
-                    if len(response.tool_calls) == 1:
-                        # Single tool — direct execution (no thread overhead)
-                        tc = response.tool_calls[0]
+                    # Execute tools — parallel if multiple, direct if single
+                    def _exec_one(tc):
                         if tc.name in _blocked_tools:
-                            result_text = (
-                                f"Tool '{tc.name}' has been called {_consecutive_tool_s[tc.name]} times "
+                            return tc, (
+                                f"Tool '{tc.name}' has been called {_consecutive_tool_s.get(tc.name, 0)} times "
                                 f"consecutively (limit: {_max_consec_s}). "
                                 f"Stop and explain to the user what you've tried so far, "
                                 f"and ask if they want you to continue."
                             )
-                        else:
-                            try:
-                                result_text = registry.execute(tc.name, tc.arguments) or ""
-                            except Exception as tool_err:
-                                result_text = f"Error: {tool_err}"
-                                logger.error(f"Tool '{tc.name}' failed: {tool_err}")
+                        # Re-inject thread-local source agent (needed in pool threads)
+                        from core.tool_registry import SpawnAgentsHandler as _SAH_exec
+                        for _hp in registry.list_tools():
+                            if isinstance(_hp, _SAH_exec):
+                                _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
+                                break
+                        try:
+                            return tc, registry.execute(tc.name, tc.arguments) or ""
+                        except Exception as e:
+                            logger.error(f"Tool '{tc.name}' failed: {e}")
+                            return tc, f"Error: {e}"
+
+                    if len(response.tool_calls) == 1:
+                        # Single tool — direct execution (no thread overhead)
+                        results_ordered = [_exec_one(response.tool_calls[0])]
+                    else:
+                        # Multiple tools — parallel execution
+                        from concurrent.futures import ThreadPoolExecutor, as_completed
+                        with ThreadPoolExecutor(max_workers=len(response.tool_calls)) as pool:
+                            futures = {pool.submit(_exec_one, tc): tc for tc in response.tool_calls}
+                            results_map = {}
+                            for future in as_completed(futures):
+                                tc, result_text = future.result()
+                                results_map[tc.id] = (tc, result_text)
+                        results_ordered = [(results_map[tc.id]) for tc in response.tool_calls]
+
+                    # Process results in original order
+                    for tc, result_text in results_ordered:
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
-                        _result_preview = result_text if tc.name == "spawn_agents" else result_text[:2000]
+                        _result_preview = result_text if tc.name == "spawn_agents" else (result_text or "")[:2000]
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": _result_preview,
                             "agent_name": _agent_name or "assistant",
                             "llm_service": _agent_svc or "",
                         })
-                        bus.publish_event(conversation_id, "iteration_status", {
-                            "agent_name": _agent_name or "assistant",
-                            "iteration": iteration,
-                            "max_iterations": ctx["max_iterations"],
-                            "round": current_round,
-                            "max_rounds": max_rounds,
-                            "tools_called": tools_called[-3:],
-                            "total_tools": len(tools_called),
-                        })
-                    else:
-                        # Multiple tools — parallel execution
-                        from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                        def _exec_tool(tc):
-                            # Re-inject thread-local source agent in pool thread
-                            from core.tool_registry import SpawnAgentsHandler as _SAH_pool
-                            for _hp in registry.list_tools():
-                                if isinstance(_hp, _SAH_pool):
-                                    _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
-                                    break
-                            try:
-                                return tc, registry.execute(tc.name, tc.arguments) or ""
-                            except Exception as e:
-                                logger.error(f"Tool '{tc.name}' failed: {e}")
-                                return tc, f"Error: {e}"
-
-                        with ThreadPoolExecutor(max_workers=len(response.tool_calls)) as pool:
-                            futures = {pool.submit(_exec_tool, tc): tc for tc in response.tool_calls}
-                            results_map = {}
-                            for future in as_completed(futures):
-                                tc, result_text = future.result()
-                                results_map[tc.id] = (tc, result_text)
-                                bus.publish_event(conversation_id, "tool_result", {
-                                    "tool": tc.name, "result": (result_text or "")[:2000],
-                                    "agent_name": _agent_name or "assistant",
-                                    "llm_service": _agent_svc or "",
-                                })
-
-                        # Append results in original order (LLM expects consistent ordering)
-                        for tc in response.tool_calls:
-                            _, result_text = results_map[tc.id]
-                            if tc.name == "schedule_continuation":
-                                continuation_plan = tc.arguments.get("plan", "Continue working")
-                                continuation_delay = int(tc.arguments.get("delay_seconds", 3))
-                            _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
-
-                        bus.publish_event(conversation_id, "iteration_status", {
-                            "agent_name": _agent_name or "assistant",
-                            "iteration": iteration,
-                            "max_iterations": ctx["max_iterations"],
-                            "round": current_round,
+                    bus.publish_event(conversation_id, "iteration_status", {
+                        "agent_name": _agent_name or "assistant",
+                        "iteration": iteration,
+                        "max_iterations": ctx["max_iterations"],
+                        "round": current_round,
                             "max_rounds": max_rounds,
                             "tools_called": tools_called[-3:],
                             "total_tools": len(tools_called),

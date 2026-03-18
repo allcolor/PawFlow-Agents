@@ -140,6 +140,12 @@ class BrowserService:
 
     def _worker_loop(self):
         """Worker thread: processes Playwright commands sequentially."""
+        # Python 3.14 on Windows: force ProactorEventLoop for subprocess support
+        import sys
+        if sys.platform == "win32":
+            import asyncio
+            asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
         from playwright.sync_api import sync_playwright
 
         pw = sync_playwright().start()

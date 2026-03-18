@@ -187,7 +187,8 @@ def _render_config_editor(registry, sdef, gen):
     cfg_keys = []
     if schema:
         from gui.components.schema_form import render_schema_fields
-        render_schema_fields(schema, sdef.config, key_prefix=prefix)
+        render_schema_fields(schema, sdef.config, key_prefix=prefix,
+                             ignore_show_when=True)
     else:
         for cfg_key, cfg_val in sdef.config.items():
             k = f"gsvc_ecfg_{sid}_{cfg_key}_{gen}"

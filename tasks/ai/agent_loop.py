@@ -5386,6 +5386,12 @@ class AgentLoopTask(BaseTask):
         store = ConversationStore.instance()
         scheduler = PollScheduler.instance()
 
+        # Watchdog: ensure active tasks always have a pending schedule
+        try:
+            self._ensure_tasks_scheduled()
+        except Exception as _wt_err:
+            logger.warning(f"Task watchdog failed: {_wt_err}")
+
         # Collect conversations to poll from two sources:
         # 1. Scheduled rechecks that are due (persistent, works without SSE)
         # 2. Active SSE conversations with cooldown expired (legacy behavior)
@@ -5620,6 +5626,40 @@ class AgentLoopTask(BaseTask):
                     else:
                         self._active_conversations[cid] = rc
                     self._active_thoughts.discard(entry_key)
+
+    def _ensure_tasks_scheduled(self):
+        """Watchdog: ensure every active task has a pending schedule.
+
+        Called at each poll cycle. If a task is active but has no schedule
+        (lost due to race condition, restart, etc.), recreate it.
+        """
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        sched = PollScheduler.instance()
+        store = ConversationStore.instance()
+        for conv in store.list_conversations():
+            cid = conv["conversation_id"]
+            entry = store._conversations.get(cid, {})
+            all_tasks = entry.get("extra", {}).get("agent_tasks", {})
+            if not isinstance(all_tasks, dict):
+                continue
+            for tid, task in all_tasks.items():
+                if not isinstance(task, dict):
+                    continue
+                if task.get("status") not in ("active",):
+                    continue
+                sched_key = f"{cid}::task::{tid}"
+                if sched.get(sched_key):
+                    continue  # already scheduled
+                from core.tool_registry import AssignTaskHandler
+                delay = AssignTaskHandler._get_task_delay(task)
+                sched.schedule_delay(
+                    cid, delay, key=sched_key,
+                    reason=f"[agent_task:{tid}] watchdog reschedule ({task.get('agent', '?')})",
+                    user_id=task.get("assigned_by", ""),
+                )
+                logger.info(f"[task-watchdog] Rescheduled lost task {tid} for "
+                            f"{task.get('agent', '?')} in {cid[:8]}")
 
     def _is_eligible_for_poll(self, conversation_id: str,
                               messages_data: List[Dict]) -> bool:

@@ -431,7 +431,7 @@ class AgentLoopTask(BaseTask):
 
         for h in registry.list_tools():
             if isinstance(h, SpawnAgentsHandler):
-                h.set_spawn_deps(client, _client_resolver, _sub_on_event)
+                h.set_spawn_deps(client, _client_resolver, _sub_on_event, registry=registry)
                 if _agent_names:
                     h.set_available_agents(_agent_names)
             elif isinstance(h, UseSkillHandler):
@@ -5062,7 +5062,7 @@ class AgentLoopTask(BaseTask):
         _poll_svc = svc_id or ""
         for h in registry.list_tools():
             if isinstance(h, _SAH):
-                h.set_spawn_deps(client, _client_resolver, _poll_on_event)
+                h.set_spawn_deps(client, _client_resolver, _poll_on_event, registry=registry)
                 h.set_source_agent(_poll_source, _poll_svc)
             elif isinstance(h, _USH):
                 h.set_spawn_deps(client, _client_resolver)

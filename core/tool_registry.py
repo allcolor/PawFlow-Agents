@@ -3519,11 +3519,12 @@ class SpawnAgentsHandler(ToolHandler):
     def set_conversation_id(self, conversation_id: str) -> None:
         self._conversation_id = conversation_id
 
-    def set_spawn_deps(self, client, client_resolver, on_event):
-        """Set dependencies for spawning sub-agents (not thread-local)."""
+    def set_spawn_deps(self, client, client_resolver, on_event, registry=None):
+        """Set dependencies for spawning sub-agents."""
         self._default_client = client
         self._client_resolver = client_resolver
         self._on_event = on_event
+        self._registry = registry
 
     def set_source_agent(self, agent_name: str, llm_service: str = "") -> None:
         self._local.source_agent = agent_name
@@ -3647,9 +3648,9 @@ class SpawnAgentsHandler(ToolHandler):
         if not agent_tasks:
             return "Error: no valid tasks to spawn."
 
-        # Create executor on-the-fly — no thread-local needed
+        # Create executor on-the-fly
         executor = SubAgentExecutor(
-            self._default_client, None, max_workers=4,
+            self._default_client, self._registry, max_workers=4,
             client_resolver=self._client_resolver,
             on_event=self._on_event,
         )

@@ -117,7 +117,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg-actions button:hover { background: rgba(255,255,255,0.2); color: #fff; }
 .active-panel { display: none; background: rgba(15,22,41,0.9); border: 1px solid #0f3460; border-radius: 8px;
                 padding: 6px 10px; font-size: 11px; color: #a0a0c0;
-                position: fixed; bottom: 70px; right: 20px; z-index: 50; max-width: 350px; backdrop-filter: blur(4px); }
+                position: fixed; bottom: 70px; right: 20px; z-index: 50; max-width: 350px;
+                max-height: 150px; overflow-y: auto; backdrop-filter: blur(4px); }
 .active-panel.visible { display: block; }
 .active-panel-title { font-size: 10px; color: #6c6c8a; margin-bottom: 2px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
 .active-row { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
@@ -139,7 +140,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .typing .verb { animation: fadeIn 0.4s ease-in; }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 @keyframes fadeIn { 0% { opacity: 0; transform: translateY(2px); } 100% { opacity: 1; transform: translateY(0); } }
-.scroll-nav { position: absolute; right: 20px; bottom: 10px; display: flex; flex-direction: column;
+.scroll-nav { position: fixed; right: 24px; bottom: 75px; display: flex; flex-direction: column; z-index: 51;
               gap: 6px; z-index: 10; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
 .scroll-nav.visible { opacity: 1; pointer-events: auto; }
 .scroll-nav button { width: 36px; height: 36px; border-radius: 50%; border: 1px solid #0f3460;
@@ -1435,10 +1436,12 @@ function updateActivePanel() {
   const names = Object.keys(activeInteractions);
   const wasVisible = panel.classList.contains('visible');
   const wasAtBottom = isNearBottom();
+  const scrollNav = document.getElementById('scrollNav');
   if (names.length === 0) {
     if (wasVisible) {
       panel.classList.remove('visible');
       hideTyping();
+      if (scrollNav) scrollNav.style.bottom = '75px';
       if (wasAtBottom) scrollBottom(true);
     }
     return;
@@ -1480,6 +1483,11 @@ function updateActivePanel() {
       + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
+  // Push scroll-nav above the active panel
+  if (scrollNav) {
+    const panelHeight = panel.offsetHeight || 60;
+    scrollNav.style.bottom = (75 + panelHeight + 8) + 'px';
+  }
   if (!wasVisible && wasAtBottom) scrollBottom(true);
 }
 

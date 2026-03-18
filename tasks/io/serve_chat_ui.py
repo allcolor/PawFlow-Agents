@@ -2121,7 +2121,12 @@ function connectSSE(cid) {
     const resultSvc = data.llm_service ? ' via ' + data.llm_service : '';
     const preview = (data.result || '').substring(0, 200);
     addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + preview + (data.result && data.result.length > 200 ? '...' : ''));
-    showTyping();
+    // User /call has no agent loop following — don't show typing
+    if (data.agent_name === 'user') {
+      hideTyping();
+    } else {
+      showTyping();
+    }
   });
 
   eventSource.addEventListener('notification', (e) => {
@@ -3348,19 +3353,14 @@ async function handleSlashCommand(text) {
       addMsg('system', 'Usage: /call tool_name(key=value, ...) or /call tool_name {"key": "value"}\nType /help call for details.');
       return true;
     }
-    // Parse: tool_name(...) or tool_name {...}
     const parsed = _parseToolCall(callText);
     if (parsed.error) {
       addMsg('system', 'Parse error: ' + parsed.error + '\nType /help call <toolname> for parameter info.');
       return true;
     }
-    // Build display: show positional + named args
-    const posDisplay = (parsed.positional || []).map(v => JSON.stringify(v));
-    const namedDisplay = Object.entries(parsed.args).map(([k,v]) => k + '=' + JSON.stringify(v));
-    const allDisplay = posDisplay.concat(namedDisplay).join(', ').substring(0, 150);
-    addMsg('tool', '\u{1F527} /call ' + parsed.name + '(' + allDisplay + ')');
+    // Submit — tool_call + tool_result will arrive via SSE events
+    // (same display path as agent tool calls)
     showTyping();
-    // Non-blocking: fire-and-forget with .then()
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -3371,14 +3371,11 @@ async function handleSlashCommand(text) {
         conversation_id: conversationId,
       }),
     }).then(r => r.json()).then(data => {
-      hideTyping();
       if (data.error) {
+        hideTyping();
         addMsg('error', data.error);
-      } else {
-        const result = data.result || '(empty result)';
-        addMsg('tool', '\u2705 ' + parsed.name + ': ' + result);
       }
-      scrollBottom();
+      // No display here — SSE tool_call + tool_result events handle it
     }).catch(e => { hideTyping(); addMsg('error', 'Tool call failed: ' + e.message); });
     return true;
   }

@@ -59,17 +59,17 @@ def global_services_dialog():
                         if st.button("⏸️", key=f"gsvc_dis_{sid}",
                                      help=t("common.disabled")):
                             registry.disable(sid)
-                            st.rerun(scope="fragment")
+                            st.rerun()
                     else:
                         if st.button("▶️", key=f"gsvc_en_{sid}",
                                      help=t("common.enabled")):
                             registry.enable(sid)
-                            st.rerun(scope="fragment")
+                            st.rerun()
                 with hdr_cols[2]:
                     if st.button("⚙️", key=f"gsvc_cfg_{sid}",
                                  help=t("common.edit")):
                         st.session_state["_gsvc_edit"] = sid
-                        st.rerun(scope="fragment")
+                        st.rerun()
                 with hdr_cols[3]:
                     if st.button("🗑️", key=f"gsvc_del_{sid}",
                                  help=t("common.delete")):
@@ -193,11 +193,11 @@ def _render_config_editor(registry, sdef):
                 if new_desc != sdef.description:
                     registry.update_description(sdef.service_id, new_desc)
             st.session_state.pop("_gsvc_edit", None)
-            st.rerun(scope="fragment")
+            st.rerun()
     with save_cols[1]:
         if st.button(t("common.cancel"), key=f"gsvc_cancel_{sdef.service_id}"):
             st.session_state.pop("_gsvc_edit", None)
-            st.rerun(scope="fragment")
+            st.rerun()
 
     # Close button at bottom of dialog
     st.markdown("---")

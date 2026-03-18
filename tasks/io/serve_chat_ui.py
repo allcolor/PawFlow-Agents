@@ -2908,6 +2908,15 @@ const HELP_DATA = {
     short: 'Preview a file (image, PDF, text, code)',
     detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
   },
+  '/cost': {
+    usage: '/cost <agent|ALL>',
+    short: 'Show token usage and estimated cost per agent',
+    detail: 'Displays input/output tokens, call count, and estimated cost per agent.\n\n'
+      + '  /cost ALL     — All agents\n'
+      + '  /cost grok    — Specific agent\n\n'
+      + 'Cost is calculated from cost_per_1k_input/output on the LLM service.\n'
+      + 'If not configured, shows "not configured".',
+  },
   '/autoconv': {
     usage: '/autoconv <on|off|status|now> <agent|ALL> [freq]',
     short: 'Auto-conversation — agents contribute to the conversation autonomously',
@@ -3081,6 +3090,48 @@ async function handleSlashCommand(text) {
   if (cmd === '/rebuild') {
     if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
     cmdRebuild();
+    return true;
+  }
+
+  if (cmd === '/cost') {
+    const cargs = parseQuotedArgs(text);
+    const target = cargs[1] || '';
+    if (!target) { addMsg('system', 'Usage: /cost <agent|ALL>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'cost', agent: target }),
+        credentials: 'same-origin',
+      });
+      const data = await resp.json();
+      const agents = data.agents || [];
+      if (agents.length === 0) {
+        addMsg('system', 'No usage data found.');
+      } else {
+        const lines = agents.map(a => {
+          const name = displayAgentName(a.agent || '?');
+          const svc = a.llm_service || 'default';
+          const tokIn = (a.in || 0).toLocaleString();
+          const tokOut = (a.out || 0).toLocaleString();
+          const calls = a.calls || 0;
+          let line = name + ' via ' + svc + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
+          if (a.cost !== undefined) {
+            line += ' — $' + a.cost.toFixed(4);
+          } else if (a.cost_in_1k === undefined) {
+            line += ' — cost: not configured (set cost_per_1k_input/output on service)';
+          }
+          return line;
+        });
+        // Total
+        const totalIn = agents.reduce((s, a) => s + (a.in || 0), 0);
+        const totalOut = agents.reduce((s, a) => s + (a.out || 0), 0);
+        const totalCost = agents.reduce((s, a) => s + (a.cost || 0), 0);
+        lines.push('---');
+        lines.push('Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out'
+          + (totalCost > 0 ? ' — $' + totalCost.toFixed(4) : ''));
+        addMsg('system', lines.join('\n'));
+      }
+    } catch (e) { addMsg('error', 'Failed: ' + e.message); }
     return true;
   }
 

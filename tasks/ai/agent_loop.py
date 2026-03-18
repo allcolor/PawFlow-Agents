@@ -1117,6 +1117,41 @@ class AgentLoopTask(BaseTask):
             }).encode())
             return [flowfile]
 
+        if action == "cost":
+            agent_name = body.get("agent", "ALL")
+            from core.token_tracker import TokenTracker
+            tracker = TokenTracker.instance()
+            if agent_name.upper() == "ALL":
+                stats = tracker.get_agent_usage(user_id)
+            else:
+                # Resolve nickname
+                agent_name = self._resolve_agent_name(agent_name, body.get("conversation_id", ""))
+                stats = tracker.get_agent_usage(user_id, agent_name)
+
+            # Enrich with cost from LLM service config
+            for s in stats:
+                svc_id = s.get("llm_service", "")
+                cost_in_1k = 0.0
+                cost_out_1k = 0.0
+                if svc_id:
+                    try:
+                        from gui.services.global_service_registry import GlobalServiceRegistry
+                        svc_def = GlobalServiceRegistry.get_instance().get_definition(svc_id)
+                        if svc_def:
+                            cost_in_1k = float(svc_def.config.get("cost_per_1k_input", 0))
+                            cost_out_1k = float(svc_def.config.get("cost_per_1k_output", 0))
+                    except Exception:
+                        pass
+                tokens_in = s.get("in", 0)
+                tokens_out = s.get("out", 0)
+                if cost_in_1k or cost_out_1k:
+                    s["cost"] = round(tokens_in / 1000 * cost_in_1k + tokens_out / 1000 * cost_out_1k, 4)
+                    s["cost_in_1k"] = cost_in_1k
+                    s["cost_out_1k"] = cost_out_1k
+
+            flowfile.set_content(json.dumps({"agents": stats}, ensure_ascii=False).encode())
+            return [flowfile]
+
         if action == "list_active":
             conv_id = body.get("conversation_id", "")
             if not conv_id:
@@ -3162,7 +3197,9 @@ class AgentLoopTask(BaseTask):
             tracker_user = ctx.get("user_id", "anonymous")
             TokenTracker.instance().track(
                 tracker_user, total_tokens_in, total_tokens_out,
-                model=final_model,
+                model=final_model or _client_model,
+                agent_name=ctx.get("active_agent_name", "") or "assistant",
+                llm_service=ctx.get("active_llm_service", ""),
             )
             TokenTracker.instance().flush()
         except Exception:
@@ -4427,7 +4464,9 @@ class AgentLoopTask(BaseTask):
                 tracker_user = ctx.get("user_id", "anonymous")
                 TokenTracker.instance().track(
                     tracker_user, total_tokens_in, total_tokens_out,
-                    model=final_model,
+                    model=final_model or _client_model,
+                    agent_name=_agent_name or "assistant",
+                    llm_service=_agent_svc or "",
                 )
                 TokenTracker.instance().flush()
             except Exception:

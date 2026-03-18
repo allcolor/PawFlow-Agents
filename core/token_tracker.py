@@ -44,13 +44,13 @@ class TokenTracker:
             cls._instance = None
 
     def track(self, user_id: str, tokens_in: int, tokens_out: int,
-              model: str = ""):
-        """Record token usage for a user."""
+              model: str = "", agent_name: str = "", llm_service: str = ""):
+        """Record token usage for a user, optionally per agent/service."""
         with self._store_lock:
             self._ensure_loaded()
             entry = self._data.setdefault(user_id, {
                 "total_in": 0, "total_out": 0,
-                "daily": {}, "models": {},
+                "daily": {}, "models": {}, "agents": {},
             })
             entry["total_in"] += tokens_in
             entry["total_out"] += tokens_out
@@ -67,6 +67,17 @@ class TokenTracker:
                 m["in"] += tokens_in
                 m["out"] += tokens_out
 
+            # Per-agent tracking (agent_name::llm_service)
+            agent_key = (agent_name or "assistant") + "::" + (llm_service or "default")
+            a = entry.setdefault("agents", {}).setdefault(agent_key, {
+                "agent": agent_name or "assistant",
+                "llm_service": llm_service or "default",
+                "in": 0, "out": 0, "calls": 0,
+            })
+            a["in"] += tokens_in
+            a["out"] += tokens_out
+            a["calls"] = a.get("calls", 0) + 1
+
             self._dirty = True
 
     def get_usage(self, user_id: str) -> Dict[str, Any]:
@@ -75,8 +86,22 @@ class TokenTracker:
             self._ensure_loaded()
             entry = self._data.get(user_id)
             if not entry:
-                return {"total_in": 0, "total_out": 0, "daily": {}, "models": {}}
+                return {"total_in": 0, "total_out": 0, "daily": {},
+                        "models": {}, "agents": {}}
             return dict(entry)
+
+    def get_agent_usage(self, user_id: str, agent_name: str = "") -> list:
+        """Get per-agent usage stats. If agent_name given, filter to that agent."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._data.get(user_id, {})
+            agents = entry.get("agents", {})
+            result = []
+            for key, stats in agents.items():
+                if agent_name and stats.get("agent", "").lower() != agent_name.lower():
+                    continue
+                result.append(dict(stats))
+            return result
 
     def get_all_usage(self) -> Dict[str, Dict[str, Any]]:
         """Get usage for all users (admin)."""

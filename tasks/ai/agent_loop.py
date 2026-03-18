@@ -412,9 +412,12 @@ class AgentLoopTask(BaseTask):
         def _sub_on_event(event_type, data):
             try:
                 from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(conversation_id, event_type, data)
-            except Exception:
-                pass
+                bus = ConversationEventBus.instance()
+                subs = bus.subscriber_count(conversation_id)
+                print(f"[SUB_EVENT] {event_type} for {conversation_id[:8]} (subscribers={subs})", flush=True)
+                bus.publish_event(conversation_id, event_type, data)
+            except Exception as e:
+                print(f"[SUB_EVENT] ERROR: {e}", flush=True)
         sub_executor = SubAgentExecutor(
             client, registry, max_workers=4,
             client_resolver=_client_resolver,

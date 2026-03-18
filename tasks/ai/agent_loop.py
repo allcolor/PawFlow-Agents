@@ -1116,11 +1116,19 @@ class AgentLoopTask(BaseTask):
                 ) or {}
                 _active_agent_name = _target_agent or _ares.get("agent", "")
                 if _active_agent_name:
+                    # Check per-conversation LLM service override first
+                    _llm_overrides = ConversationStore.instance().get_extra(
+                        conversation_id, "agent_llm_overrides",
+                    ) or {}
+                    _override_svc = _llm_overrides.get(_active_agent_name or "assistant")
+                    if _override_svc:
+                        _active_llm_service = _override_svc
                     from core.resource_store import ResourceStore
                     _adef = ResourceStore.instance().get_any(
                         "agent", _active_agent_name, user_id,
+                        conversation_id=conversation_id,
                     )
-                    if _adef and _adef.get("llm_service", ""):
+                    if not _override_svc and _adef and _adef.get("llm_service", ""):
                         _agent_llm = _adef["llm_service"]
                         # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
                         if "${" in _agent_llm:
@@ -2692,6 +2700,29 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps({
                 "result": f"Agent '{agent}' created (scope: {scope})."
             }).encode())
+            return [flowfile]
+
+        if action == "set_llm_service":
+            conv_id = body.get("conversation_id", "")
+            agent = body.get("agent_name", "assistant")
+            svc_value = body.get("llm_service", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                return [flowfile]
+            overrides = store.get_extra(conv_id, "agent_llm_overrides") or {}
+            if svc_value == "restore" or svc_value == "":
+                overrides.pop(agent, None)
+                store.set_extra(conv_id, "agent_llm_overrides", overrides)
+                flowfile.set_content(json.dumps({
+                    "result": f"LLM service for '{agent}' restored to default."
+                }).encode())
+            else:
+                # Accept expressions like ${global.xxx} or direct service names
+                overrides[agent] = svc_value
+                store.set_extra(conv_id, "agent_llm_overrides", overrides)
+                flowfile.set_content(json.dumps({
+                    "result": f"LLM service for '{agent}' set to '{svc_value}' in this conversation."
+                }).encode())
             return [flowfile]
 
         if action == "select_agent":

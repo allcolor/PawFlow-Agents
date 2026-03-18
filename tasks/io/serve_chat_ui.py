@@ -2913,6 +2913,16 @@ const HELP_DATA = {
       + '  /schedules add <datetime> — Add a recheck (format: YYYYMMDDHHmmss)\n'
       + '  /schedules del            — Delete all schedules',
   },
+  '/llm': {
+    usage: '/llm <agent|assistant> <service|${variable}|restore>',
+    short: 'Change LLM service for an agent in this conversation',
+    detail: 'Override the LLM service for any agent in the current conversation.\n\n'
+      + '  /llm assistant grok_llm_service    \u2014 Switch assistant to grok\n'
+      + '  /llm grok qwen_llm_service         \u2014 Switch grok to local qwen\n'
+      + '  /llm assistant ${user.my_service}   \u2014 Use a variable reference\n'
+      + '  /llm grok restore                   \u2014 Restore grok\'s default service\n\n'
+      + 'The override is per-conversation and persists across restarts.',
+  },
   '/stop': {
     usage: '/stop <agent|ALL> [-f]',
     short: 'Stop an agent — asks it to respond immediately',
@@ -3233,6 +3243,28 @@ function parseQuotedArgs(text) {
 async function handleSlashCommand(text) {
   const parts = text.split(/\s+/);
   const cmd = parts[0].toLowerCase();
+
+  if (cmd === '/llm' || cmd === '/set_llm_service') {
+    // /llm <agent> <service_or_variable>   or   /llm <agent> restore
+    const agent = parts[1] || '';
+    const svc = parts.slice(2).join(' ') || '';
+    if (!agent || !svc) {
+      addMsg('system', 'Usage: /llm <agent|assistant> <service_name|${variable}|restore>');
+      return true;
+    }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: 'set_llm_service', conversation_id: conversationId,
+          agent_name: agent, llm_service: svc,
+        }),
+      });
+      const data = await resp.json();
+      addMsg('system', data.result || data.error || 'Done.');
+    } catch (e) { addMsg('error', e.message); }
+    return true;
+  }
 
   if (cmd === '/stop') {
     const force = parts.includes('-f') || parts.includes('--force');

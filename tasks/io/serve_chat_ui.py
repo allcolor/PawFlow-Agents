@@ -2037,20 +2037,40 @@ function connectSSE(cid) {
       tcs.el = null; tcs.text = ''; tcs.chunks = [];
     }
     trackAgentTool(tcAgent, data.tool);
-    addMsg('tool', t('callingTool', {tool: data.tool}));
+    if (data.tool === 'spawn_agents' && data.arguments && data.arguments.tasks) {
+      // Show source → dest for each spawned agent
+      const src = displayAgentName(tcAgent);
+      const lines = data.arguments.tasks.map(t => {
+        const dst = displayAgentName(t.agent || '?');
+        const preview = (t.message || '').substring(0, 60);
+        return '\u27A1 ' + src + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
+      });
+      addMsg('tool', lines.join('\n'));
+    } else {
+      addMsg('tool', t('callingTool', {tool: data.tool}));
+    }
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });
 
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // spawn_agents: skip verbose JSON — sub_agent_done events show the responses
+    // spawn_agents: parse results and display each agent's response
     if (data.tool === 'spawn_agents' && data.result) {
       try {
         const agents = JSON.parse(data.result);
         if (Array.isArray(agents)) {
-          const summary = agents.map(a => (a.agent || '?') + ': ' + a.status).join(', ');
-          addMsg('tool', t('toolResult', {tool: 'spawn_agents', result: summary}));
+          for (const a of agents) {
+            const name = displayAgentName(a.agent || '?');
+            if (a.status === 'completed' && a.response) {
+              const extra = { source: { type: 'agent', name: a.agent } };
+              addMsg('assistant', a.response, extra);
+            } else if (a.status === 'error') {
+              addMsg('tool', '\u274C ' + name + ': ' + (a.error || 'failed'));
+            } else {
+              addMsg('tool', '\u2705 ' + name + ': ' + a.status);
+            }
+          }
           showTyping();
           return;
         }

@@ -521,6 +521,11 @@ class ConversationStore:
                         "expires_at": mem.get("expires_at", 0),
                         "context": list(mem["context"]) if mem.get("context") is not None else None,
                     }
+                    if mem.get("agent_contexts"):
+                        entry["agent_contexts"] = {
+                            k: list(v) if v is not None else None
+                            for k, v in mem["agent_contexts"].items()
+                        }
                     if mem.get("extra"):
                         entry["extra"] = dict(mem["extra"])
             try:
@@ -535,6 +540,8 @@ class ConversationStore:
                     "messages": entry.get("messages", []),
                     "context": entry.get("context"),
                 }
+                if entry.get("agent_contexts"):
+                    data["agent_contexts"] = entry["agent_contexts"]
                 if entry.get("extra"):
                     data["extra"] = entry["extra"]
                 tmp = path.with_suffix(".tmp")
@@ -592,6 +599,8 @@ class ConversationStore:
                     "expires_at": data.get("expires_at", 0),
                     "context": data.get("context"),  # None for old files = not diverged
                 }
+                if data.get("agent_contexts"):
+                    entry["agent_contexts"] = data["agent_contexts"]
                 if data.get("extra"):
                     entry["extra"] = data["extra"]
                 self._conversations[cid] = entry

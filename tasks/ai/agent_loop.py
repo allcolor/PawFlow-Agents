@@ -412,12 +412,9 @@ class AgentLoopTask(BaseTask):
         def _sub_on_event(event_type, data):
             try:
                 from core.conversation_event_bus import ConversationEventBus
-                bus = ConversationEventBus.instance()
-                subs = bus.subscriber_count(conversation_id)
-                print(f"[SUB_EVENT] {event_type} for {conversation_id[:8]} (subscribers={subs})", flush=True)
-                bus.publish_event(conversation_id, event_type, data)
-            except Exception as e:
-                print(f"[SUB_EVENT] ERROR: {e}", flush=True)
+                ConversationEventBus.instance().publish_event(conversation_id, event_type, data)
+            except Exception:
+                pass
         sub_executor = SubAgentExecutor(
             client, registry, max_workers=4,
             client_resolver=_client_resolver,
@@ -4174,13 +4171,11 @@ class AgentLoopTask(BaseTask):
                             # Re-inject thread-local state in pool thread
                             if _sub_exec:
                                 self._inject_executor(registry, _sub_exec)
-                                from core.tool_registry import SpawnAgentsHandler as _SAH_pool
-                                for _hp in registry.list_tools():
-                                    if isinstance(_hp, _SAH_pool):
-                                        _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
-                                        _has = getattr(_hp._local, 'executor', None)
-                                        print(f"[POOL] {tc.name} executor={_has is not None} thread={threading.current_thread().name}", flush=True)
-                                        break
+                            from core.tool_registry import SpawnAgentsHandler as _SAH_pool
+                            for _hp in registry.list_tools():
+                                if isinstance(_hp, _SAH_pool):
+                                    _hp.set_source_agent(_agent_name or "assistant", _agent_svc)
+                                    break
                             try:
                                 return tc, registry.execute(tc.name, tc.arguments) or ""
                             except Exception as e:

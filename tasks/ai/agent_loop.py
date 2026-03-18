@@ -409,16 +409,12 @@ class AgentLoopTask(BaseTask):
         def _client_resolver(svc_id, uid):
             return _self._resolve_llm_service(svc_id, uid)
         # on_event callback for sub-agent visibility (SSE events)
-        # conversation_id is resolved later — use mutable ref
-        _sub_conv_id = [None]  # will be set once conversation_id is known
         def _sub_on_event(event_type, data):
-            cid = _sub_conv_id[0]
-            if cid:
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(cid, event_type, data)
-                except Exception:
-                    pass
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(conversation_id, event_type, data)
+            except Exception:
+                pass
         sub_executor = SubAgentExecutor(
             client, registry, max_workers=4,
             client_resolver=_client_resolver,
@@ -830,7 +826,6 @@ class AgentLoopTask(BaseTask):
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
             "sub_executor": sub_executor,
-            "_sub_conv_id_ref": _sub_conv_id,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
             "_nicknames": _nicknames if conversation_id else {},
@@ -3249,11 +3244,6 @@ class AgentLoopTask(BaseTask):
                 }).encode())
                 flowfile.set_attribute("http.response.status", "409")
                 return [flowfile]
-
-        # Wire sub-agent event callback to this conversation
-        _sub_ref = ctx.get("_sub_conv_id_ref")
-        if _sub_ref:
-            _sub_ref[0] = conversation_id
 
         # Configure conversation-aware handlers with runtime context
         from core.tool_registry import (

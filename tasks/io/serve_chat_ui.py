@@ -2725,9 +2725,13 @@ const HELP_DATA = {
       + '  /schedules del            — Delete all schedules',
   },
   '/stop': {
-    usage: '/stop',
-    short: 'Stop the current agent generation',
-    detail: 'Interrupts the running agent. The agent stops gracefully and shows [Cancelled].',
+    usage: '/stop [agent] [-f]',
+    short: 'Stop an agent — asks it to respond immediately',
+    detail: 'Interrupts the agent and asks it to give its best answer now.\n\n'
+      + '  /stop              — Stop all agents (they respond with what they have)\n'
+      + '  /stop grok         — Stop only grok\n'
+      + '  /stop -f           — Force stop all (immediate cancel, no response)\n'
+      + '  /stop grok -f      — Force stop grok (immediate cancel)',
   },
   '/restart_from': {
     usage: '/restart_from [N]',
@@ -2923,7 +2927,14 @@ async function handleSlashCommand(text) {
   const cmd = parts[0].toLowerCase();
 
   if (cmd === '/stop') {
-    await cancelAgent();
+    const force = parts.includes('-f') || parts.includes('--force');
+    const targetParts = parts.slice(1).filter(p => p !== '-f' && p !== '--force');
+    const target = targetParts.length > 0 ? resolveAgentName(targetParts[0]) : 'ALL';
+    if (force) {
+      await cancelAgent(target);
+    } else {
+      await cmdAgentInterrupt(target);
+    }
     return true;
   }
 
@@ -3036,12 +3047,6 @@ async function handleSlashCommand(text) {
     return true;
   }
 
-  if (cmd === '/interrupt' || cmd === '/stop') {
-    const iargs = parseQuotedArgs(text);
-    const target = resolveAgentName(iargs[1] || 'ALL');
-    await cmdAgentInterrupt(target);
-    return true;
-  }
 
   if (cmd === '/msg') {
     const margs = parseQuotedArgs(text);
@@ -3351,7 +3356,9 @@ async function handleSlashCommand(text) {
     return true;
   }
 
-  return false; // not a known command — send as normal message
+  // Unknown slash command — show error, don't send as message
+  addMsg('system', 'Unknown command: ' + cmd + '. Type /help for available commands.');
+  return true;
 }
 
 async function cmdSchedulesList() {
@@ -4454,15 +4461,17 @@ async function deleteMsg(btn) {
   }
 }
 
-async function cancelAgent() {
+async function cancelAgent(target) {
   if (!conversationId) return;
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('status').textContent = t('cancelling');
+  const body = { action: 'cancel', conversation_id: conversationId };
+  if (target && target !== 'ALL') body.agent_name = target;
   try {
     await fetch(API, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId }),
+      body: JSON.stringify(body),
       credentials: 'same-origin',
     });
   } catch (e) {

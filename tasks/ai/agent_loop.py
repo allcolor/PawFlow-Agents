@@ -4413,6 +4413,7 @@ class AgentLoopTask(BaseTask):
                     # Always use the default LLM client for compaction (not the
                     # agent-switched one which may be slow/expensive).
                     compact_client = ctx.get("default_client") or client
+                    _pre_compact_len = len(messages)
                     llm_context = self._compact_if_needed(
                         list(messages), compact_client,
                         ctx.get("context_max_tokens", 64000),
@@ -4421,6 +4422,11 @@ class AgentLoopTask(BaseTask):
                         conversation_id=conversation_id,
                         agent_name=_agent_name or "assistant",
                     )
+                    # If compaction happened, mark context as diverged so
+                    # _flush_new() appends subsequent messages to the agent
+                    # context (not just to the canonical messages).
+                    if len(llm_context) < _pre_compact_len:
+                        ctx["_context_diverged"] = True
 
                     # Inject identity prefixes so LLM knows who said what
                     _id_nicks = ctx.get("_nicknames") or {}

@@ -2936,6 +2936,7 @@ class AgentLoopTask(BaseTask):
         if action == "call_tool":
             tool_name = body.get("tool_name", "")
             tool_args = body.get("arguments", {})
+            positional = body.get("positional_args", [])
             if not tool_name:
                 flowfile.set_content(json.dumps({"error": "Missing tool_name"}).encode())
                 return [flowfile]
@@ -2946,7 +2947,7 @@ class AgentLoopTask(BaseTask):
                 self._configure_tool_handlers(
                     registry, conversation_id=conv_id, user_id=user_id,
                 )
-            # Find and execute
+            # Find handler
             handler = None
             for h in registry.list_tools():
                 if h.name == tool_name:
@@ -2957,6 +2958,24 @@ class AgentLoopTask(BaseTask):
                     "error": f"Tool '{tool_name}' not found",
                 }).encode())
                 return [flowfile]
+            # Map positional args to named params using schema
+            if positional:
+                schema = handler.parameters_schema or {}
+                param_names = list((schema.get("properties") or {}).keys())
+                for i, val in enumerate(positional):
+                    if i < len(param_names):
+                        key = param_names[i]
+                        if key not in tool_args:  # named args take priority
+                            tool_args[key] = val
+                    else:
+                        flowfile.set_content(json.dumps({
+                            "error": (
+                                f"Too many positional arguments ({len(positional)}) "
+                                f"for tool '{tool_name}' which has "
+                                f"{len(param_names)} parameters: {param_names}"
+                            ),
+                        }).encode())
+                        return [flowfile]
             try:
                 result = registry.execute(tool_name, tool_args)
                 flowfile.set_content(json.dumps({

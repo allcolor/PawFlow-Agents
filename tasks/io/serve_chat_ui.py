@@ -3354,27 +3354,32 @@ async function handleSlashCommand(text) {
       addMsg('system', 'Parse error: ' + parsed.error + '\nType /help call <toolname> for parameter info.');
       return true;
     }
-    addMsg('tool', '\u{1F527} /call ' + parsed.name + '(' + Object.entries(parsed.args).map(([k,v]) => k + '=' + JSON.stringify(v)).join(', ').substring(0, 120) + ')');
+    // Build display: show positional + named args
+    const posDisplay = (parsed.positional || []).map(v => JSON.stringify(v));
+    const namedDisplay = Object.entries(parsed.args).map(([k,v]) => k + '=' + JSON.stringify(v));
+    const allDisplay = posDisplay.concat(namedDisplay).join(', ').substring(0, 150);
+    addMsg('tool', '\u{1F527} /call ' + parsed.name + '(' + allDisplay + ')');
     showTyping();
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'call_tool',
-          tool_name: parsed.name,
-          arguments: parsed.args,
-          conversation_id: conversationId,
-        }),
-      });
+    // Non-blocking: fire-and-forget with .then()
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'call_tool',
+        tool_name: parsed.name,
+        arguments: parsed.args,
+        positional_args: parsed.positional || [],
+        conversation_id: conversationId,
+      }),
+    }).then(r => r.json()).then(data => {
       hideTyping();
-      const data = await resp.json();
       if (data.error) {
         addMsg('error', data.error);
       } else {
         const result = data.result || '(empty result)';
         addMsg('tool', '\u2705 ' + parsed.name + ': ' + result);
       }
-    } catch (e) { hideTyping(); addMsg('error', 'Tool call failed: ' + e.message); }
+      scrollBottom();
+    }).catch(e => { hideTyping(); addMsg('error', 'Tool call failed: ' + e.message); });
     return true;
   }
 
@@ -4514,55 +4519,99 @@ function showContextOverlay(data) {
 
 // ── Tool Call Parser ────────────────────────────────────────────
 function _parseToolCall(text) {
-  // Format 1: tool_name(key=value, key2=value2)
-  // Format 2: tool_name {"key": "value"}
-  // Format 3: tool_name key=value key2=value2
+  // Formats supported:
+  //   tool(val1, val2, val3)              — positional (mapped to schema server-side)
+  //   tool(key=val, key2=val2)            — named
+  //   tool(val1, key2=val2)               — mixed (positional first, then named)
+  //   tool {"key": "value"}               — JSON
+  //   tool()                              — no args
   const nameMatch = text.match(/^(\w+)/);
   if (!nameMatch) return { error: 'No tool name found' };
   const name = nameMatch[1];
   let rest = text.slice(name.length).trim();
 
-  // No args
-  if (!rest || rest === '()') return { name, args: {} };
+  if (!rest || rest === '()') return { name, args: {}, positional: [] };
 
-  // Format 2: JSON object
+  // JSON object format
   if (rest.startsWith('{')) {
-    try {
-      return { name, args: JSON.parse(rest) };
-    } catch (e) {
-      return { error: 'Invalid JSON: ' + e.message };
-    }
+    try { return { name, args: JSON.parse(rest), positional: [] }; }
+    catch (e) { return { error: 'Invalid JSON: ' + e.message }; }
   }
 
-  // Format 1: parenthesized args
+  // Strip outer parens
   if (rest.startsWith('(') && rest.endsWith(')')) {
     rest = rest.slice(1, -1).trim();
   }
+  if (!rest) return { name, args: {}, positional: [] };
 
-  // Parse key=value pairs (supports quoted strings, arrays, numbers, booleans)
+  // Tokenize: split on commas respecting quotes and brackets
+  const tokens = _splitArgs(rest);
   const args = {};
-  // Regex: key = value where value can be "string", [array], number, true/false, or unquoted-string
-  const pairRe = /(\w+)\s*=\s*("(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\[.*?\]|\{.*?\}|true|false|null|\d+(?:\.\d+)?|[^\s,)]+)/g;
-  let m;
-  while ((m = pairRe.exec(rest)) !== null) {
-    const key = m[1];
-    let val = m[2];
-    // Parse the value
-    if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-      val = val.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
-    } else if (val.startsWith('[') || val.startsWith('{')) {
-      try { val = JSON.parse(val); } catch(e) { /* keep as string */ }
-    } else if (val === 'true') { val = true; }
-    else if (val === 'false') { val = false; }
-    else if (val === 'null') { val = null; }
-    else if (/^\d+$/.test(val)) { val = parseInt(val); }
-    else if (/^\d+\.\d+$/.test(val)) { val = parseFloat(val); }
-    args[key] = val;
+  const positional = [];
+
+  for (const token of tokens) {
+    const eqMatch = token.match(/^(\w+)\s*=\s*([\s\S]*)$/);
+    if (eqMatch) {
+      // Named: key=value
+      args[eqMatch[1]] = _parseValue(eqMatch[2].trim());
+    } else {
+      // Positional
+      positional.push(_parseValue(token.trim()));
+    }
   }
-  if (Object.keys(args).length === 0 && rest.trim()) {
-    return { error: 'Could not parse arguments: ' + rest.substring(0, 100) };
+  return { name, args, positional };
+}
+
+function _splitArgs(s) {
+  // Split on commas, respecting quotes, brackets, braces
+  const result = [];
+  let current = '';
+  let depth = 0;  // [] {} depth
+  let inStr = null;  // null, '"', "'"
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      current += c;
+      if (c === inStr && s[i - 1] !== '\\') inStr = null;
+    } else if (c === '"' || c === "'") {
+      current += c;
+      inStr = c;
+    } else if (c === '[' || c === '{') {
+      current += c;
+      depth++;
+    } else if (c === ']' || c === '}') {
+      current += c;
+      depth--;
+    } else if (c === ',' && depth === 0) {
+      result.push(current);
+      current = '';
+    } else {
+      current += c;
+    }
   }
-  return { name, args };
+  if (current.trim()) result.push(current);
+  return result;
+}
+
+function _parseValue(v) {
+  if (!v) return '';
+  // Quoted string
+  if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+    return v.slice(1, -1).replace(/\\"/g, '"').replace(/\\'/g, "'");
+  }
+  // JSON array or object
+  if (v.startsWith('[') || v.startsWith('{')) {
+    try { return JSON.parse(v); } catch(e) { return v; }
+  }
+  // Booleans / null
+  if (v === 'true') return true;
+  if (v === 'false') return false;
+  if (v === 'null') return null;
+  // Numbers
+  if (/^\d+$/.test(v)) return parseInt(v);
+  if (/^\d+\.\d+$/.test(v)) return parseFloat(v);
+  // Bare string (unquoted)
+  return v;
 }
 
 // ── Agent Memories ──────────────────────────────────────────────
@@ -5207,6 +5256,15 @@ async function send() {
     return;
   }
 
+  // Save to message history (before slash command intercept so commands are in history too)
+  if (text) {
+    messageHistory.unshift(text);
+    if (messageHistory.length > 50) messageHistory.pop();
+    localStorage.setItem('pyfi2_msg_history', JSON.stringify(messageHistory.slice(0, 50)));
+  }
+  historyIndex = -1;
+  savedDraft = '';
+
   // Intercept slash commands
   if (text.startsWith('/')) {
     const handled = await handleSlashCommand(text);
@@ -5220,15 +5278,6 @@ async function send() {
   const attachmentsForDisplay = [...pendingFiles];
   pendingFiles = [];
   renderAttachments();
-
-  // Save to message history
-  if (text) {
-    messageHistory.unshift(text);
-    if (messageHistory.length > 50) messageHistory.pop();
-    localStorage.setItem('pyfi2_msg_history', JSON.stringify(messageHistory.slice(0, 50)));
-  }
-  historyIndex = -1;
-  savedDraft = '';
 
   // Allow stacking: don't block on 'sending', just track pending count
   sending = true;

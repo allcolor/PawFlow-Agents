@@ -236,6 +236,14 @@ class LLMClient:
                 else:
                     result = self._complete_anthropic(messages, model, temperature, max_tokens, tools)
                 result.duration_ms = (time.time() - start) * 1000
+                # Estimate tokens if provider didn't return counts
+                if not result.tokens_in and messages:
+                    result.tokens_in = sum(
+                        len(m.content) if isinstance(m.content, str) else
+                        sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                        else 0 for m in messages) // 4
+                if not result.tokens_out and result.content:
+                    result.tokens_out = len(result.content) // 4
                 self._report_tokens(result, messages)
                 return result
             except LLMClientError:
@@ -281,6 +289,14 @@ class LLMClient:
             raise LLMClientError(f"Unknown provider '{self.provider}'")
 
         result.duration_ms = (time.time() - start) * 1000
+        # Estimate tokens only if provider didn't return them
+        if not result.tokens_in and messages:
+            result.tokens_in = sum(
+                len(m.content) if isinstance(m.content, str) else
+                sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                else 0 for m in messages) // 4
+        if not result.tokens_out and result.content:
+            result.tokens_out = len(result.content) // 4
         self._report_tokens(result, messages)
         return result
 

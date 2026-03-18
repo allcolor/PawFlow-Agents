@@ -5558,8 +5558,18 @@ class AgentLoopTask(BaseTask):
             if not messages_data:
                 continue
 
-            # Extract agent name from key (conv_id::thought::agent_name)
-            _thought_agent = entry_key.rsplit("::", 1)[-1] if "::" in entry_key else "assistant"
+            # Extract agent name from key
+            if "::task::" in entry_key or "::task_verify::" in entry_key:
+                # Task key: conv::task::t_xxx — resolve agent from task data
+                _task_id = entry_key.rsplit("::", 1)[-1]
+                _all_tasks = store.get_extra(cid, "agent_tasks") or {}
+                _task_entry = _all_tasks.get(_task_id, {})
+                _thought_agent = _task_entry.get("agent", "assistant")
+            elif "::" in entry_key:
+                # Thought key: conv::thought::agent_name
+                _thought_agent = entry_key.rsplit("::", 1)[-1]
+            else:
+                _thought_agent = "assistant"
 
             # Skip if this agent already has a thought running
             with self._active_lock:

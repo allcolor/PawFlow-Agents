@@ -192,6 +192,7 @@ def make_safe_import() -> Callable:
 def build_sandbox_globals(
     sandbox_open: Optional[Callable] = None,
     extra_vars: Optional[Dict[str, Any]] = None,
+    base_url: str = "http://localhost:9090",
 ) -> tuple:
     """Build sandboxed globals and a print-capture buffer.
 
@@ -289,6 +290,37 @@ def build_sandbox_globals(
     safe_builtins["get_secret"] = _get_secret
     safe_builtins["get_variable"] = _get_variable
 
+    # FileStore access — lets scripts create downloadable binary files
+    _sb_base_url = base_url
+
+    def _store_file(filename: str, data, content_type: str = "") -> str:
+        """Store a file in FileStore and return its download URL.
+
+        Args:
+            filename: Name for the file (e.g. 'archive.zip')
+            data: bytes or str content
+            content_type: MIME type (auto-detected if empty)
+        Returns:
+            Download URL string
+        """
+        from core.file_store import FileStore
+        if isinstance(data, str):
+            data = data.encode("utf-8")
+        if not content_type:
+            ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+            content_type = {
+                "zip": "application/zip", "gz": "application/gzip",
+                "tar": "application/x-tar", "pdf": "application/pdf",
+                "png": "image/png", "jpg": "image/jpeg", "gif": "image/gif",
+                "csv": "text/csv", "json": "application/json",
+                "txt": "text/plain", "html": "text/html",
+                "mp4": "video/mp4", "mp3": "audio/mpeg",
+            }.get(ext, "application/octet-stream")
+        file_id = FileStore.instance().store(filename, data, content_type=content_type)
+        return f"{_sb_base_url}/files/{file_id}/{filename}"
+
+    safe_builtins["store_file"] = _store_file
+
     globals_dict = {"__builtins__": safe_builtins}
 
     if extra_vars:
@@ -328,6 +360,7 @@ def execute_sandboxed(
 
     globals_dict, print_buf = build_sandbox_globals(
         sandbox_open=sandbox_open,
+        base_url=base_url,
     )
 
     namespace = dict(local_vars or {})

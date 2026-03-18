@@ -125,10 +125,10 @@ class ExecuteScriptHandler(ToolHandler):
         return (
             "Execute Python code and return the result. Supports expressions, "
             "statements, and file I/O via open(). Files created with open() "
-            "are stored in a virtual sandbox — the agent cannot access the "
-            "real filesystem. Written files are automatically made available "
-            "for download. Safe standard library imports: math, json, re, csv, "
-            "datetime, collections, itertools, statistics, etc."
+            "are stored in a virtual sandbox. Use store_file(filename, data, "
+            "content_type) to create downloadable binary files (ZIP, images, etc.) "
+            "— returns a download URL. Safe imports: math, json, re, csv, "
+            "datetime, collections, itertools, statistics, zipfile, pathlib, etc."
         )
 
     @property

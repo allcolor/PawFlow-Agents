@@ -45,7 +45,6 @@ ExecutorRegistry.get_instance().restore_from_disk()
 
 # Graceful shutdown: stop all executors on process exit
 import atexit
-import signal
 
 def _graceful_shutdown():
     """Stop all running executors cleanly on server shutdown."""
@@ -60,15 +59,6 @@ def _graceful_shutdown():
         pass
 
 atexit.register(_graceful_shutdown)
-
-# Handle SIGINT/SIGTERM for immediate graceful shutdown
-def _signal_handler(signum, frame):
-    _graceful_shutdown()
-    raise SystemExit(0)
-
-signal.signal(signal.SIGINT, _signal_handler)
-if hasattr(signal, 'SIGTERM'):
-    signal.signal(signal.SIGTERM, _signal_handler)
 
 # Initialize global log capture for GUI log viewer
 from gui.components.log_viewer import LogCapture

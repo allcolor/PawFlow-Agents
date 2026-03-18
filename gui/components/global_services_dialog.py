@@ -160,63 +160,70 @@ def global_services_dialog():
 
 def _render_config_editor(registry, sdef, gen):
     """Inline config editor for an existing global service."""
-    st.markdown(f"--- *{t('common.edit')}: {sdef.service_id}*")
+    sid = sdef.service_id
+    name_key = f"gsvc_rename_{sid}_{gen}"
+    desc_key = f"gsvc_edesc_{sid}_{gen}"
+    prefix = f"gsvc_edit_{sid}_{gen}"
 
-    new_name = st.text_input(
-        t("common.name"), value=sdef.service_id,
-        key=f"gsvc_rename_{sdef.service_id}_{gen}"
-    )
+    # Check if save was just executed (via callback)
+    if st.session_state.pop("_gsvc_saved", None) == sid:
+        st.success(f"Saved {sid}")
+        return
+
+    st.markdown(f"--- *{t('common.edit')}: {sid}*")
+
+    st.text_input(t("common.name"), value=sid, key=name_key)
 
     schema = _get_service_schema(sdef.service_type)
+    cfg_keys = []
     if schema:
         from gui.components.schema_form import render_schema_fields
-        edited = render_schema_fields(
-            schema, sdef.config,
-            key_prefix=f"gsvc_edit_{sdef.service_id}_{gen}"
-        )
+        render_schema_fields(schema, sdef.config, key_prefix=prefix)
     else:
-        edited = {}
         for cfg_key, cfg_val in sdef.config.items():
+            k = f"gsvc_ecfg_{sid}_{cfg_key}_{gen}"
+            cfg_keys.append((cfg_key, k))
             if isinstance(cfg_val, bool):
-                edited[cfg_key] = st.checkbox(
-                    cfg_key, value=cfg_val,
-                    key=f"gsvc_ecfg_{sdef.service_id}_{cfg_key}_{gen}")
+                st.checkbox(cfg_key, value=cfg_val, key=k)
             elif isinstance(cfg_val, (int, float)):
-                edited[cfg_key] = st.number_input(
-                    cfg_key, value=cfg_val,
-                    key=f"gsvc_ecfg_{sdef.service_id}_{cfg_key}_{gen}")
+                st.number_input(cfg_key, value=cfg_val, key=k)
             else:
-                edited[cfg_key] = st.text_input(
-                    cfg_key, value=str(cfg_val),
-                    key=f"gsvc_ecfg_{sdef.service_id}_{cfg_key}_{gen}")
+                st.text_input(cfg_key, value=str(cfg_val), key=k)
 
-    new_desc = st.text_input(
-        "Description", value=sdef.description,
-        key=f"gsvc_edesc_{sdef.service_id}_{gen}"
-    )
+    st.text_input("Description", value=sdef.description, key=desc_key)
+
+    def _do_save():
+        new_name = st.session_state.get(name_key, sid).strip()
+        new_desc = st.session_state.get(desc_key, sdef.description)
+        edited = {}
+        if schema:
+            for param_name in schema:
+                wk = f"{prefix}_{param_name}"
+                if wk in st.session_state:
+                    edited[param_name] = st.session_state[wk]
+        else:
+            for cfg_key, k in cfg_keys:
+                if k in st.session_state:
+                    edited[cfg_key] = st.session_state[k]
+        if new_name and new_name != sid:
+            try:
+                registry.rename(sid, new_name)
+                registry.update_config(new_name, edited)
+                if new_desc != sdef.description:
+                    registry.update_description(new_name, new_desc)
+            except (KeyError, ValueError):
+                pass
+        else:
+            registry.update_config(sid, edited)
+            if new_desc != sdef.description:
+                registry.update_description(sid, new_desc)
+        st.session_state.pop("_gsvc_edit", None)
+        st.session_state["_gsvc_saved"] = sid
 
     save_cols = st.columns([1, 1])
     with save_cols[0]:
-        if st.button(f"💾 {t('common.save')}",
-                     key=f"gsvc_save_{sdef.service_id}_{gen}",
-                     type="primary"):
-            renamed_id = new_name.strip() if new_name else ""
-            if renamed_id and renamed_id != sdef.service_id:
-                try:
-                    registry.rename(sdef.service_id, renamed_id)
-                except (KeyError, ValueError) as e:
-                    st.error(str(e))
-                    return
-                registry.update_config(renamed_id, edited)
-                if new_desc != sdef.description:
-                    registry.update_description(renamed_id, new_desc)
-            else:
-                registry.update_config(sdef.service_id, edited)
-                if new_desc != sdef.description:
-                    registry.update_description(sdef.service_id, new_desc)
-            st.session_state.pop("_gsvc_edit", None)
-            st.success(f"Saved {sdef.service_id}")
+        st.button(f"💾 {t('common.save')}", key=f"gsvc_save_{sid}_{gen}",
+                  type="primary", on_click=_do_save)
     with save_cols[1]:
-        if st.button(t("common.cancel"),
-                     key=f"gsvc_cancel_{sdef.service_id}_{gen}"):
-            st.session_state.pop("_gsvc_edit", None)
+        st.button(t("common.cancel"), key=f"gsvc_cancel_{sid}_{gen}",
+                  on_click=lambda: st.session_state.pop("_gsvc_edit", None))

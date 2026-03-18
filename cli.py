@@ -281,8 +281,7 @@ def cmd_gui(args):
         return result.returncode
     except KeyboardInterrupt:
         print("\nGUI stopped.")
-        # Suppress Python threading shutdown errors (Streamlit + concurrent.futures race)
-        os._exit(0)
+        return 0
 
 
 def cmd_plugins(args):

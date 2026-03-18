@@ -4091,8 +4091,10 @@ class AgentLoopTask(BaseTask):
             # so a regular message still cancels all agent threads
             if not _target:
                 # Cancel all per-agent keys for this conversation
+                # but NOT task/thought threads (they have their own lifecycle)
                 for k in list(self._conv_generation):
-                    if k.startswith(conversation_id + ":"):
+                    if k.startswith(conversation_id + ":") and \
+                       "::thought::" not in k and "::task::" not in k:
                         self._conv_generation[k] += 1
         ctx["_generation"] = gen
         ctx["_gen_key"] = _gen_key
@@ -4235,7 +4237,7 @@ class AgentLoopTask(BaseTask):
                     if "::thought::" in k and k.startswith(conversation_id):
                         self._conv_generation[k] += 1
             for k in list(scheduler._schedules):
-                if k.startswith(conversation_id):
+                if k.startswith(conversation_id) and "::task::" not in k and "::task_verify::" not in k:
                     scheduler.cancel(k)
         # Clear poll cooldown so poller doesn't re-trigger immediately
         with self._active_lock:
@@ -5412,6 +5414,11 @@ class AgentLoopTask(BaseTask):
 
             if "::thought::" in entry_key:
                 # Thoughts are never blocked — they can arrive anytime
+                thought_entries.append(entry)
+                continue
+
+            if "::task::" in entry_key or "::task_verify::" in entry_key:
+                # Tasks are like thoughts — never cancelled by user interaction
                 thought_entries.append(entry)
                 continue
 

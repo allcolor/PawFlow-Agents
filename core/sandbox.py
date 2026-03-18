@@ -293,33 +293,52 @@ def build_sandbox_globals(
     # FileStore access — lets scripts create downloadable binary files
     _sb_base_url = base_url
 
-    def _store_file(filename: str, data, content_type: str = "") -> str:
-        """Store a file in FileStore and return its download URL.
+    _MIME_MAP = {
+        "zip": "application/zip", "gz": "application/gzip",
+        "tar": "application/x-tar", "pdf": "application/pdf",
+        "png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg",
+        "gif": "image/gif", "webp": "image/webp", "svg": "image/svg+xml",
+        "csv": "text/csv", "json": "application/json",
+        "txt": "text/plain", "html": "text/html", "md": "text/markdown",
+        "mp4": "video/mp4", "mp3": "audio/mpeg", "wav": "audio/wav",
+    }
+
+    def _store_file(filename: str, data, content_type: str = "") -> dict:
+        """Store a file in FileStore and return {url, file_id, filename}.
 
         Args:
             filename: Name for the file (e.g. 'archive.zip')
             data: bytes or str content
             content_type: MIME type (auto-detected if empty)
         Returns:
-            Download URL string
+            dict with 'url', 'file_id', 'filename'
         """
         from core.file_store import FileStore
         if isinstance(data, str):
             data = data.encode("utf-8")
         if not content_type:
             ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-            content_type = {
-                "zip": "application/zip", "gz": "application/gzip",
-                "tar": "application/x-tar", "pdf": "application/pdf",
-                "png": "image/png", "jpg": "image/jpeg", "gif": "image/gif",
-                "csv": "text/csv", "json": "application/json",
-                "txt": "text/plain", "html": "text/html",
-                "mp4": "video/mp4", "mp3": "audio/mpeg",
-            }.get(ext, "application/octet-stream")
+            content_type = _MIME_MAP.get(ext, "application/octet-stream")
         file_id = FileStore.instance().store(filename, data, content_type=content_type)
-        return f"{_sb_base_url}/files/{file_id}/{filename}"
+        url = f"{_sb_base_url}/files/{file_id}/{filename}"
+        return {"url": url, "file_id": file_id, "filename": filename}
+
+    def _get_store_file(name_or_id: str) -> bytes:
+        """Read a file from FileStore by filename or file_id. Returns bytes."""
+        from core.file_store import FileStore
+        fs = FileStore.instance()
+        result = fs.get(name_or_id)
+        if result:
+            return result[1]  # (filename, bytes)
+        # Try searching by filename
+        for fid in fs.list_files():
+            entry = fs.get(fid)
+            if entry and entry[0] == name_or_id:
+                return entry[1]
+        raise FileNotFoundError(f"File '{name_or_id}' not found in FileStore")
 
     safe_builtins["store_file"] = _store_file
+    safe_builtins["get_store_file"] = _get_store_file
 
     globals_dict = {"__builtins__": safe_builtins}
 

@@ -124,11 +124,11 @@ class ExecuteScriptHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Execute Python code and return the result. Supports expressions, "
-            "statements, and file I/O via open(). Files created with open() "
-            "are stored in a virtual sandbox. Use store_file(filename, data, "
-            "content_type) to create downloadable binary files (ZIP, images, etc.) "
-            "— returns a download URL. Safe imports: math, json, re, csv, "
-            "datetime, collections, itertools, statistics, zipfile, pathlib, etc."
+            "statements, and file I/O via open(). "
+            "store_file(filename, data) → creates a downloadable file, returns "
+            "{url, file_id, filename}. "
+            "get_store_file(name_or_id) → reads a file from FileStore, returns bytes. "
+            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc."
         )
 
     @property

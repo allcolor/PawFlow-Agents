@@ -61,7 +61,7 @@
       "api_key": "local",
       "base_url": "${global.qwen_llm_base_url}",
       "default_model": "${global.qwen_llm_model}",
-      "timeout": 300,
+      "timeout": 120,
       "max_retries": 1,
       "max_tokens": 32768,
       "max_concurrent": 1,

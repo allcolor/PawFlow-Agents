@@ -3929,8 +3929,13 @@ class AgentLoopTask(BaseTask):
                     if "::thought::" in k and k.startswith(conversation_id):
                         self._conv_generation[k] += 1
             for k in list(scheduler._schedules):
-                if k.startswith(conversation_id + "::thought::"):
+                if k.startswith(conversation_id):
                     scheduler.cancel(k)
+        # Clear poll cooldown so poller doesn't re-trigger immediately
+        with self._active_lock:
+            self._active_conversations.pop(conversation_id, None)
+            self._user_active_conversations.discard(conversation_id)
+            self._poll_cooldown.pop(conversation_id, None)
 
         # Reset status
         from core.conversation_store import ConversationStore
@@ -4268,6 +4273,10 @@ class AgentLoopTask(BaseTask):
                 continuation_delay = 3
 
                 while iteration < ctx["max_iterations"]:
+                    # Check cancellation at the very start of each iteration
+                    if not self._is_current_generation(gen_key, my_generation):
+                        raise AgentCancelled()
+
                     iteration += 1
 
                     # During poll first iteration, suppress streaming to avoid
@@ -4454,6 +4463,10 @@ class AgentLoopTask(BaseTask):
                     finally:
                         heartbeat_stop.set()
                         hb_thread.join(timeout=1)
+
+                    # Check cancellation immediately after LLM call returns
+                    if not self._is_current_generation(gen_key, my_generation):
+                        raise AgentCancelled()
 
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out

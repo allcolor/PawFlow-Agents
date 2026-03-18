@@ -203,6 +203,7 @@ def _render_config_editor(registry, sdef, gen):
     st.text_input("Description", value=sdef.description, key=desc_key)
 
     def _do_save():
+        print(f"[SAVE] Starting save for {sid}", flush=True)
         new_name = st.session_state.get(name_key, sid).strip()
         new_desc = st.session_state.get(desc_key, sdef.description)
         edited = {}
@@ -215,20 +216,24 @@ def _render_config_editor(registry, sdef, gen):
             for cfg_key, k in cfg_keys:
                 if k in st.session_state:
                     edited[cfg_key] = st.session_state[k]
+        print(f"[SAVE] Collected config: {list(edited.keys())}", flush=True)
         if new_name and new_name != sid:
             try:
                 registry.rename(sid, new_name)
                 registry.update_config(new_name, edited)
                 if new_desc != sdef.description:
                     registry.update_description(new_name, new_desc)
-            except (KeyError, ValueError):
-                pass
+            except (KeyError, ValueError) as e:
+                print(f"[SAVE] Rename error: {e}", flush=True)
         else:
+            print(f"[SAVE] Calling update_config...", flush=True)
             registry.update_config(sid, edited)
+            print(f"[SAVE] update_config done", flush=True)
             if new_desc != sdef.description:
                 registry.update_description(sid, new_desc)
         st.session_state.pop("_gsvc_edit", None)
         st.session_state["_gsvc_saved"] = sid
+        print(f"[SAVE] Done", flush=True)
 
     save_cols = st.columns([1, 1])
     with save_cols[0]:

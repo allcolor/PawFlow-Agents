@@ -1169,8 +1169,19 @@ function sourceBadge(source) {
     const label = svc ? name + ' via ' + svc : name;
     return '<span class="source-badge" style="background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(label) + '</span> ';
   }
-  if (source.type === 'user' && name && name !== 'anonymous') {
-    return '<span class="source-badge" style="background:#1a3a2a;color:#4ecdc4">' + escapeHtml(name) + '</span> ';
+  if (source.type === 'user') {
+    let userLabel = (name && name !== 'anonymous') ? name : '';
+    const target = source.target_agent;
+    const isBtw = source.btw;
+    if (target) {
+      const prefix = isBtw ? 'btw \u2192 ' : '\u2192 ';
+      userLabel = (userLabel ? userLabel + ' ' : '') + prefix + displayAgentName(target);
+    } else if (isBtw) {
+      userLabel = (userLabel ? userLabel + ' ' : '') + 'btw';
+    }
+    if (userLabel) {
+      return '<span class="source-badge" style="background:#1a3a2a;color:#4ecdc4">' + escapeHtml(userLabel) + '</span> ';
+    }
   }
   return '';
 }
@@ -1256,6 +1267,12 @@ function addMsg(role, text, extra) {
     container.appendChild(el);
   }
   scrollBottom(shouldScroll);
+  // Re-scroll when images finish loading (they change height after initial render)
+  if (shouldScroll) {
+    for (const img of el.querySelectorAll('img')) {
+      img.addEventListener('load', () => scrollBottom(true), { once: true });
+    }
+  }
   return el;
 }
 
@@ -5309,11 +5326,13 @@ document.getElementById('input').addEventListener('paste', (e) => {
 function copyMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg) return;
-  // Get text content (strip action buttons text)
+  // Get text content only (strip badges, time, actions, meta)
   const clone = msg.cloneNode(true);
-  const actions = clone.querySelector('.msg-actions');
-  if (actions) actions.remove();
-  const text = clone.textContent || clone.innerText;
+  for (const sel of ['.msg-actions', '.source-badge', '.msg-time', '.msg-meta']) {
+    const el = clone.querySelector(sel);
+    if (el) el.remove();
+  }
+  const text = (clone.textContent || clone.innerText).trim();
   navigator.clipboard.writeText(text).then(() => {
     btn.textContent = '\u2705';
     setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);

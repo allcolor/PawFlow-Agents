@@ -1097,6 +1097,12 @@ class AgentLoopTask(BaseTask):
         if user_text.strip() or attachments:
             user_content = self._build_user_content(user_text, attachments)
             user_source = {"type": "user", "name": user_id or "anonymous"}
+            if _target_agent:
+                user_source["target_agent"] = _target_agent
+            # Also tag btw messages
+            _is_btw = body_json.get("btw", False) if body_json else False
+            if _is_btw:
+                user_source["btw"] = True
             messages.append(LLMMessage(role="user", content=user_content, source=user_source))
 
         # Determine active agent name and llm_service for source tracking

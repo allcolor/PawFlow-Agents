@@ -3204,7 +3204,7 @@ class AgentLoopTask(BaseTask):
             output = json.dumps({
                 "response": response_content,
                 "conversation_id": conversation_id,
-                "model": final_model,
+                "model": final_model or _client_model,
                 "provider": _client_prov,
                 "tokens_in": total_tokens_in,
                 "tokens_out": total_tokens_out,
@@ -3710,17 +3710,19 @@ class AgentLoopTask(BaseTask):
         _client_provider = getattr(client, "provider", "")
         _client_base_url = getattr(client, "base_url", "")
 
+        # Resolve model from client (always available, unlike final_model which needs a response)
+        _client_model = getattr(client, "default_model", "") or ""
+
         def _agent_source():
-            src = {"type": "agent", "name": _agent_name or "assistant"}
-            if _agent_svc:
-                src["llm_service"] = _agent_svc
-            if _client_provider:
-                src["provider"] = _client_provider
-            if _client_base_url:
-                # Mask API keys in URL if present
-                import re as _re
-                src["base_url"] = _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_base_url)
-            return src
+            import re as _re
+            return {
+                "type": "agent",
+                "name": _agent_name or "assistant",
+                "llm_service": _agent_svc or "",
+                "provider": _client_provider or "",
+                "model": _client_model,
+                "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***', _client_base_url) if _client_base_url else "",
+            }
 
         def _strip_echo_prefix(text: str) -> str:
             """Strip identity prefix that the LLM may echo back."""
@@ -4193,7 +4195,7 @@ class AgentLoopTask(BaseTask):
                         "response": response_content,
                         "conversation_id": conversation_id,
                         "agent_name": _agent_name or "assistant",
-                        "model": final_model,
+                        "model": final_model or _client_model,
                         "provider": _client_provider,
                         "base_url": _agent_source().get("base_url", ""),
                         "tokens_in": total_tokens_in,
@@ -4381,7 +4383,7 @@ class AgentLoopTask(BaseTask):
                 "response": response_content,
                 "conversation_id": conversation_id,
                 "agent_name": _agent_name or "assistant",
-                "model": final_model,
+                "model": final_model or _client_model,
                 "provider": _client_provider,
                 "base_url": _source.get("base_url", ""),
                 "tokens_in": total_tokens_in,
@@ -4422,7 +4424,7 @@ class AgentLoopTask(BaseTask):
                 "response": response_content,
                 "conversation_id": conversation_id,
                 "agent_name": _agent_name or "assistant",
-                "model": final_model,
+                "model": final_model or _client_model,
                 "provider": _client_provider,
                 "base_url": _source.get("base_url", ""),
                 "tokens_in": total_tokens_in,

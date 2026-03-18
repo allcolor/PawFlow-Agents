@@ -602,6 +602,12 @@ class ContinuousFlowExecutor:
                         ff_to_send = result_ff
                     else:
                         ff_to_send = result_ff.clone()
+                    # Let target task set priority (for priority-attribute queues)
+                    target_task = self._tasks.get(out_conn.target_id)
+                    if target_task and hasattr(target_task, 'prioritize'):
+                        prio = target_task.prioritize(ff_to_send)
+                        if prio != 0:
+                            ff_to_send.set_attribute("priority", str(prio))
                     logger.debug(
                         "_commit: %s → %s [%d/%d], fragment.id=%s, %d bytes",
                         task_id, out_conn.target_id, i + 1, len(matching),

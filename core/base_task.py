@@ -335,6 +335,20 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         """
         pass
 
+    def prioritize(self, flowfile) -> int:
+        """Return priority for a FlowFile entering this task's input queue.
+
+        Higher number = more urgent. Override for custom rules.
+        Default: read from 'priority' attribute or 0.
+
+        Convention: 0=normal, 5=elevated, 10=urgent, -5=low/batch.
+        """
+        val = flowfile.get_attribute("priority")
+        try:
+            return int(val) if val else 0
+        except (ValueError, TypeError):
+            return 0
+
     def has_pending_input(self) -> bool:
         """Whether this task has self-generated input ready.
 

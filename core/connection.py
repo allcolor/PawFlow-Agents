@@ -27,7 +27,7 @@ class Connection:
                  relationship: str = "success",
                  max_queue_size: int = 10000,
                  max_queue_bytes: int = 100 * 1024 * 1024,  # 100MB
-                 prioritizer: PrioritizerType = PrioritizerType.FIFO,
+                 prioritizer: PrioritizerType = PrioritizerType.PRIORITY_ATTRIBUTE,
                  priority_attribute: str = "priority",
                  flowfile_ttl_seconds: int = 0):
         self.source_id = source_id

@@ -1362,6 +1362,12 @@ class AgentLoopTask(BaseTask):
             pass
         return False
 
+    def prioritize(self, flowfile) -> int:
+        """Action FlowFiles get priority 10 (urgent), normal messages get 0."""
+        if self._is_action_flowfile(flowfile):
+            return 10
+        return 0
+
     def select_processable(self, connections):
         """Queue-aware scheduling: skip FlowFiles targeting saturated LLM services
         or conversations with a context operation in progress.

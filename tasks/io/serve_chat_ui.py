@@ -4247,12 +4247,10 @@ async function cmdLinkStatus() {
 
 async function cmdAgentList() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     const agents = data.agents || {};
     const selected = data.selected || '';
     const names = Object.keys(agents);
@@ -4264,12 +4262,12 @@ async function cmdAgentList() {
         const a = agents[n];
         const marker = n === selected ? ' \u2705' : '';
         const scope = scopeIcons[a._scope || ''] || '';
-        const prompt = (a.prompt || '').substring(0, 80);
-        return `\u2022 ${scope} **${n}**${marker} \u2014 ${prompt}...`;
+        const pr = (a.prompt || '').substring(0, 80);
+        return '\u2022 ' + scope + ' **' + n + '**' + marker + ' \u2014 ' + pr + '...';
       });
-      addMsg('system', `Agents (${selected ? 'active: ' + selected : 'none selected'}):\n` + lines.join('\n'));
+      addMsg('system', 'Agents (' + (selected ? 'active: ' + selected : 'none selected') + '):\n' + lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed to list agents: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to list agents: ' + e.message));
 }
 
 async function cmdAgentCreate() {
@@ -4346,7 +4344,7 @@ async function cmdAgentSetname(realName, nickname) {
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
 
-async function cmdAgentMsg(agentName, text) {
+function cmdAgentMsg(agentName, text) {
   // Send a message to a specific agent without changing the active agent
   addMsg('user', '[\u2192 ' + agentName + '] ' + text);
   clearStream(agentName);
@@ -4355,32 +4353,30 @@ async function cmdAgentMsg(agentName, text) {
   lastSSEActivity = Date.now();
   document.getElementById('status').textContent = t('sending');
 
-  try {
-    const body = { message: text, target_agent: agentName };
-    if (conversationId) body.conversation_id = conversationId;
-    const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
-    if (ttlVal > 0) body.ttl = ttlVal;
+  const body = { message: text, target_agent: agentName };
+  if (conversationId) body.conversation_id = conversationId;
+  const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
+  if (ttlVal > 0) body.ttl = ttlVal;
 
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); hideTyping(); sending = false; return; }
     if (data.conversation_id && !conversationId) {
       conversationId = data.conversation_id;
       connectSSE(conversationId);
     }
     if (data.message_count) serverMsgCount = data.message_count;
-  } catch (e) {
+  }).catch(e => {
     addMsg('error', 'Failed to send to agent: ' + e.message);
     hideTyping();
     sending = false;
-  }
+  });
 }
 
-async function cmdAgentMsgAll(text) {
+function cmdAgentMsgAll(text) {
   // Broadcast a message to ALL agents in parallel
   if (!conversationId) {
     // Need a conversation first — send a dummy to create one
@@ -4393,27 +4389,24 @@ async function cmdAgentMsgAll(text) {
   lastSSEActivity = Date.now();
   document.getElementById('status').textContent = 'Broadcasting...';
 
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'broadcast_agents',
-        conversation_id: conversationId,
-        message: text,
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); hideTyping(); sending = false; return; }
-    // Responses will come via SSE agent_response events
-  } catch (e) {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({
+      action: 'broadcast_agents',
+      conversation_id: conversationId,
+      message: text,
+    }),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', data.error); hideTyping(); sending = false; }
+  }).catch(e => {
     addMsg('error', 'Broadcast failed: ' + e.message);
     hideTyping();
     sending = false;
-  }
+  });
 }
 
-async function cmdAgentInterrupt(target) {
+function cmdAgentInterrupt(target) {
   if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
   const isAll = target.toUpperCase() === 'ALL';
   addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'assistant') + '...'));
@@ -4441,20 +4434,18 @@ async function cmdAgentInterrupt(target) {
   } catch (e) { addMsg('error', 'Interrupt failed: ' + e.message); }
 }
 
-async function cmdAgentBtw(target, question) {
+function cmdAgentBtw(target, question) {
   if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
   const agent = target || '';
   const isAll = agent.toUpperCase() === 'ALL';
   addMsg('user', '[btw' + (agent ? ' → ' + agent : '') + '] ' + question);
-  try {
-    await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'btw', conversation_id: conversationId,
-        agent_name: isAll ? 'ALL' : agent, message: question,
-      }),
-    });
-    // Response comes via SSE btw_token/btw_done events
-  } catch (e) { addMsg('error', 'BTW failed: ' + e.message); }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({
+      action: 'btw', conversation_id: conversationId,
+      agent_name: isAll ? 'ALL' : agent, message: question,
+    }),
+  }).catch(e => addMsg('error', 'BTW failed: ' + e.message));
+  // Response comes via SSE btw_token/btw_done events
 }
 
 async function cmdMemoryList(agentFilter, searchQuery) {

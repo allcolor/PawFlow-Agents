@@ -3510,7 +3510,6 @@ class SpawnAgentsHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
-        self._executor = None  # type: Optional[SubAgentExecutor]
         self._available_agents: List[str] = []
         self._local = threading.local()  # thread-safe source agent
 
@@ -3584,11 +3583,11 @@ class SpawnAgentsHandler(ToolHandler):
         self._user_id = uid
 
     def set_executor(self, executor):
-        """Set the SubAgentExecutor instance."""
-        self._executor = executor
+        """Set the SubAgentExecutor instance (thread-local)."""
+        self._local.executor = executor
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if self._executor is None:
+        if not getattr(self._local, 'executor', None):
             return "Error: Agent executor not configured."
 
         from core.agent_executor import resolve_agent_task
@@ -3641,7 +3640,7 @@ class SpawnAgentsHandler(ToolHandler):
         if not agent_tasks:
             return "Error: no valid tasks to spawn."
 
-        results = self._executor.spawn(agent_tasks, wait=wait)
+        results = self._local.executor.spawn(agent_tasks, wait=wait)
 
         if not wait:
             ids = [r.task_id for r in results]
@@ -3674,7 +3673,7 @@ class GetAgentResultsHandler(ToolHandler):
     """Retrieve results from previously spawned background agents."""
 
     def __init__(self):
-        self._executor = None
+        self._local = threading.local()
 
     @property
     def name(self) -> str:
@@ -3702,14 +3701,14 @@ class GetAgentResultsHandler(ToolHandler):
         }
 
     def set_executor(self, executor):
-        self._executor = executor
+        self._local.executor = executor
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if self._executor is None:
+        if not getattr(self._local, 'executor', None):
             return "Error: Agent executor not configured."
 
         task_ids = arguments.get("task_ids", [])
-        results = self._executor.get_results(task_ids)
+        results = self._local.executor.get_results(task_ids)
 
         output = [r.to_dict() for r in results]
         return json.dumps(output, ensure_ascii=False, indent=2)
@@ -3720,7 +3719,7 @@ class UseSkillHandler(ToolHandler):
 
     def __init__(self):
         self._user_id = ""
-        self._executor = None
+        self._local = threading.local()
 
     @property
     def name(self) -> str:
@@ -3760,10 +3759,10 @@ class UseSkillHandler(ToolHandler):
         self._user_id = uid
 
     def set_executor(self, executor):
-        self._executor = executor
+        self._local.executor = executor
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        if self._executor is None:
+        if not getattr(self._local, 'executor', None):
             return "Error: Agent executor not configured."
 
         from core.resource_store import ResourceStore
@@ -3778,7 +3777,7 @@ class UseSkillHandler(ToolHandler):
         if skill_def is None:
             return f"Error: Skill '{skill_name}' not found."
 
-        result = self._executor.execute_skill(
+        result = self._local.executor.execute_skill(
             skill_prompt=skill_def.get("prompt", ""),
             input_text=input_text,
             model=model,

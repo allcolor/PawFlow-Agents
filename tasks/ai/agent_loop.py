@@ -5166,9 +5166,10 @@ class AgentLoopTask(BaseTask):
                         _at_key = f"{conversation_id}::task::{_at_tid}"
                         if _at_sched.get(_at_key):
                             continue  # already scheduled
-                        _at_interval = _at_task.get("interval", 60)
+                        from core.tool_registry import AssignTaskHandler as _ATH
+                        _at_delay = _ATH._get_task_delay(_at_task)
                         _at_sched.schedule_delay(
-                            conversation_id, _at_interval,
+                            conversation_id, _at_delay,
                             key=_at_key,
                             reason=f"[agent_task:{_at_tid}] auto-reschedule ({_at_agent})",
                             user_id=ctx.get("user_id", ""),
@@ -5337,7 +5338,8 @@ class AgentLoopTask(BaseTask):
                 existing = scheduler.get(sched_key)
                 if existing:
                     continue
-                interval_s = task.get("interval", 60)
+                from core.tool_registry import AssignTaskHandler as _ATH_rs
+                interval_s = _ATH_rs._get_task_delay(task)
                 scheduler.schedule_delay(
                     cid, interval_s,
                     key=sched_key,

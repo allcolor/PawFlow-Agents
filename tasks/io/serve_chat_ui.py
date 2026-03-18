@@ -3511,7 +3511,8 @@ async function handleSlashCommand(text) {
         else {
           const lines = tasks.map(t => {
             let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
-            line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ', every ' + t.interval + 's]';
+            const ivLabel = typeof t.interval === 'object' ? (t.interval.spec || t.interval.min + '-' + t.interval.max + 's') : t.interval + 's';
+            line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ', ' + ivLabel + ']';
             if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
             if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
             return line;

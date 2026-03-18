@@ -2857,8 +2857,8 @@ class AssignTaskHandler(ToolHandler):
                     "description": "How to know the task is done (verifiable criteria)",
                 },
                 "interval": {
-                    "type": "integer",
-                    "description": "Seconds between work sessions (default: 60)",
+                    "type": "string",
+                    "description": "Schedule frequency. Examples: '60' (every 60s), '3/5m' (3 times per 5min), '2-4/h' (2-4 per hour). Default: '60'",
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -2871,6 +2871,49 @@ class AssignTaskHandler(ToolHandler):
             },
             "required": ["agent", "task"],
         }
+
+    @staticmethod
+    def _parse_interval(spec: str) -> dict:
+        """Parse interval spec → {min: seconds, max: seconds, spec: original}.
+
+        Formats:
+          '60'       → fixed 60s
+          '3/5m'     → 3 times per 5 minutes
+          '2-4/h'    → 2-4 times per hour
+        """
+        import re
+        spec = spec.strip()
+        # Plain seconds
+        try:
+            secs = int(spec)
+            return {"min": secs, "max": secs, "spec": spec}
+        except ValueError:
+            pass
+        # Frequency spec: count[-count]/[num]unit
+        m = re.match(r'^(\d+)(?:-(\d+))?/(\d*)([smhd])$', spec)
+        if not m:
+            return {"min": 60, "max": 60, "spec": spec}
+        count_min = int(m.group(1))
+        count_max = int(m.group(2) or count_min)
+        if count_min <= 0 or count_max < count_min:
+            return {"min": 60, "max": 60, "spec": spec}
+        duration_num = int(m.group(3) or 1)
+        unit = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(4)]
+        period = duration_num * unit
+        max_interval = period // count_min
+        min_interval = period // count_max
+        return {"min": max(1, min_interval), "max": max(1, max_interval), "spec": spec}
+
+    @staticmethod
+    def _get_task_delay(task_data: dict) -> int:
+        """Get the next delay in seconds from a task's interval config."""
+        import random
+        iv = task_data.get("interval", {})
+        if isinstance(iv, int):
+            return iv
+        if isinstance(iv, dict):
+            return random.randint(iv.get("min", 60), iv.get("max", 60))
+        return 60
 
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
@@ -2893,9 +2936,12 @@ class AssignTaskHandler(ToolHandler):
             return "Error: no conversation context"
 
         criteria = arguments.get("completion_criteria", "")
-        interval = int(arguments.get("interval", 60))
+        interval_spec = str(arguments.get("interval", "60"))
         max_iter = int(arguments.get("max_iterations", 50))
         verifier = arguments.get("verifier", "")
+
+        # Parse interval: plain seconds or frequency spec (3/5m, 2-4/h)
+        interval_data = self._parse_interval(interval_spec)
 
         import uuid as _uuid
         task_id = "t_" + _uuid.uuid4().hex[:8]
@@ -2911,7 +2957,7 @@ class AssignTaskHandler(ToolHandler):
             "task": task_desc,
             "completion_criteria": criteria,
             "status": "active",
-            "interval": interval,
+            "interval": interval_data,
             "max_iterations": max_iter,
             "iterations_done": 0,
             "verifier": verifier,
@@ -2922,10 +2968,11 @@ class AssignTaskHandler(ToolHandler):
         all_tasks[task_id] = task_data
         store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
 
-        # Schedule first wake-up at the configured interval
+        # Schedule first wake-up
+        first_delay = self._get_task_delay(task_data)
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(
-            self._conversation_id, interval,
+            self._conversation_id, first_delay,
             key=f"{self._conversation_id}::task::{task_id}",
             reason=f"[agent_task:{task_id}] assigned task ({target})",
             user_id=self._user_id,
@@ -2945,7 +2992,8 @@ class AssignTaskHandler(ToolHandler):
             pass
 
         v_info = f" (verifier: {verifier})" if verifier else ""
-        return f"Task {task_id} assigned to '{target}'{v_info}. First wake-up in {interval}s."
+        iv_label = interval_data.get("spec", str(first_delay))
+        return f"Task {task_id} assigned to '{target}'{v_info}. Interval: {iv_label}. First in {first_delay}s."
 
 
 class CompleteTaskHandler(ToolHandler):
@@ -3075,15 +3123,15 @@ class CompleteTaskHandler(ToolHandler):
             task["status"] = "active"
             all_tasks[task_id] = task
             store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
-            interval = task.get("interval", 60)
+            delay = AssignTaskHandler._get_task_delay(task)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().schedule_delay(
-                self._conversation_id, interval,
+                self._conversation_id, delay,
                 key=f"{self._conversation_id}::task::{task_id}",
                 reason=f"[agent_task:{task_id}] continue ({agent})",
                 user_id=task.get("assigned_by", ""),
             )
-            return f"Task {task_id} progress noted. Next in {interval}s."
+            return f"Task {task_id} progress noted. Next in {delay}s."
 
 
 class VerifyTaskHandler(ToolHandler):

@@ -49,6 +49,14 @@ def _register_all_services():
 
     # Image generation services
     import services.pixazo_image_service      # noqa: F401
+    import services.grok_image_service        # noqa: F401
+    import services.openai_image_service      # noqa: F401
+
+    # Video generation services
+    import services.kling_video_service       # noqa: F401
+    import services.pixazo_video_service      # noqa: F401
+    import services.grok_video_service        # noqa: F401
+    import services.sora_video_service        # noqa: F401
 
     # Executor service
     import services.remote_executor_service   # noqa: F401

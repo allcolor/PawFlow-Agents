@@ -2860,12 +2860,15 @@ const HELP_DATA = {
       + 'Useful when the conversation gets too long or the agent loses focus.',
   },
   '/summary': {
-    usage: '/summary [tokens]',
-    short: 'Summarize conversation to N tokens and restart from summary',
-    detail: 'Asks the LLM to summarize the entire conversation to approximately N tokens (default 500), then restarts from that summary.\n\n'
-      + '  /summary       — Summarize to ~500 tokens\n'
-      + '  /summary 1000  — Summarize to ~1000 tokens\n\n'
-      + 'The summary replaces all previous context. New messages build on top of it.',
+    usage: '/summary [agent|ALL] [tokens]',
+    short: 'Summarize context to N tokens and restart from summary',
+    detail: 'Asks the LLM to summarize the context to approximately N tokens (default 500), then restarts from that summary.\n\n'
+      + '  /summary              \u2014 Summarize shared context to ~500 tokens\n'
+      + '  /summary 1000         \u2014 Summarize to ~1000 tokens\n'
+      + '  /summary grok         \u2014 Summarize grok\'s context\n'
+      + '  /summary ALL          \u2014 Summarize all agents\' contexts\n'
+      + '  /summary qwen 2000    \u2014 Summarize qwen\'s context to ~2000 tokens\n\n'
+      + 'The summary replaces previous context for that agent. New messages build on top.',
   },
   '/resume': {
     usage: '/resume <agent|ALL>',
@@ -2873,14 +2876,20 @@ const HELP_DATA = {
     detail: 'Resumes an agent that was interrupted or stopped.\n\nExamples:\n  /resume grok\n  /resume ALL',
   },
   '/compact': {
-    usage: '/compact',
-    short: 'Compact conversation (summarize old messages)',
-    detail: 'Summarizes older messages in the conversation to reduce context size while preserving key information.',
+    usage: '/compact [agent|ALL]',
+    short: 'Compact context (summarize old messages)',
+    detail: 'Summarizes older messages to reduce context size while preserving key information.\n\n'
+      + '  /compact        \u2014 Compact the shared context\n'
+      + '  /compact grok   \u2014 Compact grok\'s context only\n'
+      + '  /compact ALL    \u2014 Compact all agents\' contexts',
   },
   '/rebuild': {
-    usage: '/rebuild',
+    usage: '/rebuild [agent|ALL]',
     short: 'Rebuild context from full conversation history',
-    detail: 'Reconstructs the LLM context from the complete conversation. If everything fits in the context window, restores fully; otherwise compacts.\n\nUseful after /compact or /resume to get back more context.',
+    detail: 'Reconstructs the LLM context from the complete conversation. If everything fits, restores fully; otherwise compacts.\n\n'
+      + '  /rebuild        \u2014 Rebuild shared context\n'
+      + '  /rebuild grok   \u2014 Rebuild grok\'s context\n'
+      + '  /rebuild ALL    \u2014 Rebuild all agents',
   },
   '/rebuild_clean': {
     usage: '/rebuild_clean',
@@ -2888,9 +2897,12 @@ const HELP_DATA = {
     detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.',
   },
   '/context': {
-    usage: '/context',
-    short: 'View the current LLM context',
-    detail: 'Shows what the LLM actually sees: the list of messages in the current context, token estimate, and whether the context has diverged from the conversation.',
+    usage: '/context [agent]',
+    short: 'View the LLM context',
+    detail: 'Shows what the LLM actually sees: messages, token estimate, divergence status.\n\n'
+      + '  /context        \u2014 View shared context\n'
+      + '  /context grok   \u2014 View grok\'s context\n\n'
+      + 'The overlay includes an agent dropdown to switch between agent contexts.',
   },
   '/files': {
     usage: '/files',

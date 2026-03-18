@@ -1834,22 +1834,17 @@ class TestImageServiceResolution(unittest.TestCase):
         from services.base_image_generation import BaseImageGenerationService
         task = AgentLoopTask.__new__(AgentLoopTask)
 
-        mock_img_svc = MagicMock(spec=BaseImageGenerationService)
-        mock_llm_svc = MagicMock()  # not a BaseImageGenerationService
-
         mock_pixazo_def = MagicMock(enabled=True, service_type="pixazoImageGeneration")
         mock_llm_def = MagicMock(enabled=True, service_type="llmConnection")
-
-        def _get_live(sid):
-            return {"pixazo": mock_img_svc, "llm_svc": mock_llm_svc}.get(sid)
 
         with patch("gui.services.global_service_registry.GlobalServiceRegistry") as mock_glob:
             mock_glob.get_instance.return_value.get_all_definitions.return_value = {
                 "pixazo": mock_pixazo_def,
                 "llm_svc": mock_llm_def,
             }
-            mock_glob.get_instance.return_value.get_live_instance.side_effect = _get_live
-            result = task._discover_media_services("", BaseImageGenerationService)
+            with patch.object(AgentLoopTask, '_is_service_subclass',
+                              side_effect=lambda t, bc: t == "pixazoImageGeneration"):
+                result = task._discover_media_services("", BaseImageGenerationService)
 
         assert len(result) == 1
         assert result[0][0] == "pixazo"

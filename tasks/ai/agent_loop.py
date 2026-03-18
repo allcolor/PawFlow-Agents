@@ -335,14 +335,31 @@ class AgentLoopTask(BaseTask):
 
     # ── Media service discovery (generic for image/video) ───────────
 
-    def _discover_media_services(self, user_id: str, base_class) -> list:
-        """Discover all deployed services inheriting from base_class.
+    @staticmethod
+    def _is_service_subclass(service_type: str, base_class) -> bool:
+        """Check if a service_type's class inherits from base_class."""
+        try:
+            from core import ServiceFactory
+            cls = ServiceFactory.get(service_type)
+            return cls is not None and issubclass(cls, base_class)
+        except Exception:
+            return False
 
-        Checks live instances via the registry — if a service has a
-        ``generate`` method and is an instance of base_class, it qualifies.
+    def _discover_media_services(self, user_id: str, base_class) -> list:
+        """Discover all deployed services whose type inherits from base_class.
+
+        Checks the service definitions (global + user) — no instantiation.
+        Uses ServiceFactory class hierarchy to determine type.
 
         Returns list of (service_id, service_type, scope) tuples.
         """
+        # Ensure all service modules are registered in ServiceFactory
+        try:
+            from tasks import _register_all_services
+            _register_all_services()
+        except Exception:
+            pass
+
         results = []
         seen = set()
         try:
@@ -351,9 +368,8 @@ class AgentLoopTask(BaseTask):
             for sid, sdef in greg.get_all_definitions().items():
                 if not getattr(sdef, "enabled", True):
                     continue
-                svc = greg.get_live_instance(sid)
-                if svc and isinstance(svc, base_class):
-                    stype = getattr(sdef, "service_type", "") or ""
+                stype = getattr(sdef, "service_type", "") or ""
+                if self._is_service_subclass(stype, base_class):
                     results.append((sid, stype, "global"))
                     seen.add(sid)
         except Exception:
@@ -367,9 +383,8 @@ class AgentLoopTask(BaseTask):
                         continue
                     if not getattr(sdef, "enabled", True):
                         continue
-                    svc = ureg.get_live_instance(user_id, sid)
-                    if svc and isinstance(svc, base_class):
-                        stype = getattr(sdef, "service_type", "") or ""
+                    stype = getattr(sdef, "service_type", "") or ""
+                    if self._is_service_subclass(stype, base_class):
                         results.append((sid, stype, "user"))
             except Exception:
                 pass
@@ -1151,7 +1166,12 @@ class AgentLoopTask(BaseTask):
             "conv_attr": conv_attr, "conversation_id": conversation_id,
             "user_id": user_id,
             "_base_message_count": base_message_count,
-            "context_max_tokens": int(self.config.get("context_max_tokens", 64000)),
+            "context_max_tokens": int(
+                # Per-agent: use service max_tokens (= context window size)
+                (getattr(resolved_svc, 'config', {}) or {}).get("max_tokens", 0)
+                or (_selected_agent_def or {}).get("context_max_tokens", 0)
+                or self.config.get("context_max_tokens", 64000)
+            ),
             "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "channel": channel,
@@ -5508,6 +5528,12 @@ class AgentLoopTask(BaseTask):
         _agent_name = _active_agent if _active_agent and _active_agent != "assistant" else ""
         _agent_svc = svc_id if svc_id != "default" else ""
 
+        # Context window from service config
+        _poll_ctx_max = int(
+            (getattr(_poll_svc, 'config', {}) or {}).get("max_tokens", 0)
+            or self.config.get("context_max_tokens", 64000)
+        )
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model,
@@ -5518,6 +5544,9 @@ class AgentLoopTask(BaseTask):
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
             "user_id": poll_user_id,
+            "context_max_tokens": _poll_ctx_max,
+            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
+            "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "active_agent_name": _agent_name,
             "active_llm_service": _agent_svc,
             "is_poll": True,

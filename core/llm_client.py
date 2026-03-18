@@ -147,6 +147,11 @@ class LLMClient:
         self.timeout = timeout
         self.max_retries = max_retries
         self.claude_binary = claude_binary
+        self.gemini_binary = gemini_binary
+        self.refresh_token = refresh_token
+        self.token_expires_at = token_expires_at
+        self.token_url = token_url or "https://console.anthropic.com/v1/oauth/token"
+        self._token_lock = threading.Lock() if refresh_token else None
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None  # callable(tokens_in, tokens_out, model)
 
@@ -170,11 +175,6 @@ class LLMClient:
             self._on_tokens(tokens_in, tokens_out, response.model or self.default_model)
         except Exception:
             pass
-        self.gemini_binary = gemini_binary
-        self.refresh_token = refresh_token
-        self.token_expires_at = token_expires_at
-        self.token_url = token_url or "https://console.anthropic.com/v1/oauth/token"
-        self._token_lock = threading.Lock() if refresh_token else None
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":

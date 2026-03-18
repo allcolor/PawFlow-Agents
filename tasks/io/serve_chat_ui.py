@@ -1588,11 +1588,12 @@ async function interruptSingle(agentName) {
   } catch(e) { console.warn('Interrupt failed:', e); }
 }
 async function stopSingle(agentName) {
+  // Stop button in active panel = force stop (no response, immediate kill)
   if (!conversationId) return;
   try {
     await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId, agent_name: agentName }),
+      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId, agent_name: agentName, force: true }),
       credentials: 'same-origin',
     });
     trackAgentDone(agentName);

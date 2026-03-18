@@ -177,9 +177,13 @@ class ExecuteScriptHandler(ToolHandler):
             output = "Script executed (no 'result' variable set)"
 
         if created_files:
-            output += "\n\nFiles created:\n" + "\n".join(
-                f"- {url}" for url in created_files
-            )
+            output += "\n\nFiles created (use show_file in a SEPARATE turn, not the same batch):\n"
+            for url in created_files:
+                # Extract file_id from URL for easy reference
+                import re as _re_fid
+                _m = _re_fid.search(r'/files/([a-f0-9]+)/', url)
+                _fid = _m.group(1) if _m else ""
+                output += f"- {url}" + (f" (file_id: {_fid})" if _fid else "") + "\n"
         return output
 
 
@@ -3121,10 +3125,13 @@ class CompleteTaskHandler(ToolHandler):
                 )
                 return f"Task {task_id} marked done. Verifier '{verifier}' will check."
             else:
-                task["status"] = "completed"
-                task["completed_at"] = _t.time()
-                all_tasks[task_id] = task
+                # Remove completed task — trace is in chat history
+                all_tasks.pop(task_id, None)
                 store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+                # Cancel any pending schedule
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().cancel(
+                    f"{self._conversation_id}::task::{task_id}")
                 return f"Task {task_id} completed."
         else:
             task["status"] = "active"
@@ -3217,11 +3224,14 @@ class VerifyTaskHandler(ToolHandler):
             pass
 
         if approved:
-            task["status"] = "completed"
-            task["completed_at"] = _t.time()
-            task["verified_by"] = self._agent_name
-            all_tasks[task_id] = task
+            # Remove completed task
+            all_tasks.pop(task_id, None)
             store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+            from core.poll_scheduler import PollScheduler
+            PollScheduler.instance().cancel(
+                f"{self._conversation_id}::task::{task_id}")
+            PollScheduler.instance().cancel(
+                f"{self._conversation_id}::task_verify::{task_id}")
             return f"Task {task_id} approved and completed."
         else:
             task["status"] = "active"
@@ -4502,7 +4512,9 @@ class ShowFileHandler(ToolHandler):
                     found = f
                     break
             if not found:
-                return f"Error: File '{filename}' not found in FileStore."
+                return (f"Error: File '{filename}' not found in FileStore. "
+                        f"If you just created it with execute_script, call show_file "
+                        f"in a SEPARATE turn (not in the same tool_call batch).")
             file_id = found["file_id"]
             fname = found["filename"]
             result = store.get(file_id)

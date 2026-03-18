@@ -748,6 +748,8 @@ async function resumeConv(cid) {
     sending = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('messages').innerHTML = '';
+    // Load nicknames BEFORE replay so displayAgentName() works on old messages
+    nicknameMap = data.nicknames || {};
     // Replay messages (using classified types: user/assistant/tool_call/tool_result)
     for (const m of (data.messages || [])) {
       let content = m.content || '';
@@ -759,8 +761,6 @@ async function resumeConv(cid) {
     }
     serverMsgCount = data.message_count || 0;
     highlightConv(cid);
-    // Load agent nicknames if present
-    nicknameMap = data.nicknames || {};
     connectSSE(cid);  // subscribe to SSE — will pick up events if agent is still running
     startPollTimer();
     updateDeleteBtn();

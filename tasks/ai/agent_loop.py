@@ -3094,7 +3094,11 @@ class AgentLoopTask(BaseTask):
                         continue
 
                 logger.info(f"Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
-                result_text = registry.execute(tc.name, tc.arguments)
+                try:
+                    result_text = registry.execute(tc.name, tc.arguments) or ""
+                except Exception as _te:
+                    result_text = f"Error: {_te}"
+                    logger.error(f"Tool '{tc.name}' failed: {_te}")
                 messages.append(LLMMessage(
                     role="tool", content=result_text, tool_call_id=tc.id,
                 ))
@@ -4136,7 +4140,7 @@ class AgentLoopTask(BaseTask):
                             )
                         else:
                             try:
-                                result_text = registry.execute(tc.name, tc.arguments)
+                                result_text = registry.execute(tc.name, tc.arguments) or ""
                             except Exception as tool_err:
                                 result_text = f"Error: {tool_err}"
                                 logger.error(f"Tool '{tc.name}' failed: {tool_err}")
@@ -4165,7 +4169,7 @@ class AgentLoopTask(BaseTask):
 
                         def _exec_tool(tc):
                             try:
-                                return tc, registry.execute(tc.name, tc.arguments)
+                                return tc, registry.execute(tc.name, tc.arguments) or ""
                             except Exception as e:
                                 logger.error(f"Tool '{tc.name}' failed: {e}")
                                 return tc, f"Error: {e}"
@@ -4177,7 +4181,7 @@ class AgentLoopTask(BaseTask):
                                 tc, result_text = future.result()
                                 results_map[tc.id] = (tc, result_text)
                                 bus.publish_event(conversation_id, "tool_result", {
-                                    "tool": tc.name, "result": result_text[:2000],
+                                    "tool": tc.name, "result": (result_text or "")[:2000],
                                     "agent_name": _agent_name or "assistant",
                                     "llm_service": _agent_svc or "",
                                 })

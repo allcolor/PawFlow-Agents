@@ -2814,16 +2814,19 @@ const HELP_DATA = {
       + '  /vidservice clear <agent>         \u2014 Remove preference for one agent\n',
   },
   '/task': {
-    usage: '/task assign <agent> <description> [options] | status | pause | resume | cancel',
+    usage: '/task assign | list | status | pause | resume | cancel',
     short: 'Assign and manage agent tasks',
-    detail: 'Assign autonomous tasks to agents. They work at intervals until done.\n\n'
+    detail: 'Assign autonomous tasks to agents. Multiple tasks per agent supported.\n\n'
       + '  /task assign <agent> "<task>" [--interval 60] [--max 50] [--verifier <agent>] [--criteria "<criteria>"]\n'
-      + '  /task status                  \u2014 Show all active tasks\n'
-      + '  /task pause <agent>           \u2014 Pause an agent\'s task\n'
-      + '  /task resume <agent>          \u2014 Resume a paused task\n'
-      + '  /task cancel <agent>          \u2014 Cancel an agent\'s task\n\n'
-      + 'The task description and criteria can be multi-line (use quotes).\n'
-      + 'Example: /task assign grok "Scrape the top 100 HN posts and summarize each" --verifier claude --interval 120',
+      + '  /task list                    \u2014 Show all tasks (all agents)\n'
+      + '  /task list <agent>            \u2014 Show tasks for one agent\n'
+      + '  /task status                  \u2014 Alias for list\n'
+      + '  /task pause <task_id|agent>   \u2014 Pause a task (by ID) or all tasks of an agent\n'
+      + '  /task resume <task_id|agent>  \u2014 Resume a paused task or all of an agent\n'
+      + '  /task cancel <task_id|agent>  \u2014 Cancel a task or all of an agent\n\n'
+      + 'Task IDs look like t_xxxxxxxx. Use /task list to see them.\n'
+      + 'Tasks survive server restarts and reschedule automatically.\n\n'
+      + 'Example: /task assign grok "Scrape the top 100 HN posts" --verifier claude --interval 120 --criteria "all 100 posts summarized"',
   },
   '/imgservice': {
     usage: '/imgservice [list | select <name> [agent] | clear [agent]]',
@@ -2918,11 +2921,13 @@ const HELP_DATA = {
       + '  /stop grok -f      — Force stop grok (immediate cancel)',
   },
   '/restart_from': {
-    usage: '/restart_from [N]',
+    usage: '/restart_from [agent|ALL] [N]',
     short: 'Restart context from last N messages (default 5, 0 = empty)',
     detail: 'Keeps only the last N messages as LLM context. Earlier messages stay in history but are ignored by the agent.\n\n'
-      + '  /restart_from      — Keep last 5 messages\n'
-      + '  /restart_from 10   — Keep last 10 messages\n'
+      + '  /restart_from          \u2014 Keep last 5 messages (shared)\n'
+      + '  /restart_from 10       \u2014 Keep last 10 messages\n'
+      + '  /restart_from grok 3   \u2014 Keep last 3 for grok\'s context\n'
+      + '  /restart_from ALL 5    \u2014 Restart all agents\n'
       + '  /restart_from 0    — Empty context (fresh start, keeps system prompt)\n\n'
       + 'Useful when the conversation gets too long or the agent loses focus.',
   },
@@ -3491,11 +3496,14 @@ async function handleSlashCommand(text) {
         if (data.error) { addMsg('error', data.error); }
         else { addMsg('system', data.result || 'Task assigned.'); }
       } catch (e) { addMsg('error', e.message); }
-    } else if (sub === 'status') {
+    } else if (sub === 'status' || sub === 'list') {
+      const listAgent = parts[2] || '';
       try {
+        const listBody = { action: 'task_status', conversation_id: conversationId };
+        if (listAgent) listBody.agent_name = listAgent;
         const resp = await fetch(API, {
           method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'task_status', conversation_id: conversationId }),
+          body: JSON.stringify(listBody),
         });
         const data = await resp.json();
         const tasks = data.tasks || [];

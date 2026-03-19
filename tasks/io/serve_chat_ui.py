@@ -82,8 +82,8 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
 .header .btn:hover { background: #e94560; color: white; }
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .user-info { font-size: 12px; color: #8888aa; }
-.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
-.messages { flex: 1; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+.messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; min-width: 0; width: 100%; }
+.messages { flex: 1; width: 100%; min-width: 0; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
             scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
        white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }

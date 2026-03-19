@@ -179,10 +179,11 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         capture_output=True, text=True,
         timeout=timeout,
         cwd=root_dir,
+        encoding="utf-8", errors="replace",
     )
     return {
-        "stdout": result.stdout[-10000:],
-        "stderr": result.stderr[-5000:],
+        "stdout": (result.stdout or "")[-10000:],
+        "stderr": (result.stderr or "")[-5000:],
         "returncode": result.returncode,
     }
 

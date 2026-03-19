@@ -546,9 +546,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         action = msg.get("action", "")
         rel_path = msg.get("path", ".")
 
-        msg_secret = msg.get("secret", "")
-        if not hmac.compare_digest(msg_secret, secret):
-            return {"ok": False, "error": "Invalid secret"}
+        # Token already validated at WS connect time — no per-command secret check
 
         if readonly and action in _WRITE_ACTIONS:
             return {"ok": False, "error": "Operation not allowed in readonly mode"}

@@ -367,7 +367,11 @@ class FilesystemService:
         if "error" in holder:
             raise Exception(holder["error"])
 
-        return holder.get("data")
+        data = holder.get("data")
+        # Check for relay-level errors
+        if isinstance(data, dict) and data.get("ok") is False:
+            raise Exception(data.get("error", "Relay error"))
+        return data
 
     # ── Filesystem interface ──
 

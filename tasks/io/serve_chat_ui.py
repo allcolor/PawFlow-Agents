@@ -832,6 +832,11 @@ async function _recoverConversation(cid) {
         }
       }
       if (mType === 'assistant') {
+        // Skip btw messages that were already shown via btw_done SSE event
+        if (m.source && m.source.btw) {
+          console.log('[poll] skipping btw message (already shown via btw_done)');
+          continue;
+        }
         // Check if this assistant message was already shown via SSE done event
         const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
         const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
@@ -2833,7 +2838,7 @@ const HELP_DATA = {
     usage: '/task assign | list | status | pause | resume | cancel',
     short: 'Assign and manage agent tasks',
     detail: 'Assign autonomous tasks to agents. Multiple tasks per agent supported.\n\n'
-      + '  /task assign <agent> "<task>" [--interval 60] [--max 50] [--verifier <agent>] [--criteria "<criteria>"]\n'
+      + '  /task assign <agent> "<task>" [--interval 6/1m] [--max 50] [--verifier <agent>] [--criteria "<criteria>"]\n'
       + '  /task list                    \u2014 Show all tasks (all agents)\n'
       + '  /task list <agent>            \u2014 Show tasks for one agent\n'
       + '  /task status                  \u2014 Alias for list\n'
@@ -3524,9 +3529,9 @@ async function handleSlashCommand(text) {
         return true;
       }
       // Parse options from remaining args
-      let interval = 60, maxIter = 50, verifier = '', criteria = '';
+      let interval = null, maxIter = 50, verifier = '', criteria = '';
       for (let i = 4; i < qargs.length; i++) {
-        if (qargs[i] === '--interval' && qargs[i+1]) { interval = parseInt(qargs[++i]) || 60; }
+        if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
         else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 50; }
         else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
         else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
@@ -3536,7 +3541,8 @@ async function handleSlashCommand(text) {
         body: JSON.stringify({
           action: 'assign_task', conversation_id: conversationId,
           agent_name: taskAgent, task: taskDesc,
-          completion_criteria: criteria, interval, max_iterations: maxIter, verifier,
+          completion_criteria: criteria, max_iterations: maxIter, verifier,
+          ...(interval != null ? { interval } : {}),
         }),
       }).then(r => r.json()).then(data => {
         if (data.error) { addMsg('error', data.error); }

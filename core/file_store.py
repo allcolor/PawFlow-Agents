@@ -63,9 +63,6 @@ class FileStore:
             if os.path.isdir(src) and not os.path.exists(dst):
                 try:
                     shutil.copytree(src, dst)
-                    import traceback
-                    print(f"[FILE_DELETE] migrate rmtree: {src}")
-                    traceback.print_stack()
                     shutil.rmtree(src, ignore_errors=True)
                     migrated += 1
                 except Exception:
@@ -161,9 +158,6 @@ class FileStore:
         entry = self._entries.pop(file_id, None)
         if entry:
             file_dir = os.path.dirname(entry["path"])
-            import traceback
-            print(f"[FILE_DELETE] _remove_entry: file_id={file_id}, dir={file_dir}")
-            traceback.print_stack()
             try:
                 shutil.rmtree(file_dir, ignore_errors=True)
             except Exception:
@@ -289,9 +283,6 @@ class FileStore:
             # Find the actual file inside the directory
             files = [f for f in file_dir.iterdir() if f.is_file()]
             if not files:
-                import traceback
-                print(f"[FILE_DELETE] _rebuild_index: empty dir removed: {file_dir}")
-                traceback.print_stack()
                 shutil.rmtree(file_dir, ignore_errors=True)
                 continue
             actual_file = files[0]

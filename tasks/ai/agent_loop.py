@@ -5937,9 +5937,6 @@ class AgentLoopTask(BaseTask):
             # Always set idle — follow-ups are handled by PollScheduler
             from core.conversation_store import ConversationStore as _CS
             _agent_name = ctx.get("active_agent_name") or "assistant"
-            print(f"[POLL DONE] agent={_agent_name}, conv={conversation_id[:8]}, "
-                  f"tools={len(tools_called)}, is_poll={ctx.get('is_poll')}, "
-                  f"gen_key={ctx.get('_gen_key','?')[:30]}")
             _CS.instance().set_status(conversation_id, "idle")
 
         except _InterruptComplete:
@@ -6341,8 +6338,6 @@ class AgentLoopTask(BaseTask):
                 if not self._is_eligible_for_poll(conversation_id, messages_data):
                     continue
 
-            print(f"[POLL WAKE] generic to_poll conv={conversation_id[:8]}, "
-                  f"reasons={scheduled_reasons.get(conversation_id, [])}")
             logger.info(f"[poller] Waking up conversation {conversation_id[:8]}")
 
             # Bump generation for the poll run
@@ -6434,8 +6429,6 @@ class AgentLoopTask(BaseTask):
                     continue
                 self._active_thoughts.add(entry_key)
 
-            print(f"[POLL WAKE] thought entry_key={entry_key}, agent={_thought_agent}, "
-                  f"reason={reason[:80]}, conv={cid[:8]}")
             logger.info(f"[poller] Waking thought {entry_key} (agent={_thought_agent})")
             store.set_status(cid, "active")
             bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
@@ -6628,8 +6621,6 @@ class AgentLoopTask(BaseTask):
                 if _sched_match:
                     _active_agent = _sched_match.group(1)
                     break
-            print(f"[POLL CTX] conv={conversation_id[:8]}, resolved_agent={_active_agent!r}, "
-                  f"reasons={[r[:60] for r in (scheduled_reasons or [])]}")
             if _active_agent and _active_agent != "assistant":
                 try:
                     from core.resource_store import ResourceStore
@@ -7285,10 +7276,6 @@ class AgentLoopTask(BaseTask):
             if isinstance(content, str):
                 for match in pattern.finditer(content):
                     file_ids.add(match.group(1))
-        if file_ids:
-            import traceback
-            print(f"[FILE_DELETE] _cleanup_conversation_files: {len(file_ids)} files: {file_ids}")
-            traceback.print_stack()
         for fid in file_ids:
             store.delete(fid)
         if file_ids:

@@ -166,9 +166,8 @@ class ExecutorRegistry:
         if legacy.exists():
             legacy.unlink(missing_ok=True)
 
-        # Hot-reload watcher disabled — was causing data/files deletion.
-        # TODO: investigate root cause before re-enabling.
-        # self.start_hot_reload()
+        # Auto-restart flows when source files change
+        self.start_hot_reload()
 
 
     def _restore_instance(self, instance_id: str, flow_path: str,

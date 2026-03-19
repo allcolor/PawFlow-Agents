@@ -92,6 +92,47 @@ def action_read_pdf(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         }
 
 
+def action_read_notebook(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Extract content from a Jupyter notebook (.ipynb)."""
+    p = Path(path)
+    if not p.suffix.lower() == ".ipynb":
+        raise ValueError(f"Not a notebook: {p.name}")
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    cells = raw.get("cells", [])
+    metadata = raw.get("metadata", {})
+    kernel = metadata.get("kernelspec", {}).get("display_name", "")
+    result_cells = []
+    for i, cell in enumerate(cells):
+        cell_type = cell.get("cell_type", "")
+        source = "".join(cell.get("source", []))
+        outputs_text = ""
+        for out in cell.get("outputs", []):
+            if "text" in out:
+                outputs_text += "".join(out["text"])
+            elif "data" in out:
+                # Prefer text/plain, then text/html
+                data = out["data"]
+                if "text/plain" in data:
+                    outputs_text += "".join(data["text/plain"])
+                elif "text/html" in data:
+                    outputs_text += "[HTML output]"
+                elif "image/png" in data:
+                    outputs_text += "[Image output]"
+            if out.get("ename"):
+                outputs_text += f"Error: {out['ename']}: {out.get('evalue', '')}"
+        result_cells.append({
+            "index": i,
+            "type": cell_type,
+            "source": source,
+            "output": outputs_text,
+        })
+    return {
+        "kernel": kernel,
+        "total_cells": len(cells),
+        "cells": result_cells,
+    }
+
+
 def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     content = req.get("content", "")
     raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
@@ -392,6 +433,7 @@ ACTIONS = {
     "list_dir": action_list_dir,
     "read_file": action_read_file,
     "read_pdf": action_read_pdf,
+    "read_notebook": action_read_notebook,
     "write_file": action_write_file,
     "delete_file": action_delete_file,
     "mkdir": action_mkdir,

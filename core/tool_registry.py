@@ -4736,7 +4736,7 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files and run commands on the user's filesystem through a configured service. "
-            "Actions: list_dir, read_file, read_pdf (extract text from PDF), "
+            "Actions: list_dir, read_file, read_pdf, read_notebook (.ipynb), "
             "write_file, edit (exact string replace), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
             "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
@@ -4760,7 +4760,8 @@ class FilesystemToolHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": [
-                        "list_dir", "read_file", "read_pdf", "write_file", "edit",
+                        "list_dir", "read_file", "read_pdf", "read_notebook",
+                        "write_file", "edit",
                         "delete_file", "mkdir", "stat", "exists",
                         "search", "grep", "find_replace", "exec",
                         "git_status", "git_log", "git_diff", "git_commit",
@@ -4952,6 +4953,21 @@ class FilesystemToolHandler(ToolHandler):
                         lines = [f"PDF: {result.get('total_pages', '?')} pages"]
                         for p_data in result["pages"]:
                             lines.append(f"\n--- Page {p_data['page']} ---\n{p_data['text']}")
+                        return "\n".join(lines)
+                    return json.dumps(result)
+                # Notebook: auto-redirect to read_notebook
+                if fname.lower().endswith(".ipynb"):
+                    result = svc._request("read_notebook", path)
+                    if isinstance(result, dict) and "cells" in result:
+                        lines = [f"Notebook: {result.get('total_cells', '?')} cells "
+                                 f"(kernel: {result.get('kernel', '?')})"]
+                        for c in result["cells"]:
+                            header = f"\n### Cell {c['index']} [{c['type']}]"
+                            lines.append(header)
+                            if c["source"]:
+                                lines.append(f"```\n{c['source']}\n```")
+                            if c.get("output"):
+                                lines.append(f"Output:\n```\n{c['output']}\n```")
                         return "\n".join(lines)
                     return json.dumps(result)
                 # Text files

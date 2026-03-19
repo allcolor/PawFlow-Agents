@@ -86,11 +86,11 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
 .messages { flex: 1; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
             scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
-       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
+       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; min-width: 0; }
 .msg a { color: #4fc3f7; text-decoration: underline; }
 .msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
 .msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;
-           margin: 8px 0; }
+           margin: 8px 0; max-width: 100%; }
 .msg pre code { background: none; padding: 0; }
 .msg.user { align-self: flex-end; background: #0f3460; color: white; border-bottom-right-radius: 4px;
             border-left: 3px solid #4ecdc4; }

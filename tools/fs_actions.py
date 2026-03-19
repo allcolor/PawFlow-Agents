@@ -174,16 +174,27 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     timeout = min(req.get("timeout", 30), 120)
     if not command:
         raise ValueError("Missing 'command' parameter")
+    # Capture as bytes to handle any encoding (Windows cmd uses cp850/cp1252)
     result = subprocess.run(
         command, shell=True,
-        capture_output=True, text=True,
+        capture_output=True,
         timeout=timeout,
         cwd=root_dir,
-        encoding="utf-8", errors="replace",
     )
+    def _decode(raw: bytes) -> str:
+        if not raw:
+            return ""
+        # Try UTF-8 first, then system default, then latin-1 (never fails)
+        for enc in ("utf-8", "cp1252", "cp850", "latin-1"):
+            try:
+                return raw.decode(enc)
+            except (UnicodeDecodeError, LookupError):
+                continue
+        return raw.decode("latin-1")  # fallback, always works
+
     return {
-        "stdout": (result.stdout or "")[-10000:],
-        "stderr": (result.stderr or "")[-5000:],
+        "stdout": _decode(result.stdout),
+        "stderr": _decode(result.stderr),
         "returncode": result.returncode,
     }
 

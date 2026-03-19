@@ -653,7 +653,9 @@ function newChat() {
   clearAllStreams();
   sending = false;
   document.getElementById('sendBtn').disabled = false;
+  _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
   addMsg('system', t('newConv'));
   document.getElementById('status').textContent = t('ready');
   document.getElementById('deleteConvBtn').style.display = 'none';
@@ -757,7 +759,9 @@ async function resumeConv(cid) {
     clearAllStreams();
     sending = false;
     document.getElementById('sendBtn').disabled = false;
+    _expectingClear = true;
     document.getElementById('messages').innerHTML = '';
+    _expectingClear = false;
     // Load nicknames BEFORE replay so displayAgentName() works on old messages
     nicknameMap = data.nicknames || {};
     // Replay messages (using classified types: user/assistant/tool_call/tool_result)
@@ -1143,7 +1147,9 @@ async function refreshCurrentConv() {
     const data = await resp.json();
     if (data.error) { document.getElementById('status').textContent = t('error'); return; }
     // Clear and replay
+    _expectingClear = true;
     document.getElementById('messages').innerHTML = '';
+    _expectingClear = false;
     clearAllStreams();
     for (const m of (data.messages || [])) {
       let content = m.content || '';
@@ -6833,8 +6839,10 @@ document.addEventListener('click', (e) => {
 
 addMsg('system', t('welcome'));
 
-// DEBUG: track message DOM removals
+// DEBUG: track unexpected message DOM removals
+let _expectingClear = false;  // set true before intentional innerHTML='' / clearAllStreams
 const _msgObserver = new MutationObserver((mutations) => {
+  if (_expectingClear) return;
   for (const m of mutations) {
     for (const node of m.removedNodes) {
       if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {

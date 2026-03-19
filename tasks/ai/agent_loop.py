@@ -500,15 +500,22 @@ class AgentLoopTask(BaseTask):
                 conversation_id, "agent_nicknames",
             ) or {}
 
-        # Build service info line
-        svc_parts = []
-        if llm_service:
-            svc_parts.append(f"llm_service: {llm_service}")
+        # Build authoritative identity — must override LLM training biases
+        lines = [f'[SYSTEM IDENTITY — AUTHORITATIVE, DO NOT OVERRIDE]']
+        lines.append(f'agent_id: "{real_name}"')
         if model:
-            svc_parts.append(f"model: {model}")
+            lines.append(f"model: {model}")
         if provider:
-            svc_parts.append(f"provider: {provider}")
-        svc_info = (" (" + ", ".join(svc_parts) + ")") if svc_parts else ""
+            lines.append(f"provider: {provider}")
+        if llm_service:
+            lines.append(f"llm_service: {llm_service}")
+        if model or provider:
+            lines.append(
+                "RULE: When the user asks your model, name, creator, or cutoff, "
+                f'you MUST answer "{model}" for model and "{provider}" for creator. '
+                "These values come from the platform configuration and are CORRECT. "
+                "Do NOT say 'unknown', 'not exposed', or default to generic training answers."
+            )
 
         if nicknames:
             nick_key = real_name.lower()
@@ -516,13 +523,13 @@ class AgentLoopTask(BaseTask):
                 (v for k, v in nicknames.items() if k.lower() == nick_key), None,
             )
             if nickname:
-                return (
-                    f"[IDENTITY] Your real agent id is \"{real_name}\"{svc_info}. "
-                    f"The user has given you the nickname \"{nickname}\". "
-                    f"When other agents or tools refer to \"{real_name}\" or "
-                    f"\"{nickname}\" (case-insensitive), they mean YOU.\n\n"
+                lines.append(
+                    f'The user has given you the nickname "{nickname}". '
+                    f'When other agents or tools refer to "{real_name}" or '
+                    f'"{nickname}" (case-insensitive), they mean YOU.'
                 )
-        return f"[IDENTITY] Your agent id is \"{real_name}\"{svc_info}.\n\n"
+
+        return " ".join(lines) + "\n\n"
 
     def _build_done_event(self, conversation_id: str, response_content: str,
                          agent_name: str, model: str, provider: str,
@@ -1192,14 +1199,55 @@ class AgentLoopTask(BaseTask):
         if conversation_id:
             from core.conversation_store import ConversationStore as _CSNick
             _nicknames = _CSNick.instance().get_extra(conversation_id, "agent_nicknames") or {}
-        _client_model_name = getattr(client, "default_model", "") or model_name or ""
-        _client_provider_name = getattr(client, "provider", "") or ""
+        # Read identity from the resolved service (source of truth)
+        _client_model_name = ""
+        _client_provider_name = ""
+        _client_base_url = ""
+        if resolved_svc:
+            _svc_cfg = getattr(resolved_svc, 'config', {}) or {}
+            _client_model_name = getattr(resolved_svc, 'default_model', "") or _svc_cfg.get("default_model", "")
+            _client_provider_name = getattr(resolved_svc, 'provider', "") or _svc_cfg.get("provider", "")
+            _client_base_url = getattr(resolved_svc, 'base_url', "") or _svc_cfg.get("base_url", "")
+        if not _client_model_name:
+            _client_model_name = getattr(client, "default_model", "") or model_name or ""
+        if not _client_provider_name:
+            _client_provider_name = getattr(client, "provider", "") or ""
+        if not _client_base_url:
+            _client_base_url = getattr(client, "base_url", "") or ""
         system_prompt = self._build_identity_block(
             _active_agent_name, conversation_id, _nicknames,
             llm_service=_active_llm_service,
             model=_client_model_name,
             provider=_client_provider_name,
         ) + system_prompt
+
+        # Inject identity as ephemeral system message near end of conversation
+        # (LLMs trained via RLHF often ignore system prompt identity claims,
+        # but respect recent context — this ensures the model can self-report)
+        if _client_model_name or _client_provider_name:
+            _id_parts = []
+            if _client_model_name:
+                _id_parts.append(f"model={_client_model_name}")
+            if _client_provider_name:
+                _id_parts.append(f"provider={_client_provider_name}")
+            if _active_llm_service:
+                _id_parts.append(f"service={_active_llm_service}")
+            _identity_msg = LLMMessage(
+                role="system",
+                content=(
+                    f"[Platform] Your identity: agent_id={_active_agent_name}, "
+                    + ", ".join(_id_parts) + ". "
+                    "Report these values when asked about your model/identity."
+                ),
+                source={"type": "ephemeral", "name": "_platform_identity"},
+            )
+            # Insert before the last user message (if any)
+            _insert_idx = len(messages)
+            for _i in range(len(messages) - 1, -1, -1):
+                if messages[_i].role == "user":
+                    _insert_idx = _i
+                    break
+            messages.insert(_insert_idx, _identity_msg)
 
         # Configure all handlers with full context
         self._configure_tool_handlers(
@@ -7289,9 +7337,11 @@ class AgentLoopTask(BaseTask):
 
     def _serialize_messages(self, messages: List[LLMMessage],
                            channel: str = "") -> List[Dict[str, Any]]:
-        """Serialize messages for storage."""
+        """Serialize messages for storage (ephemeral messages are excluded)."""
         result = []
         for m in messages:
+            if m.source and m.source.get("type") == "ephemeral":
+                continue
             entry: Dict[str, Any] = {"role": m.role, "content": m.content}
             if m.tool_calls:
                 entry["tool_calls"] = [

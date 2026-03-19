@@ -26,15 +26,6 @@ from core.file_store import FileStore
 from core.tool_registry import CreateFileHandler, create_default_registry
 
 
-def _reset_filestore():
-    """Reset FileStore singleton for tests.
-
-    Only clears the in-memory singleton reference — NEVER deletes files
-    from disk.  Previous code iterated _remove_entry() on all entries
-    which deleted production files when the singleton pointed to data/files.
-    """
-    with FileStore._lock:
-        FileStore._instance = None
 
 
 # ── ConversationStore ────────────────────────────────────────────────
@@ -215,14 +206,13 @@ class TestConversationStore(unittest.TestCase):
 class TestFileStore(unittest.TestCase):
 
     def setUp(self):
-        _reset_filestore()
+        self._old_instance = FileStore._instance
         self._tmpdir = tempfile.mkdtemp()
         self.store = FileStore(base_dir=self._tmpdir)
-        # Override singleton
         FileStore._instance = self.store
 
     def tearDown(self):
-        _reset_filestore()
+        FileStore._instance = self._old_instance
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -278,13 +268,13 @@ class TestFileStore(unittest.TestCase):
 class TestCreateFileHandler(unittest.TestCase):
 
     def setUp(self):
-        _reset_filestore()
+        self._old_instance = FileStore._instance
         self._tmpdir = tempfile.mkdtemp()
         store = FileStore(base_dir=self._tmpdir)
         FileStore._instance = store
 
     def tearDown(self):
-        _reset_filestore()
+        FileStore._instance = self._old_instance
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
@@ -322,13 +312,13 @@ class TestCreateFileHandler(unittest.TestCase):
 class TestServeFileTask(unittest.TestCase):
 
     def setUp(self):
-        _reset_filestore()
+        self._old_instance = FileStore._instance
         self._tmpdir = tempfile.mkdtemp()
         store = FileStore(base_dir=self._tmpdir)
         FileStore._instance = store
 
     def tearDown(self):
-        _reset_filestore()
+        FileStore._instance = self._old_instance
         import shutil
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 

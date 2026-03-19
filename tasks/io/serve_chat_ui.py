@@ -25,7 +25,7 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; }
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
            display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
@@ -66,7 +66,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .sidebar.open { left: 0; }
   .sidebar-toggle { display: block; }
 }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; }
 .header h1 { font-size: 18px; color: #e94560; }
@@ -79,9 +79,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .user-info { font-size: 12px; color: #8888aa; }
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
-.messages { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
-       white-space: pre-wrap; word-wrap: break-word; }
+       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; overflow: hidden; }
 .msg a { color: #4fc3f7; text-decoration: underline; }
 .msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
 .msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;

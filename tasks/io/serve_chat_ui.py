@@ -1409,18 +1409,22 @@ function renderMarkdown(text) {
       }
     }
   } catch(e) {}
-  // Strip dangerous HTML tags (XSS prevention + layout protection)
-  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
-  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
-  text = text.replace(/<link[^>]*>/gi, '');
-  text = text.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
-  text = text.replace(/<object[\s\S]*?<\/object>/gi, '');
-  text = text.replace(/<embed[^>]*>/gi, '');
-  text = text.replace(/<form[\s\S]*?<\/form>/gi, '');
-  text = text.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');  // onclick, onerror, etc.
-  // Code blocks first (protect from other replacements)
-  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
-  text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // 1. Extract code blocks BEFORE escaping (preserve their content as-is)
+  const _codeBlocks = [];
+  text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+    _codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+    return '\x00CB' + (_codeBlocks.length - 1) + '\x00';
+  });
+  const _inlineCodes = [];
+  text = text.replace(/`([^`]+)`/g, function(_, code) {
+    _inlineCodes.push('<code>' + escapeHtml(code) + '</code>');
+    return '\x00IC' + (_inlineCodes.length - 1) + '\x00';
+  });
+  // 2. Escape ALL remaining HTML (prevents XSS from any source)
+  text = escapeHtml(text);
+  // 3. Restore code blocks (already escaped internally)
+  text = text.replace(/\x00CB(\d+)\x00/g, function(_, i) { return _codeBlocks[parseInt(i)]; });
+  text = text.replace(/\x00IC(\d+)\x00/g, function(_, i) { return _inlineCodes[parseInt(i)]; });
   // Markdown links: [text](url) — must run BEFORE bare URL detection
   text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, function(_, label, url) {
     if (url.match(/\/files\/[a-f0-9]+\//)) {

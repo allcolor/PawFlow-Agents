@@ -243,49 +243,28 @@ def cmd_serve(args):
 def cmd_gui(args):
     """Start the PyFi2 GUI.
 
-    Runs Streamlit in-process so we can pre-restore deployed flows
-    in a background thread *before* a browser connects.  The old
-    approach (subprocess + HTTP poke) was unreliable because Streamlit
-    only executes main.py on WebSocket connect, not on HTTP GET.
+    Uses a wrapper script that pre-restores flows before launching
+    Streamlit's event loop, ensuring flows auto-restart without
+    waiting for a browser connection.
     """
     project_root = os.path.dirname(os.path.abspath(__file__))
 
-    # Ensure project root is importable
-    if project_root not in sys.path:
-        sys.path.insert(0, project_root)
-    os.chdir(project_root)
+    import subprocess
+    # Ensure project root is in PYTHONPATH for the Streamlit subprocess
+    env = os.environ.copy()
+    pythonpath = env.get("PYTHONPATH", "")
+    if project_root not in pythonpath.split(os.pathsep):
+        env["PYTHONPATH"] = project_root + (os.pathsep + pythonpath if pythonpath else "")
+    # Set env var so gui/main.py knows to restore flows eagerly
+    env["PYFI2_AUTO_RESTORE"] = "1"
 
-    # Pre-restore deployed flows before Streamlit's event loop starts.
-    # This runs in a background thread so it doesn't block the server boot.
-    import threading
-
-    def _pre_restore():
-        try:
-            from tasks import register_all_tasks
-            register_all_tasks()
-            from gui.services.executor_registry import ExecutorRegistry
-            ExecutorRegistry.get_instance().restore_from_disk()
-            n = ExecutorRegistry.get_instance().count()
-            if n:
-                logging.getLogger(__name__).info(
-                    "Pre-restored %d flow(s) from DeploymentRegistry", n)
-        except Exception as e:
-            logging.getLogger(__name__).error("Pre-restore failed: %s", e)
-
-    threading.Thread(target=_pre_restore, daemon=True).start()
-
-    # Build sys.argv for Streamlit CLI and launch in-process
-    sys.argv = ["streamlit", "run", "gui/main.py",
-                f"--server.port={args.port}",
-                f"--server.address={args.host}"]
+    cmd = [sys.executable, "-m", "streamlit", "run", "gui/main.py",
+           f"--server.port={args.port}", f"--server.address={args.host}"]
     if args.headless:
-        sys.argv.append("--server.headless=true")
-
+        cmd.append("--server.headless=true")
     try:
-        from streamlit.web.cli import main as st_main
-        st_main()
-    except SystemExit:
-        pass
+        result = subprocess.run(cmd, env=env, cwd=project_root)
+        return result.returncode
     except KeyboardInterrupt:
         print("\nGUI stopped.")
         return 0

@@ -77,7 +77,8 @@ class FileStore:
             pass
 
     def store(self, filename: str, content: bytes,
-              content_type: str = "application/octet-stream") -> str:
+              content_type: str = "application/octet-stream",
+              conversation_id: str = "") -> str:
         """Store a file and return its file_id.
 
         Args:
@@ -107,6 +108,7 @@ class FileStore:
                 "content_type": content_type,
                 "size": len(content),
                 "created_at": time.time(),
+                "conversation_id": conversation_id,
             }
 
         self._save_index()

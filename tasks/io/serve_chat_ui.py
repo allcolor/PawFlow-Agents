@@ -1305,31 +1305,77 @@ function isImageFile(name) {
   return /\.(png|jpe?g|gif|svg|webp|bmp)$/i.test(name || '');
 }
 
+// Batch image loading: collect pending images, check availability in one call,
+// then fetch only existing ones. Avoids 50+ sequential 404s blocking the page.
+let _pendingImages = [];  // [{imgId, url}]
+let _imageFlushTimer = null;
+
+function _flushPendingImages() {
+  _imageFlushTimer = null;
+  const batch = _pendingImages.splice(0);
+  if (!batch.length) return;
+  const token = getToken();
+  const headers = {};
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  // Extract file_ids from URLs: /files/{file_id}/filename
+  const fileIds = [];
+  const byId = {};
+  for (const item of batch) {
+    const m = item.url.match(/\/files\/([a-f0-9]+)\//);
+    if (m) { fileIds.push(m[1]); byId[m[1]] = item; }
+    else { byId[item.imgId] = item; fileIds.push(item.imgId); }
+  }
+  // Batch check: ask server which file_ids exist
+  fetch(API, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({ action: 'check_files', file_ids: fileIds }),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
+    const available = new Set(data.available || []);
+    for (const fid of fileIds) {
+      const item = byId[fid];
+      if (!item) continue;
+      const el = document.getElementById(item.imgId);
+      if (!el) continue;
+      const wrapper = el.closest('.img-wrapper');
+      if (!available.has(fid)) {
+        // File doesn't exist — hide entirely
+        if (wrapper) wrapper.style.display = 'none';
+        continue;
+      }
+      // File exists — fetch the blob
+      fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
+        if (!r.ok) throw new Error(r.status);
+        return r.blob();
+      }).then(blob => {
+        el.src = URL.createObjectURL(blob);
+        el.style.display = 'block';
+      }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
+    }
+  }).catch(() => {
+    // Fallback: try each individually
+    for (const item of batch) {
+      const el = document.getElementById(item.imgId);
+      if (!el) continue;
+      const wrapper = el.closest('.img-wrapper');
+      fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
+        if (!r.ok) throw new Error(r.status);
+        return r.blob();
+      }).then(blob => {
+        el.src = URL.createObjectURL(blob);
+        el.style.display = 'block';
+      }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
+    }
+  });
+}
+
 function inlineImageHtml(url, filename, sizeInfo) {
   // Render authenticated inline image (max 512px) with click-to-view
-  const token = getToken();
   const imgId = 'img_' + Math.random().toString(36).substring(2, 8);
-  // Fetch with auth, hide entirely on 404 (no broken image placeholder)
-  setTimeout(() => {
-    const el = document.getElementById(imgId);
-    if (!el) return;
-    const wrapper = el.closest('.img-wrapper');
-    const headers = {};
-    if (token) headers['Authorization'] = 'Bearer ' + token;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 5000);  // 5s timeout
-    fetch(url, { headers, credentials: 'same-origin', signal: ctrl.signal }).then(r => {
-      clearTimeout(timer);
-      if (!r.ok) throw new Error(r.status);
-      return r.blob();
-    }).then(blob => {
-      el.src = URL.createObjectURL(blob);
-      el.style.display = 'block';
-    }).catch(() => {
-      clearTimeout(timer);
-      if (wrapper) wrapper.style.display = 'none';
-    });
-  }, 50);
+  // Queue for batch loading (flushed after 100ms of no new images)
+  _pendingImages.push({ imgId, url });
+  if (_imageFlushTimer) clearTimeout(_imageFlushTimer);
+  _imageFlushTimer = setTimeout(_flushPendingImages, 100);
   return '<div class="img-wrapper" style="margin:6px 0;">'
     + '<img id="' + imgId + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
     + 'onclick="openFileViewer(\'' + url + '\')" title="Click to view full size" />'

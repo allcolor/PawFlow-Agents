@@ -3075,6 +3075,17 @@ class AgentLoopTask(BaseTask):
             }, ensure_ascii=False).encode())
             return [flowfile]
 
+        if action == "check_files":
+            file_ids = body.get("file_ids", [])
+            if not file_ids:
+                flowfile.set_content(json.dumps({"available": []}).encode())
+                return [flowfile]
+            from core.file_store import FileStore
+            fs = FileStore.instance()
+            available = [fid for fid in file_ids if fs.exists(fid)]
+            flowfile.set_content(json.dumps({"available": available}).encode())
+            return [flowfile]
+
         if action == "list_resources":
             # List all resource types for the user
             conv_id = body.get("conversation_id", "")

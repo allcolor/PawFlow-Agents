@@ -4816,31 +4816,57 @@ class FilesystemToolHandler(ToolHandler):
         self._available_services = services
 
     def _find_service(self, service_name: str = ""):
-        """Find a filesystem service for the current user."""
-        # Plan D: explicit service selection
-        if service_name and self._user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                registry = UserServiceRegistry.get_instance()
-                svc = registry.get_live_instance(self._user_id, service_name)
+        """Find a filesystem service by name or auto-detect.
+
+        Search order: GlobalServiceRegistry → UserServiceRegistry.
+        If service_name is given, resolve that specific service.
+        If empty, find the first available filesystem service.
+        """
+        # Search GlobalServiceRegistry
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            if service_name:
+                svc = greg.get_live_instance(service_name)
                 if svc:
                     if hasattr(svc, 'set_user_id') and self._user_id:
                         svc.set_user_id(self._user_id)
                     return svc
-            except Exception:
-                pass
-        try:
-            from core import ServiceFactory
-            if service_name:
-                svc_cls = ServiceFactory.get(service_name)
-                if svc_cls:
-                    return svc_cls
-            for stype in self._FS_TYPES:
-                svc_cls = ServiceFactory.get(stype)
-                if svc_cls:
-                    return svc_cls
+            else:
+                for sid, sdef in greg.get_all_definitions().items():
+                    if not getattr(sdef, "enabled", True):
+                        continue
+                    if getattr(sdef, "service_type", "") in self._FS_TYPES:
+                        svc = greg.get_live_instance(sid)
+                        if svc:
+                            if hasattr(svc, 'set_user_id') and self._user_id:
+                                svc.set_user_id(self._user_id)
+                            return svc
         except Exception:
             pass
+        # Search UserServiceRegistry
+        if self._user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                ureg = UserServiceRegistry.get_instance()
+                if service_name:
+                    svc = ureg.get_live_instance(self._user_id, service_name)
+                    if svc:
+                        if hasattr(svc, 'set_user_id') and self._user_id:
+                            svc.set_user_id(self._user_id)
+                        return svc
+                else:
+                    for fs_type in self._FS_TYPES:
+                        compatible = ureg.get_compatible(fs_type, self._user_id)
+                        for sdef in compatible:
+                            if sdef.enabled:
+                                svc = ureg.get_live_instance(self._user_id, sdef.service_id)
+                                if svc:
+                                    if hasattr(svc, 'set_user_id') and self._user_id:
+                                        svc.set_user_id(self._user_id)
+                                    return svc
+            except Exception:
+                pass
         return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:

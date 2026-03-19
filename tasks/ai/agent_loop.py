@@ -7207,7 +7207,20 @@ class AgentLoopTask(BaseTask):
             svc_type = getattr(svc, 'TYPE', '')
             if svc_type in fs_types:
                 return svc
-        # Plan B: fallback to user-installed services
+        # Check GlobalServiceRegistry
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all_definitions().items():
+                if not getattr(sdef, "enabled", True):
+                    continue
+                if getattr(sdef, "service_type", "") in fs_types:
+                    svc = greg.get_live_instance(sid)
+                    if svc:
+                        return svc
+        except Exception:
+            pass
+        # Check UserServiceRegistry
         if user_id:
             try:
                 from gui.services.user_service_registry import UserServiceRegistry

@@ -1169,7 +1169,7 @@ async function refreshCurrentConv() {
 
 function sourceBadge(source) {
   if (!source) return '';
-  const name = displayAgentName(source.name || '') || '';
+  const name = source.name ? displayAgentName(source.name) : '';
   const svc = source.llm_service || '';
   if (source.type === 'agent') {
     // Hash name to color

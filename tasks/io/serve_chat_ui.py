@@ -3588,18 +3588,37 @@ async function handleSlashCommand(text) {
   if (cmd === '/task') {
     const sub = (parts[1] || 'status').toLowerCase();
     if (sub === 'create') {
-      // /task create <name> "<prompt>" [--criteria "..."] [--interval XX]
-      const qargs = parseQuotedArgs(text);
-      const taskName = qargs[2] || '';
-      const taskPrompt = qargs[3] || '';
-      if (!taskName || !taskPrompt) {
-        addMsg('system', 'Usage: /task create <name> "<prompt>" [--criteria "..."] [--interval XX]');
-        return true;
+      // Parse: /task create <name> --prompt "..." [--criteria "..."] [--interval XX]
+      // Also supports: /task create <name> "inline prompt" [--criteria "..."]
+      const rawText = text.replace(/^\/task\s+create\s+/i, '');
+      // Extract name (first word)
+      const nameMatch = rawText.match(/^(\S+)/);
+      const taskName = nameMatch ? nameMatch[1] : '';
+      const afterName = rawText.substring(taskName.length).trim();
+      // Extract --option "value" or --option value pairs
+      function extractOpt(txt, opt) {
+        // Match --opt "multi\nline\ncontent" or --opt value
+        const re = new RegExp('--' + opt + '\\s+(?:"([\\s\\S]*?)"|\'([\\s\\S]*?)\'|(\\S+))', 'i');
+        const m = txt.match(re);
+        return m ? (m[1] ?? m[2] ?? m[3] ?? '') : '';
       }
-      let criteria = '', interval = '';
-      for (let i = 4; i < qargs.length; i++) {
-        if (qargs[i] === '--criteria' && qargs[i+1]) criteria = qargs[++i];
-        else if (qargs[i] === '--interval' && qargs[i+1]) interval = qargs[++i];
+      let taskPrompt = extractOpt(afterName, 'prompt');
+      let criteria = extractOpt(afterName, 'criteria');
+      let interval = extractOpt(afterName, 'interval');
+      // Fallback: if no --prompt, treat first quoted arg as prompt (old syntax)
+      if (!taskPrompt) {
+        const qargs = parseQuotedArgs(text);
+        taskPrompt = qargs[3] || '';
+        if (!criteria) {
+          for (let i = 4; i < qargs.length; i++) {
+            if (qargs[i] === '--criteria' && qargs[i+1]) criteria = qargs[++i];
+            else if (qargs[i] === '--interval' && qargs[i+1]) interval = qargs[++i];
+          }
+        }
+      }
+      if (!taskName || !taskPrompt) {
+        addMsg('system', 'Usage: /task create <name> --prompt "..." [--criteria "..."] [--interval XX]\n       /task create <name> "inline prompt" [--criteria "..."]');
+        return true;
       }
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),

@@ -147,6 +147,14 @@ class ExecutorRegistry:
                 return
             self._restored = True
 
+        # Connect all enabled global services (listeners, filesystem, etc.)
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            GlobalServiceRegistry.get_instance().connect_all_enabled()
+            logger.info("Global services connected at startup")
+        except Exception as e:
+            logger.warning("Failed to connect global services: %s", e)
+
         dr = _get_deployment_registry()
         if dr:
             dr._ensure_loaded()

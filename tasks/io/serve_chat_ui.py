@@ -28,8 +28,9 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
-html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #1a1a2e; color: #e0e0e0; height: 100vh; width: 100vw; display: flex; overflow: hidden; max-width: 100vw; }
+html { width: 100%; height: 100%; overflow: hidden; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       background: #1a1a2e; color: #e0e0e0; height: 100%; width: 100%; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
            display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;

@@ -6291,6 +6291,12 @@ class AgentLoopTask(BaseTask):
         except Exception as _wt_err:
             logger.warning(f"Task watchdog failed: {_wt_err}")
 
+        # Watchdog: ensure enabled autoconv thoughts have a pending schedule
+        try:
+            self._ensure_thoughts_scheduled()
+        except Exception as _wt_err:
+            logger.warning(f"Thought watchdog failed: {_wt_err}")
+
         # Collect conversations to poll from two sources:
         # 1. Scheduled rechecks that are due (persistent, works without SSE)
         # 2. Active SSE conversations with cooldown expired (legacy behavior)
@@ -6558,6 +6564,44 @@ class AgentLoopTask(BaseTask):
                 )
                 logger.info(f"[task-watchdog] Rescheduled lost task {tid} for "
                             f"{task.get('agent', '?')} in {cid[:8]}")
+
+    def _ensure_thoughts_scheduled(self):
+        """Watchdog: ensure every enabled autoconv thought has a pending schedule.
+
+        Scans all conversations for random_thought::* extras with enabled=True.
+        If no matching schedule exists in PollScheduler, creates one.
+        This handles restarts where the PollScheduler file lost the schedule.
+        """
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        import random as _rng
+        sched = PollScheduler.instance()
+        store = ConversationStore.instance()
+        for conv in store.list_conversations():
+            cid = conv["conversation_id"]
+            entry = store._conversations.get(cid, {})
+            extra = entry.get("extra", {})
+            for key, val in extra.items():
+                if not key.startswith("random_thought::") or not isinstance(val, dict):
+                    continue
+                if not val.get("enabled"):
+                    continue
+                agent = val.get("agent", key.split("::")[-1])
+                agent_key = agent.lower()
+                thought_key = f"{cid}::thought::{agent_key}"
+                if sched.get(thought_key):
+                    continue  # already scheduled
+                # Not scheduled — recreate
+                min_iv = val.get("min_interval", 10)
+                max_iv = val.get("max_interval", 10)
+                delay = _rng.randint(min_iv, max_iv)
+                sched.schedule_delay(
+                    cid, delay, key=thought_key,
+                    reason=f"[random_thought] watchdog reschedule ({agent})",
+                    user_id=conv.get("user_id", ""),
+                )
+                logger.info(f"[thought-watchdog] Rescheduled autoconv for {agent} "
+                            f"in {cid[:8]} (delay={delay}s)")
 
     def _is_eligible_for_poll(self, conversation_id: str,
                               messages_data: List[Dict]) -> bool:

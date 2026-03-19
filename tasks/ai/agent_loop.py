@@ -1364,10 +1364,36 @@ class AgentLoopTask(BaseTask):
             pass
         return False
 
+    # Priority levels for FlowFile queue ordering
+    _ACTION_PRIORITIES = {
+        "cancel": 20,       # /stop — highest, user wants to stop NOW
+        "interrupt": 20,    # /stop (interrupt variant)
+        "btw": 15,          # /btw — side-channel, should not wait
+        "compact": 10,      # context ops
+        "rebuild": 10,
+        "rebuild_full": 10,
+        "rebuild_clean": 10,
+        "restart_from": 10,
+        "resume_conversation": 10,
+    }
+
     def prioritize(self, flowfile) -> int:
-        """Action FlowFiles get priority 10 (urgent), normal messages get 0."""
-        if self._is_action_flowfile(flowfile):
-            return 10
+        """Assign priority based on FlowFile content.
+
+        20 = cancel/interrupt (immediate)
+        15 = btw (side-channel)
+        10 = actions (no LLM needed)
+        0  = normal messages
+        """
+        try:
+            raw = flowfile.get_content().decode("utf-8", errors="replace")
+            if raw.strip().startswith("{"):
+                body = json.loads(raw)
+                if isinstance(body, dict) and "action" in body:
+                    action = body["action"]
+                    return self._ACTION_PRIORITIES.get(action, 10)
+        except Exception:
+            pass
         return 0
 
     def select_processable(self, connections):

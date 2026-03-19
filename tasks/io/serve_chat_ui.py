@@ -1210,11 +1210,13 @@ function buildMetaLine(extra) {
   const dur = extra.duration_ms || 0;
   const parts = [];
   if (model) parts.push(model);
-  if (provider) parts.push(provider);
-  if (!model && !provider) return '';  // nothing interesting to show
-  // Compact line
+  if (provider && provider !== model) parts.push(provider);
+  if (tokIn || tokOut) parts.push('\u2191' + tokIn + ' \u2193' + tokOut);
+  if (dur) parts.push((dur / 1000).toFixed(1) + 's');
+  if (!parts.length) return '';
+  // Compact summary line (always visible)
   let line = '<span class="meta-summary">' + parts.join(' \u00b7 ') + '</span>';
-  // Build expandable details
+  // Expandable details
   const details = [];
   if (baseUrl) details.push('endpoint: ' + escapeHtml(baseUrl));
   if (tokIn || tokOut) details.push('tokens: ' + tokIn + ' in / ' + tokOut + ' out (' + (tokIn + tokOut) + ' total)');
@@ -2072,6 +2074,8 @@ function connectSSE(cid) {
     if (data.response) {
       const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
       if (data.source_agent) extra.source.reply_to = data.source_agent;
+      if (data.model) extra.model = data.model;
+      if (data.provider) extra.provider = data.provider;
       if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
       if (data.duration_s) extra.duration_ms = data.duration_s * 1000;
       addMsg('assistant', data.response, extra);

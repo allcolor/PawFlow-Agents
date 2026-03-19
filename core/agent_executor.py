@@ -67,6 +67,8 @@ class AgentResult:
     iterations: int = 0
     duration_ms: float = 0.0
     status: str = "pending"  # pending, running, completed, error, timeout
+    model: str = ""
+    provider: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -305,6 +307,10 @@ class SubAgentExecutor:
 
                 result.tokens_in += response.tokens_in
                 result.tokens_out += response.tokens_out
+                if response.model:
+                    result.model = response.model
+                if not result.provider and client:
+                    result.provider = getattr(client, 'provider', '') or ''
 
                 # No tool calls → final response
                 if not response.tool_calls:
@@ -375,6 +381,8 @@ class SubAgentExecutor:
             "source_agent": task.source_agent,
             "source_llm_service": task.source_llm_service,
             "llm_service": task.llm_service,
+            "model": result.model,
+            "provider": result.provider,
         })
         return result
 

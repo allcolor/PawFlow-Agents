@@ -2911,7 +2911,6 @@ class AssignTaskHandler(ToolHandler):
         self._conversation_id = ""
         self._agent_name = ""
         self._user_id = ""
-        self._default_interval = 0  # 0 = use poll_recheck_delay
 
     @property
     def name(self) -> str:
@@ -2944,7 +2943,7 @@ class AssignTaskHandler(ToolHandler):
                 },
                 "interval": {
                     "type": "string",
-                    "description": "Schedule frequency. Examples: '60' (every 60s), '3/5m' (3 times per 5min), '2-4/h' (2-4 per hour). Default: same as autoconv poll interval",
+                    "description": "Schedule frequency. Examples: '60' (every 60s), '3/5m' (3 times per 5min), '2-4/h' (2-4 per hour). Default: 6/1m (same as autoconv)",
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -2959,7 +2958,7 @@ class AssignTaskHandler(ToolHandler):
         }
 
     @staticmethod
-    def _parse_interval(spec: str) -> dict:
+    def _parse_interval(spec: str, fallback: int = 10) -> dict:
         """Parse interval spec → {min: seconds, max: seconds, spec: original}.
 
         Formats:
@@ -2978,11 +2977,11 @@ class AssignTaskHandler(ToolHandler):
         # Frequency spec: count[-count]/[num]unit
         m = re.match(r'^(\d+)(?:-(\d+))?/(\d*)([smhd])$', spec)
         if not m:
-            return {"min": 60, "max": 60, "spec": spec}
+            return {"min": fallback, "max": fallback, "spec": spec}
         count_min = int(m.group(1))
         count_max = int(m.group(2) or count_min)
         if count_min <= 0 or count_max < count_min:
-            return {"min": 60, "max": 60, "spec": spec}
+            return {"min": fallback, "max": fallback, "spec": spec}
         duration_num = int(m.group(3) or 1)
         unit = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(4)]
         period = duration_num * unit
@@ -3010,10 +3009,6 @@ class AssignTaskHandler(ToolHandler):
     def set_user_id(self, uid: str):
         self._user_id = uid
 
-    def set_default_interval(self, seconds: int):
-        """Set default interval from flow config (e.g. poll_recheck_delay)."""
-        self._default_interval = seconds
-
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _t
         target = arguments.get("agent", "")
@@ -3026,8 +3021,8 @@ class AssignTaskHandler(ToolHandler):
             return "Error: no conversation context"
 
         criteria = arguments.get("completion_criteria", "")
-        _default_iv = str(self._default_interval) if self._default_interval > 0 else "7200"
-        interval_spec = str(arguments.get("interval", _default_iv))
+        _raw_iv = arguments.get("interval")
+        interval_spec = str(_raw_iv) if _raw_iv else "6/1m"
         max_iter = int(arguments.get("max_iterations", 50))
         verifier = arguments.get("verifier", "")
 

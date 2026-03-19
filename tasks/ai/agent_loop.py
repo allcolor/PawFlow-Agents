@@ -4982,28 +4982,36 @@ class AgentLoopTask(BaseTask):
                     hb_thread.start()
 
                     # Compact context if approaching token limit.
-                    # Use summarizer service if available, else default client.
-                    _summ = ctx.get("summarizer", (None, 0))
-                    if _summ[0]:
-                        compact_client = _summ[0]
+                    # Skip compaction during tool-call chains (iteration > 1
+                    # and previous response had tool calls) — compacting would
+                    # destroy tool results the LLM needs for the next step
+                    # (critical for lazy tools: get_tool_schema → use_tool).
+                    _in_tool_chain = (iteration > 1 and len(tools_called) > 0
+                                      and messages and messages[-1].role == "tool")
+                    if _in_tool_chain:
+                        llm_context = list(messages)
                     else:
-                        compact_client = ctx.get("default_client") or client
-                    _pre_compact_len = len(messages)
-                    llm_context = self._compact_if_needed(
-                        list(messages), compact_client,
-                        ctx.get("max_context_size", 64000),
-                        ctx.get("context_compact_threshold", 0.8),
-                        ctx.get("context_keep_recent", 6),
-                        conversation_id=conversation_id,
-                        agent_name=_agent_name or "assistant",
-                        tool_defs=ctx.get("tool_defs"),
-                        chars_per_token=ctx.get("chars_per_token", 0),
-                    )
-                    # If compaction happened, mark context as diverged so
-                    # _flush_new() appends subsequent messages to the agent
-                    # context (not just to the canonical messages).
-                    if len(llm_context) < _pre_compact_len:
-                        ctx["_context_diverged"] = True
+                        _summ = ctx.get("summarizer", (None, 0))
+                        if _summ[0]:
+                            compact_client = _summ[0]
+                        else:
+                            compact_client = ctx.get("default_client") or client
+                        _pre_compact_len = len(messages)
+                        llm_context = self._compact_if_needed(
+                            list(messages), compact_client,
+                            ctx.get("max_context_size", 64000),
+                            ctx.get("context_compact_threshold", 0.8),
+                            ctx.get("context_keep_recent", 6),
+                            conversation_id=conversation_id,
+                            agent_name=_agent_name or "assistant",
+                            tool_defs=ctx.get("tool_defs"),
+                            chars_per_token=ctx.get("chars_per_token", 0),
+                        )
+                        # If compaction happened, mark context as diverged so
+                        # _flush_new() appends subsequent messages to the agent
+                        # context (not just to the canonical messages).
+                        if len(llm_context) < _pre_compact_len:
+                            ctx["_context_diverged"] = True
 
                     # Inject identity prefixes so LLM knows who said what
                     _id_nicks = ctx.get("_nicknames") or {}

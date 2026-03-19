@@ -3088,18 +3088,27 @@ class AgentLoopTask(BaseTask):
                 "agents": [{
                     "name": a["name"],
                     "description": a.get("description", ""),
+                    "scope": a.get("_scope", ""),
                     "active": active.get("agent") == a["name"],
-                } for a in rs.list_all("agent", uid)],
+                } for a in rs.list_all("agent", uid, conversation_id=conv_id)],
                 "skills": [{
                     "name": s["name"],
                     "description": s.get("description", ""),
+                    "scope": s.get("_scope", ""),
                     "active": s["name"] in active.get("skills", []),
-                } for s in rs.list_all("skill", uid)],
+                } for s in rs.list_all("skill", uid, conversation_id=conv_id)],
                 "mcp_servers": [{
                     "name": m["name"],
                     "url": m.get("url", ""),
+                    "scope": m.get("_scope", ""),
                     "active": m["name"] in active.get("mcps", []),
-                } for m in rs.list_all("mcp", uid)],
+                } for m in rs.list_all("mcp", uid, conversation_id=conv_id)],
+                "task_defs": [{
+                    "name": t["name"],
+                    "description": t.get("description", "") or t.get("prompt", "")[:60],
+                    "scope": t.get("_scope", ""),
+                    "default_interval": t.get("default_interval", "6/1m"),
+                } for t in rs.list_all("task_def", uid, conversation_id=conv_id)],
             }
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
             return [flowfile]

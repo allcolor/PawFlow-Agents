@@ -5978,6 +5978,12 @@ async function loadResources() {
     });
     const data = await resp.json();
     const el = document.getElementById('resourcesContent');
+    const scopeBadge = (s) => {
+      if (!s) return '';
+      const colors = { global: '#2d5a8e', user: '#5a2d8e', conversation: '#8e5a2d' };
+      const labels = { global: 'G', user: 'U', conversation: 'C' };
+      return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
+    };
     let html = '';
     // Agents
     if (data.agents && data.agents.length) {
@@ -5986,7 +5992,7 @@ async function loadResources() {
         const active = a.active;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${a.name}</span>
+          ${scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${a.name}</span>
         </div>`;
       });
     }
@@ -5997,7 +6003,7 @@ async function loadResources() {
         const active = s.active;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
+          ${scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
         </div>`;
       });
     }
@@ -6008,11 +6014,21 @@ async function loadResources() {
         const active = m.active;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          <span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
+          ${scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
         </div>`;
       });
     }
-    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use /agent create, /add-skill</div>';
+    // Task definitions
+    if (data.task_defs && data.task_defs.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Tasks</div>';
+      data.task_defs.forEach(t => {
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+          ${scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;" title="${escapeHtml(t.description)}">${t.name}</span>
+          <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
+        </div>`;
+      });
+    }
+    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use /agent create, /add-skill, /task create</div>';
     el.innerHTML = html;
   } catch (e) {
     document.getElementById('resourcesContent').innerHTML = '';

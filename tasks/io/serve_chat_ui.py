@@ -2303,8 +2303,12 @@ function connectSSE(cid) {
     // events may have cleared the JS references while leaving DOM elements.
     const s = streams[doneAgent.toLowerCase()] || { el: null, text: '', chunks: [] };
     const removedEls = new Set();
+    console.log('[SSE done] clearing', s.chunks.length, 'chunks for', doneAgent, 'stream keys:', Object.keys(streams));
     for (const chunk of s.chunks) {
-      if (chunk && chunk.parentNode) { chunk.remove(); removedEls.add(chunk); }
+      if (chunk && chunk.parentNode) {
+        console.log('[SSE done] removing chunk:', chunk.className, (chunk.dataset.rawText || chunk.textContent || '').substring(0, 60));
+        chunk.remove(); removedEls.add(chunk);
+      }
     }
     // Also remove any streaming element that was detached from tracking
     // (happens when tool_call clears tcs.el/chunks mid-stream)

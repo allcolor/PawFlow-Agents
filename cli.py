@@ -243,25 +243,45 @@ def cmd_serve(args):
 def cmd_gui(args):
     """Start the PyFi2 GUI.
 
-    Uses a wrapper script that pre-restores flows before launching
-    Streamlit's event loop, ensuring flows auto-restart without
-    waiting for a browser connection.
+    Launches Streamlit in a subprocess with a bootstrap that pre-restores
+    deployed flows in a daemon thread before Streamlit's event loop starts.
+    This ensures flows auto-restart without waiting for a browser connection,
+    while keeping the executors in the same process as Streamlit.
     """
     project_root = os.path.dirname(os.path.abspath(__file__))
 
     import subprocess
-    # Ensure project root is in PYTHONPATH for the Streamlit subprocess
     env = os.environ.copy()
     pythonpath = env.get("PYTHONPATH", "")
     if project_root not in pythonpath.split(os.pathsep):
         env["PYTHONPATH"] = project_root + (os.pathsep + pythonpath if pythonpath else "")
-    # Set env var so gui/main.py knows to restore flows eagerly
-    env["PYFI2_AUTO_RESTORE"] = "1"
 
-    cmd = [sys.executable, "-m", "streamlit", "run", "gui/main.py",
-           f"--server.port={args.port}", f"--server.address={args.host}"]
+    st_argv = ["streamlit", "run", "gui/main.py",
+               f"--server.port={args.port}", f"--server.address={args.host}"]
     if args.headless:
-        cmd.append("--server.headless=true")
+        st_argv.append("--server.headless=true")
+
+    # Bootstrap script: runs restore in a daemon thread inside the Streamlit
+    # process, then launches Streamlit normally. The thread starts BEFORE
+    # Streamlit waits for browser connections.
+    bootstrap = (
+        "import sys, os, threading, logging\n"
+        f"sys.path.insert(0, {project_root!r})\n"
+        f"os.chdir({project_root!r})\n"
+        "def _restore():\n"
+        "    try:\n"
+        "        from tasks import register_all_tasks; register_all_tasks()\n"
+        "        from gui.services.executor_registry import ExecutorRegistry\n"
+        "        ExecutorRegistry.get_instance().restore_from_disk()\n"
+        "        n = ExecutorRegistry.get_instance().count()\n"
+        "        if n: logging.getLogger('cli').info('Pre-restored %d flow(s)', n)\n"
+        "    except Exception as e:\n"
+        "        logging.getLogger('cli').error('Pre-restore failed: %s', e)\n"
+        "threading.Thread(target=_restore, daemon=True).start()\n"
+        f"sys.argv = {st_argv!r}\n"
+        "from streamlit.web.cli import main; main()\n"
+    )
+    cmd = [sys.executable, "-c", bootstrap]
     try:
         result = subprocess.run(cmd, env=env, cwd=project_root)
         return result.returncode

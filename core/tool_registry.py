@@ -3281,7 +3281,7 @@ class CompleteTaskHandler(ToolHandler):
             PollScheduler.instance().schedule_delay(
                 self._conversation_id, delay,
                 key=f"{self._conversation_id}::task::{task_id}",
-                reason=f"[agent_task:{task_id}] continue ({agent})",
+                reason=f"[agent_task:{task_id}] continue ({task.get('agent', agent)})",
                 user_id=task.get("assigned_by", ""),
             )
             return f"Task {task_id} progress noted. Next in {delay}s."

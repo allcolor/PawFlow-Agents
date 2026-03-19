@@ -6043,10 +6043,11 @@ class AgentLoopTask(BaseTask):
                             continue  # already scheduled
                         from core.tool_registry import AssignTaskHandler as _ATH
                         _at_delay = _ATH._get_task_delay(_at_task)
+                        _at_real_agent = _at_task.get("agent", _at_agent)
                         _at_sched.schedule_delay(
                             conversation_id, _at_delay,
                             key=_at_key,
-                            reason=f"[agent_task:{_at_tid}] auto-reschedule ({_at_agent})",
+                            reason=f"[agent_task:{_at_tid}] auto-reschedule ({_at_real_agent})",
                             user_id=ctx.get("user_id", ""),
                         )
                         logger.info(f"[task] Auto-rescheduled {_at_tid} for {_at_agent} "

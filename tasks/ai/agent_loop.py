@@ -1122,7 +1122,7 @@ class AgentLoopTask(BaseTask):
             messages.append(LLMMessage(role="user", content=user_content, source=user_source))
 
         # Determine active agent name and llm_service for source tracking
-        _active_agent_name = ""
+        _active_agent_name = "assistant"
         _active_llm_service = task_llm_service
         if use_conv_store and conversation_id:
             try:
@@ -1130,7 +1130,7 @@ class AgentLoopTask(BaseTask):
                 _ares = ConversationStore.instance().get_extra(
                     conversation_id, "active_resources",
                 ) or {}
-                _active_agent_name = _target_agent or _ares.get("agent", "")
+                _active_agent_name = _target_agent or _ares.get("agent", "") or "assistant"
                 if _active_agent_name:
                     # Check per-conversation LLM service override first
                     _llm_overrides = ConversationStore.instance().get_extra(

@@ -5406,14 +5406,12 @@ function showFileMenu(e, fileId, filename) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.id = 'fileCtxMenu';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
   const href = window.location.origin + '/files/' + fileId + '/' + filename;
   menu.innerHTML =
     '<div class="ctx-menu-item" onclick="event.stopPropagation();openFileViewer(\'' + href + '\');closeFileMenu();">&#x1F441; View</div>' +
     '<div class="ctx-menu-item" onclick="event.stopPropagation();window.open(\'' + href + '\',\'_blank\');closeFileMenu();">&#x2B07; Download</div>' +
     '<div class="ctx-menu-item danger" onclick="event.stopPropagation();deleteFile(\'' + fileId + '\');closeFileMenu();">&#x1F5D1; Delete</div>';
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', closeFileMenu, {once: true}), 0);
 }
 
@@ -5447,8 +5445,7 @@ function showFlowMenu(e, flowId, flowStatus) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.id = 'flowCtxMenu';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
 
   if (flowStatus === 'running') {
     menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'stop\')">&#x23F9; Stop</div>' +
@@ -5457,7 +5454,6 @@ function showFlowMenu(e, flowId, flowStatus) {
     menu.innerHTML = '<div class="ctx-menu-item" onclick="flowAction(\'' + flowId + '\', \'start\')">&#x25B6; Start</div>' +
       '<div class="ctx-menu-item danger" onclick="flowAction(\'' + flowId + '\', \'delete\')">&#x1F5D1; Delete</div>';
   }
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', closeFlowMenu, {once: true}), 0);
 }
 
@@ -6219,6 +6215,22 @@ async function loadResources() {
 }
 
 // ── Resource context menu ─────────────────────────────────────────
+function _positionMenu(menu, e) {
+  // Position context menu, flip up if it would overflow the viewport
+  document.body.appendChild(menu);
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  requestAnimationFrame(() => {
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom > window.innerHeight) {
+      menu.style.top = Math.max(0, e.clientY - rect.height) + 'px';
+    }
+    if (rect.right > window.innerWidth) {
+      menu.style.left = Math.max(0, e.clientX - rect.width) + 'px';
+    }
+  });
+}
+
 function showResourceMenu(e, rtype, name, scope, autoconv) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
@@ -6226,8 +6238,7 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
 
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
@@ -6278,7 +6289,6 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   sep();
   item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
 
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _close() {
     menu.remove(); document.removeEventListener('click', _close);
   }), 0);
@@ -6491,8 +6501,7 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
@@ -6520,7 +6529,6 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
   menu.appendChild(sep);
   item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -6531,8 +6539,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
@@ -6563,7 +6570,6 @@ function showServiceMenu(e, serviceId, scope, enabled) {
       else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
     }).catch(e => addMsg('error', e.message));
   }, true);
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -6628,8 +6634,7 @@ function showFlowInstanceMenu(e, instanceId, status) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
@@ -6651,7 +6656,6 @@ function showFlowInstanceMenu(e, instanceId, status) {
     if (!confirm(`Undeploy flow '${instanceId}'?`)) return;
     _flowAction(instanceId, 'undeploy_flow');
   }, true);
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -6671,8 +6675,7 @@ function showParamMenu(e, key, scope, isSecret) {
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
   menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
-  menu.style.left = e.clientX + 'px';
-  menu.style.top = e.clientY + 'px';
+  _positionMenu(menu, e);
   const item = (label, fn, danger) => {
     const d = document.createElement('div');
     d.textContent = label;
@@ -6689,7 +6692,6 @@ function showParamMenu(e, key, scope, isSecret) {
       body: JSON.stringify({ action: isSecret ? 'delete_secret' : 'delete_param', key, scope, conversation_id: conversationId }),
     }).then(() => loadResources()).catch(e => addMsg('error', e.message));
   }, true);
-  document.body.appendChild(menu);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -6834,7 +6836,8 @@ const _msgObserver = new MutationObserver((mutations) => {
       if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {
         const role = node.className.replace('msg ', '');
         const text = (node.dataset.rawText || node.textContent || '').substring(0, 80);
-        console.warn('[MSG REMOVED]', role, text, new Error().stack.split('\n').slice(1,4).join(' <- '));
+        console.warn('[MSG REMOVED]', role, text);
+        console.trace('[MSG REMOVED STACK]');
       }
     }
   }

@@ -7079,6 +7079,10 @@ class AgentLoopTask(BaseTask):
             if isinstance(content, str):
                 for match in pattern.finditer(content):
                     file_ids.add(match.group(1))
+        if file_ids:
+            import traceback
+            print(f"[FILE_DELETE] _cleanup_conversation_files: {len(file_ids)} files: {file_ids}")
+            traceback.print_stack()
         for fid in file_ids:
             store.delete(fid)
         if file_ids:

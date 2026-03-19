@@ -1256,9 +1256,9 @@ function addMsg(role, text, extra) {
   const timeStr = msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
 
-  // Action buttons (copy + delete) for user/assistant/subagent messages
+  // Action buttons (copy + delete) for all user-visible messages
   let actionsHtml = '';
-  if (role === 'user' || role === 'assistant') {
+  if (role === 'user' || role === 'assistant' || role === 'system') {
     actionsHtml = '<span class="msg-actions">'
       + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
       + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
@@ -2323,22 +2323,16 @@ function connectSSE(cid) {
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
-    // Replace streaming chunks with a proper message via addMsg
-    // (one rendering rule for all messages — no special upgrade path)
-    // Create the final message FIRST, then remove chunks — no flash.
+    // Remove streaming chunks THEN create proper message via addMsg.
+    // Must be in this order so the new message appears at the right
+    // position (end of chat) without a stale chunk above it.
     _expectingClear = true;
-    let newMsg = null;
-    if (finalText) {
-      newMsg = addMsg('assistant', finalText, extra);
-    }
-    // Now remove all streaming chunks (they're above the new message)
     for (const chunk of s.chunks) {
       if (chunk && chunk.parentNode) chunk.remove();
     }
     if (s.el && !s.chunks.includes(s.el) && s.el.parentNode) s.el.remove();
-    // Move new message to where the first chunk was (maintain order)
-    // Not needed — addMsg appends to end which is correct for chat flow
     _expectingClear = false;
+    if (finalText) addMsg('assistant', finalText, extra);
     clearStream(doneAgent);
     scrollBottom();
 

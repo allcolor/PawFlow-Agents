@@ -8,11 +8,16 @@ It also persists the list of running flows to disk so they can be
 automatically restarted after a server restart.
 
 Hooks into DeploymentRegistry to track instance status (running/stopped).
+
+Hot-reload: watches source files for changes and auto-restarts running
+flows so handler configuration is always fresh.
 """
 
 import json
 import logging
+import os
 import threading
+import time as _time
 from pathlib import Path
 from typing import Dict, Optional, Any
 
@@ -21,6 +26,11 @@ from engine.continuous_executor import ContinuousFlowExecutor
 logger = logging.getLogger(__name__)
 
 STATE_FILE = "continuous_state.json"  # kept for cleanup only
+
+# Directories to watch for hot-reload
+_HOT_RELOAD_DIRS = ["tasks", "core", "services"]
+_HOT_RELOAD_INTERVAL = 5  # seconds between mtime scans
+_HOT_RELOAD_DEBOUNCE = 2  # seconds to wait after last change before restart
 
 
 def _get_deployment_registry():
@@ -45,6 +55,8 @@ class ExecutorRegistry:
         self._executors: Dict[str, ContinuousFlowExecutor] = {}
         self._executor_lock = threading.Lock()
         self._restored = False
+        self._hot_reload_started = False
+        self._py_mtimes: Dict[str, float] = {}  # path -> mtime
 
     @classmethod
     def get_instance(cls) -> "ExecutorRegistry":
@@ -154,6 +166,9 @@ class ExecutorRegistry:
         if legacy.exists():
             legacy.unlink(missing_ok=True)
 
+        # Start hot-reload watcher (auto-restart flows on source changes)
+        self.start_hot_reload()
+
 
     def _restore_instance(self, instance_id: str, flow_path: str,
                           max_workers: int = 4, max_retries: int = 3,
@@ -208,4 +223,103 @@ class ExecutorRegistry:
             if _get_deployment_registry():
                 _get_deployment_registry().update_status(instance_id, "error", str(e))
             return False
+
+    # -- Hot-reload: watch source files, restart flows on change --
+
+    def start_hot_reload(self):
+        """Start background thread that watches .py files for changes."""
+        if self._hot_reload_started:
+            return
+        self._hot_reload_started = True
+        self._snapshot_mtimes()
+        t = threading.Thread(target=self._hot_reload_loop, daemon=True,
+                             name="hot-reload-watcher")
+        t.start()
+        logger.info("Hot-reload watcher started (dirs: %s, interval: %ds)",
+                     _HOT_RELOAD_DIRS, _HOT_RELOAD_INTERVAL)
+
+    def _snapshot_mtimes(self):
+        """Record mtime of all .py files in watched directories."""
+        self._py_mtimes.clear()
+        for d in _HOT_RELOAD_DIRS:
+            p = Path(d)
+            if not p.is_dir():
+                continue
+            for py in p.rglob("*.py"):
+                try:
+                    self._py_mtimes[str(py)] = py.stat().st_mtime
+                except OSError:
+                    pass
+
+    def _check_changes(self) -> list:
+        """Check for .py file changes. Returns list of changed paths."""
+        changed = []
+        for path, old_mt in list(self._py_mtimes.items()):
+            try:
+                new_mt = Path(path).stat().st_mtime
+                if new_mt > old_mt:
+                    changed.append(path)
+            except OSError:
+                pass
+        # Also check for new files
+        for d in _HOT_RELOAD_DIRS:
+            p = Path(d)
+            if not p.is_dir():
+                continue
+            for py in p.rglob("*.py"):
+                s = str(py)
+                if s not in self._py_mtimes:
+                    changed.append(s)
+        return changed
+
+    def _hot_reload_loop(self):
+        """Background loop: scan for changes, debounce, restart."""
+        while True:
+            _time.sleep(_HOT_RELOAD_INTERVAL)
+            try:
+                changed = self._check_changes()
+                if not changed:
+                    continue
+                # Debounce: wait, then re-check to catch multi-file saves
+                _time.sleep(_HOT_RELOAD_DEBOUNCE)
+                changed = self._check_changes()
+                if not changed:
+                    continue
+                # Update snapshot BEFORE restart
+                self._snapshot_mtimes()
+                short = [os.path.basename(p) for p in changed[:5]]
+                if len(changed) > 5:
+                    short.append(f"... +{len(changed) - 5} more")
+                logger.info("Hot-reload: %d file(s) changed (%s), restarting flows...",
+                             len(changed), ", ".join(short))
+                self._restart_all_flows()
+            except Exception as e:
+                logger.error("Hot-reload error: %s", e)
+
+    def _restart_all_flows(self):
+        """Stop and restart all running flows using DeploymentRegistry info."""
+        dr = _get_deployment_registry()
+        if not dr:
+            return
+        with self._executor_lock:
+            running = {iid: ex for iid, ex in self._executors.items()
+                       if ex.is_running}
+        if not running:
+            return
+        restarted = 0
+        for iid, ex in running.items():
+            inst = dr.get_all().get(iid)
+            if not inst:
+                continue
+            try:
+                ex.stop()
+                logger.info("Hot-reload: stopped '%s'", iid)
+            except Exception as e:
+                logger.warning("Hot-reload: failed to stop '%s': %s", iid, e)
+            # Re-parse and start fresh
+            if self._restore_instance(iid, inst.flow_path,
+                                       inst.max_workers, inst.max_retries,
+                                       parameters=inst.parameters):
+                restarted += 1
+        logger.info("Hot-reload: restarted %d/%d flow(s)", restarted, len(running))
 

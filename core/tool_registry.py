@@ -4735,10 +4735,10 @@ class FilesystemToolHandler(ToolHandler):
     @property
     def description(self) -> str:
         desc = (
-            "Access files on the user's filesystem through a configured filesystem service. "
+            "Access files and run commands on the user's filesystem through a configured service. "
             "Actions: list_dir, read_file, write_file, edit (exact string replace), "
-            "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace, "
-            "exec (shell command). "
+            "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
+            "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
             "Git: git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout. "
             "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root."

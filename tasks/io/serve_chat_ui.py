@@ -588,6 +588,7 @@ let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
 let serverMsgCount = 0;    // last known message_count from server (for poll delta)
 let pollTimer = null;      // 30s fallback poll interval
+let resourcesTimer = null; // 10s resources panel refresh
 
 // ── Message history (arrow key navigation) ──
 let messageHistory = JSON.parse(localStorage.getItem('pyfi2_msg_history') || '[]');
@@ -2530,9 +2531,16 @@ function startPollTimer() {
     if (!conversationId) return;
     _recoverConversation(conversationId);
   }, 30000);
+  // Refresh resources panel every 10s
+  if (!resourcesTimer) {
+    resourcesTimer = setInterval(() => {
+      if (conversationId) loadResources();
+    }, 10000);
+  }
 }
 function stopPollTimer() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (resourcesTimer) { clearInterval(resourcesTimer); resourcesTimer = null; }
 }
 
 // ── Local Files (File System Access API) ─────────────────────────
@@ -4380,6 +4388,7 @@ async function cmdAgentCreate() {
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', `Agent '${name}' created. Use /agent select ${name} to activate.`);
+    loadResources();
   } catch (e) { addMsg('error', 'Failed to create agent: ' + e.message); }
 }
 
@@ -4420,6 +4429,7 @@ async function cmdAgentSelect(name) {
     selectedAgent = isDefault ? '' : name;
     updateActiveAgentBadge();
     addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected. Messages now go to ${name}.`);
+    loadResources();
   } catch (e) { addMsg('error', 'Failed to select agent: ' + e.message); }
 }
 
@@ -4436,6 +4446,7 @@ async function cmdAgentDelete(name) {
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', data.deleted ? `Agent '${name}' deleted.` : `Agent '${name}' not found.`);
+    loadResources();
   } catch (e) { addMsg('error', 'Failed to delete agent: ' + e.message); }
 }
 

@@ -2323,30 +2323,22 @@ function connectSSE(cid) {
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
-    // If there's a streaming element with content, upgrade it in-place
-    // instead of remove+recreate (avoids flash of disappearance)
-    if (s.el && s.el.parentNode && finalText) {
-      const badge = sourceBadge(extra.source);
-      const timeStr = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-      const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
-      const actionsHtml = '<span class="msg-actions">'
-        + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
-        + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
-        + '</span>';
-      s.el.dataset.rawText = finalText.substring(0, 500);
-      s.el.innerHTML = actionsHtml + timeHtml + badge + renderMarkdown(finalText) + buildMetaLine(extra);
-      // Remove extra chunks (if multiple were created during streaming)
-      for (const chunk of s.chunks) {
-        if (chunk && chunk !== s.el && chunk.parentNode) chunk.remove();
-      }
-    } else {
-      // No streaming element — remove any orphan chunks and create fresh
-      for (const chunk of s.chunks) {
-        if (chunk && chunk.parentNode) chunk.remove();
-      }
-      if (s.el && s.el.parentNode) s.el.remove();
-      if (finalText) addMsg('assistant', finalText, extra);
+    // Replace streaming chunks with a proper message via addMsg
+    // (one rendering rule for all messages — no special upgrade path)
+    // Create the final message FIRST, then remove chunks — no flash.
+    _expectingClear = true;
+    let newMsg = null;
+    if (finalText) {
+      newMsg = addMsg('assistant', finalText, extra);
     }
+    // Now remove all streaming chunks (they're above the new message)
+    for (const chunk of s.chunks) {
+      if (chunk && chunk.parentNode) chunk.remove();
+    }
+    if (s.el && !s.chunks.includes(s.el) && s.el.parentNode) s.el.remove();
+    // Move new message to where the first chunk was (maintain order)
+    // Not needed — addMsg appends to end which is correct for chat flow
+    _expectingClear = false;
     clearStream(doneAgent);
     scrollBottom();
 

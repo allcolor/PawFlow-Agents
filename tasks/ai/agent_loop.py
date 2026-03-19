@@ -3717,7 +3717,7 @@ class AgentLoopTask(BaseTask):
         if action == "assign_task":
             conv_id = body.get("conversation_id", "")
             agent = body.get("agent_name", "")
-            task_desc = body.get("task", "")
+            task_desc = body.get("task", "") or body.get("task_def_name", "")
             if not conv_id or not agent or not task_desc:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or task"}).encode())
                 return [flowfile]

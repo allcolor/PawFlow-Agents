@@ -6103,7 +6103,7 @@ async function loadResources() {
       html += _sectionHeader('Agents', 'agent');
       data.agents.forEach(a => {
         const active = a.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'agent','${a.name}','${a.scope||''}');return false;">
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'agent','${a.name}','${a.scope||''}','${a.autoconv||''}');return false;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
           ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>${a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:4px;" title="Autoconv: ' + a.autoconv + '">\u{1F504} ' + a.autoconv + '</span>' : ''}
         </div>`;
@@ -6220,7 +6220,7 @@ async function loadResources() {
 }
 
 // ── Resource context menu ─────────────────────────────────────────
-function showResourceMenu(e, rtype, name, scope) {
+function showResourceMenu(e, rtype, name, scope, autoconv) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
@@ -6248,6 +6248,27 @@ function showResourceMenu(e, rtype, name, scope) {
   item('\u270F Edit...', () => showResourceEditor(rtype, name));
   if (rtype === 'agent') {
     item('\u25B6 Select', () => cmdAgentSelect(name));
+    if (autoconv) {
+      item('\u23F9 Autoconv off', () => {
+        fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'random_thought', sub: 'off', agent: name, conversation_id: conversationId }),
+        }).then(r => r.json()).then(d => {
+          addMsg('system', d.error || 'Autoconv disabled for ' + name);
+          loadResources();
+        }).catch(e => addMsg('error', e.message));
+      });
+    } else {
+      item('\u{1F504} Autoconv on...', () => {
+        const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m');
+        if (!freq) return;
+        fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'random_thought', sub: 'on', agent: name, frequency: freq, conversation_id: conversationId }),
+        }).then(r => r.json()).then(d => {
+          addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')');
+          loadResources();
+        }).catch(e => addMsg('error', e.message));
+      });
+    }
   }
   if (rtype === 'task_def') {
     item('\u25B6 Assign to agent...', () => _showAssignDialog(name));

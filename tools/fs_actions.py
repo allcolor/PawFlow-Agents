@@ -174,27 +174,23 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     timeout = min(req.get("timeout", 30), 120)
     if not command:
         raise ValueError("Missing 'command' parameter")
-    # Capture as bytes to handle any encoding (Windows cmd uses cp850/cp1252)
+    # Force UTF-8 output from child process (Windows defaults to cp850/cp1252)
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    if os.name == "nt":
+        # chcp 65001 = UTF-8 codepage for cmd.exe
+        command = f"chcp 65001 >nul 2>&1 & {command}"
     result = subprocess.run(
         command, shell=True,
-        capture_output=True,
+        capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
         timeout=timeout,
         cwd=root_dir,
+        env=env,
     )
-    def _decode(raw: bytes) -> str:
-        if not raw:
-            return ""
-        # Try UTF-8 first, then system default, then latin-1 (never fails)
-        for enc in ("utf-8", "cp1252", "cp850", "latin-1"):
-            try:
-                return raw.decode(enc)
-            except (UnicodeDecodeError, LookupError):
-                continue
-        return raw.decode("latin-1")  # fallback, always works
-
     return {
-        "stdout": _decode(result.stdout),
-        "stderr": _decode(result.stderr),
+        "stdout": result.stdout or "",
+        "stderr": result.stderr or "",
         "returncode": result.returncode,
     }
 

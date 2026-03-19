@@ -2308,26 +2308,12 @@ function connectSSE(cid) {
     // Use both the tracked chunks AND a DOM scan, because tool_call
     // events may have cleared the JS references while leaving DOM elements.
     const s = streams[doneAgent.toLowerCase()] || { el: null, text: '', chunks: [] };
-    const removedEls = new Set();
-    console.log('[SSE done] clearing', s.chunks.length, 'chunks for', doneAgent, 'stream keys:', Object.keys(streams));
-    for (const chunk of s.chunks) {
-      if (chunk && chunk.parentNode) {
-        console.log('[SSE done] removing chunk:', chunk.className, (chunk.dataset.rawText || chunk.textContent || '').substring(0, 60));
-        chunk.remove(); removedEls.add(chunk);
-      }
-    }
-    // Also remove any streaming element that was detached from tracking
-    // (happens when tool_call clears tcs.el/chunks mid-stream)
-    if (s.el && !removedEls.has(s.el) && s.el.parentNode) {
-      s.el.remove();
-    }
     // Strip internal tags that may leak into the response
     let resp = data.response || '';
     resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
-    // Strip identity prefix if LLM echoed it back (e.g. "[AgentName]: text")
     resp = resp.replace(/^\[[^\]]+\]:\s*/, '');
-    // Show the final response (or fallback if empty), with source badge + metadata
-    // Every response always has a source — fallback to agent_name or 'assistant'
+    const finalText = resp || s.text.replace(/^\[[^\]]+\]:\s*/, '') || '';
+    // Build metadata
     const extra = {};
     extra.source = data.source || {type: 'agent', name: doneAgent};
     if (data.model) extra.model = data.model;
@@ -2335,10 +2321,29 @@ function connectSSE(cid) {
     if (data.base_url) extra.base_url = data.base_url;
     if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
     if (data.duration_ms) extra.duration_ms = data.duration_ms;
-    if (resp) {
-      addMsg('assistant', resp, extra);
-    } else if (s.text) {
-      addMsg('assistant', s.text.replace(/^\[[^\]]+\]:\s*/, ''), extra);
+    // If there's a streaming element with content, upgrade it in-place
+    // instead of remove+recreate (avoids flash of disappearance)
+    if (s.el && s.el.parentNode && finalText) {
+      const badge = sourceBadge(extra.source);
+      const timeStr = new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+      const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
+      const actionsHtml = '<span class="msg-actions">'
+        + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
+        + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
+        + '</span>';
+      s.el.dataset.rawText = finalText.substring(0, 500);
+      s.el.innerHTML = actionsHtml + timeHtml + badge + renderMarkdown(finalText) + buildMetaLine(extra);
+      // Remove extra chunks (if multiple were created during streaming)
+      for (const chunk of s.chunks) {
+        if (chunk && chunk !== s.el && chunk.parentNode) chunk.remove();
+      }
+    } else {
+      // No streaming element — remove any orphan chunks and create fresh
+      for (const chunk of s.chunks) {
+        if (chunk && chunk.parentNode) chunk.remove();
+      }
+      if (s.el && s.el.parentNode) s.el.remove();
+      if (finalText) addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

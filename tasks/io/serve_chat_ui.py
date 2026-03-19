@@ -6127,41 +6127,35 @@ async function loadResources() {
       });
       html += _sectionFooter();
     }
-    // Skills
-    if (data.skills && data.skills.length) {
-      html += _sectionHeader('Skills', 'skill');
-      data.skills.forEach(s => {
-        const active = s.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
-          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
-        </div>`;
-      });
-      html += _sectionFooter();
-    }
-    // MCP
-    if (data.mcp_servers && data.mcp_servers.length) {
-      html += _sectionHeader('MCP', 'mcp');
-      data.mcp_servers.forEach(m => {
-        const active = m.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
-          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
-        </div>`;
-      });
-      html += _sectionFooter();
-    }
-    // Task definitions
-    if (data.task_defs && data.task_defs.length) {
-      html += _sectionHeader('Tasks', 'task_def');
-      data.task_defs.forEach(t => {
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
-          ${_scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;cursor:default;" title="${escapeHtml(t.description)}">${t.name}</span>
-          <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
-        </div>`;
-      });
-      html += _sectionFooter();
-    }
+    // Skills (always show header + [+] even when empty)
+    html += _sectionHeader('Skills', 'skill');
+    (data.skills || []).forEach(s => {
+      const active = s.active;
+      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
+        <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
+        ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
+      </div>`;
+    });
+    html += _sectionFooter();
+    // MCP (always show header)
+    html += _sectionHeader('MCP', 'mcp');
+    (data.mcp_servers || []).forEach(m => {
+      const active = m.active;
+      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
+        <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
+        ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
+      </div>`;
+    });
+    html += _sectionFooter();
+    // Task definitions (always show header)
+    html += _sectionHeader('Tasks', 'task_def');
+    (data.task_defs || []).forEach(t => {
+      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
+        ${_scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;cursor:default;" title="${escapeHtml(t.description)}">${t.name}</span>
+        <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
+      </div>`;
+    });
+    html += _sectionFooter();
     // Running task instances
     if (data.running_tasks && data.running_tasks.length) {
       html += _sectionHeader('Running Tasks', '_running');

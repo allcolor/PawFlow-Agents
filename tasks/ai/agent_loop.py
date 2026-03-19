@@ -3095,13 +3095,32 @@ class AgentLoopTask(BaseTask):
             active = {}
             if conv_id:
                 active = store.get_extra(conv_id, "active_resources") or {}
-            result = {
-                "agents": [{
-                    "name": a["name"],
+            # Build agents list with autoconv status
+            agents_out = []
+            for a in rs.list_all("agent", uid, conversation_id=conv_id):
+                aname = a["name"]
+                entry = {
+                    "name": aname,
                     "description": a.get("description", ""),
                     "scope": a.get("_scope", ""),
-                    "active": active.get("agent") == a["name"],
-                } for a in rs.list_all("agent", uid, conversation_id=conv_id)],
+                    "active": active.get("agent") == aname,
+                }
+                if conv_id:
+                    ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
+                    if ac_cfg.get("enabled"):
+                        entry["autoconv"] = ac_cfg.get("frequency", "on")
+                agents_out.append(entry)
+            # Also check assistant autoconv
+            if conv_id:
+                ac_asst = store.get_extra(conv_id, "random_thought::assistant") or {}
+                if ac_asst.get("enabled"):
+                    # Find assistant in agents_out or add info
+                    for e in agents_out:
+                        if e["name"] == "assistant":
+                            e["autoconv"] = ac_asst.get("frequency", "on")
+                            break
+            result = {
+                "agents": agents_out,
                 "skills": [{
                     "name": s["name"],
                     "description": s.get("description", ""),
@@ -6784,6 +6803,10 @@ class AgentLoopTask(BaseTask):
                         + (f"**Progress:** {_td.get('last_result', '')}\n" if _td.get("last_result") else "")
                         + _rej_text + "\n\n"
                         f"Call complete_task(task_id=\"{_tid}\", done=true/false, progress=\"...\").\n"
+                        "IMPORTANT: If the completion criteria are met, you MUST call "
+                        f"complete_task(task_id=\"{_tid}\", done=true, progress=\"...\") "
+                        "to finish the task. Failing to call it will cause the task to "
+                        "be rescheduled indefinitely.\n"
                         "Do NOT repeat information already shared in previous iterations. "
                         "Focus on NEW progress only. Be concise.\n"
                         "Do NOT respond with [NO_PENDING_WORK]."

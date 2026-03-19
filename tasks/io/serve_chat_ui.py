@@ -6105,7 +6105,7 @@ async function loadResources() {
         const active = a.active;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'agent','${a.name}','${a.scope||''}');return false;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>
+          ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>${a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:4px;" title="Autoconv: ' + a.autoconv + '">\u{1F504} ' + a.autoconv + '</span>' : ''}
         </div>`;
       });
       html += _sectionFooter();

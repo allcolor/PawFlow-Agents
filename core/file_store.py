@@ -191,7 +191,12 @@ class FileStore:
         return os.path.join(self._base_dir, "_index.json")
 
     def _save_index(self):
-        """Persist the entries index to disk."""
+        """Persist the entries index to disk.
+
+        Safety: refuses to overwrite a non-empty index with an empty one
+        if there are actual file directories on disk (prevents accidental
+        data loss from unloaded state).
+        """
         try:
             with self._store_lock:
                 data = {
@@ -201,9 +206,23 @@ class FileStore:
                         "content_type": e["content_type"],
                         "size": e["size"],
                         "created_at": e["created_at"],
+                        "conversation_id": e.get("conversation_id", ""),
                     }
                     for fid, e in self._entries.items()
                 }
+            # Safety: never overwrite a populated index with empty data
+            # if file directories still exist on disk
+            if not data:
+                existing_dirs = [
+                    d for d in Path(self._base_dir).iterdir()
+                    if d.is_dir() and not d.name.startswith("_")
+                ]
+                if existing_dirs:
+                    logger.warning(
+                        "FileStore: refusing to save empty index — "
+                        "%d file dirs still on disk. Call _rebuild_index() first.",
+                        len(existing_dirs))
+                    return
             path = self._index_path()
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:

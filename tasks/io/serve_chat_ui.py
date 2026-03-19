@@ -6145,6 +6145,21 @@ async function loadResources() {
       });
       html += _sectionFooter();
     }
+    // Running task instances
+    if (data.running_tasks && data.running_tasks.length) {
+      html += _sectionHeader('Running Tasks', '_running');
+      data.running_tasks.forEach(t => {
+        const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
+        const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
+        const label = (t.task_def_name || t.task.substring(0, 30)) + ' \u2192 ' + t.agent;
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
+          <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
+          <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
+          <span style="color:#555;font-size:10px;">[${t.iterations}/${t.max_iterations}]</span>
+        </div>`;
+      });
+      html += _sectionFooter();
+    }
     // Services
     if (data.services && data.services.length) {
       html += _sectionHeader('Services', '_svc');
@@ -6235,15 +6250,7 @@ function showResourceMenu(e, rtype, name, scope) {
     item('\u25B6 Select', () => cmdAgentSelect(name));
   }
   if (rtype === 'task_def') {
-    item('\u25B6 Assign to agent...', () => {
-      const agent = prompt('Agent name:');
-      if (agent) {
-        fetch(API, { method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'assign_task', conversation_id: conversationId,
-            agent_name: agent, task_def_name: name }),
-        }).then(r => r.json()).then(d => addMsg('system', d.result || d.error || 'Done')).catch(e => addMsg('error', e.message));
-      }
-    });
+    item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
   }
   sep();
   if (scope !== 'global') item('\u2191 Copy to Global', () => _copyResource(rtype, name, 'global'));
@@ -6402,6 +6409,101 @@ function _saveResourceCreate(rtype) {
 
 // ── Param/Secret context menu + create ────────────────────────────
 // ── Service context menu ──────────────────────────────────────────
+// ── Assign task dialog (agent + variables) ────────────────────────
+function _showAssignDialog(taskDefName) {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:420px;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Assign: ${escapeHtml(taskDefName)}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div>
+  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Agent</label>
+    <input id="assign-agent" value="assistant" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
+  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Interval (optional override)</label>
+    <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
+  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Variables (key=value, one per line)</label>
+    <textarea id="assign-vars" placeholder="nbr_images=20&#10;style=cyberpunk" style="width:100%;min-height:60px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_submitAssign('${taskDefName}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
+  </div>`;
+  overlay.appendChild(panel);
+  overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+  document.getElementById('assign-agent').focus();
+}
+
+function _submitAssign(taskDefName) {
+  const agent = (document.getElementById('assign-agent').value || '').trim();
+  const interval = (document.getElementById('assign-interval').value || '').trim();
+  const varsText = (document.getElementById('assign-vars').value || '').trim();
+  if (!agent) { alert('Agent is required'); return; }
+  const body = { action: 'assign_task', conversation_id: conversationId,
+    agent_name: agent, task_def_name: taskDefName };
+  if (interval) body.interval = interval;
+  if (varsText) {
+    const variables = {};
+    for (const line of varsText.split('\n')) {
+      const eq = line.indexOf('=');
+      if (eq > 0) variables[line.substring(0, eq).trim()] = line.substring(eq + 1).trim();
+    }
+    if (Object.keys(variables).length) body.variables = variables;
+  }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', d.result || 'Task assigned.'); loadResources(); }
+    document.getElementById('resourceEditorOverlay').remove();
+  }).catch(e => addMsg('error', e.message));
+}
+
+// ── Running task context menu ─────────────────────────────────────
+function showRunningTaskMenu(e, taskId, agent, status) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  const _taskAction = (action) => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: action + '_task', conversation_id: conversationId, task_id: taskId }),
+    }).then(r => r.json()).then(d => {
+      if (d.error) addMsg('error', d.error);
+      else addMsg('system', `Task ${taskId} ${action}d.`);
+      loadResources();
+    }).catch(e => addMsg('error', e.message));
+  };
+  if (status === 'active') {
+    item('\u23F8 Pause', () => _taskAction('pause'));
+  } else if (status === 'paused') {
+    item('\u25B6 Resume', () => _taskAction('resume'));
+  }
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  menu.appendChild(sep);
+  item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
 function showServiceMenu(e, serviceId, scope, enabled) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');

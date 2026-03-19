@@ -3121,6 +3121,23 @@ class AgentLoopTask(BaseTask):
                     "default_interval": t.get("default_interval", "6/1m"),
                 } for t in rs.list_all("task_def", uid, conversation_id=conv_id)],
             }
+            # Running task instances for this conversation
+            if conv_id:
+                all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+                running = []
+                for tid, t in all_tasks.items():
+                    if not isinstance(t, dict):
+                        continue
+                    running.append({
+                        "task_id": tid,
+                        "agent": t.get("agent", ""),
+                        "task": t.get("task", "")[:80],
+                        "status": t.get("status", ""),
+                        "iterations": t.get("iterations_done", 0),
+                        "max_iterations": t.get("max_iterations", 50),
+                        "task_def_name": t.get("task_def_name", ""),
+                    })
+                result["running_tasks"] = running
             # Services (global + user)
             try:
                 from gui.services.global_service_registry import GlobalServiceRegistry
@@ -5993,6 +6010,16 @@ class AgentLoopTask(BaseTask):
                         if _at_task.get("agent") != _at_agent:
                             continue
                         if _at_task.get("status") != "active":
+                            continue
+                        # Auto-fail if max iterations reached
+                        _at_iters = _at_task.get("iterations_done", 0)
+                        _at_max = _at_task.get("max_iterations", 50)
+                        if _at_iters >= _at_max:
+                            _at_task["status"] = "failed"
+                            _at_task["last_result"] = f"Auto-failed: {_at_iters}/{_at_max} iterations"
+                            _at_all[_at_tid] = _at_task
+                            _at_store.set_extra(conversation_id, "agent_tasks", _at_all)
+                            logger.info(f"[task] Auto-failed {_at_tid}: max iterations reached")
                             continue
                         _at_key = f"{conversation_id}::task::{_at_tid}"
                         if _at_sched.get(_at_key):

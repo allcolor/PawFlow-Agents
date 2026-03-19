@@ -1185,8 +1185,8 @@ function sourceBadge(source) {
     const target = source.target_agent;
     const isBtw = source.btw;
     if (target) {
-      const prefix = isBtw ? 'btw \u2192 ' : '\u2192 ';
-      userLabel = (userLabel ? userLabel + ' ' : '') + prefix + displayAgentName(target);
+      const prefix = isBtw ? '[btw \u2192 ' : '[\u2192 ';
+      userLabel = (userLabel ? userLabel + ' ' : '') + prefix + displayAgentName(target) + ']';
     } else if (isBtw) {
       userLabel = (userLabel ? userLabel + ' ' : '') + 'btw';
     }

@@ -1,7 +1,7 @@
 """Groovy → Python script converter for NiFi imports.
 
-Built-in OpenPaw feature (not a task/flow). Uses shared LLM client from core/llm_client.py.
-Config stored in openpaw settings (api_key, base_url, model).
+Built-in PawFlow feature (not a task/flow). Uses shared LLM client from core/llm_client.py.
+Config stored in pawflow settings (api_key, base_url, model).
 
 Supports:
 - LLM-based conversion with specialized prompt
@@ -21,13 +21,13 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# NiFi Groovy API → OpenPaw Python API mapping (used in LLM prompt + static fallback)
+# NiFi Groovy API → PawFlow Python API mapping (used in LLM prompt + static fallback)
 # ============================================================================
 
 API_MAPPING_TABLE = """
-## NiFi Groovy API → OpenPaw Python API
+## NiFi Groovy API → PawFlow Python API
 
-| NiFi Groovy | OpenPaw Python | Notes |
+| NiFi Groovy | PawFlow Python | Notes |
 |---|---|---|
 | `session.get()` | `flowfile` (parameter of execute()) | FlowFile is passed as argument |
 | `session.read(flowfile, ...)` | `flowfile.get_content()` | Returns bytes |
@@ -56,17 +56,17 @@ API_MAPPING_TABLE = """
 | `true` / `false` | `True` / `False` | |
 """
 
-SYSTEM_PROMPT = f"""You are a NiFi Groovy-to-Python converter for the OpenPaw framework.
+SYSTEM_PROMPT = f"""You are a NiFi Groovy-to-Python converter for the PawFlow framework.
 
-Your job: convert a NiFi ExecuteScript/ExecuteGroovyScript Groovy script into a OpenPaw-compatible Python script.
+Your job: convert a NiFi ExecuteScript/ExecuteGroovyScript Groovy script into a PawFlow-compatible Python script.
 
-## OpenPaw executeScript task format
+## PawFlow executeScript task format
 
-The converted Python script will be passed as the `script` parameter of a OpenPaw `executeScript` task.
+The converted Python script will be passed as the `script` parameter of a PawFlow `executeScript` task.
 The script receives a `flowfile` variable (a FlowFile object) and must return a list of FlowFiles.
 
 ```python
-# OpenPaw executeScript template
+# PawFlow executeScript template
 import json
 import logging
 from core import FlowFile, TaskError
@@ -90,12 +90,12 @@ result_flowfiles = [flowfile]
 
 ## Rules
 1. Convert ALL Java/Groovy types to Python equivalents
-2. Replace NiFi session API calls with OpenPaw FlowFile API
+2. Replace NiFi session API calls with PawFlow FlowFile API
 3. Remove all Java imports, add Python imports as needed
 4. Convert `session.transfer(ff, REL_SUCCESS)` to adding ff to the return list
 5. Convert `session.transfer(ff, REL_FAILURE)` to `raise TaskError("reason")`
 6. Mark uncertain conversions with `# TODO: manual review - <reason>`
-7. Handle encoding: NiFi uses Java strings (UTF-16), OpenPaw uses bytes
+7. Handle encoding: NiFi uses Java strings (UTF-16), PawFlow uses bytes
 8. Keep the logic structure, don't over-refactor
 
 ## Output format
@@ -134,7 +134,7 @@ class ScriptConversionResult:
 
 
 class NiFiScriptConverter:
-    """Converts NiFi Groovy scripts to OpenPaw Python scripts.
+    """Converts NiFi Groovy scripts to PawFlow Python scripts.
 
     Uses LLM for intelligent conversion, with static regex fallback.
     Supports interactive re-submission with user feedback.
@@ -238,7 +238,7 @@ class NiFiScriptConverter:
                 LLMMessage(role="system", content=SYSTEM_PROMPT),
                 LLMMessage(
                     role="user",
-                    content=f"Convert this NiFi Groovy script to OpenPaw Python:\n\n```groovy\n{groovy_script}\n```",
+                    content=f"Convert this NiFi Groovy script to PawFlow Python:\n\n```groovy\n{groovy_script}\n```",
                 ),
             ]
             response = self._llm_client.complete(

@@ -21,7 +21,7 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>OpenPaw Agent Chat</title>
+<title>PawFlow Agent Chat</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -275,7 +275,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 </div>
 <div class="main">
 <div class="header">
-  <h1>OpenPaw Agent</h1>
+  <h1>PawFlow Agent</h1>
   <span class="status" id="status">Ready</span>
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
   <div class="actions">
@@ -591,7 +591,7 @@ let pollTimer = null;      // 30s fallback poll interval
 let resourcesTimer = null; // 10s resources panel refresh
 
 // ── Message history (arrow key navigation) ──
-let messageHistory = JSON.parse(localStorage.getItem('openpaw_msg_history') || '[]');
+let messageHistory = JSON.parse(localStorage.getItem('pawflow_msg_history') || '[]');
 let historyIndex = -1;    // -1 = not navigating, 0 = most recent
 let savedDraft = '';      // text being typed before navigating
 
@@ -619,7 +619,7 @@ setInterval(() => {
 
 // Auth
 function getToken() {
-  const m = document.cookie.match(/(?:^|;\s*)openpaw_token=([^;]+)/);
+  const m = document.cookie.match(/(?:^|;\s*)pawflow_token=([^;]+)/);
   return m ? m[1] : null;
 }
 function getAuthHeaders() {
@@ -1028,7 +1028,7 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     body += '<div class="msg ' + cssClass + '">' + badge + html + '</div>\n';
   }
   return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">'
-    + '<title>OpenPaw Conversation Export</title>'
+    + '<title>PawFlow Conversation Export</title>'
     + '<style>'
     + 'body { font-family: -apple-system, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 900px; margin: 0 auto; }'
     + '.msg { padding: 10px 14px; border-radius: 12px; margin-bottom: 12px; line-height: 1.5; font-size: 14px; white-space: pre-wrap; word-wrap: break-word; }'
@@ -1042,7 +1042,7 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     + '.msg.btw { background: #0d1b2a; font-size: 13px; border-left: 3px solid #60a5fa; margin-right: 20%; font-style: italic; }'
     + 'img { display: block; margin: 8px 0; }'
     + '</style></head><body>'
-    + '<h1 style="color:#e94560;margin-bottom:20px;">OpenPaw Conversation Export</h1>'
+    + '<h1 style="color:#e94560;margin-bottom:20px;">PawFlow Conversation Export</h1>'
     + '<p style="color:#6c6c8a;margin-bottom:20px;">Exported: ' + new Date().toLocaleString() + '</p>'
     + body
     + '</body></html>';
@@ -2268,7 +2268,7 @@ function connectSSE(cid) {
     scrollBottom();
     // Browser notification if page is not visible
     if (document.hidden && Notification.permission === 'granted') {
-      new Notification('OpenPaw Agent', { body: data.message });
+      new Notification('PawFlow Agent', { body: data.message });
     }
   });
 
@@ -5781,7 +5781,7 @@ async function send() {
   if (text) {
     messageHistory.unshift(text);
     if (messageHistory.length > 50) messageHistory.pop();
-    localStorage.setItem('openpaw_msg_history', JSON.stringify(messageHistory.slice(0, 50)));
+    localStorage.setItem('pawflow_msg_history', JSON.stringify(messageHistory.slice(0, 50)));
   }
   historyIndex = -1;
   savedDraft = '';
@@ -6059,10 +6059,10 @@ function _scopeBadge(s) {
 }
 
 // Collapsed state per section (persisted in localStorage)
-const _collapsedSections = JSON.parse(localStorage.getItem('openpaw_collapsed_sections') || '{}');
+const _collapsedSections = JSON.parse(localStorage.getItem('pawflow_collapsed_sections') || '{}');
 function _toggleSection(id) {
   _collapsedSections[id] = !_collapsedSections[id];
-  localStorage.setItem('openpaw_collapsed_sections', JSON.stringify(_collapsedSections));
+  localStorage.setItem('pawflow_collapsed_sections', JSON.stringify(_collapsedSections));
   const el = document.getElementById('res-section-' + id);
   if (el) el.style.display = _collapsedSections[id] ? 'none' : 'block';
   const arrow = document.getElementById('res-arrow-' + id);

@@ -1,8 +1,8 @@
-"""Filesystem abstraction layer for OpenPaw.
+"""Filesystem abstraction layer for PawFlow.
 
 Provides a unified interface for accessing filesystems from various backends
 (HTTP relay, WebSocket relay, browser File System Access API, server local,
-Google Drive, OneDrive). All file access in OpenPaw should go through this
+Google Drive, OneDrive). All file access in PawFlow should go through this
 interface to enforce permissions and path safety.
 
 Key classes:

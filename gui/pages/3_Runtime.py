@@ -13,7 +13,7 @@ import logging
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Exécution - OpenPaw",
+    page_title="Exécution - PawFlow",
     page_icon="▶️",
     layout="wide",
 )

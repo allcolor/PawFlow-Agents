@@ -2,9 +2,9 @@
 
 ## Overview
 
-OpenPaw provides a unified filesystem abstraction that allows flows and agents to access files from various sources — the user's local machine, cloud storage (Google Drive, OneDrive), or the browser — through a consistent interface with enforced permissions.
+PawFlow provides a unified filesystem abstraction that allows flows and agents to access files from various sources — the user's local machine, cloud storage (Google Drive, OneDrive), or the browser — through a consistent interface with enforced permissions.
 
-**Core principle:** The OpenPaw server does NOT access its own filesystem by default. All file access goes through an explicitly configured filesystem service.
+**Core principle:** The PawFlow server does NOT access its own filesystem by default. All file access goes through an explicitly configured filesystem service.
 
 ## Architecture
 
@@ -34,8 +34,8 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 | Type | Description | Git Support | Requires |
 |------|-------------|-------------|----------|
-| `localFilesystem` | HTTP relay to user's machine | Yes | `openpaw_fs_relay.py` script |
-| `wsFilesystem` | WebSocket relay (persistent connection) | Yes | `openpaw_fs_relay_ws.py` script |
+| `localFilesystem` | HTTP relay to user's machine | Yes | `pawflow_fs_relay.py` script |
+| `wsFilesystem` | WebSocket relay (persistent connection) | Yes | `pawflow_fs_relay_ws.py` script |
 | `browserFilesystem` | Browser File System Access API | No | Chrome/Edge, folder opened |
 | `serverFilesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
@@ -47,16 +47,16 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 ```bash
 # Read/write access to a project directory
-python tools/openpaw_fs_relay.py --port 9876 --dir /home/user/project --secret mysecret
+python tools/pawflow_fs_relay.py --port 9876 --dir /home/user/project --secret mysecret
 
 # Read-only access
-python tools/openpaw_fs_relay.py --port 9876 --dir /data --secret mysecret --readonly
+python tools/pawflow_fs_relay.py --port 9876 --dir /data --secret mysecret --readonly
 
 # Bind to all interfaces (for remote access)
-python tools/openpaw_fs_relay.py --port 9876 --dir /data --secret mysecret --bind 0.0.0.0
+python tools/pawflow_fs_relay.py --port 9876 --dir /data --secret mysecret --bind 0.0.0.0
 ```
 
-### 2. Install the service in OpenPaw
+### 2. Install the service in PawFlow
 
 ```
 /service install localFilesystem myfiles host=localhost,port=9876,secret=mysecret,mode=readwrite
@@ -79,7 +79,7 @@ Add a `filesystemOps` task with `service_id=myfiles` and configure the action.
 Same as HTTP relay but with persistent connection (faster for frequent operations):
 
 ```bash
-python tools/openpaw_fs_relay_ws.py --port 9877 --dir /home/user/project --secret mysecret
+python tools/pawflow_fs_relay_ws.py --port 9877 --dir /home/user/project --secret mysecret
 ```
 
 ```
@@ -123,7 +123,7 @@ The `user_id` is automatically injected from the authenticated session. Tokens a
 For rare cases where flows need server disk access (exports, logs, staging):
 
 ```
-/service install serverFilesystem staging root=/var/openpaw/staging,mode=readwrite
+/service install serverFilesystem staging root=/var/pawflow/staging,mode=readwrite
 ```
 
 Only admin users can install this service type.

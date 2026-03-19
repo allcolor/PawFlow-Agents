@@ -11,7 +11,7 @@ Builtin handlers:
 Agent tool types (flow-level agent_tools section):
 - builtin: Reference to a builtin handler
 - http: Call an external HTTP endpoint
-- task: Execute a OpenPaw task inline
+- task: Execute a PawFlow task inline
 - mcp: Call a tool on an MCP server (HTTP transport)
 """
 
@@ -1107,7 +1107,7 @@ class LocalFilesHandler(ToolHandler):
 class RemoteExecutorHandler(ToolHandler):
     """Execute commands on the user's machine through a relay.
 
-    Uses a RemoteExecutorService to communicate with openpaw_executor_relay.py.
+    Uses a RemoteExecutorService to communicate with pawflow_executor_relay.py.
     Commands are classified by risk level and may require user approval via
     an SSE dialog in the chat UI (same pattern as LocalFilesHandler).
     """
@@ -1315,7 +1315,7 @@ class RemoteExecutorHandler(ToolHandler):
         if not service:
             return (
                 "Error: no remote executor relay connected.\n"
-                "Run: python openpaw_executor_relay.py --connect ws://<server>/ws/relay "
+                "Run: python pawflow_executor_relay.py --connect ws://<server>/ws/relay "
                 "--token <api_key> --secret <secret> --dir <path>"
             )
 
@@ -1825,11 +1825,11 @@ class CreateToolHandler(ToolHandler):
 
 
 class FlowManagerHandler(ToolHandler):
-    """Manage OpenPaw flows — create, start, stop, delete.
+    """Manage PawFlow flows — create, start, stop, delete.
 
     The agent can only manage flows it created (tagged with user_id).
     Flows are scoped to the current conversation.
-    Flow definitions are standard OpenPaw JSON flow format.
+    Flow definitions are standard PawFlow JSON flow format.
     """
 
     def __init__(self):
@@ -1843,7 +1843,7 @@ class FlowManagerHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Manage OpenPaw data flows. Actions:\n"
+            "Manage PawFlow data flows. Actions:\n"
             "- catalog: List available flow templates from the repository\n"
             "- deploy: Deploy an existing template as a new instance\n"
             "- list: List flow instances in this conversation\n"
@@ -1989,7 +1989,7 @@ class FlowManagerHandler(ToolHandler):
         from pathlib import Path
         dirs = [Path("flows")]
         # Also check configured flow directories
-        env_dir = __import__("os").environ.get("OPENPAW_FLOWS_DIR", "")
+        env_dir = __import__("os").environ.get("PAWFLOW_FLOWS_DIR", "")
         if env_dir:
             dirs.append(Path(env_dir))
         return [d for d in dirs if d.exists()]
@@ -3389,8 +3389,8 @@ class VerifyTaskHandler(ToolHandler):
             return f"Task {task_id} rejected. Agent '{target_agent}' rescheduled."
 
 
-class OpenPawHelpHandler(ToolHandler):
-    """Query the OpenPaw platform catalog and flow-authoring guide.
+class PawFlowHelpHandler(ToolHandler):
+    """Query the PawFlow platform catalog and flow-authoring guide.
 
     Provides dynamic information about available tasks, services, and their
     configuration schemas, plus a static guide on how to build flows.
@@ -3398,12 +3398,12 @@ class OpenPawHelpHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "openpaw_help"
+        return "pawflow_help"
 
     @property
     def description(self) -> str:
         return (
-            "Get information about the OpenPaw platform. Topics:\n"
+            "Get information about the PawFlow platform. Topics:\n"
             "- tasks: List all available task types\n"
             "- task:<type>: Get detailed info about a specific task\n"
             "- services: List all available service types\n"
@@ -3559,7 +3559,7 @@ class OpenPawHelpHandler(ToolHandler):
         return "\n".join(info)
 
     def _flow_guide(self) -> str:
-        return """# OpenPaw Flow Authoring Guide
+        return """# PawFlow Flow Authoring Guide
 
 ## Flow JSON Structure
 ```json
@@ -3679,7 +3679,7 @@ Use manage_flow with action 'catalog' to see available templates, then 'deploy'
 with template_id to create an instance. Override parameters as needed.
 
 ### Scheduled pipeline
-Use cronTrigger as root task (see openpaw_help topic 'triggers' for details).
+Use cronTrigger as root task (see pawflow_help topic 'triggers' for details).
 
 ### Data transformation
 tasks: fetchData → updateAttribute → transformJSON → routeOnAttribute → output
@@ -3693,7 +3693,7 @@ tasks: fetchData → updateAttribute → transformJSON → routeOnAttribute → 
 - Use `${env.VAR_NAME}` for environment variables
 - Use `${flow.parameters.key}` for flow-level parameters (overridable at start)
 
-## IMPORTANT: Before using any task, ALWAYS call openpaw_help with topic 'task:<type>'
+## IMPORTANT: Before using any task, ALWAYS call pawflow_help with topic 'task:<type>'
 to get the EXACT parameter names. DO NOT guess parameter names.
 
 Common mistakes to avoid:
@@ -3749,7 +3749,7 @@ Variables available in scripts:
     def _expressions_guide(self) -> str:
         return """# Expression Syntax
 
-OpenPaw expressions use `${...}` syntax and are resolved at parse/runtime.
+PawFlow expressions use `${...}` syntax and are resolved at parse/runtime.
 
 ## Global Secrets (shared across all flows)
 - `${secrets.global.key_name}` — Encrypted global secret (config/global_secrets.json)
@@ -3850,7 +3850,7 @@ For agent-initiated scheduled checks:
     def _resources_guide(self) -> str:
         return """# Resource Management
 
-OpenPaw supports user-scoped resources: agents, skills, and MCP servers.
+PawFlow supports user-scoped resources: agents, skills, and MCP servers.
 Both users (via chat commands) and agents (via tools) can manage them.
 
 ## Resource Types
@@ -4823,7 +4823,7 @@ class FilesystemToolHandler(ToolHandler):
                 "Error: No filesystem service configured. "
                 "Install one with: /service install localFilesystem <name> "
                 "host=localhost,port=9876,secret=<secret>,mode=readwrite\n"
-                "Then run: python tools/openpaw_fs_relay.py --port 9876 "
+                "Then run: python tools/pawflow_fs_relay.py --port 9876 "
                 "--dir <path> --secret <secret>"
             )
 
@@ -4964,7 +4964,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CreateToolHandler())
     registry.register(AskAgentHandler())
     registry.register(FlowManagerHandler())
-    registry.register(OpenPawHelpHandler())
+    registry.register(PawFlowHelpHandler())
     registry.register(StoreSecretHandler())
     registry.register(ListSecretsHandler())
     registry.register(ManageResourceHandler())
@@ -5292,7 +5292,7 @@ class HTTPToolHandler(ConfigurableToolHandler):
                 conn = http.client.HTTPConnection(
                     host, port, timeout=self._timeout)
 
-            headers = {"User-Agent": "OpenPaw-Agent/1.0",
+            headers = {"User-Agent": "PawFlow-Agent/1.0",
                        "Content-Type": "application/json"}
             headers.update(self._headers)
 
@@ -5324,7 +5324,7 @@ class HTTPToolHandler(ConfigurableToolHandler):
 
 
 class TaskToolHandler(ConfigurableToolHandler):
-    """Tool that executes a OpenPaw task inline.
+    """Tool that executes a PawFlow task inline.
 
     Config example::
 
@@ -5544,7 +5544,7 @@ def load_agent_tools(agent_tools_config: Dict[str, Any]) -> ToolRegistry:
     Supports four tool types:
     - builtin: Reference to a builtin handler (execute_script, read_file, scrape_url)
     - http: Call an external HTTP endpoint
-    - task: Execute a OpenPaw task inline
+    - task: Execute a PawFlow task inline
     - mcp: Call a tool on an MCP server (single tool)
 
     Plus a special "mcp_server" entry that auto-discovers all tools::
@@ -5601,7 +5601,7 @@ def load_agent_tools(agent_tools_config: Dict[str, Any]) -> ToolRegistry:
                 continue
             handler = TaskToolHandler(
                 tool_name=tool_name,
-                tool_description=tool_def.get("description", f"OpenPaw task: {task_type}"),
+                tool_description=tool_def.get("description", f"PawFlow task: {task_type}"),
                 tool_parameters=tool_def.get("parameters", {
                     "type": "object", "properties": {},
                 }),

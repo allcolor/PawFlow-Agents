@@ -2,7 +2,7 @@
 
 """
 Module Engine.
-Moteur d'exécution des flux OpenPaw.
+Moteur d'exécution des flux PawFlow.
 """
 
 from engine.continuous_executor import ContinuousFlowExecutor, ExecutionResult, TaskStats

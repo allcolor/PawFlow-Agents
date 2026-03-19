@@ -1,7 +1,7 @@
 # IO Tasks
 
 """
-Modules IO pour OpenPaw.
+Modules IO pour PawFlow.
 Tâches pour la lecture/écriture de fichiers, HTTP, email, messaging, cloud.
 """
 

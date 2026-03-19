@@ -1,4 +1,4 @@
-"""Internationalization for OpenPaw GUI."""
+"""Internationalization for PawFlow GUI."""
 
 import json
 import os

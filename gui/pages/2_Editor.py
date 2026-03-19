@@ -13,7 +13,7 @@ from datetime import datetime
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Editeur de flux - OpenPaw",
+    page_title="Editeur de flux - PawFlow",
     page_icon="✏️",
     layout="wide",
 )

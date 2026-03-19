@@ -1,10 +1,10 @@
-"""NiFi → OpenPaw flow converter.
+"""NiFi → PawFlow flow converter.
 
 Parses NiFi flow exports (XML templates or JSON REST API format)
-and converts them to OpenPaw flow dicts.
+and converts them to PawFlow flow dicts.
 
 Handles:
-- Processor mapping (NiFi processor type → OpenPaw task type)
+- Processor mapping (NiFi processor type → PawFlow task type)
 - Controller service mapping
 - Connection/relationship extraction
 - Parameter context extraction
@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# NiFi processor → OpenPaw task mapping
+# NiFi processor → PawFlow task mapping
 # ============================================================================
 
 PROCESSOR_MAP: Dict[str, str] = {
@@ -135,14 +135,14 @@ for full_name, pyfi_type in PROCESSOR_MAP.items():
     short = full_name.rsplit(".", 1)[-1]
     PROCESSOR_SHORT_MAP[short] = pyfi_type
 
-# NiFi controller service → OpenPaw service mapping
+# NiFi controller service → PawFlow service mapping
 SERVICE_MAP: Dict[str, str] = {
     "org.apache.nifi.dbcp.DBCPConnectionPool": "dbConnectionPool",
     "org.apache.nifi.distributed.cache.client.DistributedMapCacheClientService": "distributedMapCache",
     "org.apache.nifi.ssl.StandardSSLContextService": None,  # No direct equivalent
 }
 
-# NiFi relationship → OpenPaw relation type
+# NiFi relationship → PawFlow relation type
 RELATIONSHIP_MAP: Dict[str, str] = {
     "success": "success",
     "failure": "failure",
@@ -167,7 +167,7 @@ class ConversionWarning:
 
 @dataclass
 class ConversionResult:
-    """Result of NiFi → OpenPaw conversion."""
+    """Result of NiFi → PawFlow conversion."""
     flow: Dict[str, Any]
     warnings: List[ConversionWarning] = field(default_factory=list)
     unmapped_processors: List[str] = field(default_factory=list)
@@ -177,10 +177,10 @@ class ConversionResult:
 
 
 class NiFiConverter:
-    """Converts NiFi flow exports to OpenPaw flow dicts."""
+    """Converts NiFi flow exports to PawFlow flow dicts."""
 
     def convert_xml(self, xml_content: str) -> ConversionResult:
-        """Convert NiFi XML template/flow to OpenPaw flow dict."""
+        """Convert NiFi XML template/flow to PawFlow flow dict."""
         try:
             root = ET.fromstring(xml_content)
         except ET.ParseError as e:
@@ -206,7 +206,7 @@ class NiFiConverter:
         return self._convert_process_group(snippet, source_format="xml")
 
     def convert_json(self, json_content: str) -> ConversionResult:
-        """Convert NiFi JSON (REST API format) to OpenPaw flow dict."""
+        """Convert NiFi JSON (REST API format) to PawFlow flow dict."""
         try:
             data = json.loads(json_content)
         except json.JSONDecodeError as e:
@@ -236,7 +236,7 @@ class NiFiConverter:
     # ========================================================================
 
     def _convert_process_group(self, pg_element, source_format="xml") -> ConversionResult:
-        """Convert a NiFi processGroup XML element to OpenPaw flow dict.
+        """Convert a NiFi processGroup XML element to PawFlow flow dict.
 
         Handles nested process groups by converting each to a separate subflow
         and inserting an executeFlow task in the parent.
@@ -272,7 +272,7 @@ class NiFiConverter:
                 nested_pg_ids.add(pg_id)
 
         # Extract processors (only direct children, not from nested process groups)
-        id_map = {}  # NiFi UUID → OpenPaw task_id
+        id_map = {}  # NiFi UUID → PawFlow task_id
         for proc in self._direct_children(pg_element, "processor"):
             task_id, task_config, proc_warnings = self._convert_xml_processor(proc)
             if task_id:
@@ -395,7 +395,7 @@ class NiFiConverter:
         )
 
     def _convert_xml_processor(self, proc_element) -> Tuple[Optional[str], Dict[str, Any], List[ConversionWarning]]:
-        """Convert a single NiFi processor XML element to OpenPaw task config."""
+        """Convert a single NiFi processor XML element to PawFlow task config."""
         warnings = []
         nifi_type = self._xml_text(proc_element, "class") or self._xml_text(proc_element, "type") or ""
         nifi_name = self._xml_text(proc_element, "name") or ""
@@ -414,7 +414,7 @@ class NiFiConverter:
             task_config["_unmapped"] = True
             warnings.append(ConversionWarning(
                 "warning", task_id, nifi_type,
-                f"No OpenPaw equivalent for '{nifi_type}'. Replaced with log task.",
+                f"No PawFlow equivalent for '{nifi_type}'. Replaced with log task.",
             ))
 
         # Extract properties
@@ -471,7 +471,7 @@ class NiFiConverter:
     # ========================================================================
 
     def _convert_json_flow(self, flow_data: Dict[str, Any], pg_data: Optional[Dict[str, Any]] = None) -> ConversionResult:
-        """Convert NiFi JSON REST API flow to OpenPaw flow dict."""
+        """Convert NiFi JSON REST API flow to PawFlow flow dict."""
         warnings = []
         unmapped = []
         script_procs = []
@@ -499,7 +499,7 @@ class NiFiConverter:
             "variables": {},
         }
 
-        id_map = {}  # NiFi UUID → OpenPaw task_id
+        id_map = {}  # NiFi UUID → PawFlow task_id
 
         # Convert processors
         processors = flow_data.get("processors", [])
@@ -528,7 +528,7 @@ class NiFiConverter:
                 unmapped.append(nifi_type)
                 warnings.append(ConversionWarning(
                     "warning", task_id, nifi_type,
-                    f"No OpenPaw equivalent for '{nifi_type}'. Replaced with log task.",
+                    f"No PawFlow equivalent for '{nifi_type}'. Replaced with log task.",
                 ))
             else:
                 # Extract properties
@@ -646,7 +646,7 @@ class NiFiConverter:
     # ========================================================================
 
     def _map_processor_type(self, nifi_type: str) -> str:
-        """Map NiFi processor class to OpenPaw task type."""
+        """Map NiFi processor class to PawFlow task type."""
         if nifi_type in PROCESSOR_MAP:
             return PROCESSOR_MAP[nifi_type]
         # Try short name
@@ -656,7 +656,7 @@ class NiFiConverter:
         return "_unmapped"
 
     def _map_relationship(self, relationships: List[str]) -> str:
-        """Map NiFi relationship names to OpenPaw relation type."""
+        """Map NiFi relationship names to PawFlow relation type."""
         if not relationships:
             return "success"
         # Use first relationship
@@ -664,7 +664,7 @@ class NiFiConverter:
         return RELATIONSHIP_MAP.get(rel, rel)
 
     def _map_properties(self, pyfi_type: str, nifi_props: Dict[str, str]) -> Dict[str, Any]:
-        """Map NiFi processor properties to OpenPaw task parameters."""
+        """Map NiFi processor properties to PawFlow task parameters."""
         params = {}
 
         # Common property mappings per task type

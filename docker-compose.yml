@@ -6,9 +6,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - OPENPAW_CORS_ORIGINS=http://localhost:8501,http://localhost:8000
-      - OPENPAW_SECRET_KEY=${OPENPAW_SECRET_KEY:-changeme}
-      - OPENPAW_RATE_LIMIT=true
+      - PAWFLOW_CORS_ORIGINS=http://localhost:8501,http://localhost:8000
+      - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY:-changeme}
+      - PAWFLOW_RATE_LIMIT=true
     volumes:
       - ./flows:/app/flows
       - ./config:/app/config
@@ -26,7 +26,7 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - OPENPAW_API_URL=http://api:8000
+      - PAWFLOW_API_URL=http://api:8000
     depends_on:
       api:
         condition: service_healthy
@@ -38,9 +38,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      - POSTGRES_DB=openpaw
-      - POSTGRES_USER=openpaw
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-openpawsecret}
+      - POSTGRES_DB=pawflow
+      - POSTGRES_USER=pawflow
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pawflowsecret}
     volumes:
       - pgdata:/var/lib/postgresql/data
     profiles:

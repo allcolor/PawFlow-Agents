@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create non-root user and set ownership
-RUN groupadd -r openpaw && useradd -r -g openpaw -d /app -s /sbin/nologin openpaw \
+RUN groupadd -r pawflow && useradd -r -g pawflow -d /app -s /sbin/nologin pawflow \
     && mkdir -p /app/flows /app/config /app/plugins /app/logs \
-    && chown -R openpaw:openpaw /app
+    && chown -R pawflow:pawflow /app
 
-USER openpaw
+USER pawflow
 
 # Expose ports: API (8000) + GUI (8501)
 EXPOSE 8000 8501

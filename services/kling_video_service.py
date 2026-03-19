@@ -125,7 +125,7 @@ class KlingVideoService(BaseVideoGenerationService):
         raise ServiceError(f"Kling generation timed out after {self.timeout}s")
 
     def _download_video(self, url: str) -> dict:
-        req = urllib.request.Request(url, headers={"User-Agent": "OpenPaw-Agent/1.0"})
+        req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})
         with urllib.request.urlopen(req, timeout=120) as resp:
             video_bytes = resp.read()
             content_type = resp.headers.get("Content-Type", "video/mp4")

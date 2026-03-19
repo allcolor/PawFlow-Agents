@@ -15,7 +15,7 @@ import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-logger = logging.getLogger("openpaw.poll_scheduler")
+logger = logging.getLogger("pawflow.poll_scheduler")
 
 _DATA_DIR = os.path.join("data", "poll_schedule")
 _SCHEDULE_FILE = os.path.join(_DATA_DIR, "schedule.json")

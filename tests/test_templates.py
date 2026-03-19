@@ -16,7 +16,7 @@ class TestTemplateService(unittest.TestCase):
         self.svc = TemplateService()
         # Use a temporary directory for file-based templates
         self._orig_dir = self.svc.templates_dir
-        self.svc.templates_dir = tempfile.mkdtemp(prefix="openpaw_tpl_test_")
+        self.svc.templates_dir = tempfile.mkdtemp(prefix="pawflow_tpl_test_")
 
     def tearDown(self):
         shutil.rmtree(self.svc.templates_dir, ignore_errors=True)

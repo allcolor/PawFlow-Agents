@@ -87,7 +87,7 @@ class TestBrowserService:
     def test_validate_url_allowed_domains(self):
         from services.browser_service import BrowserService
         svc = BrowserService.instance()
-        with patch.dict("os.environ", {"OPENPAW_BROWSER_ALLOWED_DOMAINS": "trusted.com,safe.org"}):
+        with patch.dict("os.environ", {"PAWFLOW_BROWSER_ALLOWED_DOMAINS": "trusted.com,safe.org"}):
             # Re-instantiate to pick up env
             BrowserService.reset()
             svc = BrowserService.instance()
@@ -99,7 +99,7 @@ class TestBrowserService:
 
     def test_validate_url_blocked_domains(self):
         from services.browser_service import BrowserService
-        with patch.dict("os.environ", {"OPENPAW_BROWSER_BLOCKED_DOMAINS": "evil.com,bad.org"}):
+        with patch.dict("os.environ", {"PAWFLOW_BROWSER_BLOCKED_DOMAINS": "evil.com,bad.org"}):
             BrowserService.reset()
             svc = BrowserService.instance()
             with pytest.raises(ValueError):
@@ -286,8 +286,8 @@ class TestBrowserSecurity:
 
     def test_domain_env_vars_read(self):
         with patch.dict("os.environ", {
-            "OPENPAW_BROWSER_ALLOWED_DOMAINS": "a.com,b.com",
-            "OPENPAW_BROWSER_BLOCKED_DOMAINS": "x.com",
+            "PAWFLOW_BROWSER_ALLOWED_DOMAINS": "a.com,b.com",
+            "PAWFLOW_BROWSER_BLOCKED_DOMAINS": "x.com",
         }):
             from services.browser_service import BrowserService
             BrowserService.reset()

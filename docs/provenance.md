@@ -1,6 +1,6 @@
-# Système de Provenance - OpenPaw
+# Système de Provenance - PawFlow
 
-Le système de provenance de OpenPaw permet de tracer le cycle de vie complet de chaque FlowFile à travers le pipeline de traitement. Il enregistre tous les événements significatifs pour permettre l'audit, le débogage et la reconstruction du lignage des données.
+Le système de provenance de PawFlow permet de tracer le cycle de vie complet de chaque FlowFile à travers le pipeline de traitement. Il enregistre tous les événements significatifs pour permettre l'audit, le débogage et la reconstruction du lignage des données.
 
 ---
 
@@ -16,7 +16,7 @@ Le système de provenance de OpenPaw permet de tracer le cycle de vie complet de
 
 ## Types d'Événements de Provenance
 
-OpenPaw définit **7 types d'événements** :
+PawFlow définit **7 types d'événements** :
 
 | Type | Quand | Contexte |
 |------|-------|----------|

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# OpenPaw CLI
+# PawFlow CLI
 
 """
-Point d'entree principal de OpenPaw.
+Point d'entree principal de PawFlow.
 Usage:
     python cli.py run <flow.json> [--input <file>] [--verbose]
     python cli.py validate <flow.json>
@@ -47,7 +47,7 @@ def cmd_run(args):
         format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
         datefmt='%H:%M:%S'
     )
-    logger = logging.getLogger('OpenPaw')
+    logger = logging.getLogger('PawFlow')
 
     # Parser le flow
     logger.info(f"Chargement du flow: {flow_path}")
@@ -225,7 +225,7 @@ def cmd_info(args):
 
 
 def cmd_serve(args):
-    """Start the OpenPaw API server."""
+    """Start the PawFlow API server."""
     try:
         import uvicorn
     except ImportError:
@@ -241,7 +241,7 @@ def cmd_serve(args):
 
 
 def cmd_gui(args):
-    """Start the OpenPaw GUI.
+    """Start the PawFlow GUI.
 
     Launches Streamlit in a subprocess with a bootstrap that pre-restores
     deployed flows in a daemon thread before Streamlit's event loop starts.
@@ -612,8 +612,8 @@ def cmd_re_embed(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        prog='openpaw',
-        description='OpenPaw - Framework de traitement de flux de donnees (NiFi-like)'
+        prog='pawflow',
+        description='PawFlow (Open Cuddle Edition) - Data workflow framework'
     )
     subparsers = parser.add_subparsers(dest='command', help='Commande')
 
@@ -642,13 +642,13 @@ def main():
     info_parser.add_argument('flow', help='Fichier JSON du flow')
 
     # serve
-    serve_parser = subparsers.add_parser('serve', help='Start the OpenPaw API server')
+    serve_parser = subparsers.add_parser('serve', help='Start the PawFlow API server')
     serve_parser.add_argument('--host', default='0.0.0.0', help='Host to bind (default: 0.0.0.0)')
     serve_parser.add_argument('--port', type=int, default=8000, help='Port (default: 8000)')
     serve_parser.add_argument('--reload', action='store_true', help='Enable auto-reload')
 
     # gui
-    gui_parser = subparsers.add_parser('gui', help='Start the OpenPaw Streamlit GUI')
+    gui_parser = subparsers.add_parser('gui', help='Start the PawFlow Streamlit GUI')
     gui_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
     gui_parser.add_argument('--port', type=int, default=8501, help='Port (default: 8501)')
     gui_parser.add_argument('--headless', action='store_true', help='Run in headless mode')

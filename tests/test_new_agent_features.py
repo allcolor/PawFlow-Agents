@@ -23,7 +23,7 @@ from core.tool_registry import (
     CreateToolHandler,
     AskAgentHandler,
     FlowManagerHandler,
-    OpenPawHelpHandler,
+    PawFlowHelpHandler,
     StoreSecretHandler,
 )
 
@@ -629,14 +629,14 @@ class TestFlowManagerHandler(unittest.TestCase):
 # ══════════════════════════════════════════════════════════════════
 
 
-class TestOpenPawHelpHandler(unittest.TestCase):
-    """Tests for OpenPawHelpHandler."""
+class TestPawFlowHelpHandler(unittest.TestCase):
+    """Tests for PawFlowHelpHandler."""
 
     def setUp(self):
-        self.handler = OpenPawHelpHandler()
+        self.handler = PawFlowHelpHandler()
 
     def test_name(self):
-        self.assertEqual(self.handler.name, "openpaw_help")
+        self.assertEqual(self.handler.name, "pawflow_help")
 
     def test_schema(self):
         schema = self.handler.parameters_schema
@@ -1180,8 +1180,8 @@ class TestNewFeatureI18n(unittest.TestCase):
     def test_flow_manager_keys(self):
         self._check_keys("flow_manager.")
 
-    def test_openpaw_help_keys(self):
-        self._check_keys("openpaw_help.")
+    def test_pawflow_help_keys(self):
+        self._check_keys("pawflow_help.")
 
     def test_store_secret_keys(self):
         self._check_keys("store_secret.")
@@ -1191,7 +1191,7 @@ class TestNewFeatureI18n(unittest.TestCase):
         if len(self.locales) < 2:
             self.skipTest("Need at least 2 locales")
         prefixes = ("plan.", "notification.", "create_tool.", "agent_persona.",
-                     "flow_manager.", "openpaw_help.", "store_secret.")
+                     "flow_manager.", "pawflow_help.", "store_secret.")
         en_keys = {k for k in self.locales.get("en", {}) if any(k.startswith(p) for p in prefixes)}
         for lang in ("fr", "es"):
             lang_keys = {k for k in self.locales.get(lang, {}) if any(k.startswith(p) for p in prefixes)}

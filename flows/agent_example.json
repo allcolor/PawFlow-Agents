@@ -82,7 +82,7 @@
     "validate_auth": {
       "type": "validateSessionAuth",
       "parameters": {
-        "cookie_name": "openpaw_token",
+        "cookie_name": "pawflow_token",
         "login_redirect": "/auth/login",
         "listener_service_id": "http_listener"
       }
@@ -103,7 +103,7 @@
     "oauth_logout": {
       "type": "oauthLogout",
       "parameters": {
-        "cookie_name": "openpaw_token",
+        "cookie_name": "pawflow_token",
         "redirect_to": "/chat"
       }
     },

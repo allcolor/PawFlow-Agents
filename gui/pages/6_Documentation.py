@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Documentation page — interactive reference for OpenPaw."""
+"""Documentation page — interactive reference for PawFlow."""
 
 import streamlit as st
 
 st.set_page_config(
-    page_title="Documentation - OpenPaw",
+    page_title="Documentation - PawFlow",
     page_icon="📚",
     layout="wide",
 )

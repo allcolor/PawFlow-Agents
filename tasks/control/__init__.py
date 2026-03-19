@@ -1,7 +1,7 @@
 # Control Tasks
 
 """
-Modules Control pour OpenPaw.
+Modules Control pour PawFlow.
 Tâches pour le contrôle de flux.
 """
 

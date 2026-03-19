@@ -1,6 +1,6 @@
 # Notification System
 
-"""Système de notifications pour OpenPaw.
+"""Système de notifications pour PawFlow.
 
 Envoie des notifications sur les événements de flow (succès, échec, etc.)
 via webhook HTTP, et supporte des handlers custom.

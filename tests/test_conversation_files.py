@@ -388,7 +388,7 @@ class TestServeChatUITask(unittest.TestCase):
 
         content = results[0].get_content().decode()
         assert "<!DOCTYPE html>" in content
-        assert "OpenPaw Agent" in content
+        assert "PawFlow Agent" in content
         assert "/api/agent" in content
         assert results[0].get_attribute("http.response.header.Content-Type") == "text/html; charset=utf-8"
 

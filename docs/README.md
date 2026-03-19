@@ -1,12 +1,12 @@
-# OpenPaw - Documentation Complète
+# PawFlow - Documentation Complète
 
-**OpenPaw** est un framework de traitement de flux de données inspiré d'**Apache NiFi**, implémenté en Python. Il permet de construire, orchestrer et exécuter des pipelines de traitement de données avec support du parallélisme, de la gestion d'erreurs, du suivi de provenance et d'une interface graphique complète.
+**PawFlow** est un framework de traitement de flux de données inspiré d'**Apache NiFi**, implémenté en Python. Il permet de construire, orchestrer et exécuter des pipelines de traitement de données avec support du parallélisme, de la gestion d'erreurs, du suivi de provenance et d'une interface graphique complète.
 
 ---
 
 ## Présentation
 
-OpenPaw offre une architecture modulaire pour créer des flux de traitement de données (flows) composés de tâches (tasks) interconnectées. Chaque flux est représenté comme un **DAG (Directed Acyclic Graph)** où les noeuds sont des tâches et les arêtes définissent le flux de données entre elles.
+PawFlow offre une architecture modulaire pour créer des flux de traitement de données (flows) composés de tâches (tasks) interconnectées. Chaque flux est représenté comme un **DAG (Directed Acyclic Graph)** où les noeuds sont des tâches et les arêtes définissent le flux de données entre elles.
 
 ### Caractéristiques principales
 
@@ -24,7 +24,7 @@ OpenPaw offre une architecture modulaire pour créer des flux de traitement de d
 - **Sécurité** : RBAC (4 rôles), OAuth2, API keys, sessions
 - **Plugin system** : Archives .pfp pour tasks/services/flows personnalisés
 - **API REST** : FastAPI avec 85+ endpoints (10 routeurs), auth middleware, OpenAPI auto-générée
-- **API Client** : Client Python pour piloter OpenPaw depuis la GUI ou des scripts
+- **API Client** : Client Python pour piloter PawFlow depuis la GUI ou des scripts
 - **Cluster** : Mode cluster avec coordination multi-noeud
 - **GUI** : Interface graphique Streamlit (5 pages : Dashboard, Editor, Runtime, Monitoring, Settings)
 - **CLI** : 4 commandes (run, validate, list-tasks, info)
@@ -35,7 +35,7 @@ OpenPaw offre une architecture modulaire pour créer des flux de traitement de d
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                           OpenPaw Framework                               │
+│                           PawFlow Framework                               │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  ┌──────────────┐  ┌───────────────────┐  ┌───────────┐  ┌───────────┐ │
@@ -111,8 +111,8 @@ OpenPaw offre une architecture modulaire pour créer des flux de traitement de d
 
 ```bash
 # Cloner et lancer avec Docker
-git clone https://github.com/votre-org/openpaw.git
-cd openpaw
+git clone https://github.com/votre-org/pawflow.git
+cd pawflow
 cp .env.example .env
 docker compose up -d
 
@@ -134,8 +134,8 @@ Voir **[deployment.md](deployment.md)** pour les options de déploiement avancé
 
 ```bash
 # Cloner le repository
-git clone https://github.com/votre-org/openpaw.git
-cd openpaw
+git clone https://github.com/votre-org/pawflow.git
+cd pawflow
 
 # Créer un environnement virtuel (recommandé)
 python -m venv venv
@@ -240,7 +240,7 @@ python -m streamlit run gui/main.py
 ## Structure du Projet
 
 ```
-OpenPaw/
+PawFlow/
 ├── core/                          # Core du framework
 │   ├── __init__.py               # FlowFile, Task, Service, Flow, Factories
 │   ├── base_task.py              # BaseTask avec services injectés

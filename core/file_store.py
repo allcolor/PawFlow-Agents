@@ -53,7 +53,7 @@ class FileStore:
     def _migrate_from_temp(self):
         """One-time migration from old tempdir-based storage."""
         import tempfile
-        old_dir = os.path.join(tempfile.gettempdir(), "openpaw_files")
+        old_dir = os.path.join(tempfile.gettempdir(), "pawflow_files")
         if not os.path.isdir(old_dir) or os.path.normpath(old_dir) == os.path.normpath(self._base_dir):
             return
         migrated = 0

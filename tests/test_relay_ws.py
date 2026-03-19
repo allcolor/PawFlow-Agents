@@ -874,34 +874,34 @@ class TestRelayScriptArgs(unittest.TestCase):
     def test_executor_relay_has_connect_arg(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "relay", "tools/openpaw_executor_relay.py",
+            "relay", "tools/pawflow_executor_relay.py",
         )
         mod = importlib.util.module_from_spec(spec)
         # Don't execute, just verify source contains --connect
-        source = open("tools/openpaw_executor_relay.py").read()
+        source = open("tools/pawflow_executor_relay.py").read()
         self.assertIn("--connect", source)
         self.assertIn("--token", source)
         self.assertIn("--relay-id", source)
 
     def test_fs_relay_has_connect_arg(self):
-        source = open("tools/openpaw_fs_relay.py").read()
+        source = open("tools/pawflow_fs_relay.py").read()
         self.assertIn("--connect", source)
         self.assertIn("--token", source)
         self.assertIn("--relay-id", source)
 
     def test_executor_relay_has_ws_connect(self):
-        source = open("tools/openpaw_executor_relay.py").read()
+        source = open("tools/pawflow_executor_relay.py").read()
         self.assertIn("_ws_connect", source)
         self.assertIn("ws_key", source)
 
     def test_fs_relay_has_ws_connect(self):
-        source = open("tools/openpaw_fs_relay.py").read()
+        source = open("tools/pawflow_fs_relay.py").read()
         self.assertIn("_ws_connect", source)
 
     def test_executor_relay_ws_doc_updated(self):
-        source = open("tools/openpaw_executor_relay.py").read()
+        source = open("tools/pawflow_executor_relay.py").read()
         self.assertIn("WS Reverse", source)
-        self.assertIn("ws://openpaw.example.com", source)
+        self.assertIn("ws://pawflow.example.com", source)
 
 
 if __name__ == "__main__":

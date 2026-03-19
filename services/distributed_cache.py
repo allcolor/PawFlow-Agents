@@ -36,7 +36,7 @@ class DistributedMapCacheService(BaseService):
         super().__init__(config)
         self.backend = self.config.get("backend", "memory")
         self.redis_url = self.config.get("redis_url", "redis://localhost:6379/0")
-        self.key_prefix = self.config.get("key_prefix", "openpaw:")
+        self.key_prefix = self.config.get("key_prefix", "pawflow:")
         self.default_ttl = int(self.config.get("default_ttl", 0))
 
         self._memory_store: Dict[str, bytes] = {}
@@ -176,7 +176,7 @@ class DistributedMapCacheService(BaseService):
             },
             "key_prefix": {
                 "type": "string", "required": False,
-                "default": "openpaw:",
+                "default": "pawflow:",
                 "description": "Prefixe pour toutes les cles",
             },
             "default_ttl": {

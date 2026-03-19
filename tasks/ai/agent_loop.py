@@ -1597,7 +1597,7 @@ class AgentLoopTask(BaseTask):
                 resolved = IdentityService.instance().resolve_user("telegram", tg_user_id)
                 if not resolved:
                     flowfile.set_content(
-                        "Access denied. Your Telegram account is not linked to a OpenPaw user.\n"
+                        "Access denied. Your Telegram account is not linked to a PawFlow user.\n"
                         "Ask an administrator to link your account from the web chat using:\n"
                         "/link telegram YOUR_TELEGRAM_USER_ID"
                         .encode("utf-8")
@@ -4448,7 +4448,7 @@ class AgentLoopTask(BaseTask):
         resolved_user = ids.resolve_user("telegram", tg_user_id)
         if not resolved_user:
             flowfile.set_content(
-                "Your Telegram account is not linked to a OpenPaw user.\n"
+                "Your Telegram account is not linked to a PawFlow user.\n"
                 "Use /link telegram YOUR_TG_ID from the web chat to link it."
                 .encode("utf-8")
             )

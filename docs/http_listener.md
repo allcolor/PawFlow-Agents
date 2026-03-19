@@ -1,11 +1,11 @@
 # HTTP Listener — Shared HTTP Server for Flows
 
-OpenPaw provides a shared HTTP listener service that lets multiple flows handle incoming HTTP requests on the same port, with method+URL pattern routing, authentication validation, and custom response control.
+PawFlow provides a shared HTTP listener service that lets multiple flows handle incoming HTTP requests on the same port, with method+URL pattern routing, authentication validation, and custom response control.
 
 ## Architecture
 
 ```
-HTTP Client                          OpenPaw
+HTTP Client                          PawFlow
     │                                  │
     │  GET /api/users/42               │
     ├─────────────────────────────────►│

@@ -1,4 +1,4 @@
-"""Cluster mode — multi-instance coordination for OpenPaw."""
+"""Cluster mode — multi-instance coordination for PawFlow."""
 
 import json
 import os

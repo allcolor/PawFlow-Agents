@@ -112,7 +112,7 @@ class GrokImageService(BaseImageGenerationService):
 
         # Download image
         img_req = urllib.request.Request(
-            image_url, headers={"User-Agent": "OpenPaw-Agent/1.0"},
+            image_url, headers={"User-Agent": "PawFlow-Agent/1.0"},
         )
         with urllib.request.urlopen(img_req, timeout=60) as img_resp:
             image_bytes = img_resp.read()

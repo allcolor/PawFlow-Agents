@@ -1,8 +1,8 @@
-# OpenPaw - Pipeline Framework
+# PawFlow - Pipeline Framework
 
 ## Vue d'Ensemble
 
-OpenPaw est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes.
+PawFlow est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes.
 
 ### Principales Caractéristiques
 
@@ -37,7 +37,7 @@ OpenPaw est un framework Python de type Apache NiFi permettant de créer, déplo
 ## Structure du Projet
 
 ```
-openpaw/
+pawflow/
 ├── core/                  # Interfaces abstraites et classes de base
 │   ├── __init__.py       # Definitions (Task, Service, Flow, FlowFile)
 │   ├── base_task.py      # Implémentation de base pour les tâches
@@ -77,8 +77,8 @@ openpaw/
 
 ```bash
 # Cloner le repository
-git clone https://github.com/your-org/openpaw.git
-cd openpaw
+git clone https://github.com/your-org/pawflow.git
+cd pawflow
 
 # Installer les dépendances
 pip install -r requirements.txt
@@ -201,7 +201,7 @@ Exemple simplifié :
 
 ```json
 {
-  "$schema": "http://openpaw.org/schemas/flow-v1.json",
+  "$schema": "http://pawflow.org/schemas/flow-v1.json",
   "metadata": {
     "name": "mon-flux",
     "version": "1.0.0"
@@ -297,7 +297,7 @@ MIT License - Voir le fichier LICENSE
 
 ## Auteur
 
-OpenPaw Team
+PawFlow Team
 
 ---
 

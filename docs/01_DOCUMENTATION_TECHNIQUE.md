@@ -1,4 +1,4 @@
-# Documentation Technique et Fonctionnelle - OpenPaw
+# Documentation Technique et Fonctionnelle - PawFlow
 
 ## Table des Matières
 
@@ -26,7 +26,7 @@
 
 ### 1.1. Objectif du Projet
 
-OpenPaw est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes. Il sépare clairement deux états :
+PawFlow est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes. Il sépare clairement deux états :
 
 - **État Création** : Design et édition des flux, services et tâches dans un dépôt (Git/DB/Fichier)
 - **État Runtime** : Déploiement, configuration et exécution des flux avec gestion des variables
@@ -57,7 +57,7 @@ Repository
 ### 2.1. Structure du Projet
 
 ```
-openpaw/
+pawflow/
 ├── core/
 │   ├── __init__.py
 │   ├── interface_task.py        # Interface abstraite Task
@@ -338,7 +338,7 @@ Une relation définit comment les FlowFiles circulent entre composants :
 
 ```json
 {
-  "$schema": "http://openpaw.org/schemas/flow-v1.json",
+  "$schema": "http://pawflow.org/schemas/flow-v1.json",
   "metadata": {
     "name": "mon-flux",
     "version": "1.0.0",
@@ -1031,9 +1031,9 @@ STANDARD_ATTRIBUTES = {
     'line.count': 'Nombre de lignes',
     
     # Système
-    'openpaw.task.id': 'ID de la tâche en cours',
-    'openpaw.flow.id': 'ID du flow',
-    'openpaw.execution.id': 'ID de l\'exécution'
+    'pawflow.task.id': 'ID de la tâche en cours',
+    'pawflow.flow.id': 'ID du flow',
+    'pawflow.execution.id': 'ID de l\'exécution'
 }
 ```
 

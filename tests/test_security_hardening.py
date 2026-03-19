@@ -87,9 +87,9 @@ class TestCORSConfiguration(unittest.TestCase):
     def test_default_origins(self):
         """Default should be localhost:8501 and localhost:8000."""
         env = os.environ.copy()
-        env.pop("OPENPAW_CORS_ORIGINS", None)
+        env.pop("PAWFLOW_CORS_ORIGINS", None)
         with patch.dict(os.environ, env, clear=True):
-            raw = os.environ.get("OPENPAW_CORS_ORIGINS",
+            raw = os.environ.get("PAWFLOW_CORS_ORIGINS",
                                  "http://localhost:8501,http://localhost:8000")
             origins = [o.strip() for o in raw.split(",") if o.strip()]
         self.assertIn("http://localhost:8501", origins)
@@ -97,15 +97,15 @@ class TestCORSConfiguration(unittest.TestCase):
         self.assertNotIn("*", origins)
 
     def test_custom_origins_from_env(self):
-        with patch.dict(os.environ, {"OPENPAW_CORS_ORIGINS": "https://app.example.com"}):
-            raw = os.environ.get("OPENPAW_CORS_ORIGINS",
+        with patch.dict(os.environ, {"PAWFLOW_CORS_ORIGINS": "https://app.example.com"}):
+            raw = os.environ.get("PAWFLOW_CORS_ORIGINS",
                                  "http://localhost:8501,http://localhost:8000")
             origins = [o.strip() for o in raw.split(",") if o.strip()]
         self.assertEqual(origins, ["https://app.example.com"])
 
     def test_wildcard_if_explicit(self):
-        with patch.dict(os.environ, {"OPENPAW_CORS_ORIGINS": "*"}):
-            raw = os.environ.get("OPENPAW_CORS_ORIGINS",
+        with patch.dict(os.environ, {"PAWFLOW_CORS_ORIGINS": "*"}):
+            raw = os.environ.get("PAWFLOW_CORS_ORIGINS",
                                  "http://localhost:8501,http://localhost:8000")
             origins = [o.strip() for o in raw.split(",") if o.strip()]
         self.assertEqual(origins, ["*"])
@@ -170,12 +170,12 @@ class TestInputValidation(unittest.TestCase):
 
     def test_body_size_default(self):
         """Default max body size is 10 MB."""
-        default = int(os.environ.get("OPENPAW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
+        default = int(os.environ.get("PAWFLOW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
         self.assertEqual(default, 10 * 1024 * 1024)
 
     def test_body_size_env_override(self):
-        with patch.dict(os.environ, {"OPENPAW_MAX_BODY_SIZE": "1024"}):
-            val = int(os.environ.get("OPENPAW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
+        with patch.dict(os.environ, {"PAWFLOW_MAX_BODY_SIZE": "1024"}):
+            val = int(os.environ.get("PAWFLOW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
         self.assertEqual(val, 1024)
 
 

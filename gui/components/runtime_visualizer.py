@@ -436,7 +436,7 @@ def render_runtime_flow_static(
     layout = LayeredLayout(direction="right") if use_auto_layout else ManualLayout()
 
     result_state = streamlit_flow(
-        f"openpaw_runtime_viz{key_suffix}",
+        f"pawflow_runtime_viz{key_suffix}",
         state=state,
         fit_view=True,
         height=height,
@@ -503,7 +503,7 @@ def render_runtime_flow(
     layout = LayeredLayout(direction="right") if use_auto_layout else ManualLayout()
 
     result_state = streamlit_flow(
-        "openpaw_runtime_viz",
+        "pawflow_runtime_viz",
         state=state,
         fit_view=True,
         height=height,

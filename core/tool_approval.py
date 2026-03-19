@@ -19,7 +19,7 @@ class ToolApprovalGate:
 
     # Tools that never need approval (read-only, informational)
     EXEMPT_TOOLS = frozenset({
-        "recall", "semantic_recall", "openpaw_help", "list_secrets",
+        "recall", "semantic_recall", "pawflow_help", "list_secrets",
         "get_agent_results", "show_file", "manage_resource",
     })
 

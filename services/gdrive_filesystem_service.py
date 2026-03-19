@@ -58,7 +58,7 @@ def _multipart_upload(url: str, token: str, metadata: dict,
                       content: bytes, mime_type: str = "application/octet-stream",
                       method: str = "POST", timeout: int = 60) -> dict:
     """Multipart upload (metadata + content) to Google Drive."""
-    boundary = "openpaw_boundary_drive"
+    boundary = "pawflow_boundary_drive"
     body = (
         f"--{boundary}\r\n"
         f"Content-Type: application/json; charset=UTF-8\r\n\r\n"

@@ -4,7 +4,7 @@ Used by:
 - services/llm_connection.py (LLMConnectionService)
 - engine/nifi_script_converter.py (Groovy→Python conversion)
 - tasks/ai/agent_loop.py (Agent LLM loop with tool_use)
-- Any future OpenPaw feature needing LLM calls
+- Any future PawFlow feature needing LLM calls
 """
 
 import json

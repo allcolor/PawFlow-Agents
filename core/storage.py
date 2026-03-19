@@ -1,7 +1,7 @@
 # Core Storage Module
 
 """
-Module de stockage abstrait pour OpenPaw.
+Module de stockage abstrait pour PawFlow.
 Fournit une interface unifiée pour différents backends de stockage.
 """
 

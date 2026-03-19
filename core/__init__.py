@@ -1,7 +1,7 @@
-# OpenPaw Core
+# PawFlow Core
 
 """
-Core module de OpenPaw.
+Core module de PawFlow.
 Définit les interfaces et classes abstraites du framework.
 """
 
@@ -12,39 +12,39 @@ import uuid
 import io
 
 __version__ = "1.0.0"
-__author__ = "OpenPaw Team"
+__author__ = "PawFlow Team"
 
 
 # ============================================================================
 # Exceptions
 # ============================================================================
 
-class OpenPawError(Exception):
-    """Exception de base pour OpenPaw."""
+class PawFlowError(Exception):
+    """Exception de base pour PawFlow."""
     pass
 
 
-class TaskError(OpenPawError):
+class TaskError(PawFlowError):
     """Erreur lors de l'exécution d'une tâche."""
     pass
 
 
-class ServiceError(OpenPawError):
+class ServiceError(PawFlowError):
     """Erreur lors de l'utilisation d'un service."""
     pass
 
 
-class FlowError(OpenPawError):
+class FlowError(PawFlowError):
     """Erreur de configuration ou d'exécution d'un flow."""
     pass
 
 
-class ValidationError(OpenPawError):
+class ValidationError(PawFlowError):
     """Erreur de validation."""
     pass
 
 
-class VariableResolutionError(OpenPawError):
+class VariableResolutionError(PawFlowError):
     """Erreur de résolution de variables."""
     pass
 

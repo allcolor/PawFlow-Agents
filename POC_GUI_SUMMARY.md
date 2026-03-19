@@ -1,8 +1,8 @@
-# POC GUI - OpenPaw
+# POC GUI - PawFlow
 
 ## Résumé du POC
 
-Ce document présente la Preuve de Concept (POC) de l'interface graphique pour le projet OpenPaw.
+Ce document présente la Preuve de Concept (POC) de l'interface graphique pour le projet PawFlow.
 
 ## Architecture Implémentée
 

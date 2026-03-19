@@ -58,7 +58,7 @@ class TestRoot:
         resp = client.get("/")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["name"] == "OpenPaw API"
+        assert data["name"] == "PawFlow API"
         assert data["status"] == "running"
 
     def test_health(self):
@@ -76,9 +76,9 @@ class TestRoot:
         resp = client.get("/api/v1/system/metrics")
         assert resp.status_code == 200
         text = resp.text
-        assert "openpaw_info" in text
-        assert "openpaw_uptime_seconds" in text
-        assert "openpaw_tasks_registered_total" in text
+        assert "pawflow_info" in text
+        assert "pawflow_uptime_seconds" in text
+        assert "pawflow_tasks_registered_total" in text
         assert "# TYPE" in text
 
     def test_system_info(self, auth_headers):

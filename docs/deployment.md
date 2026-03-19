@@ -1,6 +1,6 @@
-# OpenPaw Deployment Guide
+# PawFlow Deployment Guide
 
-Ce guide couvre les options de deploiement de OpenPaw : local, Docker, et production.
+Ce guide couvre les options de deploiement de PawFlow : local, Docker, et production.
 
 ---
 
@@ -62,14 +62,14 @@ cp .env.example .env
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `OPENPAW_SECRET_KEY` | Cle secrete pour les sessions et tokens | `changeme` |
-| `OPENPAW_CORS_ORIGINS` | Origines CORS autorisees (separees par virgule) | `http://localhost:8501,http://localhost:8000` |
-| `OPENPAW_RATE_LIMIT` | Activer le rate limiting | `false` |
-| `OPENPAW_RATE_LIMIT_MAX` | Nombre max de requetes par fenetre | `100` |
-| `OPENPAW_RATE_LIMIT_WINDOW` | Fenetre de rate limiting en secondes | `60` |
-| `OPENPAW_MAX_BODY_SIZE` | Taille max du body HTTP en bytes | `10485760` (10 MB) |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (profil postgres) | `openpawsecret` |
-| `OPENPAW_API_URL` | URL de l'API pour la GUI | `http://localhost:8000` |
+| `PAWFLOW_SECRET_KEY` | Cle secrete pour les sessions et tokens | `changeme` |
+| `PAWFLOW_CORS_ORIGINS` | Origines CORS autorisees (separees par virgule) | `http://localhost:8501,http://localhost:8000` |
+| `PAWFLOW_RATE_LIMIT` | Activer le rate limiting | `false` |
+| `PAWFLOW_RATE_LIMIT_MAX` | Nombre max de requetes par fenetre | `100` |
+| `PAWFLOW_RATE_LIMIT_WINDOW` | Fenetre de rate limiting en secondes | `60` |
+| `PAWFLOW_MAX_BODY_SIZE` | Taille max du body HTTP en bytes | `10485760` (10 MB) |
+| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (profil postgres) | `pawflowsecret` |
+| `PAWFLOW_API_URL` | URL de l'API pour la GUI | `http://localhost:8000` |
 
 ---
 
@@ -99,12 +99,12 @@ Lance deux services :
 
 ### Securite
 
-- [ ] Changer `OPENPAW_SECRET_KEY` avec une valeur aleatoire forte
-- [ ] Activer le rate limiting (`OPENPAW_RATE_LIMIT=true`)
+- [ ] Changer `PAWFLOW_SECRET_KEY` avec une valeur aleatoire forte
+- [ ] Activer le rate limiting (`PAWFLOW_RATE_LIMIT=true`)
 - [ ] Configurer les origines CORS strictement
 - [ ] Activer l'authentification dans l'API (RBAC)
 - [ ] Generer des API keys pour les integrations
-- [ ] Restreindre `OPENPAW_MAX_BODY_SIZE` selon les besoins
+- [ ] Restreindre `PAWFLOW_MAX_BODY_SIZE` selon les besoins
 
 ### Reseau
 

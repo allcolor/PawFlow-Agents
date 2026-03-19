@@ -1,7 +1,7 @@
-# OpenPaw GUI
+# PawFlow GUI
 
 """
-Interface graphique Streamlit pour OpenPaw.
+Interface graphique Streamlit pour PawFlow.
 Permet de créer, déployer et monitorer des pipelines de données.
 """
 
@@ -14,4 +14,4 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 __version__ = "0.1.0"
-__author__ = "OpenPaw Team"
+__author__ = "PawFlow Team"

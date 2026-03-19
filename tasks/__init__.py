@@ -1,7 +1,7 @@
-# OpenPaw Tasks Module
+# PawFlow Tasks Module
 
 """
-Module principal des tâches OpenPaw.
+Module principal des tâches PawFlow.
 Fournit et enregistre toutes les tâches disponibles.
 """
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Application principale Streamlit pour OpenPaw.
+Application principale Streamlit pour PawFlow.
 Point d'entrée de l'interface graphique.
 """
 
@@ -25,7 +25,7 @@ from gui.i18n import init as i18n_init, set_locale, get_locale, t, get_available
 
 # Configuration de la page
 st.set_page_config(
-    page_title="OpenPaw - Pipeline Framework",
+    page_title="PawFlow - Pipeline Framework",
     page_icon="🚀",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -135,7 +135,7 @@ def render_sidebar():
             st.rerun()
 
         # Connection mode selector
-        from gui.services.api_client import OpenPawApiClient
+        from gui.services.api_client import PawFlowApiClient
 
         st.markdown("---")
         mode = st.radio(
@@ -152,7 +152,7 @@ def render_sidebar():
             )
             if st.button(t("connection.connect")):
                 try:
-                    client = OpenPawApiClient(api_url)
+                    client = PawFlowApiClient(api_url)
                     health = client.health()
                     st.session_state.api_client = client
                     st.session_state.api_mode = True

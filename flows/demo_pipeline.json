@@ -1,9 +1,9 @@
 {
   "name": "Demo Pipeline - All Task Types",
-  "description": "Demonstrates OpenPaw capabilities with 25 task types",
+  "description": "Demonstrates PawFlow capabilities with 25 task types",
   "version": "1.0.0",
   "parameters": {
-    "greeting": "Bienvenue dans OpenPaw"
+    "greeting": "Bienvenue dans PawFlow"
   },
   "tasks": {
     "generate": {

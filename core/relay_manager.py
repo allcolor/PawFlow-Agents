@@ -1,7 +1,7 @@
 """Relay Connection Manager — manages active WS connections from relays.
 
 Relays (executor, filesystem) run on the user's machine and maintain a
-persistent WebSocket connection to the OpenPaw server. This manager tracks
+persistent WebSocket connection to the PawFlow server. This manager tracks
 those connections and routes commands to them.
 
 Thread-safe singleton.

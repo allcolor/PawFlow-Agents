@@ -1,6 +1,6 @@
 """Local Filesystem Service — HTTP relay backend for user's filesystem.
 
-Connects to a openpaw_fs_relay.py script running on the user's machine,
+Connects to a pawflow_fs_relay.py script running on the user's machine,
 providing secure filesystem access through the FilesystemBackend interface.
 
 Config:
@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 
 class RelayHTTPBackend(FilesystemBackend):
-    """Client that talks to openpaw_fs_relay.py over HTTP POST."""
+    """Client that talks to pawflow_fs_relay.py over HTTP POST."""
 
     def __init__(self, host: str, port: int, secret: str, timeout: int = 30):
         self._url = f"http://{host}:{port}"

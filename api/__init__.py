@@ -1,1 +1,1 @@
-"""OpenPaw REST API - FastAPI application."""
+"""PawFlow REST API - FastAPI application."""

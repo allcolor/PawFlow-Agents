@@ -1,4 +1,4 @@
-"""Tests for the expanded OpenPaw CLI (P12)."""
+"""Tests for the expanded PawFlow CLI (P12)."""
 
 import argparse
 import json

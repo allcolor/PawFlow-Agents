@@ -1,4 +1,4 @@
-"""OpenPaw REST API - FastAPI application.
+"""PawFlow REST API - FastAPI application.
 
 Usage:
     python -m api.app                    # default port 8000
@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     """Initialize services on startup, cleanup on shutdown."""
     # Startup
     register_all_tasks()
-    logger.info("OpenPaw API started — tasks registered")
+    logger.info("PawFlow API started — tasks registered")
 
     # Crash recovery: restart flows that were running before
     try:
@@ -52,18 +52,18 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Shutdown cleanup error: {e}")
 
-    logger.info("OpenPaw API shutting down")
+    logger.info("PawFlow API shutting down")
 
 
 app = FastAPI(
-    title="OpenPaw API",
-    description="REST API for OpenPaw — Apache NiFi-inspired data workflow framework",
+    title="PawFlow API (Open Cuddle Edition)",
+    description="REST API for PawFlow — NiFi-inspired data workflow framework",
     version="1.0.0",
     lifespan=lifespan,
 )
 
 # CORS — configurable origins (default: localhost Streamlit + API docs)
-_cors_raw = os.environ.get("OPENPAW_CORS_ORIGINS", "http://localhost:8501,http://localhost:8000")
+_cors_raw = os.environ.get("PAWFLOW_CORS_ORIGINS", "http://localhost:8501,http://localhost:8000")
 cors_origins = [o.strip() for o in _cors_raw.split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
@@ -77,7 +77,7 @@ app.add_middleware(
 @app.middleware("http")
 async def validate_request(request: Request, call_next):
     """Input validation: limit request body size."""
-    max_size = int(os.environ.get("OPENPAW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
+    max_size = int(os.environ.get("PAWFLOW_MAX_BODY_SIZE", str(10 * 1024 * 1024)))
     cl = request.headers.get("content-length")
     if cl and int(cl) > max_size:
         return JSONResponse(status_code=413, content={"detail": "Request body too large"})
@@ -86,10 +86,10 @@ async def validate_request(request: Request, call_next):
 
 
 # Rate limiting (100 requests/minute per IP by default)
-if os.environ.get("OPENPAW_RATE_LIMIT", "").lower() in ("1", "true", "yes"):
+if os.environ.get("PAWFLOW_RATE_LIMIT", "").lower() in ("1", "true", "yes"):
     from api.rate_limit import RateLimitMiddleware
-    rate_limit = int(os.environ.get("OPENPAW_RATE_LIMIT_MAX", "100"))
-    rate_window = int(os.environ.get("OPENPAW_RATE_LIMIT_WINDOW", "60"))
+    rate_limit = int(os.environ.get("PAWFLOW_RATE_LIMIT_MAX", "100"))
+    rate_window = int(os.environ.get("PAWFLOW_RATE_LIMIT_WINDOW", "60"))
     app.add_middleware(RateLimitMiddleware, max_requests=rate_limit, window_seconds=rate_window)
     logger.info(f"Rate limiting enabled: {rate_limit} req/{rate_window}s")
 
@@ -123,7 +123,7 @@ app.include_router(triggers_router, prefix="/api/v1/triggers", tags=["Triggers"]
 def root():
     """API root — health check."""
     return {
-        "name": "OpenPaw API",
+        "name": "PawFlow API",
         "version": "1.0.0",
         "status": "running",
         "docs": "/docs",
@@ -139,7 +139,7 @@ if __name__ == "__main__":
             asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     import uvicorn
 
-    parser = argparse.ArgumentParser(description="OpenPaw REST API")
+    parser = argparse.ArgumentParser(description="PawFlow REST API")
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--reload", action="store_true")

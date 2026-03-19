@@ -1,4 +1,4 @@
-"""Unified script sandbox for OpenPaw.
+"""Unified script sandbox for PawFlow.
 
 Provides a secure execution environment used by both:
 - ExecuteScriptTask (flow task)

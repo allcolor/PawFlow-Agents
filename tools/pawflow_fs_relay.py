@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""OpenPaw Filesystem Relay — Standalone relay for filesystem access.
+"""PawFlow Filesystem Relay — Standalone relay for filesystem access.
 
-Runs on the user's machine to give the OpenPaw server secure access to the
+Runs on the user's machine to give the PawFlow server secure access to the
 user's filesystem. Zero external dependencies (stdlib only).
 
 Two modes:
   HTTP (legacy, local only):
-    python openpaw_fs_relay.py --port 9876 --dir /home/user/data --secret abc123
+    python pawflow_fs_relay.py --port 9876 --dir /home/user/data --secret abc123
 
   WS Reverse (recommended, works across NAT/firewalls):
-    python openpaw_fs_relay.py --connect ws://openpaw.example.com/ws/relay \
+    python pawflow_fs_relay.py --connect ws://pawflow.example.com/ws/relay \
         --token <api_key> --secret abc --dir /home/user/data
 
 Security:
@@ -50,7 +50,7 @@ _WRITE_ACTIONS = frozenset({
 class FSRelayHandler(BaseHTTPRequestHandler):
     """HTTP POST handler for filesystem relay operations."""
 
-    server_version = "OpenPaw-FSRelay/1.0"
+    server_version = "PawFlow-FSRelay/1.0"
 
     # Set by the factory function
     root_dir: str = "."
@@ -96,7 +96,7 @@ class FSRelayHandler(BaseHTTPRequestHandler):
     # ── HTTP verbs ────────────────────────────────────────────────
 
     def do_GET(self):
-        self._send_json(True, data={"service": "OpenPaw-FSRelay", "version": "1.0"})
+        self._send_json(True, data={"service": "PawFlow-FSRelay", "version": "1.0"})
 
     def do_POST(self):
         # Read body
@@ -349,7 +349,7 @@ def _action_git_diff(handler, path, req):
 
 
 def _action_git_commit(handler, path, req):
-    message = req.get("message", "OpenPaw auto-commit")
+    message = req.get("message", "PawFlow auto-commit")
     _git_run(path, ["add", "-A"])
     _git_run(path, ["commit", "-m", message])
     h = _git_run(path, ["rev-parse", "HEAD"])
@@ -416,7 +416,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool):
 # ── WS Reverse client ─────────────────────────────────────────────
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly):
-    """Connect to the OpenPaw server via WebSocket and process filesystem commands."""
+    """Connect to the PawFlow server via WebSocket and process filesystem commands."""
     import ssl
     import base64 as b64
     from urllib.parse import urlparse
@@ -616,7 +616,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="OpenPaw Filesystem Relay — Secure filesystem access (HTTP or WS)",
+        description="PawFlow Filesystem Relay — Secure filesystem access (HTTP or WS)",
     )
     parser.add_argument("--port", type=int, default=9876,
                         help="Port to listen on in HTTP mode (default: 9876)")
@@ -630,7 +630,7 @@ def main():
                         help="Bind address for HTTP mode (default: 127.0.0.1)")
     # WS Reverse mode
     parser.add_argument("--connect", default="",
-                        help="WS URL to connect to (e.g. ws://openpaw.example.com/ws/relay)")
+                        help="WS URL to connect to (e.g. ws://pawflow.example.com/ws/relay)")
     parser.add_argument("--token", default="",
                         help="API key for WS authentication")
     parser.add_argument("--relay-id", default="",
@@ -654,7 +654,7 @@ def main():
         relay_id = args.relay_id or f"fs-{os.getpid()}"
 
         sys.stderr.write(
-            f"\n  OpenPaw Filesystem Relay (WS Reverse)\n"
+            f"\n  PawFlow Filesystem Relay (WS Reverse)\n"
             f"  ────────────────────────────────────\n"
             f"  Server:    {args.connect}\n"
             f"  Relay ID:  {relay_id}\n"
@@ -668,7 +668,7 @@ def main():
     else:
         # HTTP mode (legacy)
         sys.stderr.write(
-            f"\n  OpenPaw Filesystem Relay (HTTP)\n"
+            f"\n  PawFlow Filesystem Relay (HTTP)\n"
             f"  ─────────────────────────────\n"
             f"  Bind:      {args.bind}:{args.port}\n"
             f"  Directory: {root_dir}\n"

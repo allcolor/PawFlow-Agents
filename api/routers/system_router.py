@@ -198,22 +198,22 @@ def prometheus_metrics():
             lines.append(f"{name} {value}")
 
     # System info
-    _metric("openpaw_info", 1, "OpenPaw system info", "gauge",
+    _metric("pawflow_info", 1, "PawFlow system info", "gauge",
             labels={"version": __version__})
-    _metric("openpaw_uptime_seconds", f"{time.time() - _start_time:.0f}",
+    _metric("pawflow_uptime_seconds", f"{time.time() - _start_time:.0f}",
             "Seconds since API started")
 
     # Task/service counts
-    _metric("openpaw_tasks_registered_total", len(TaskFactory.list_types()),
+    _metric("pawflow_tasks_registered_total", len(TaskFactory.list_types()),
             "Number of registered task types")
-    _metric("openpaw_services_registered_total", len(ServiceFactory.list_types()),
+    _metric("pawflow_services_registered_total", len(ServiceFactory.list_types()),
             "Number of registered service types")
 
     # Audit log
     try:
         audit = AuditLog.get_instance()
         stats = audit.stats()
-        _metric("openpaw_audit_events_total", stats.get("total_events", 0),
+        _metric("pawflow_audit_events_total", stats.get("total_events", 0),
                 "Total audit events recorded", "counter")
     except Exception:
         pass
@@ -222,11 +222,11 @@ def prometheus_metrics():
     try:
         nm = NotificationManager.get_instance()
         nm_stats = nm.get_stats()
-        _metric("openpaw_notifications_sent_total", nm_stats.get("total_sent", 0),
+        _metric("pawflow_notifications_sent_total", nm_stats.get("total_sent", 0),
                 "Total notifications sent", "counter")
-        _metric("openpaw_webhooks_registered", nm_stats.get("webhooks_count", 0),
+        _metric("pawflow_webhooks_registered", nm_stats.get("webhooks_count", 0),
                 "Number of registered webhooks")
-        _metric("openpaw_handlers_registered", nm_stats.get("handlers_count", 0),
+        _metric("pawflow_handlers_registered", nm_stats.get("handlers_count", 0),
                 "Number of registered handlers")
     except Exception:
         pass
@@ -234,9 +234,9 @@ def prometheus_metrics():
     # Security
     try:
         sm = get_security_manager()
-        _metric("openpaw_active_sessions", len(sm.list_sessions()),
+        _metric("pawflow_active_sessions", len(sm.list_sessions()),
                 "Number of active sessions")
-        _metric("openpaw_users_total", len(sm.list_users()),
+        _metric("pawflow_users_total", len(sm.list_users()),
                 "Number of registered users")
     except Exception:
         pass

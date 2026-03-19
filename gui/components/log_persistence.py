@@ -41,7 +41,7 @@ class LogPersistence:
             Path to the saved log file.
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        parts = ["openpaw"]
+        parts = ["pawflow"]
         if flow_id:
             parts.append(flow_id)
         if execution_id:
@@ -73,14 +73,14 @@ class LogPersistence:
         Returns list of dicts with keys: path, filename, size, modified, flow_id.
         """
         files = []
-        for p in self.log_dir.glob("openpaw_*.jsonl"):
+        for p in self.log_dir.glob("pawflow_*.jsonl"):
             stat = p.stat()
             # Extract flow_id from filename if present
             parts = p.stem.split("_")
             file_flow_id = None
             if len(parts) >= 3:
-                # openpaw_<flow_id>_<exec_id>_<timestamp> or openpaw_<timestamp>
-                # If part after "openpaw" is not a timestamp, it's a flow_id
+                # pawflow_<flow_id>_<exec_id>_<timestamp> or pawflow_<timestamp>
+                # If part after "pawflow" is not a timestamp, it's a flow_id
                 candidate = parts[1]
                 if not candidate.isdigit():
                     file_flow_id = candidate
@@ -106,7 +106,7 @@ class LogPersistence:
         """
         cutoff = datetime.now() - timedelta(days=self.retention_days)
         removed = 0
-        for p in self.log_dir.glob("openpaw_*.jsonl"):
+        for p in self.log_dir.glob("pawflow_*.jsonl"):
             mtime = datetime.fromtimestamp(p.stat().st_mtime)
             if mtime < cutoff:
                 p.unlink()

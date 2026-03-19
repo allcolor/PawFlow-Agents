@@ -1,9 +1,9 @@
 {
   "id": "exemple-flux-1",
-  "name": "Exemple de Flux OpenPaw",
+  "name": "Exemple de Flux PawFlow",
   "version": "1.0.0",
   "description": "Un flux de test simple pour démontrer le GUI",
-  "author": "OpenPaw Team",
+  "author": "PawFlow Team",
   "created_at": "2026-03-03T00:00:00Z",
   "parameters": {},
   "entries": [],
@@ -21,7 +21,7 @@
       "type": "replace_text",
       "parameters": {
         "search_pattern": "test",
-        "replacement": "OPENPAW",
+        "replacement": "PAWFLOW",
         "regex": false,
         "case_sensitive": true
       }

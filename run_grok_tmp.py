@@ -1,7 +1,7 @@
 import sys, os, logging, json
 from pathlib import Path
-sys.path.insert(0, 'C:/Projets/OpenPaw')
-os.chdir('C:/Projets/OpenPaw')
+sys.path.insert(0, 'C:/Projets/PawFlow')
+os.chdir('C:/Projets/PawFlow')
 logging.basicConfig(level=logging.WARNING)
 from core.expression import resolve_expression
 from core.llm_client import LLMClient

@@ -14,7 +14,7 @@ class GUIConfig:
     """Configuration de l'application GUI."""
 
     # Application
-    app_name: str = "OpenPaw - Pipeline Framework"
+    app_name: str = "PawFlow - Pipeline Framework"
     app_version: str = "0.1.0"
     page_icon: str = "🚀"
 
@@ -58,8 +58,8 @@ class StorageConfig:
     # PostgreSQL
     postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "openpaw"
-    postgres_user: str = "openpaw"
+    postgres_db: str = "pawflow"
+    postgres_user: str = "pawflow"
 
 
 # Configuration globale

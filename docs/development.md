@@ -1,6 +1,6 @@
-# Guide de Développement - OpenPaw
+# Guide de Développement - PawFlow
 
-Ce guide s'adresse aux développeurs qui souhaitent étendre OpenPaw en créant de nouvelles tâches, services, ou en contribuant au code source.
+Ce guide s'adresse aux développeurs qui souhaitent étendre PawFlow en créant de nouvelles tâches, services, ou en contribuant au code source.
 
 ---
 
@@ -191,7 +191,7 @@ mon-plugin/
     "version": "1.0.0",
     "author": "Auteur",
     "description": "Description du plugin",
-    "min_openpaw_version": "1.0.0",
+    "min_pawflow_version": "1.0.0",
     "tasks": ["tasks/mon_task.py:MonTaskClass"],
     "services": ["services/mon_service.py:MonServiceClass"],
     "flows": ["flows/mon_flow.json"]

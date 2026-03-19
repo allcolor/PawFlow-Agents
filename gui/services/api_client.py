@@ -1,4 +1,4 @@
-"""HTTP API client for OpenPaw GUI -- connects to a running OpenPaw API server."""
+"""HTTP API client for PawFlow GUI -- connects to a running PawFlow API server."""
 
 import json
 from typing import Any, Dict, List, Optional
@@ -14,11 +14,11 @@ class ApiError(Exception):
         self.status_code = status_code
 
 
-class OpenPawApiClient:
-    """HTTP client for OpenPaw REST API.
+class PawFlowApiClient:
+    """HTTP client for PawFlow REST API.
 
     Usage:
-        client = OpenPawApiClient("http://localhost:8000")
+        client = PawFlowApiClient("http://localhost:8000")
         client.login("admin", "admin")
         flows = client.list_flows()
     """
@@ -219,7 +219,7 @@ class OpenPawApiClient:
         return self._get("/api/v1/system/audit/stats")
 
 
-def get_api_client() -> Optional[OpenPawApiClient]:
+def get_api_client() -> Optional[PawFlowApiClient]:
     """Get API client from session state, or None if in direct mode."""
     try:
         import streamlit as st

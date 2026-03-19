@@ -1,4 +1,4 @@
-"""Tests for P9 — NiFi → OpenPaw flow conversion."""
+"""Tests for P9 — NiFi → PawFlow flow conversion."""
 
 import json
 import pytest
@@ -715,7 +715,7 @@ class TestProcessGroupToSubflow:
 class TestEndToEnd:
 
     def test_converted_flow_structure(self):
-        """Verify converted flow has all required OpenPaw fields."""
+        """Verify converted flow has all required PawFlow fields."""
         converter = NiFiConverter()
         result = converter.convert_xml(SAMPLE_NIFI_XML_TEMPLATE)
         flow = result.flow

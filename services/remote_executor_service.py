@@ -105,7 +105,7 @@ class RemoteExecutorService(BaseService):
         if not conn:
             raise ServiceError(
                 "Relay disconnected. Restart the relay process.\n"
-                "Run: python openpaw_executor_relay.py --connect ws://<server>/ws/relay "
+                "Run: python pawflow_executor_relay.py --connect ws://<server>/ws/relay "
                 "--token <api_key> --secret <secret> --dir <path>"
             )
 

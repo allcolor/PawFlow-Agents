@@ -6006,6 +6006,7 @@ async function loadResources() {
       body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
     });
     const data = await resp.json();
+    if (data.error) { console.warn('[loadResources] error:', data.error); return; }
     const el = document.getElementById('resourcesContent');
     let html = '';
     // Agents

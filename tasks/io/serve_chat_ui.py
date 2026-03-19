@@ -2835,14 +2835,19 @@ const HELP_DATA = {
       + '  /vidservice clear <agent>         \u2014 Remove preference for one agent\n',
   },
   '/task': {
-    usage: '/task assign | list | status | pause | resume | cancel',
-    short: 'Assign and manage agent tasks',
-    detail: 'Assign autonomous tasks to agents. Multiple tasks per agent supported.\n\n'
-      + '  /task assign <agent> "<task>" [--interval 6/1m] [--max 50] [--verifier <agent>] [--criteria "<criteria>"]\n'
-      + '  /task list                    \u2014 Show all tasks (all agents)\n'
-      + '  /task list <agent>            \u2014 Show tasks for one agent\n'
-      + '  /task status                  \u2014 Alias for list\n'
-      + '  /task pause <task_id|agent>   \u2014 Pause a task (by ID) or all tasks of an agent\n'
+    usage: '/task create | assign | list | delete | pause | resume | cancel',
+    short: 'Create, assign and manage agent tasks',
+    detail: 'Task library + autonomous task assignment. Tasks can be reusable definitions or inline.\n\n'
+      + '**Library (reusable definitions):**\n'
+      + '  /task create <name> "<prompt>" [--criteria "..."] [--interval XX]\n'
+      + '  /task delete <name>           \u2014 Delete a task definition\n'
+      + '  /task list                    \u2014 Show library + running tasks\n\n'
+      + '**Assignment (from library or inline):**\n'
+      + '  /task assign <agent> <taskname>              \u2014 From library\n'
+      + '  /task assign <agent> <taskname> --interval XX \u2014 From library, override interval\n'
+      + '  /task assign <agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier <agent>]\n\n'
+      + '**Control:**\n'
+      + '  /task pause <task_id|agent>   \u2014 Pause a task or all tasks of an agent\n'
       + '  /task resume <task_id|agent>  \u2014 Resume a paused task or all of an agent\n'
       + '  /task cancel <task_id|agent>  \u2014 Cancel a task or all of an agent\n\n'
       + 'Task IDs look like t_xxxxxxxx. Use /task list to see them.\n'
@@ -3518,17 +3523,41 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/task') {
     const sub = (parts[1] || 'status').toLowerCase();
-    if (sub === 'assign') {
-      // Parse: /task assign <agent> "<task>" [--interval N] [--max N] [--verifier <agent>] [--criteria "<text>"]
+    if (sub === 'create') {
+      // /task create <name> "<prompt>" [--criteria "..."] [--interval XX]
       const qargs = parseQuotedArgs(text);
-      // qargs[0]=/task, qargs[1]=assign, qargs[2]=agent, qargs[3]=task description
-      const taskAgent = qargs[2] || '';
-      const taskDesc = qargs[3] || '';
-      if (!taskAgent || !taskDesc) {
-        addMsg('system', 'Usage: /task assign <agent> "<task description>" [--interval 60] [--verifier <agent>] [--criteria "<criteria>"]');
+      const taskName = qargs[2] || '';
+      const taskPrompt = qargs[3] || '';
+      if (!taskName || !taskPrompt) {
+        addMsg('system', 'Usage: /task create <name> "<prompt>" [--criteria "..."] [--interval XX]');
         return true;
       }
-      // Parse options from remaining args
+      let criteria = '', interval = '';
+      for (let i = 4; i < qargs.length; i++) {
+        if (qargs[i] === '--criteria' && qargs[i+1]) criteria = qargs[++i];
+        else if (qargs[i] === '--interval' && qargs[i+1]) interval = qargs[++i];
+      }
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: 'manage_resource', resource_type: 'task_def',
+          name: taskName, _action: 'create',
+          data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
+          conversation_id: conversationId,
+        }),
+      }).then(r => r.json()).then(data => {
+        if (data.error) addMsg('error', data.error);
+        else addMsg('system', `Task definition '${taskName}' created.`);
+      }).catch(e => addMsg('error', e.message));
+    } else if (sub === 'assign') {
+      // /task assign <agent> <taskname_or_"description"> [--interval N] [--max N] [--verifier <agent>] [--criteria "<text>"]
+      const qargs = parseQuotedArgs(text);
+      const taskAgent = qargs[2] || '';
+      const taskArg = qargs[3] || '';
+      if (!taskAgent || !taskArg) {
+        addMsg('system', 'Usage: /task assign <agent> <taskname> [--interval N]\n       /task assign <agent> "<inline description>" [--criteria "..."] [--interval N]');
+        return true;
+      }
       let interval = null, maxIter = 50, verifier = '', criteria = '';
       for (let i = 4; i < qargs.length; i++) {
         if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
@@ -3536,56 +3565,92 @@ async function handleSlashCommand(text) {
         else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
         else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
       }
+      // Detect library name vs inline description:
+      // If taskArg has no spaces and no --criteria was given → library lookup
+      const isLibrary = !taskArg.includes(' ') && !criteria;
+      const body = {
+        action: 'assign_task', conversation_id: conversationId,
+        agent_name: taskAgent, max_iterations: maxIter, verifier,
+        ...(interval != null ? { interval } : {}),
+      };
+      if (isLibrary) {
+        body.task_def_name = taskArg;
+      } else {
+        body.task = taskArg;
+        body.completion_criteria = criteria;
+      }
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'assign_task', conversation_id: conversationId,
-          agent_name: taskAgent, task: taskDesc,
-          completion_criteria: criteria, max_iterations: maxIter, verifier,
-          ...(interval != null ? { interval } : {}),
-        }),
+        body: JSON.stringify(body),
       }).then(r => r.json()).then(data => {
         if (data.error) { addMsg('error', data.error); }
         else { addMsg('system', data.result || 'Task assigned.'); }
       }).catch(e => addMsg('error', e.message));
+    } else if (sub === 'delete' || sub === 'del') {
+      // /task delete <taskname> — delete a task definition from library
+      const taskName = parts[2] || '';
+      if (!taskName) { addMsg('system', 'Usage: /task delete <taskname>'); return true; }
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({
+          action: 'manage_resource', resource_type: 'task_def',
+          name: taskName, _action: 'delete',
+          conversation_id: conversationId,
+        }),
+      }).then(r => r.json()).then(data => {
+        if (data.error) addMsg('error', data.error);
+        else addMsg('system', `Task definition '${taskName}' deleted.`);
+      }).catch(e => addMsg('error', e.message));
     } else if (sub === 'status' || sub === 'list') {
       const listAgent = parts[2] || '';
-      const listBody = { action: 'task_status', conversation_id: conversationId };
+      // Show both library definitions and running instances
+      const listBody = { action: 'task_status', conversation_id: conversationId, include_library: true };
       if (listAgent) listBody.agent_name = listAgent;
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify(listBody),
       }).then(r => r.json()).then(data => {
+        const defs = data.definitions || [];
         const tasks = data.tasks || [];
-        if (tasks.length === 0) { addMsg('system', 'No active tasks.'); }
-        else {
-          const lines = tasks.map(t => {
+        const lines = [];
+        if (defs.length) {
+          lines.push('**Library:**');
+          for (const d of defs) {
+            lines.push('\u2022 `' + d.name + '` — ' + (d.description || d.prompt.substring(0, 60)) + ' [' + (d.default_interval || '6/1m') + ']');
+          }
+        }
+        if (tasks.length) {
+          if (lines.length) lines.push('');
+          lines.push('**Running:**');
+          for (const t of tasks) {
             let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
             const ivLabel = typeof t.interval === 'object' ? (t.interval.spec || t.interval.min + '-' + t.interval.max + 's') : t.interval + 's';
             line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ', ' + ivLabel + ']';
+            if (t.task_def_name) line += ' (def: ' + t.task_def_name + ')';
             if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
             if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
-            return line;
-          });
-          addMsg('system', 'Tasks:\n' + lines.join('\n'));
+            lines.push(line);
+          }
         }
+        if (!lines.length) addMsg('system', 'No task definitions or running tasks.');
+        else addMsg('system', lines.join('\n'));
       }).catch(e => addMsg('error', e.message));
     } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
       const taskAgent = parts[2];
-      if (!taskAgent) { addMsg('system', 'Usage: /task ' + sub + ' <agent>'); return true; }
+      if (!taskAgent) { addMsg('system', 'Usage: /task ' + sub + ' <task_id|agent>'); return true; }
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({
           action: sub + '_task', conversation_id: conversationId,
           task_id: taskAgent.startsWith('t_') ? taskAgent : '',
-            agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
-          }),
-        }).then(r => r.json()).then(data => {
-          if (data.error) { addMsg('error', data.error); }
-          else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
-        }).catch(e => addMsg('error', e.message));
+          agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
+        }),
+      }).then(r => r.json()).then(data => {
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
+      }).catch(e => addMsg('error', e.message));
     } else {
-      addMsg('system', 'Usage: /task assign | status | pause | resume | cancel');
+      addMsg('system', 'Usage: /task create | assign | list | delete | pause | resume | cancel');
     }
     return true;
   }

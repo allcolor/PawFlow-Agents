@@ -2933,9 +2933,13 @@ class AssignTaskHandler(ToolHandler):
                     "type": "string",
                     "description": "Agent to assign the task to (name, or 'self' for yourself)",
                 },
+                "task_def_name": {
+                    "type": "string",
+                    "description": "Name of a task definition from the library (use instead of task+criteria)",
+                },
                 "task": {
                     "type": "string",
-                    "description": "Description of the task to accomplish",
+                    "description": "Inline task description (alternative to task_def_name)",
                 },
                 "completion_criteria": {
                     "type": "string",
@@ -2954,7 +2958,7 @@ class AssignTaskHandler(ToolHandler):
                     "description": "Agent that verifies completion (optional)",
                 },
             },
-            "required": ["agent", "task"],
+            "required": ["agent"],
         }
 
     @staticmethod
@@ -3015,8 +3019,23 @@ class AssignTaskHandler(ToolHandler):
         if target == "self":
             target = self._agent_name or "assistant"
         task_desc = arguments.get("task", "")
+        task_def_name = arguments.get("task_def_name", "")
+
+        # Library lookup: resolve task_def_name → prompt + criteria + interval
+        if task_def_name and not task_desc:
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            definition = rs.get_any("task_def", task_def_name, self._user_id)
+            if not definition:
+                return f"Error: task definition '{task_def_name}' not found"
+            task_desc = definition.get("prompt", "")
+            if not arguments.get("completion_criteria"):
+                arguments["completion_criteria"] = definition.get("criteria", "")
+            if not arguments.get("interval"):
+                arguments["interval"] = definition.get("default_interval", "6/1m")
+
         if not task_desc:
-            return "Error: task description required"
+            return "Error: task description or task_def_name required"
         if not self._conversation_id:
             return "Error: no conversation context"
 
@@ -3048,6 +3067,8 @@ class AssignTaskHandler(ToolHandler):
             "iterations_done": 0,
             "verifier": verifier,
             "assigned_by": self._agent_name or self._user_id or "unknown",
+            "created_by": self._agent_name or self._user_id or "unknown",
+            "task_def_name": task_def_name,
             "created_at": _t.time(),
             "last_result": "",
         }
@@ -4017,7 +4038,7 @@ class ManageResourceHandler(ToolHandler):
                 },
                 "resource_type": {
                     "type": "string",
-                    "enum": ["agent", "skill", "mcp", "prompt"],
+                    "enum": ["agent", "skill", "mcp", "prompt", "task_def"],
                     "description": "Type of resource",
                 },
                 "name": {

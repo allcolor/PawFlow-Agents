@@ -1,12 +1,14 @@
-"""ResourceStore — User-scoped CRUD for agents, skills, and MCP servers.
+"""ResourceStore — User-scoped CRUD for agents, skills, MCP servers, prompts, task definitions.
 
 Each resource type is stored in its own JSON file under config/.
 Keys are namespaced by user_id: "user_id.resource_name".
 
 Resource types:
-- agent: { name, prompt, model?, tools?, max_depth?, timeout?, description? }
-- skill: { name, prompt, description? }
-- mcp:   { name, url, auth?, discovered_tools? }
+- agent:    { name, prompt, model?, tools?, max_depth?, timeout?, description? }
+- skill:    { name, prompt, description? }
+- mcp:      { name, url, auth?, discovered_tools? }
+- prompt:   { name, content, title?, category?, description? }
+- task_def: { name, prompt, criteria?, default_interval?, description?, created_by? }
 """
 
 import json
@@ -26,6 +28,7 @@ _RESOURCE_FILES = {
     "skill": _CONFIG_DIR / "skills.json",
     "mcp": _CONFIG_DIR / "mcp_servers.json",
     "prompt": _CONFIG_DIR / "prompts.json",
+    "task_def": _CONFIG_DIR / "task_defs.json",
 }
 
 VALID_TYPES = frozenset(_RESOURCE_FILES.keys())
@@ -37,6 +40,7 @@ _REQUIRED_FIELDS = {
     "skill": ("prompt",),
     "mcp": ("url",),
     "prompt": ("content",),
+    "task_def": ("prompt",),
 }
 
 # Default values per type
@@ -60,6 +64,12 @@ _DEFAULTS = {
         "title": "",
         "category": "",
         "description": "",
+    },
+    "task_def": {
+        "criteria": "",
+        "default_interval": "6/1m",
+        "description": "",
+        "created_by": "",
     },
 }
 

@@ -3727,7 +3727,9 @@ class AgentLoopTask(BaseTask):
             h.set_agent_name("user")
             h.set_user_id(user_id)
             result = h.execute({
-                "agent": agent, "task": task_desc,
+                "agent": agent,
+                "task": body.get("task", ""),
+                "task_def_name": body.get("task_def_name", ""),
                 "completion_criteria": body.get("completion_criteria", ""),
                 "interval": body.get("interval"),
                 "max_iterations": body.get("max_iterations", 50),
@@ -3769,8 +3771,27 @@ class AgentLoopTask(BaseTask):
                     "last_result": t.get("last_result", ""),
                     "verifier": t.get("verifier", ""),
                     "interval": t.get("interval", 60),
+                    "task_def_name": t.get("task_def_name", ""),
+                    "created_by": t.get("created_by", ""),
                 })
-            flowfile.set_content(json.dumps({"tasks": tasks_out}).encode())
+            # Include library definitions if requested
+            defs_out = []
+            if body.get("include_library"):
+                from core.resource_store import ResourceStore
+                uid = user_id or "anonymous"
+                all_defs = ResourceStore.instance().list_all("task_def", uid)
+                for d in all_defs:
+                    defs_out.append({
+                        "name": d.get("name", ""),
+                        "prompt": d.get("prompt", ""),
+                        "criteria": d.get("criteria", ""),
+                        "default_interval": d.get("default_interval", "6/1m"),
+                        "description": d.get("description", ""),
+                        "created_by": d.get("created_by", ""),
+                    })
+            flowfile.set_content(json.dumps({
+                "tasks": tasks_out, "definitions": defs_out,
+            }).encode())
             return [flowfile]
 
         if action in ("pause_task", "resume_task", "cancel_task"):

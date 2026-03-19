@@ -135,12 +135,12 @@ class ResourceStore:
 
     @staticmethod
     def _key(user_id: str, name: str) -> str:
-        return f"{user_id}.{name}"
+        return f"{user_id}:{name}"
 
     @staticmethod
     def _parse_key(key: str) -> tuple:
-        """Split 'user_id.name' → (user_id, name)."""
-        parts = key.split(".", 1)
+        """Split 'user_id:name' → (user_id, name)."""
+        parts = key.split(":", 1)
         if len(parts) == 2:
             return parts[0], parts[1]
         return "", parts[0]

@@ -6857,6 +6857,17 @@ const _msgObserver = new MutationObserver((mutations) => {
 _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
+
+// Fix main width to prevent content from pushing layout
+function fixMainWidth() {
+  const sidebar = document.getElementById('sidebar');
+  const main = document.querySelector('.main');
+  const sidebarW = sidebar ? sidebar.offsetWidth : 0;
+  main.style.width = (window.innerWidth - sidebarW) + 'px';
+}
+fixMainWidth();
+window.addEventListener('resize', fixMainWidth);
+
 loadConversations();
 </script>
 </body>

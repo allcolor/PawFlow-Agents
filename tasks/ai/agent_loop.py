@@ -1267,6 +1267,10 @@ class AgentLoopTask(BaseTask):
             ),
             "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
+            "chars_per_token": float(
+                (getattr(resolved_svc, 'config', {}) or {}).get("chars_per_token", 0)
+                or self.config.get("chars_per_token", 0)
+            ),
             "channel": channel,
             "active_agent_name": _active_agent_name,
             "active_llm_service": _active_llm_service,
@@ -4905,6 +4909,7 @@ class AgentLoopTask(BaseTask):
                         conversation_id=conversation_id,
                         agent_name=_agent_name or "assistant",
                         tool_defs=ctx.get("tool_defs"),
+                        chars_per_token=ctx.get("chars_per_token", 0),
                     )
                     # If compaction happened, mark context as diverged so
                     # _flush_new() appends subsequent messages to the agent
@@ -4990,6 +4995,7 @@ class AgentLoopTask(BaseTask):
                                 ctx.get("context_keep_recent", 6),
                                 conversation_id=conversation_id,
                                 tool_defs=ctx.get("tool_defs"),
+                                chars_per_token=ctx.get("chars_per_token", 0),
                             )
                             try:
                                 heartbeat_stop.clear()
@@ -6683,18 +6689,17 @@ class AgentLoopTask(BaseTask):
     # ── Context compaction ────────────────────────────────────────────
 
     @staticmethod
-    @staticmethod
     def _estimate_tokens(messages: List[LLMMessage],
-                         tool_defs: list = None) -> int:
-        """Token estimate: ~3 chars per token (conservative to avoid overflow).
+                         tool_defs: list = None,
+                         chars_per_token: float = 0) -> int:
+        """Estimate token count for messages + tool definitions.
 
-        Uses 3 chars/token instead of 3.5-4 to ensure compaction triggers
-        before the real limit is hit.  Each message also adds ~4 tokens of
-        overhead (role, separators).
-
-        *tool_defs* are the tool schemas sent alongside messages — these
-        consume tokens too and must be counted.
+        *chars_per_token* controls the conversion ratio.  Default (0) uses
+        a conservative 2 chars/token.  Multilingual models or models with
+        byte-level tokenizers may need 1.0–1.5.  The service config key
+        ``chars_per_token`` can override this per-LLM.
         """
+        cpt = chars_per_token if chars_per_token > 0 else 2.0
         total_chars = 0
         for m in messages:
             total_chars += 12  # message overhead (role, separators)
@@ -6714,13 +6719,12 @@ class AgentLoopTask(BaseTask):
         # Tool definitions (JSON schemas) are sent with every request
         if tool_defs:
             for td in tool_defs:
-                # name + description + parameter schema
                 total_chars += len(getattr(td, 'name', '') or '')
                 total_chars += len(getattr(td, 'description', '') or '')
                 params = getattr(td, 'parameters', None)
                 if params:
                     total_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
-        return int(total_chars / 3)
+        return int(total_chars / cpt)
 
     def _compact_if_needed(
         self,
@@ -6732,6 +6736,7 @@ class AgentLoopTask(BaseTask):
         conversation_id: str = "",
         agent_name: str = "",
         tool_defs: list = None,
+        chars_per_token: float = 0,
     ) -> List[LLMMessage]:
         """Compact conversation history if approaching the token limit.
 
@@ -6746,7 +6751,8 @@ class AgentLoopTask(BaseTask):
         If *conversation_id* is given, the resulting summary is persisted
         to the ConversationStore so it can be reused after a restart.
         """
-        estimated = self._estimate_tokens(messages, tool_defs=tool_defs)
+        estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
+                                          chars_per_token=chars_per_token)
         limit = int(max_tokens * threshold)
 
         if estimated <= limit:
@@ -6762,7 +6768,8 @@ class AgentLoopTask(BaseTask):
                 truncated = True
 
         if truncated:
-            estimated = self._estimate_tokens(messages)
+            estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
+                                              chars_per_token=chars_per_token)
             if estimated <= limit:
                 logger.info(f"[compact] Pass 1 (truncate tool results) sufficient: {estimated} tokens")
                 return messages
@@ -6807,9 +6814,26 @@ class AgentLoopTask(BaseTask):
         ))
         compacted.extend(recent_messages)
 
-        new_estimate = self._estimate_tokens(compacted)
+        new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
+                                              chars_per_token=chars_per_token)
         logger.info(f"[compact] Final: {new_estimate} tokens (was {estimated}), "
                     f"{len(compacted)} messages (was {len(messages)})")
+
+        # Notify UI that compaction is done
+        if conversation_id:
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    conversation_id, "compact_progress", {
+                        "stage": "done",
+                        "agent": agent_name,
+                        "before": len(messages),
+                        "after": len(compacted),
+                        "tokens_before": estimated,
+                        "tokens_after": new_estimate,
+                    })
+            except Exception:
+                pass
 
         # Persist the compacted context so it survives restarts
         if conversation_id:

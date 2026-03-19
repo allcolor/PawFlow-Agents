@@ -27,7 +27,7 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
        background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
-           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; }
+           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
                    display: flex; align-items: center; justify-content: space-between; }
 .sidebar-header h2 { font-size: 14px; color: #8888aa; font-weight: 600; }
@@ -52,7 +52,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .conv-status.active { background: #4ecdc4; animation: pulse 1.5s ease-in-out infinite; }
 .conv-status.blocked { background: #f0a500; }
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-.sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; }
+.sidebar-settings { padding: 8px 14px; border-top: 1px solid #0f3460; flex-shrink: 0; }
+.sidebar-settings#resourcesPanel { flex-shrink: 1; max-height: 50%; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .sidebar-settings label { font-size: 11px; color: #6c6c8a; display: block; margin-bottom: 3px; }
 .sidebar-settings select { width: 100%; background: #1a1a2e; color: #c0c0d0; border: 1px solid #0f3460;
                             border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; }
@@ -270,7 +271,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
-    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;max-height:55vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#333 transparent;"></div>
+    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;"></div>
   </div>
 </div>
 <div class="main">

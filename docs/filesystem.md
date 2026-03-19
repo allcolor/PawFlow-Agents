@@ -34,8 +34,8 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 | Type | Description | Git Support | Requires |
 |------|-------------|-------------|----------|
-| `localFilesystem` | HTTP relay to user's machine | Yes | `pawflow_fs_relay.py` script |
-| `wsFilesystem` | WebSocket relay (persistent connection) | Yes | `pawflow_fs_relay_ws.py` script |
+| `localFilesystem` | HTTP relay to user's machine | Yes | `pawflow_relay.py` script |
+| `wsFilesystem` | WebSocket relay (persistent connection) | Yes | `pawflow_relay.py` script |
 | `browserFilesystem` | Browser File System Access API | No | Chrome/Edge, folder opened |
 | `serverFilesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
@@ -47,13 +47,13 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 ```bash
 # Read/write access to a project directory
-python tools/pawflow_fs_relay.py --port 9876 --dir /home/user/project --secret mysecret
+python tools/pawflow_relay.py --port 9876 --dir /home/user/project --secret mysecret
 
 # Read-only access
-python tools/pawflow_fs_relay.py --port 9876 --dir /data --secret mysecret --readonly
+python tools/pawflow_relay.py --port 9876 --dir /data --secret mysecret --readonly
 
 # Bind to all interfaces (for remote access)
-python tools/pawflow_fs_relay.py --port 9876 --dir /data --secret mysecret --bind 0.0.0.0
+python tools/pawflow_relay.py --port 9876 --dir /data --secret mysecret --bind 0.0.0.0
 ```
 
 ### 2. Install the service in PawFlow
@@ -79,7 +79,7 @@ Add a `filesystemOps` task with `service_id=myfiles` and configure the action.
 Same as HTTP relay but with persistent connection (faster for frequent operations):
 
 ```bash
-python tools/pawflow_fs_relay_ws.py --port 9877 --dir /home/user/project --secret mysecret
+python tools/pawflow_relay.py --port 9877 --dir /home/user/project --secret mysecret
 ```
 
 ```

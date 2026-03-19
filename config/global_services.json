@@ -85,5 +85,21 @@
     "enabled": true,
     "description": "",
     "created_at": 1773738321.588766
+  },
+  "localFS": {
+    "service_id": "localFS",
+    "service_type": "wsFilesystem",
+    "config": {
+      "host": "localhost",
+      "port": 8701,
+      "secret": "monsecret",
+      "timeout": 30,
+      "mode": "readwrite",
+      "allowed_paths": "",
+      "denied_paths": ""
+    },
+    "enabled": true,
+    "description": "",
+    "created_at": 1773948166.0070543
   }
 }

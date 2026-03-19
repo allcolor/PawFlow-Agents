@@ -867,8 +867,8 @@ PawFlow fournit une couche d'abstraction filesystem unifiée. Voir `docs/filesys
 
 | Type | Description | Git | Requis |
 |------|-------------|-----|--------|
-| `localFilesystem` | Relay HTTP vers machine user | Oui | Script `pawflow_fs_relay.py` |
-| `wsFilesystem` | Relay WebSocket | Oui | Script `pawflow_fs_relay_ws.py` |
+| `localFilesystem` | Relay HTTP vers machine user | Oui | Script `pawflow_relay.py` |
+| `wsFilesystem` | Relay WebSocket | Oui | Script `pawflow_relay.py` |
 | `browserFilesystem` | File System Access API | Non | Chrome/Edge |
 | `serverFilesystem` | Disque serveur (admin only) | Oui | Rôle admin |
 | `googleDrive` | Google Drive REST API v3 | Non | OAuth2 |

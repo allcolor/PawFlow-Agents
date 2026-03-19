@@ -4906,7 +4906,7 @@ class FilesystemToolHandler(ToolHandler):
                 "Error: No filesystem service configured. "
                 "Install one with: /service install localFilesystem <name> "
                 "host=localhost,port=9876,secret=<secret>,mode=readwrite\n"
-                "Then run: python tools/pawflow_fs_relay.py --port 9876 "
+                "Then run: python tools/pawflow_relay.py --port 9876 "
                 "--dir <path> --secret <secret>"
             )
 

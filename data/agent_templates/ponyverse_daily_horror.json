@@ -1,0 +1,63 @@
+{
+  "id": "ponyverse_daily_horror",
+  "name": "Ponyverse Daily Horror Rave Gen",
+  "version": "1.0.0",
+  "parameters": {},
+  "tasks": {
+    "cron": {
+      "type": "cronTrigger",
+      "parameters": {
+        "schedule": "0 12 * * *"
+      }
+    },
+    "prompt_gen": {
+      "type": "inferLLM",
+      "parameters": {
+        "system_prompt": "You are Ponyverse PromptMaster. Gen 1 cyberpunk absurd horror Ponyverse img prompt: hedgehog palmier rave glitch abyss space variant Hartle MWI hybrid. Detailed neon surreal detailed.",
+        "max_tokens": 200,
+        "temperature": 0.9
+      }
+    },
+    "img_gen": {
+      "type": "grokImageGeneration",
+      "parameters": {
+        "prompt": "${prompt_gen.response}"
+      }
+    },
+    "manifest_update": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "content = flowfile.attributes.get('ponyverse_manifest', '') + '\\nNew: ' + flowfile.content.decode() + ',' + flowfile.attributes['img_url']\nresult = content"
+      }
+    },
+    "notify": {
+      "type": "notifyUser",
+      "parameters": {
+        "message": "New Ponyverse horror img: ${img_gen.url} ! Rave eternal."
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "cron",
+      "to": "prompt_gen",
+      "type": "success"
+    },
+    {
+      "from": "prompt_gen",
+      "to": "img_gen",
+      "type": "success"
+    },
+    {
+      "from": "img_gen",
+      "to": "manifest_update",
+      "type": "success"
+    },
+    {
+      "from": "manifest_update",
+      "to": "notify",
+      "type": "success"
+    }
+  ],
+  "services": {}
+}

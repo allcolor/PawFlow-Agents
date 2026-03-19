@@ -884,7 +884,7 @@ class TestRelayScriptArgs(unittest.TestCase):
         self.assertIn("--relay-id", source)
 
     def test_fs_relay_has_connect_arg(self):
-        source = open("tools/pawflow_fs_relay.py").read()
+        source = open("tools/pawflow_relay.py").read()
         self.assertIn("--connect", source)
         self.assertIn("--token", source)
         self.assertIn("--relay-id", source)
@@ -895,7 +895,7 @@ class TestRelayScriptArgs(unittest.TestCase):
         self.assertIn("ws_key", source)
 
     def test_fs_relay_has_ws_connect(self):
-        source = open("tools/pawflow_fs_relay.py").read()
+        source = open("tools/pawflow_relay.py").read()
         self.assertIn("_ws_connect", source)
 
     def test_executor_relay_ws_doc_updated(self):

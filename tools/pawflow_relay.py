@@ -6,10 +6,10 @@ user's filesystem. Zero external dependencies (stdlib only).
 
 Two modes:
   HTTP (legacy, local only):
-    python pawflow_fs_relay.py --port 9876 --dir /home/user/data --secret abc123
+    python pawflow_relay.py --port 9876 --dir /home/user/data --secret abc123
 
   WS Reverse (recommended, works across NAT/firewalls):
-    python pawflow_fs_relay.py --connect ws://pawflow.example.com/ws/relay \
+    python pawflow_relay.py --connect ws://pawflow.example.com/ws/relay \
         --token <api_key> --secret abc --dir /home/user/data
 
 Security:
@@ -470,7 +470,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
 
 # ── WS Reverse client ─────────────────────────────────────────────
 
-def _ws_connect(url, token, secret, relay_id, root_dir, readonly):
+def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False):
     """Connect to the PawFlow server via WebSocket and process filesystem commands."""
     import ssl
     import base64 as b64
@@ -503,6 +503,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly):
     MockHandler.root_dir = root_dir
     MockHandler.secret = secret
     MockHandler.readonly = readonly
+    MockHandler.allow_exec = allow_exec
     mock = MockHandler()
 
     def _ws_frame_send(sock, data_bytes, opcode=0x01):
@@ -560,12 +561,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly):
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
-        handler_func = _ACTIONS.get(action)
+        from fs_actions import ACTIONS as _FS_ACTIONS
+        handler_func = _FS_ACTIONS.get(action)
         if not handler_func:
             return {"ok": False, "error": f"Unknown action: {action}"}
 
         try:
-            result = handler_func(mock, abs_path, msg)
+            if action == "exec":
+                result = handler_func(root_dir, abs_path, msg,
+                                       allow_exec=getattr(mock, 'allow_exec', False))
+            else:
+                result = handler_func(root_dir, abs_path, msg)
             return {"ok": True, "data": result}
         except Exception as e:
             return {"ok": False, "error": str(e)}
@@ -721,7 +727,7 @@ def main():
         )
 
         _ws_connect(args.connect, args.token, args.secret, relay_id,
-                     root_dir, args.readonly)
+                     root_dir, args.readonly, allow_exec=args.allow_exec)
     else:
         # HTTP mode (legacy)
         sys.stderr.write(

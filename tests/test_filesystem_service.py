@@ -515,7 +515,7 @@ class TestRelayScript(unittest.TestCase):
         """The relay script resolves paths and checks they stay under root."""
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "relay", "tools/pawflow_fs_relay.py")
+            "relay", "tools/pawflow_relay.py")
         relay = importlib.util.module_from_spec(spec)
 
         # We test the resolve_path concept: path must stay under root
@@ -537,7 +537,7 @@ class TestRelayScript(unittest.TestCase):
     def test_relay_script_compiles(self):
         """The relay script should be valid Python."""
         import py_compile
-        py_compile.compile("tools/pawflow_fs_relay.py", doraise=True)
+        py_compile.compile("tools/pawflow_relay.py", doraise=True)
 
 
 # ── GetFile/PutFile Sandbox ────────────────────────────────────────

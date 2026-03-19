@@ -7215,7 +7215,7 @@ class AgentLoopTask(BaseTask):
         Search order: flow services → UserServiceRegistry (Plan B cross-channel).
         """
         services = getattr(self, '_services', {})
-        fs_types = ("localFilesystem", "wsFilesystem", "browserFilesystem",
+        fs_types = ("filesystem", "browserFilesystem",
                      "serverFilesystem", "googleDrive", "oneDrive")
         for svc in services.values():
             svc_type = getattr(svc, 'TYPE', '')

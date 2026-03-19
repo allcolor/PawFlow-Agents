@@ -230,30 +230,44 @@ async def ws_relay(websocket: WebSocket):
             await websocket.close(code=4000, reason="First message must be register")
             return
 
-        # Validate token
+        # Validate token against service config
         token = reg.get("token", "")
-        if not token:
-            await websocket.close(code=4001, reason="Missing token")
+        relay_id = reg.get("relay_id", "")
+        relay_type = reg.get("relay_type", "filesystem")
+
+        if not token or not relay_id:
+            await websocket.close(code=4001, reason="Missing token or relay_id")
             return
 
+        # Match token against the filesystem service config
+        user_id = ""
         try:
-            from core.security import SecurityManager
-            sm = SecurityManager.get_instance()
-            user = sm.validate_api_key(token)
-            if not user:
-                await websocket.close(code=4001, reason="Invalid token")
-                return
-            user_id = user.get("username", user.get("user_id", ""))
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            sdef = greg.get_all_definitions().get(relay_id)
+            if sdef and getattr(sdef, "service_type", "") == "filesystem":
+                svc_token = (sdef.config or {}).get("token", "")
+                if svc_token and svc_token == token:
+                    user_id = relay_id  # use relay_id as user context
+                else:
+                    await websocket.close(code=4001, reason="Token mismatch")
+                    return
         except Exception:
-            # Security not configured — use token as user_id for dev mode
-            user_id = token
+            pass
+        # Fallback: try SecurityManager API key validation
+        if not user_id:
+            try:
+                from core.security import SecurityManager
+                sm = SecurityManager.get_instance()
+                user = sm.validate_api_key(token)
+                if user:
+                    user_id = user.get("username", user.get("user_id", ""))
+            except Exception:
+                user_id = token  # dev mode fallback
 
         if not user_id:
-            await websocket.close(code=4001, reason="Could not identify user")
+            await websocket.close(code=4001, reason="Invalid token")
             return
-
-        relay_id = reg.get("relay_id", f"relay-{uuid.uuid4().hex[:8]}")
-        relay_type = reg.get("relay_type", "executor")
         info = reg.get("info", {})
         secret = reg.get("secret", "")
 

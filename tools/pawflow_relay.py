@@ -1,16 +1,12 @@
 #!/usr/bin/env python3
-"""PawFlow Filesystem Relay — Standalone relay for filesystem access.
+"""PawFlow Relay — Connects to the PawFlow server to provide filesystem access.
 
-Runs on the user's machine to give the PawFlow server secure access to the
-user's filesystem. Zero external dependencies (stdlib only).
+Runs on the user's machine and connects TO the server (reverse WebSocket).
+Works behind firewalls/NAT. Zero external dependencies (stdlib only).
 
-Two modes:
-  HTTP (legacy, local only):
-    python pawflow_relay.py --port 9876 --dir /home/user/data --secret abc123
-
-  WS Reverse (recommended, works across NAT/firewalls):
-    python pawflow_relay.py --connect ws://pawflow.example.com/ws/relay \
-        --token <api_key> --secret abc --dir /home/user/data
+Usage:
+    python pawflow_relay.py --server ws://host:port/ws/relay \\
+        --relay-id localFS --token abc123 --dir /path/to/share
 
 Security:
 - Shared secret validated via hmac.compare_digest on every request
@@ -677,79 +673,43 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PawFlow Filesystem Relay — Secure filesystem access (HTTP or WS)",
+        description="PawFlow Relay — Connects to PawFlow server for filesystem access",
     )
-    parser.add_argument("--port", type=int, default=9876,
-                        help="Port to listen on in HTTP mode (default: 9876)")
+    parser.add_argument("--server", required=True,
+                        help="PawFlow server WS URL (e.g. ws://localhost:8000/ws/relay)")
+    parser.add_argument("--relay-id", required=True,
+                        help="Service ID to connect as (must match service_id in PawFlow)")
+    parser.add_argument("--token", required=True,
+                        help="Token matching the filesystem service config")
     parser.add_argument("--dir", required=True,
                         help="Root directory for filesystem access")
-    parser.add_argument("--secret", required=True,
-                        help="Shared secret for authentication")
     parser.add_argument("--readonly", action="store_true",
                         help="Reject write/delete operations")
     parser.add_argument("--allow-exec", action="store_true",
                         help="Allow shell command execution (disabled by default)")
-    parser.add_argument("--bind", default="127.0.0.1",
-                        help="Bind address for HTTP mode (default: 127.0.0.1)")
-    # WS Reverse mode
-    parser.add_argument("--connect", default="",
-                        help="WS URL to connect to (e.g. ws://pawflow.example.com/ws/relay)")
-    parser.add_argument("--token", default="",
-                        help="API key for WS authentication")
-    parser.add_argument("--relay-id", default="",
-                        help="Relay ID (default: auto-generated)")
     args = parser.parse_args()
 
     root_dir = str(Path(args.dir).resolve())
     if not Path(root_dir).is_dir():
-        sys.stderr.write(f"[FSRelay] Error: not a directory: {root_dir}\n")
+        sys.stderr.write(f"[Relay] Error: not a directory: {root_dir}\n")
         sys.exit(1)
 
     mode = "readonly" if args.readonly else "readwrite"
-    masked = args.secret[:2] + "*" * max(0, len(args.secret) - 2)
+    masked = args.token[:2] + "*" * max(0, len(args.token) - 2)
 
-    if args.connect:
-        # WS Reverse mode
-        if not args.token:
-            sys.stderr.write("[FSRelay] Error: --token required for --connect mode\n")
-            sys.exit(1)
+    sys.stderr.write(
+        f"\n  PawFlow Relay\n"
+        f"  ─────────────\n"
+        f"  Server:    {args.server}\n"
+        f"  Relay ID:  {args.relay_id}\n"
+        f"  Directory: {root_dir}\n"
+        f"  Mode:      {mode}\n"
+        f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
+        f"  Token:     {masked}\n\n"
+    )
 
-        relay_id = args.relay_id or f"fs-{os.getpid()}"
-
-        sys.stderr.write(
-            f"\n  PawFlow Filesystem Relay (WS Reverse)\n"
-            f"  ────────────────────────────────────\n"
-            f"  Server:    {args.connect}\n"
-            f"  Relay ID:  {relay_id}\n"
-            f"  Directory: {root_dir}\n"
-            f"  Mode:      {mode}\n"
-            f"  Secret:    {masked}\n\n"
-        )
-
-        _ws_connect(args.connect, args.token, args.secret, relay_id,
-                     root_dir, args.readonly, allow_exec=args.allow_exec)
-    else:
-        # HTTP mode (legacy)
-        sys.stderr.write(
-            f"\n  PawFlow Filesystem Relay (HTTP)\n"
-            f"  ─────────────────────────────\n"
-            f"  Bind:      {args.bind}:{args.port}\n"
-            f"  Directory: {root_dir}\n"
-            f"  Mode:      {mode}\n"
-            f"  Secret:    {masked}\n\n"
-        )
-
-        handler_cls = _make_handler_class(root_dir, args.secret, args.readonly,
-                                         allow_exec=args.allow_exec)
-        httpd = HTTPServer((args.bind, args.port), handler_cls)
-
-        try:
-            sys.stderr.write(f"[FSRelay] Listening on {args.bind}:{args.port} ...\n")
-            httpd.serve_forever()
-        except KeyboardInterrupt:
-            sys.stderr.write("\n[FSRelay] Shutting down.\n")
-        finally:
-            httpd.server_close()
+    _ws_connect(args.server, args.token, args.token, args.relay_id,
+                 root_dir, args.readonly, allow_exec=args.allow_exec)
 
 
 if __name__ == "__main__":

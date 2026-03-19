@@ -64,11 +64,10 @@ def _register_all_services():
     import services.remote_executor_service   # noqa: F401
 
     # Filesystem services
-    import services.local_filesystem_service  # noqa: F401
-    import services.ws_filesystem_service     # noqa: F401
-    import services.browser_filesystem_service  # noqa: F401
-    import services.server_filesystem_service   # noqa: F401
-    import services.gdrive_filesystem_service    # noqa: F401
+    import services.filesystem_service         # noqa: F401  — unified reverse relay
+    import services.browser_filesystem_service # noqa: F401
+    import services.server_filesystem_service  # noqa: F401
+    import services.gdrive_filesystem_service  # noqa: F401
     import services.onedrive_filesystem_service  # noqa: F401
 
 

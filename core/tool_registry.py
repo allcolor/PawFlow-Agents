@@ -4725,7 +4725,7 @@ class FilesystemToolHandler(ToolHandler):
     _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
 
     # Filesystem service types (checked in order for auto-detection)
-    _FS_TYPES = ("localFilesystem", "wsFilesystem", "browserFilesystem", "serverFilesystem",
+    _FS_TYPES = ("filesystem", "browserFilesystem", "serverFilesystem",
                  "googleDrive", "oneDrive")
 
     @property

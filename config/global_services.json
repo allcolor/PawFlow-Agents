@@ -88,18 +88,13 @@
   },
   "localFS": {
     "service_id": "localFS",
-    "service_type": "wsFilesystem",
+    "service_type": "filesystem",
     "config": {
-      "host": "localhost",
-      "port": 8701,
-      "secret": "monsecret",
-      "timeout": 30,
-      "mode": "readwrite",
-      "allowed_paths": "",
-      "denied_paths": ""
+      "token": "monsecret",
+      "mode": "readwrite"
     },
     "enabled": true,
-    "description": "",
+    "description": "Local filesystem relay",
     "created_at": 1773948166.0070543
   }
 }

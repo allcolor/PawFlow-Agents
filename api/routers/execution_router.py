@@ -541,60 +541,72 @@ def _get_executor(flow_id: str) -> ContinuousFlowExecutor:
 def recover_flows_on_startup():
     """Called at server startup: restart flows that were running before crash.
 
-    For each flow that was 'running', attempts to:
-    1. Load the flow config
-    2. Create a new ContinuousFlowExecutor (which auto-recovers from checkpoint)
-    3. Start the executor
-    4. On failure: mark as recovery_failed with error message
+    Checks two sources:
+    1. FlowStateManager (config/running_flows.json) — flows started via API
+    2. DeploymentRegistry (data/deployments/) — flows started via GUI
+
+    For each flow that was 'running', attempts to recreate executor and start it.
     """
-    _flow_state.load()
-    to_recover = _flow_state.get_flows_to_recover()
-
-    if not to_recover:
-        return
-
-    logger.info(f"Crash recovery: {len(to_recover)} flow(s) to restore")
-    svc = FlowService()
-    svc.initialize()
-    provenance = get_provenance_repository()
-
     recovered = 0
     failed = 0
 
-    for entry in to_recover:
-        flow_id = entry.flow_id
-        try:
-            flow = _find_flow_silent(flow_id, svc)
-            if flow is None:
-                _flow_state.mark_recovery_failed(flow_id, f"Flow config '{flow_id}' not found")
+    # --- Source 1: FlowStateManager (API-started flows) ---
+    _flow_state.load()
+    to_recover = _flow_state.get_flows_to_recover()
+
+    if to_recover:
+        logger.info(f"FlowState recovery: {len(to_recover)} flow(s) to restore")
+        svc = FlowService()
+        svc.initialize()
+        provenance = get_provenance_repository()
+
+        for entry in to_recover:
+            flow_id = entry.flow_id
+            try:
+                flow = _find_flow_silent(flow_id, svc)
+                if flow is None:
+                    _flow_state.mark_recovery_failed(flow_id, f"Flow config '{flow_id}' not found")
+                    failed += 1
+                    continue
+
+                executor = ContinuousFlowExecutor(
+                    flow,
+                    max_workers=entry.max_workers,
+                    max_retries=entry.max_retries,
+                    provenance=provenance,
+                    enable_checkpoints=entry.enable_checkpoints,
+                    checkpoint_interval=entry.checkpoint_interval,
+                    parameters=entry.parameters,
+                )
+                executor.start()
+
+                with _executors_lock:
+                    _continuous_executors[flow_id] = executor
+
+                _flow_state.mark_recovered(flow_id)
+                recovered += 1
+                logger.info(f"Flow '{flow_id}' recovered (FlowState)")
+
+            except Exception as e:
+                error_msg = f"Recovery failed: {e}"
+                _flow_state.mark_recovery_failed(flow_id, error_msg)
                 failed += 1
-                continue
+                logger.error(f"Flow '{flow_id}' {error_msg}")
 
-            executor = ContinuousFlowExecutor(
-                flow,
-                max_workers=entry.max_workers,
-                max_retries=entry.max_retries,
-                provenance=provenance,
-                enable_checkpoints=entry.enable_checkpoints,
-                checkpoint_interval=entry.checkpoint_interval,
-                parameters=entry.parameters,
-            )
-            executor.start()
+    # --- Source 2: DeploymentRegistry (GUI-started flows) ---
+    try:
+        from gui.services.executor_registry import ExecutorRegistry
+        reg = ExecutorRegistry.get_instance()
+        reg.restore_from_disk()
+        dr_count = reg.count()
+        if dr_count:
+            recovered += dr_count
+            logger.info(f"DeploymentRegistry recovery: {dr_count} flow(s) restored")
+    except Exception as e:
+        logger.warning(f"DeploymentRegistry recovery skipped: {e}")
 
-            with _executors_lock:
-                _continuous_executors[flow_id] = executor
-
-            _flow_state.mark_recovered(flow_id)
-            recovered += 1
-            logger.info(f"Flow '{flow_id}' recovered successfully")
-
-        except Exception as e:
-            error_msg = f"Recovery failed: {e}"
-            _flow_state.mark_recovery_failed(flow_id, error_msg)
-            failed += 1
-            logger.error(f"Flow '{flow_id}' {error_msg}")
-
-    logger.info(f"Crash recovery complete: {recovered} recovered, {failed} failed")
+    if recovered or failed:
+        logger.info(f"Crash recovery complete: {recovered} recovered, {failed} failed")
 
 
 def _find_flow_silent(flow_id: str, svc: FlowService):

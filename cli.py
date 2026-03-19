@@ -241,44 +241,51 @@ def cmd_serve(args):
 
 
 def cmd_gui(args):
-    """Start the PyFi2 GUI."""
+    """Start the PyFi2 GUI.
+
+    Runs Streamlit in-process so we can pre-restore deployed flows
+    in a background thread *before* a browser connects.  The old
+    approach (subprocess + HTTP poke) was unreliable because Streamlit
+    only executes main.py on WebSocket connect, not on HTTP GET.
+    """
     project_root = os.path.dirname(os.path.abspath(__file__))
 
-    # Auto-restore flows in a background thread that pokes Streamlit
-    # to trigger main.py execution (flows run inside the Streamlit process)
+    # Ensure project root is importable
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+    os.chdir(project_root)
+
+    # Pre-restore deployed flows before Streamlit's event loop starts.
+    # This runs in a background thread so it doesn't block the server boot.
     import threading
-    import urllib.request
 
-    def _trigger_restore():
-        """Wait for Streamlit to start, then poke it so main.py runs."""
-        import time
-        port = args.port
-        for _ in range(30):  # try for 30s
-            time.sleep(1)
-            try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/_stcore/health", timeout=2)
-                # Streamlit is up — trigger main.py by visiting the app
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
-                return
-            except Exception:
-                continue
+    def _pre_restore():
+        try:
+            from tasks import register_all_tasks
+            register_all_tasks()
+            from gui.services.executor_registry import ExecutorRegistry
+            ExecutorRegistry.get_instance().restore_from_disk()
+            n = ExecutorRegistry.get_instance().count()
+            if n:
+                logging.getLogger(__name__).info(
+                    "Pre-restored %d flow(s) from DeploymentRegistry", n)
+        except Exception as e:
+            logging.getLogger(__name__).error("Pre-restore failed: %s", e)
 
-    trigger = threading.Thread(target=_trigger_restore, daemon=True)
-    trigger.start()
+    threading.Thread(target=_pre_restore, daemon=True).start()
 
-    import subprocess
-    # Ensure project root is in PYTHONPATH for the Streamlit subprocess
-    env = os.environ.copy()
-    pythonpath = env.get("PYTHONPATH", "")
-    if project_root not in pythonpath.split(os.pathsep):
-        env["PYTHONPATH"] = project_root + (os.pathsep + pythonpath if pythonpath else "")
-    cmd = [sys.executable, "-m", "streamlit", "run", "gui/main.py",
-           f"--server.port={args.port}", f"--server.address={args.host}"]
+    # Build sys.argv for Streamlit CLI and launch in-process
+    sys.argv = ["streamlit", "run", "gui/main.py",
+                f"--server.port={args.port}",
+                f"--server.address={args.host}"]
     if args.headless:
-        cmd.append("--server.headless=true")
+        sys.argv.append("--server.headless=true")
+
     try:
-        result = subprocess.run(cmd, env=env, cwd=project_root)
-        return result.returncode
+        from streamlit.web.cli import main as st_main
+        st_main()
+    except SystemExit:
+        pass
     except KeyboardInterrupt:
         print("\nGUI stopped.")
         return 0

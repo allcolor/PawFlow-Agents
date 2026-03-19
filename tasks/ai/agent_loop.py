@@ -1564,11 +1564,13 @@ class AgentLoopTask(BaseTask):
             # Return all display-relevant messages with type classification
             history = self._classify_messages_for_display(messages)
             nicknames = store.get_extra(conv_id, "agent_nicknames") or {}
+            active_res = store.get_extra(conv_id, "active_resources") or {}
             result = json.dumps({
                 "conversation_id": conv_id,
                 "messages": history,
                 "message_count": len(messages),  # total raw count for polling
                 "nicknames": nicknames,
+                "active_agent": active_res.get("agent", ""),
             }, ensure_ascii=False)
             flowfile.set_content(result.encode("utf-8"))
             return [flowfile]
@@ -2829,7 +2831,9 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            if agent_name:
+            # "assistant" is the built-in default — treat as deselect
+            is_default = not agent_name or agent_name.lower() == "assistant"
+            if not is_default:
                 from core.resource_store import ResourceStore
                 uid = user_id or "anonymous"
                 if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
@@ -2839,13 +2843,13 @@ class AgentLoopTask(BaseTask):
                     flowfile.set_attribute("http.response.status", "404")
                     return [flowfile]
             active = store.get_extra(conv_id, "active_resources") or {}
-            if agent_name:
-                active["agent"] = agent_name
-            else:
+            if is_default:
                 active.pop("agent", None)
+            else:
+                active["agent"] = agent_name
             store.set_extra(conv_id, "active_resources", active)
             flowfile.set_content(json.dumps({
-                "selected": agent_name or "(default)",
+                "selected": agent_name if not is_default else "assistant (default)",
             }).encode())
             return [flowfile]
 

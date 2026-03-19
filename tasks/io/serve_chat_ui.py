@@ -70,6 +70,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
            display: flex; align-items: center; gap: 12px; }
 .header h1 { font-size: 18px; color: #e94560; }
 .header .status { font-size: 12px; color: #6c6c8a; }
+.active-agent-badge { font-size: 11px; padding: 2px 10px; border-radius: 12px; cursor: pointer; margin-left: 8px; font-weight: 600; white-space: nowrap; }
+.active-agent-badge:hover { filter: brightness(1.3); }
 .header .btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
                      padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; }
 .header .btn:hover { background: #e94560; color: white; }
@@ -275,6 +277,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 <div class="header">
   <h1>PyFi2 Agent</h1>
   <span class="status" id="status">Ready</span>
+  <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
@@ -547,6 +550,7 @@ let sending = false;
 let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
 let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
+let selectedAgent = '';   // currently active agent ('' or 'assistant' = default)
 let sseRetryCount = 0;     // for exponential backoff on reconnect
 let sseReconnectTimer = null;
 // Per-agent streaming state — prevents cross-agent clobbering when multiple
@@ -642,6 +646,8 @@ function newChat() {
   stopPollTimer();
   conversationId = null;
   pendingAgent = null;
+  selectedAgent = '';
+  updateActiveAgentBadge();
   serverMsgCount = 0;
   clearAllStreams();
   sending = false;
@@ -763,6 +769,8 @@ async function resumeConv(cid) {
       addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
+    selectedAgent = data.active_agent || '';
+    updateActiveAgentBadge();
     highlightConv(cid);
     connectSSE(cid);  // subscribe to SSE — will pick up events if agent is still running
     startPollTimer();
@@ -4290,11 +4298,28 @@ async function cmdAgentCreate() {
   } catch (e) { addMsg('error', 'Failed to create agent: ' + e.message); }
 }
 
+function updateActiveAgentBadge() {
+  const badge = document.getElementById('activeAgentBadge');
+  const agent = selectedAgent || 'assistant';
+  // Color from agent name hash (same algo as source badges)
+  let h = 0;
+  for (let i = 0; i < agent.length; i++) h = ((h << 5) - h + agent.charCodeAt(i)) | 0;
+  const hue = Math.abs(h) % 360;
+  badge.style.background = 'hsl(' + hue + ',60%,25%)';
+  badge.style.color = 'hsl(' + hue + ',80%,80%)';
+  badge.textContent = '\u2192 ' + displayAgentName(agent);
+  badge.title = agent === 'assistant' ? 'Default agent (assistant)' : 'Active: ' + agent + ' — click to switch back to assistant';
+  badge.style.display = '';
+}
+
 async function cmdAgentSelect(name) {
+  const isDefault = !name || name.toLowerCase() === 'assistant';
   if (!conversationId) {
     // No conversation yet — store pending selection, will be applied on first message
-    pendingAgent = name || null;
-    addMsg('system', name ? `Agent '${name}' selected (will activate on first message).` : 'Switched to default agent.');
+    pendingAgent = isDefault ? null : name;
+    selectedAgent = isDefault ? '' : name;
+    updateActiveAgentBadge();
+    addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected (will activate on first message).`);
     return;
   }
   try {
@@ -4302,12 +4327,14 @@ async function cmdAgentSelect(name) {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
         action: 'select_agent', conversation_id: conversationId,
-        name: name,
+        name: isDefault ? '' : name,
       }),
     });
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', name ? `Agent '${name}' selected.` : 'Switched to default agent.');
+    selectedAgent = isDefault ? '' : name;
+    updateActiveAgentBadge();
+    addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected. Messages now go to ${name}.`);
   } catch (e) { addMsg('error', 'Failed to select agent: ' + e.message); }
 }
 
@@ -4346,7 +4373,19 @@ async function cmdAgentSetname(realName, nickname) {
 
 function cmdAgentMsg(agentName, text) {
   // Send a message to a specific agent without changing the active agent
-  addMsg('user', '[\u2192 ' + agentName + '] ' + text);
+  // Capture and include any pending attachments
+  const attachments = pendingFiles.map(f => ({
+    filename: f.filename, mime_type: f.mime_type, data: f.data,
+  }));
+  const attachmentsForDisplay = [...pendingFiles];
+  pendingFiles = [];
+  renderAttachments();
+
+  const displayText = '[\u2192 ' + agentName + '] ' + text;
+  const msgEl = addMsg('user', displayText);
+  if (attachmentsForDisplay.length > 0) {
+    msgEl.innerHTML = escapeHtml(displayText) + renderUserAttachments(attachmentsForDisplay);
+  }
   clearStream(agentName);
   showTyping();
   sending = true;
@@ -4355,6 +4394,7 @@ function cmdAgentMsg(agentName, text) {
 
   const body = { message: text, target_agent: agentName };
   if (conversationId) body.conversation_id = conversationId;
+  if (attachments.length > 0) body.attachments = attachments;
   const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
   if (ttlVal > 0) body.ttl = ttlVal;
 
@@ -5598,18 +5638,19 @@ async function send() {
   input.value = '';
   input.style.height = 'auto';
 
-  // Show user message with attachments
-  const msgEl = addMsg('user', text || '');
+  // Show user message with target badge (all messages explicitly show who they go to)
+  const targetAgent = selectedAgent || 'assistant';
+  const displayText = '[\u2192 ' + targetAgent + '] ' + (text || '');
+  const msgEl = addMsg('user', displayText);
   if (attachmentsForDisplay.length > 0) {
-    msgEl.innerHTML = (text ? escapeHtml(text) : '') + renderUserAttachments(attachmentsForDisplay);
+    msgEl.innerHTML = escapeHtml(displayText) + renderUserAttachments(attachmentsForDisplay);
   }
   scrollBottom(true);  // Force scroll when user sends
-  // Only clear the assistant stream (main agent) — don't kill ongoing thought streams
-  clearStream('assistant');
+  clearStream(targetAgent);
   showTyping();
 
   try {
-    const body = { message: text };
+    const body = { message: text, target_agent: targetAgent };
     if (conversationId) body.conversation_id = conversationId;
     if (attachments.length > 0) body.attachments = attachments;
     if (pendingAgent) { body.pending_agent = pendingAgent; pendingAgent = null; }
@@ -5984,6 +6025,7 @@ document.addEventListener('click', (e) => {
 
 addMsg('system', t('welcome'));
 document.getElementById('input').focus();
+updateActiveAgentBadge();
 loadConversations();
 </script>
 </body>

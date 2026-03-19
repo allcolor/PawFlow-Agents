@@ -96,6 +96,80 @@ class ToolRegistry:
             return f"Error executing tool '{name}': {e}"
 
 
+# ── Lazy tool mode handlers ──────────────────────────────────────────
+
+class GetToolSchemaHandler(ToolHandler):
+    """Return the full JSON schema of a tool so the LLM can call it via use_tool."""
+
+    def __init__(self, registry: "ToolRegistry"):
+        self._registry = registry
+
+    @property
+    def name(self) -> str:
+        return "get_tool_schema"
+
+    @property
+    def description(self) -> str:
+        return "Get the full parameter schema for a tool. Call this BEFORE use_tool to know the required arguments."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "Name of the tool to inspect"},
+            },
+            "required": ["tool_name"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        name = arguments.get("tool_name", "")
+        handler = self._registry.get(name)
+        if not handler:
+            available = [h.name for h in self._registry.list_tools()
+                         if h.name not in ("get_tool_schema", "use_tool")]
+            return json.dumps({"error": f"Unknown tool '{name}'",
+                               "available": available})
+        return json.dumps({
+            "name": handler.name,
+            "description": handler.description,
+            "parameters": handler.parameters_schema,
+        }, indent=2)
+
+
+class UseToolHandler(ToolHandler):
+    """Execute any tool by name. The LLM should call get_tool_schema first."""
+
+    def __init__(self, registry: "ToolRegistry"):
+        self._registry = registry
+
+    @property
+    def name(self) -> str:
+        return "use_tool"
+
+    @property
+    def description(self) -> str:
+        return "Execute a tool by name with the given arguments. Call get_tool_schema first to know the parameters."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "tool_name": {"type": "string", "description": "Name of the tool to execute"},
+                "arguments": {"type": "object", "description": "Arguments to pass to the tool"},
+            },
+            "required": ["tool_name", "arguments"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        tool_name = arguments.get("tool_name", "")
+        tool_args = arguments.get("arguments", {})
+        if tool_name in ("get_tool_schema", "use_tool"):
+            return "Error: cannot call meta-tools via use_tool"
+        return self._registry.execute(tool_name, tool_args)
+
+
 # ── Builtin handlers ──────────────────────────────────────────────────
 
 

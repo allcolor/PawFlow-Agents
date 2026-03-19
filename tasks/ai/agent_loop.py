@@ -1276,6 +1276,54 @@ class AgentLoopTask(BaseTask):
             agent_svc=_active_llm_service or "",
         )
 
+        # Lazy tools mode: for small-context LLMs, replace full tool schemas
+        # with just get_tool_schema + use_tool (~200 tokens instead of ~7000)
+        _resolved_max_ctx = int(
+            (getattr(resolved_svc, 'config', {}) or {}).get("max_context_size", 0)
+            or (_selected_agent_def or {}).get("max_context_size", 0)
+            or self.config.get("max_context_size", 64000)
+        )
+        _lazy_tools = (
+            str(self.config.get("tools_mode", "")).lower() == "lazy"
+            or str((_selected_agent_def or {}).get("tools_mode", "")).lower() == "lazy"
+            or (
+                _resolved_max_ctx < 16000
+                and str(self.config.get("tools_mode", "")).lower() != "full"
+                and len(tool_defs) > 4
+            )
+        )
+        _full_tool_defs = tool_defs  # keep reference for get_tool_schema
+        if _lazy_tools and tool_defs:
+            from core.tool_registry import GetToolSchemaHandler, UseToolHandler
+            # Register meta-handlers in the registry
+            _gts = GetToolSchemaHandler(registry)
+            _ut = UseToolHandler(registry)
+            registry.register(_gts)
+            registry.register(_ut)
+            # Build tools summary for system prompt
+            _tools_summary = "\n## Available Tools (lazy mode)\n"
+            _tools_summary += "To use a tool: 1) call get_tool_schema(tool_name) to see parameters, "
+            _tools_summary += "then 2) call use_tool(tool_name, {arguments}).\n\n"
+            for td in tool_defs:
+                _tools_summary += f"- **{td.name}**: {td.description[:120]}\n"
+            system_prompt += _tools_summary
+            # Replace tool_defs with just the 2 meta-tools
+            tool_defs = [
+                LLMToolDefinition(
+                    name=_gts.name, description=_gts.description,
+                    parameters=_gts.parameters_schema,
+                ),
+                LLMToolDefinition(
+                    name=_ut.name, description=_ut.description,
+                    parameters=_ut.parameters_schema,
+                ),
+            ]
+            # Update messages[0] with the tools summary
+            if messages and messages[0].role == "system":
+                messages[0] = LLMMessage(role="system", content=system_prompt)
+            logger.info("Lazy tools mode: %d tools → 2 meta-tools (max_ctx=%d)",
+                         len(_full_tool_defs), _resolved_max_ctx)
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,
@@ -5080,18 +5128,10 @@ class AgentLoopTask(BaseTask):
                     finish_reason = response.finish_reason
 
                     # Calibrate chars_per_token from actual usage
+                    # Use _estimate_tokens(cpt=1) to get raw char count (same formula)
                     if response.tokens_in > 0:
-                        _cal_chars = sum(
-                            len(m.content) if isinstance(m.content, str) else 0
-                            for m in llm_context
-                        )
-                        if tool_defs:
-                            for _td in tool_defs:
-                                _cal_chars += len(getattr(_td, 'name', '') or '')
-                                _cal_chars += len(getattr(_td, 'description', '') or '')
-                                _p = getattr(_td, 'parameters', None)
-                                if _p:
-                                    _cal_chars += len(json.dumps(_p) if isinstance(_p, dict) else str(_p))
+                        _cal_chars = self._estimate_tokens(
+                            llm_context, tool_defs=tool_defs, chars_per_token=1.0)
                         _svc_id = ctx.get("active_llm_service") or ""
                         self._calibrate_cpt(_svc_id, _cal_chars, response.tokens_in)
                         ctx["chars_per_token"] = self._get_cpt(

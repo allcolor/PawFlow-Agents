@@ -77,10 +77,6 @@ class AgentLoopTask(BaseTask):
         self._user_active_conversations: set = set()  # convs with active USER interaction
         self._active_thoughts: set = set()  # active thought keys (conv_id::thought::agent)
         self._active_lock = threading.Lock()
-        # Track poll cooldown per conversation:
-        # conv_id -> (updated_at_when_checked, recheck_after_timestamp)
-        # Only re-poll if: user interacted (updated_at changed) OR recheck time passed
-        self._poll_cooldown: Dict[str, tuple] = {}  # conv_id -> (last_updated_at, recheck_at)
         # Generation counter per conversation — prevents stale threads from overwriting
         # newer data.  Incremented on each user request; poller threads capture the
         # generation at start and skip saves if it changed.
@@ -4953,7 +4949,6 @@ class AgentLoopTask(BaseTask):
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
-            self._poll_cooldown.pop(conversation_id, None)
 
         # Set conversation status to active
         from core.conversation_store import ConversationStore
@@ -5092,7 +5087,6 @@ class AgentLoopTask(BaseTask):
         with self._active_lock:
             self._active_conversations.pop(conversation_id, None)
             self._user_active_conversations.discard(conversation_id)
-            self._poll_cooldown.pop(conversation_id, None)
 
         # Reset status
         from core.conversation_store import ConversationStore
@@ -5885,17 +5879,13 @@ class AgentLoopTask(BaseTask):
                     stripped = stripped.strip()
 
                     # Set cooldown (in-memory) AND persistent schedule
-                    from core.conversation_store import ConversationStore
                     from core.poll_scheduler import PollScheduler
-                    convs = ConversationStore.instance().list_conversations()
-                    conv_meta = next((c for c in convs if c["conversation_id"] == conversation_id), None)
-                    current_updated_at = conv_meta["updated_at"] if conv_meta else time.time()
-                    self._poll_cooldown[conversation_id] = (current_updated_at, time.time() + recheck_delay)
-                    # Persist to PollScheduler so it survives restarts
+                    _recheck_agent = ctx.get("active_agent_name") or "assistant"
                     user_id = ctx.get("user_id", "")
                     PollScheduler.instance().schedule_delay(
                         conversation_id, recheck_delay, user_id=user_id,
-                        reason="[RECHECK_IN] tag from agent response",
+                        key=f"{conversation_id}::recheck::{_recheck_agent}",
+                        reason=f"[scheduled:{_recheck_agent}] RECHECK_IN",
                     )
 
                     if not stripped:
@@ -5944,12 +5934,10 @@ class AgentLoopTask(BaseTask):
                 llm_service=_agent_svc or "",
             )
 
-            # Update conversation status — idle unless tools were used (active = may need follow-up)
+            # Always set idle — follow-ups are handled by PollScheduler
+            # with agent-qualified keys, not by conversation status.
             from core.conversation_store import ConversationStore as _CS
-            _CS.instance().set_status(
-                conversation_id,
-                "active" if tools_called else "idle",
-            )
+            _CS.instance().set_status(conversation_id, "idle")
 
         except _InterruptComplete:
             logger.info(f"[agent:{conversation_id[:8]}] interrupt synthesis done")
@@ -6300,42 +6288,22 @@ class AgentLoopTask(BaseTask):
                 continue
 
             if "::task::" in entry_key or "::task_verify::" in entry_key:
-                # Tasks are like thoughts — never cancelled by user interaction
                 thought_entries.append(entry)
                 continue
 
+            if "::recheck::" in entry_key:
+                thought_entries.append(entry)
+                continue
+
+            # Generic scheduled recheck (user-requested via /schedule)
             logger.info(f"[poller] Scheduled recheck due for {cid[:8]}: {reason}")
-            # Set status to active so the poll runs
-            store.set_status(cid, "active")
-            # Clear any in-memory cooldown that would block the poll
-            self._poll_cooldown.pop(cid, None)
             to_poll.add(cid)
             scheduled_ids.add(cid)
             scheduled_reasons.setdefault(cid, []).append(reason)
 
-        # Source 2: Active SSE conversations (user has UI open)
-        # Only wake if cooldown expired — NOT on user interaction alone.
-        # User interaction triggers the agent via the normal HTTP request path,
-        # not via the poller.  The poller is only for autonomous check-ins.
-        active_sse = bus.active_conversations()
-        for conversation_id in active_sse:
-            # Skip if this conversation already has a PollScheduler entry
-            # (it will be woken at the right time by source 1)
-            if scheduler.get(conversation_id):
-                continue
-            # Check cooldown
-            cooldown = self._poll_cooldown.get(conversation_id)
-            if cooldown:
-                _last_updated_at, recheck_at = cooldown
-                now = time.time()
-                if now < recheck_at:
-                    continue  # cooldown not expired yet
-                # Cooldown expired — eligible for poll
-                del self._poll_cooldown[conversation_id]
-            else:
-                # No cooldown set — skip (no autonomous work expected)
-                continue
-            to_poll.add(conversation_id)
+        # Source 2 removed: all autonomous wake-ups go through PollScheduler
+        # with agent-qualified keys (::thought::, ::task::, ::recheck::).
+        # No more SSE cooldown guessing.
 
         if not to_poll and not thought_entries:
             return

@@ -216,33 +216,32 @@ class FileStore:
                     }
                     for fid, e in self._entries.items()
                 }
-            # Safety: never overwrite a populated index with empty data
-            # if file directories still exist on disk
-            if not data:
-                existing_dirs = [
-                    d for d in Path(self._base_dir).iterdir()
-                    if d.is_dir() and not d.name.startswith("_")
-                ]
-                if existing_dirs:
-                    logger.warning(
-                        "FileStore: refusing to save empty index — "
-                        "%d file dirs still on disk. Call _rebuild_index() first.",
-                        len(existing_dirs))
-                    return
-            path = self._index_path()
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            # os.replace can fail on Windows if another process holds the file
-            for _attempt in range(3):
-                try:
-                    os.replace(tmp, path)
-                    break
-                except OSError:
-                    if _attempt < 2:
-                        time.sleep(0.1)
-                    else:
-                        raise
+                # Safety: never overwrite a populated index with empty data
+                # if file directories still exist on disk
+                if not data:
+                    existing_dirs = [
+                        d for d in Path(self._base_dir).iterdir()
+                        if d.is_dir() and not d.name.startswith("_")
+                    ]
+                    if existing_dirs:
+                        logger.warning(
+                            "FileStore: refusing to save empty index — "
+                            "%d file dirs still on disk. Call _rebuild_index() first.",
+                            len(existing_dirs))
+                        return
+                path = self._index_path()
+                tmp = path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False)
+                for _attempt in range(3):
+                    try:
+                        os.replace(tmp, path)
+                        break
+                    except OSError:
+                        if _attempt < 2:
+                            time.sleep(0.1)
+                        else:
+                            raise
         except Exception as e:
             logger.error(f"FileStore: failed to save index: {e}")
 

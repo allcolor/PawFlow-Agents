@@ -5541,7 +5541,9 @@ function copyMsg(btn) {
     const el = clone.querySelector(sel);
     if (el) el.remove();
   }
-  const text = (clone.textContent || clone.innerText).trim();
+  let text = (clone.textContent || clone.innerText).trim();
+  // Strip target badge prefix like "[→ assistant] " or "[btw → agent] "
+  text = text.replace(/^\[(btw\s*)?\u2192\s*[^\]]+\]\s*/, '');
   navigator.clipboard.writeText(text).then(() => {
     btn.textContent = '\u2705';
     setTimeout(() => { btn.textContent = '\u{1F4CB}'; }, 1500);

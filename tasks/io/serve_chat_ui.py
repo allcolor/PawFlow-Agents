@@ -6399,7 +6399,6 @@ async function showResourceEditor(rtype, name) {
     <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
   </div>`;
   overlay.appendChild(panel);
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);
 }
 
@@ -6435,7 +6434,6 @@ function showResourceCreator(rtype) {
     <button onclick="_saveResourceCreate('${rtype}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
   </div>`;
   overlay.appendChild(panel);
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);
 }
 
@@ -6485,7 +6483,6 @@ function _showAssignDialog(taskDefName) {
     <button onclick="_submitAssign('${taskDefName}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
   </div>`;
   overlay.appendChild(panel);
-  overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);
   document.getElementById('assign-agent').focus();
 }
@@ -6627,8 +6624,7 @@ async function _showServiceEditor(serviceId, scope) {
     </div>`;
     panel.dataset.configKeys = JSON.stringify(Object.keys(config));
     overlay.appendChild(panel);
-    overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
-    document.body.appendChild(overlay);
+      document.body.appendChild(overlay);
   } catch (e) { addMsg('error', e.message); }
 }
 
@@ -6741,7 +6737,6 @@ function _showParamEditor(key, scope, isSecret, isNew) {
     <button onclick="_saveParam('${key}','${scope}',${isSecret},${isNew})" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
   </div>`;
   overlay.appendChild(panel);
-  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
   document.body.appendChild(overlay);
 }
 

@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+# Size limits (prevent memory explosion)
+MAX_FILE_SIZE = 50 * 1024 * 1024    # 50 MB for read/write
+MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
+
 # Actions that require write access
 WRITE_ACTIONS = frozenset({
     "write_file", "delete_file", "mkdir", "find_replace", "edit",
@@ -46,6 +50,10 @@ def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
 
 def action_read_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    max_size = req.get("max_size", MAX_FILE_SIZE)
+    size = Path(path).stat().st_size
+    if size > max_size:
+        raise ValueError(f"File too large ({size} bytes, max {max_size}). Use read_file_chunked.")
     content = Path(path).read_bytes()
     return {"content": base64.b64encode(content).decode("ascii"), "size": len(content)}
 
@@ -53,6 +61,8 @@ def action_read_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     content = req.get("content", "")
     raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
+    if len(raw) > MAX_FILE_SIZE:
+        raise ValueError(f"Content too large ({len(raw)} bytes, max {MAX_FILE_SIZE}). Use write_file_chunked.")
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_bytes(raw)
@@ -188,9 +198,15 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         cwd=root_dir,
         env=env,
     )
+    stdout = result.stdout or ""
+    stderr = result.stderr or ""
+    if len(stdout) > MAX_EXEC_OUTPUT:
+        stdout = stdout[:MAX_EXEC_OUTPUT] + f"\n... (truncated, {len(result.stdout)} bytes total)"
+    if len(stderr) > MAX_EXEC_OUTPUT:
+        stderr = stderr[:MAX_EXEC_OUTPUT] + f"\n... (truncated, {len(result.stderr)} bytes total)"
     return {
-        "stdout": result.stdout or "",
-        "stderr": result.stderr or "",
+        "stdout": stdout,
+        "stderr": stderr,
         "returncode": result.returncode,
     }
 
@@ -269,6 +285,73 @@ def action_git_checkout(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return {"output": result.stdout, "branch": ref}
 
 
+# ── Chunked read/write (for large files) ─────────────────────────
+
+CHUNK_SIZE = 1024 * 1024  # 1 MB per chunk
+
+
+def action_read_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Read a file in chunks. Returns first chunk + metadata.
+
+    The caller must handle {"type": "chunked", "total_size": N, "chunk_size": M,
+    "total_chunks": K, "chunk_index": 0, "data": base64, "path": relpath}.
+    Subsequent chunks are requested with action=read_chunk, index=N.
+    """
+    chunk_size = req.get("chunk_size", CHUNK_SIZE)
+    p = Path(path)
+    total_size = p.stat().st_size
+    total_chunks = (total_size + chunk_size - 1) // chunk_size
+    # Read first chunk
+    with open(path, "rb") as f:
+        data = f.read(chunk_size)
+    return {
+        "type": "chunked",
+        "total_size": total_size,
+        "chunk_size": chunk_size,
+        "total_chunks": total_chunks,
+        "chunk_index": 0,
+        "data": base64.b64encode(data).decode("ascii"),
+        "path": _rel(path, root_dir),
+    }
+
+
+def action_read_chunk(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Read a specific chunk of a file by index."""
+    chunk_size = req.get("chunk_size", CHUNK_SIZE)
+    index = req.get("index", 0)
+    offset = index * chunk_size
+    with open(path, "rb") as f:
+        f.seek(offset)
+        data = f.read(chunk_size)
+    return {
+        "chunk_index": index,
+        "data": base64.b64encode(data).decode("ascii"),
+        "size": len(data),
+        "done": len(data) < chunk_size,
+    }
+
+
+def action_write_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Write a chunk to a file. First chunk creates/truncates, subsequent append.
+
+    req: {"chunk_index": 0, "data": base64, "done": false}
+    Last chunk has "done": true.
+    """
+    chunk_data = base64.b64decode(req.get("data", ""))
+    chunk_index = req.get("index", 0)
+    done = req.get("done", False)
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    mode = "wb" if chunk_index == 0 else "ab"
+    with open(path, mode) as f:
+        f.write(chunk_data)
+    result = {"chunk_index": chunk_index, "written": len(chunk_data)}
+    if done:
+        result["total_written"] = p.stat().st_size
+        result["path"] = _rel(path, root_dir)
+    return result
+
+
 # ── Action registry ──────────────────────────────────────────────
 
 ACTIONS = {
@@ -284,6 +367,9 @@ ACTIONS = {
     "find_replace": action_find_replace,
     "edit": action_edit,
     "exec": action_exec,
+    "read_file_chunked": action_read_file_chunked,
+    "read_chunk": action_read_chunk,
+    "write_file_chunked": action_write_file_chunked,
     "git_status": action_git_status,
     "git_log": action_git_log,
     "git_diff": action_git_diff,

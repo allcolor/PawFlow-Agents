@@ -381,15 +381,48 @@ class FilesystemService:
         return [FilesystemEntry(**e) if isinstance(e, dict) else e for e in data]
 
     def read_file(self, path: str) -> bytes:
-        data = self._request("read_file", path)
-        if isinstance(data, dict) and "content" in data:
-            return base64.b64decode(data["content"])
-        return data.encode("utf-8") if isinstance(data, str) else data
+        try:
+            data = self._request("read_file", path)
+            if isinstance(data, dict) and "content" in data:
+                return base64.b64decode(data["content"])
+            return data.encode("utf-8") if isinstance(data, str) else data
+        except Exception as e:
+            if "too large" in str(e).lower():
+                return self._read_chunked(path)
+            raise
+
+    def _read_chunked(self, path: str) -> bytes:
+        """Read a large file in chunks via the relay."""
+        first = self._request("read_file_chunked", path)
+        chunks = [base64.b64decode(first["data"])]
+        total_chunks = first.get("total_chunks", 1)
+        chunk_size = first.get("chunk_size", 1024 * 1024)
+        for i in range(1, total_chunks):
+            chunk = self._request("read_chunk", path, index=i, chunk_size=chunk_size)
+            chunks.append(base64.b64decode(chunk["data"]))
+            if chunk.get("done"):
+                break
+        return b"".join(chunks)
 
     def write_file(self, path: str, content: bytes):
-        self._request("write_file", path,
-                       content=base64.b64encode(content).decode("ascii"),
-                       base64=True)
+        if len(content) > 50 * 1024 * 1024:  # > 50MB → chunked
+            self._write_chunked(path, content)
+        else:
+            self._request("write_file", path,
+                           content=base64.b64encode(content).decode("ascii"),
+                           base64=True)
+
+    def _write_chunked(self, path: str, content: bytes):
+        """Write a large file in chunks via the relay."""
+        chunk_size = 1024 * 1024  # 1MB
+        total = len(content)
+        for i in range(0, total, chunk_size):
+            chunk = content[i:i + chunk_size]
+            done = (i + chunk_size) >= total
+            self._request("write_file_chunked", path,
+                           index=i // chunk_size,
+                           data=base64.b64encode(chunk).decode("ascii"),
+                           done=done)
 
     def delete_file(self, path: str):
         self._request("delete_file", path)

@@ -81,7 +81,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
 .messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
-       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; overflow: hidden; }
+       white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
 .msg a { color: #4fc3f7; text-decoration: underline; }
 .msg code { background: rgba(0,0,0,0.3); padding: 1px 5px; border-radius: 3px; font-size: 13px; }
 .msg pre { background: rgba(0,0,0,0.4); padding: 10px; border-radius: 6px; overflow-x: auto;

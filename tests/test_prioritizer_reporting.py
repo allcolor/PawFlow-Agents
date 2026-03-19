@@ -47,13 +47,14 @@ class TestPrioritizedQueue:
 
     def test_priority_attribute(self):
         q = PrioritizedQueue(PrioritizerType.PRIORITY_ATTRIBUTE, priority_attribute="priority")
-        ff1 = FlowFile(content=b"low", attributes={"priority": "10"})
-        ff2 = FlowFile(content=b"high", attributes={"priority": "1"})
+        ff1 = FlowFile(content=b"urgent", attributes={"priority": "10"})
+        ff2 = FlowFile(content=b"low", attributes={"priority": "1"})
         ff3 = FlowFile(content=b"medium", attributes={"priority": "5"})
         q.put(ff1)
         q.put(ff2)
         q.put(ff3)
-        assert q.get().get_content() == b"high"
+        # Higher number = more urgent (dequeued first)
+        assert q.get().get_content() == b"urgent"
         assert q.get().get_content() == b"medium"
         assert q.get().get_content() == b"low"
 

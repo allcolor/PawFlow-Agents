@@ -70,7 +70,7 @@ html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
   .sidebar.open { left: 0; }
   .sidebar-toggle { display: block; }
 }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; max-width: calc(100vw - 260px); overflow: hidden; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; width: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; }
 .header h1 { font-size: 18px; color: #e94560; }

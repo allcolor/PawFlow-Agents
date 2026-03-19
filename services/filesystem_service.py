@@ -1,35 +1,246 @@
-"""Unified Filesystem Service — reverse WebSocket relay.
+"""Unified Filesystem Service — WS listener that relays connect to.
 
-The relay runs on the user's machine and connects TO the PawFlow server.
-This service resolves commands via the RelayConnectionManager.
+Like HTTPListenerService: binds a port, accepts relay connections.
+Multiple services can share a port (different paths).
 
 Config:
+    port: int       — WS listener port (default: 9091)
+    path: str       — WS endpoint path (default: /ws/relay)
     token: str      — Shared token (relay must match to connect)
-    mode: str       — Permission mode: "read" | "readwrite" (default: "readwrite")
+    mode: str       — "readwrite" | "readonly" (informational)
 
-Usage:
-    1. Create service in PawFlow: type=filesystem, token=abc123, mode=readwrite
-    2. Start relay: python tools/pawflow_relay.py --server ws://host:port/ws/relay
-       --relay-id <service_id> --token abc123 --dir /path
-    3. Agent calls: filesystem(action=read_file, path=file.txt, service=<service_id>)
+Relay usage:
+    python tools/pawflow_relay.py --server ws://host:port/path
+        --relay-id <service_id> --token <token> --dir /path
 """
 
+import asyncio
+import base64
+import hashlib
+import json
 import logging
+import os
+import struct
 import threading
 import time
+import uuid
 from typing import Any, Dict, List, Optional
 
-from core import ServiceError
+from core import ServiceFactory
 
 logger = logging.getLogger(__name__)
 
 
-class FilesystemService:
-    """Filesystem service backed by a reverse WebSocket relay.
+# ── Shared WS Listener (singleton per port) ──────────────────────
 
-    The relay connects to the server and registers with relay_id = service_id.
-    Commands are routed via RelayConnectionManager.
-    """
+class FilesystemWSListener:
+    """Shared WebSocket listener — one per port, multiple filesystem services."""
+
+    _instances: Dict[int, "FilesystemWSListener"] = {}
+    _lock = threading.Lock()
+
+    @classmethod
+    def get_or_create(cls, port: int) -> "FilesystemWSListener":
+        with cls._lock:
+            if port not in cls._instances:
+                inst = cls(port)
+                cls._instances[port] = inst
+            return cls._instances[port]
+
+    def __init__(self, port: int):
+        self._port = port
+        self._routes: Dict[str, "FilesystemService"] = {}  # path → service
+        self._routes_lock = threading.Lock()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._thread: Optional[threading.Thread] = None
+        self._server = None
+        self._ref_count = 0
+
+    def register_route(self, path: str, service: "FilesystemService"):
+        with self._routes_lock:
+            self._routes[path] = service
+            self._ref_count += 1
+        if not self._thread or not self._thread.is_alive():
+            self._start()
+
+    def unregister_route(self, path: str):
+        with self._routes_lock:
+            self._routes.pop(path, None)
+            self._ref_count = max(0, self._ref_count - 1)
+
+    def _start(self):
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True,
+            name=f"fs-ws-listener-{self._port}",
+        )
+        self._thread.start()
+        # Wait for server to be ready
+        for _ in range(50):
+            if self._server:
+                break
+            time.sleep(0.1)
+
+    def _run(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self):
+        self._server = await asyncio.start_server(
+            self._handle_connection, "0.0.0.0", self._port,
+        )
+        logger.info("Filesystem WS listener started on port %d", self._port)
+        async with self._server:
+            await self._server.serve_forever()
+
+    async def _handle_connection(self, reader: asyncio.StreamReader,
+                                  writer: asyncio.StreamWriter):
+        """Handle incoming relay connection — WS upgrade + command loop."""
+        addr = writer.get_extra_info("peername")
+        tag = f"{addr[0]}:{addr[1]}" if addr else "?"
+
+        try:
+            # Read HTTP upgrade request
+            request = b""
+            while b"\r\n\r\n" not in request:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=10)
+                if not chunk:
+                    return
+                request += chunk
+
+            # Parse request path
+            first_line = request.split(b"\r\n")[0].decode("latin-1", errors="replace")
+            parts = first_line.split()
+            req_path = parts[1] if len(parts) >= 2 else "/"
+
+            # Find service for this path
+            with self._routes_lock:
+                service = self._routes.get(req_path)
+            if not service:
+                writer.write(b"HTTP/1.1 404 Not Found\r\n\r\n")
+                await writer.drain()
+                writer.close()
+                return
+
+            # WS upgrade response
+            ws_key = b""
+            for line in request.split(b"\r\n"):
+                if line.lower().startswith(b"sec-websocket-key:"):
+                    ws_key = line.split(b":", 1)[1].strip()
+            accept = base64.b64encode(
+                hashlib.sha1(ws_key + b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B").digest()
+            ).decode()
+            writer.write(
+                f"HTTP/1.1 101 Switching Protocols\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Accept: {accept}\r\n"
+                f"\r\n".encode("latin-1")
+            )
+            await writer.drain()
+
+            # Read first message (registration)
+            opcode, payload = await self._ws_recv(reader)
+            if opcode != 0x01:
+                writer.close()
+                return
+            reg = json.loads(payload.decode("utf-8"))
+            if reg.get("type") != "register":
+                writer.close()
+                return
+
+            # Validate token
+            relay_token = reg.get("token", "")
+            if not relay_token or relay_token != service._token:
+                await self._ws_send(writer, json.dumps(
+                    {"type": "error", "message": "Token mismatch"}
+                ).encode())
+                writer.close()
+                return
+
+            relay_id = reg.get("relay_id", "")
+            logger.info("Relay connected: %s (path=%s, addr=%s)", relay_id, req_path, tag)
+
+            # Confirm registration
+            await self._ws_send(writer, json.dumps({
+                "type": "registered", "relay_id": relay_id,
+            }).encode())
+
+            # Store relay connection on the service
+            service._set_relay(reader, writer, self._loop)
+
+            # Main loop: read results from relay
+            while True:
+                try:
+                    opcode, payload = await asyncio.wait_for(
+                        self._ws_recv(reader), timeout=120)
+                except asyncio.TimeoutError:
+                    # Send ping
+                    await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
+                    continue
+
+                if opcode == 0x08:  # close
+                    break
+                if opcode == 0x09:  # ping
+                    await self._ws_send(writer, payload, opcode=0x0A)
+                    continue
+                if opcode != 0x01:  # text
+                    continue
+
+                msg = json.loads(payload.decode("utf-8"))
+                if msg.get("type") == "result" or msg.get("type") == "error":
+                    service._resolve_pending(msg)
+                elif msg.get("type") == "ping":
+                    await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
+
+        except Exception as e:
+            logger.debug("Relay connection error (%s): %s", tag, e)
+        finally:
+            if service:
+                service._clear_relay()
+            try:
+                writer.close()
+            except Exception:
+                pass
+            logger.info("Relay disconnected: %s", tag)
+
+    # ── WS frame helpers (minimal, no deps) ──
+
+    async def _ws_recv(self, reader: asyncio.StreamReader):
+        hdr = await reader.readexactly(2)
+        opcode = hdr[0] & 0x0F
+        masked = bool(hdr[1] & 0x80)
+        length = hdr[1] & 0x7F
+        if length == 126:
+            length = struct.unpack("!H", await reader.readexactly(2))[0]
+        elif length == 127:
+            length = struct.unpack("!Q", await reader.readexactly(8))[0]
+        if masked:
+            mask = await reader.readexactly(4)
+            data = await reader.readexactly(length)
+            payload = bytes(b ^ mask[i % 4] for i, b in enumerate(data))
+        else:
+            payload = await reader.readexactly(length)
+        return opcode, payload
+
+    async def _ws_send(self, writer: asyncio.StreamWriter, data: bytes, opcode=0x01):
+        frame = bytes([0x80 | opcode])
+        length = len(data)
+        if length < 126:
+            frame += bytes([length])
+        elif length < 65536:
+            frame += bytes([126]) + struct.pack("!H", length)
+        else:
+            frame += bytes([127]) + struct.pack("!Q", length)
+        frame += data
+        writer.write(frame)
+        await writer.drain()
+
+
+# ── Filesystem Service ────────────────────────────────────────────
+
+class FilesystemService:
+    """Filesystem service backed by a reverse WebSocket relay."""
 
     TYPE = "filesystem"
     VERSION = "2.0.0"
@@ -37,72 +248,126 @@ class FilesystemService:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        self._port = int(config.get("port", 9091))
+        self._path = config.get("path", "/ws/relay")
         self._token = config.get("token", "")
         self._mode = config.get("mode", "readwrite")
-        self._service_id = config.get("_service_id", "")  # injected by registry
-        self._connection = True  # always "connected" — relay manages the WS
+        self._service_id = config.get("_service_id", "")
+        self._connection = None
+
+        # Relay state
+        self._relay_reader: Optional[asyncio.StreamReader] = None
+        self._relay_writer: Optional[asyncio.StreamWriter] = None
+        self._relay_loop: Optional[asyncio.AbstractEventLoop] = None
+        self._relay_lock = threading.Lock()
+
+        # Pending requests: {request_id: (Event, result_holder)}
+        self._pending: Dict[str, tuple] = {}
+        self._pending_lock = threading.Lock()
 
     @property
     def service_id(self) -> str:
         return self._service_id
 
     def connect(self):
-        """No-op — the relay connects to us, not the other way."""
-        pass
+        """Register route on the shared listener."""
+        listener = FilesystemWSListener.get_or_create(self._port)
+        listener.register_route(self._path, self)
+        self._connection = listener
+        logger.info("FilesystemService '%s' listening on port %d path %s",
+                     self._service_id, self._port, self._path)
 
     def disconnect(self):
-        """No-op — relay manages its own connection."""
-        pass
+        if self._connection:
+            self._connection.unregister_route(self._path)
+            self._connection = None
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
-    def _get_relay(self):
-        """Get the connected relay for this service."""
-        from core.relay_manager import RelayConnectionManager
-        mgr = RelayConnectionManager.instance()
-        conn = mgr.get(self._user_id if hasattr(self, '_user_id') else "",
-                       relay_type="filesystem")
-        if conn:
-            return conn
-        # Try by relay_id matching service_id
-        with mgr._data_lock:
-            for uid, relays in mgr._connections.items():
-                for rid, rc in relays.items():
-                    if rid == self._service_id and rc.relay_type == "filesystem":
-                        return rc
-        return None
+    # ── Relay connection management ──
+
+    def _set_relay(self, reader, writer, loop):
+        with self._relay_lock:
+            self._relay_reader = reader
+            self._relay_writer = writer
+            self._relay_loop = loop
+
+    def _clear_relay(self):
+        with self._relay_lock:
+            self._relay_reader = None
+            self._relay_writer = None
+            self._relay_loop = None
+        # Cancel pending requests
+        with self._pending_lock:
+            for rid, (evt, holder) in self._pending.items():
+                holder["error"] = "Relay disconnected"
+                evt.set()
+            self._pending.clear()
+
+    def _resolve_pending(self, msg: dict):
+        request_id = msg.get("request_id", "")
+        with self._pending_lock:
+            entry = self._pending.pop(request_id, None)
+        if entry:
+            evt, holder = entry
+            if msg.get("type") == "error":
+                holder["error"] = msg.get("error", "Unknown relay error")
+            else:
+                holder["data"] = msg.get("data", {})
+            evt.set()
 
     def _request(self, action: str, path: str = ".", **kwargs) -> Any:
-        """Send a command to the relay and wait for the result."""
-        import uuid
-        from core.relay_manager import RelayConnectionManager
-
-        mgr = RelayConnectionManager.instance()
-        conn = self._get_relay()
-        if not conn:
-            raise ServiceError(
-                f"Relay '{self._service_id}' not connected. "
+        """Send a command to the relay and wait for the result (sync)."""
+        with self._relay_lock:
+            writer = self._relay_writer
+            loop = self._relay_loop
+        if not writer or not loop:
+            raise Exception(
+                f"Relay not connected to '{self._service_id}'. "
                 f"Start: python tools/pawflow_relay.py "
-                f"--server ws://<host>:<port>/ws/relay "
+                f"--server ws://<host>:{self._port}{self._path} "
                 f"--relay-id {self._service_id} --token <token> --dir <path>"
             )
 
         request_id = uuid.uuid4().hex[:12]
-        user_id = conn.user_id
-        payload = {"action": action, "path": path, **kwargs}
+        evt = threading.Event()
+        holder: Dict[str, Any] = {}
+
+        with self._pending_lock:
+            self._pending[request_id] = (evt, holder)
+
+        # Send command via WS (async→sync bridge)
+        payload = json.dumps({
+            "type": "command",
+            "request_id": request_id,
+            "action": action,
+            "path": path,
+            **kwargs,
+        }).encode("utf-8")
+
+        async def _send():
+            listener = self._connection
+            if listener:
+                await listener._ws_send(writer, payload)
 
         try:
-            result = mgr.send_command_sync(
-                user_id, self._service_id, request_id, payload, timeout=60
-            )
+            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
         except Exception as e:
-            raise ServiceError(f"Relay command failed: {e}")
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise Exception(f"Failed to send to relay: {e}")
 
-        if isinstance(result, dict) and result.get("error"):
-            raise ServiceError(result["error"])
+        # Wait for result
+        if not evt.wait(timeout=60):
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise Exception(f"Relay timeout for {action} on {self._service_id}")
 
-        return result
+        if "error" in holder:
+            raise Exception(holder["error"])
+
+        return holder.get("data")
 
     # ── Filesystem interface ──
 
@@ -112,14 +377,12 @@ class FilesystemService:
         return [FilesystemEntry(**e) if isinstance(e, dict) else e for e in data]
 
     def read_file(self, path: str) -> bytes:
-        import base64
         data = self._request("read_file", path)
         if isinstance(data, dict) and "content" in data:
             return base64.b64decode(data["content"])
         return data.encode("utf-8") if isinstance(data, str) else data
 
     def write_file(self, path: str, content: bytes):
-        import base64
         self._request("write_file", path,
                        content=base64.b64encode(content).decode("ascii"),
                        base64=True)
@@ -157,28 +420,14 @@ class FilesystemService:
 
     # ── Git ──
 
-    def git_status(self, path: str = "."):
-        return self._request("git_status", path)
-
-    def git_log(self, path: str = ".", count: int = 10):
-        return self._request("git_log", path, count=count)
-
-    def git_diff(self, path: str = ".", ref: str = ""):
-        return self._request("git_diff", path, ref=ref)
-
-    def git_commit(self, path: str = ".", message: str = ""):
-        return self._request("git_commit", path, message=message)
-
-    def git_pull(self, path: str = "."):
-        return self._request("git_pull", path)
-
-    def git_push(self, path: str = "."):
-        return self._request("git_push", path)
-
-    def git_checkout(self, path: str = ".", ref: str = ""):
-        return self._request("git_checkout", path, ref=ref)
+    def git_status(self, path="."): return self._request("git_status", path)
+    def git_log(self, path=".", count=10): return self._request("git_log", path, count=count)
+    def git_diff(self, path=".", ref=""): return self._request("git_diff", path, ref=ref)
+    def git_commit(self, path=".", message=""): return self._request("git_commit", path, message=message)
+    def git_pull(self, path="."): return self._request("git_pull", path)
+    def git_push(self, path="."): return self._request("git_push", path)
+    def git_checkout(self, path=".", ref=""): return self._request("git_checkout", path, ref=ref)
 
 
 # Register with ServiceFactory
-from core import ServiceFactory
 ServiceFactory.register(FilesystemService)

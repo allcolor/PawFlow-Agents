@@ -90,6 +90,8 @@
     "service_id": "localFS",
     "service_type": "filesystem",
     "config": {
+      "port": 9091,
+      "path": "/ws/relay",
       "token": "monsecret",
       "mode": "readwrite"
     },

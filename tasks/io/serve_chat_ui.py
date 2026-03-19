@@ -6826,6 +6826,20 @@ document.addEventListener('click', (e) => {
 });
 
 addMsg('system', t('welcome'));
+
+// DEBUG: track message DOM removals
+const _msgObserver = new MutationObserver((mutations) => {
+  for (const m of mutations) {
+    for (const node of m.removedNodes) {
+      if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {
+        const role = node.className.replace('msg ', '');
+        const text = (node.dataset.rawText || node.textContent || '').substring(0, 80);
+        console.warn('[MSG REMOVED]', role, text, new Error().stack.split('\n').slice(1,4).join(' <- '));
+      }
+    }
+  }
+});
+_msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
 loadConversations();

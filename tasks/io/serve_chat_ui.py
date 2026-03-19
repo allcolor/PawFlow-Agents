@@ -270,7 +270,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
-    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;max-height:55vh;overflow-y:auto;"></div>
+    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;max-height:55vh;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#333 transparent;"></div>
   </div>
 </div>
 <div class="main">

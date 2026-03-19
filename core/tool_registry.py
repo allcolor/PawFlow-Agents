@@ -4889,6 +4889,12 @@ class FilesystemToolHandler(ToolHandler):
         path = arguments.get("path", ".")
         service_name = arguments.get("service", "")
 
+        # Parse fs:// URLs: fs://service_id/path/to/file
+        if path.startswith("fs://"):
+            parts = path[5:].split("/", 1)
+            service_name = parts[0]
+            path = parts[1] if len(parts) > 1 else "."
+
         # Plan D: try explicit service first, then injected, then search
         svc = None
         if service_name:
@@ -4907,11 +4913,14 @@ class FilesystemToolHandler(ToolHandler):
         try:
             if action == "list_dir":
                 entries = svc.list_dir(path)
+                # Determine service name for fs:// URLs
+                _svc_name = service_name or getattr(svc, 'service_id', '') or 'fs'
+                _base = f"fs://{_svc_name}/{path.rstrip('/')}/" if path != "." else f"fs://{_svc_name}/"
                 lines = []
                 for e in entries:
                     kind = "📁" if e.kind == "directory" else "📄"
                     size = f" ({e.size} bytes)" if e.kind == "file" else ""
-                    lines.append(f"{kind} {e.name}{size}")
+                    lines.append(f"{kind} {_base}{e.name}{size}")
                 return "\n".join(lines) if lines else "(empty directory)"
 
             elif action == "read_file":

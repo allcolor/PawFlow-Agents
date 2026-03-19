@@ -1444,6 +1444,17 @@ function renderMarkdown(text) {
   });
   text = text.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   text = text.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  // fs:// URLs — clickable links to filesystem files
+  text = text.replace(/(fs:\/\/([^\s&<"']+))/g, function(_, url, rest) {
+    const parts = rest.split('/');
+    const service = parts[0];
+    const fpath = parts.slice(1).join('/');
+    const fname = parts[parts.length - 1] || fpath;
+    const isDir = url.endsWith('/');
+    const icon = isDir ? '\uD83D\uDCC1' : '\uD83D\uDCC4';
+    return '<a class="flink" href="#" style="color:#6c5ce7;cursor:pointer;" onclick="event.preventDefault();fetchFsFile(\'' + service + '\',\'' + fpath + '\')">'
+      + icon + ' ' + fname + '</a>';
+  });
   // Bare URLs (skip those already inside HTML tags or attributes)
   // Split on existing tags (<a>, <img>, <div> with onclick, etc.) to avoid double-linking
   const parts = text.split(/(<[^>]+>)/gi);
@@ -6754,6 +6765,30 @@ function toggleResourcesSection() {
 }
 
 // ── File Viewer ─────────────────────────────────────────────────
+function fetchFsFile(service, fpath) {
+  // Fetch file from filesystem service and open in viewer
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({
+      action: 'call_tool', tool_name: 'filesystem',
+      arguments: { action: 'read_file', path: fpath, service: service },
+      conversation_id: conversationId,
+    }),
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', 'Failed to read fs://' + service + '/' + fpath + ': ' + data.error); return; }
+    const result = data.result || '';
+    // Check if it's text or base64 binary
+    if (result.startsWith('(binary file')) {
+      addMsg('system', 'Binary file: fs://' + service + '/' + fpath);
+    } else {
+      // Create blob and open in viewer
+      const blob = new Blob([result], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      openFileViewer(url);
+    }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+}
+
 function openFileViewer(filenameOrUrl) {
   let viewer = document.getElementById('fileViewer');
   if (!viewer) {

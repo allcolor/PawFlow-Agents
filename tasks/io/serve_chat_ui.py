@@ -24,6 +24,10 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 <title>PawFlow Agent Chat</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #555; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
        background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
@@ -79,7 +83,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .header .actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .header .user-info { font-size: 12px; color: #8888aa; }
 .messages-wrap { flex: 1; position: relative; overflow: hidden; display: flex; flex-direction: column; }
-.messages { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+.messages { flex: 1; overflow-y: overlay; overflow-x: hidden; padding: 20px; display: flex; flex-direction: column; gap: 12px;
+            scrollbar-width: thin; scrollbar-color: #333 transparent; }
 .msg { max-width: 80%; padding: 10px 14px; border-radius: 12px; line-height: 1.5; font-size: 14px;
        white-space: pre-wrap; word-wrap: break-word; overflow-wrap: anywhere; }
 .msg a { color: #4fc3f7; text-decoration: underline; }

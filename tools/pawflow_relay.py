@@ -578,6 +578,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             sock = socket.create_connection((host, port), timeout=30)
             if use_ssl:
                 ctx = ssl.create_default_context()
+                # Accept self-signed ephemeral certs from the PawFlow service
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
                 sock = ctx.wrap_socket(sock, server_hostname=host)
 
             ws_key = b64.b64encode(os.urandom(16)).decode()

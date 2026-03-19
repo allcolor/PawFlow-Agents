@@ -67,6 +67,14 @@ class FilesystemWSListener:
         with self._routes_lock:
             self._routes.pop(path, None)
             self._ref_count = max(0, self._ref_count - 1)
+        # Cleanup temp cert files
+        for attr in ("_cert_file", "_key_file"):
+            f = getattr(self, attr, None)
+            if f and hasattr(f, "name"):
+                try:
+                    os.unlink(f.name)
+                except OSError:
+                    pass
 
     def _start(self):
         self._loop = asyncio.new_event_loop()
@@ -85,11 +93,59 @@ class FilesystemWSListener:
         asyncio.set_event_loop(self._loop)
         self._loop.run_until_complete(self._serve())
 
+    def _create_ssl_context(self):
+        """Generate ephemeral self-signed cert for TLS."""
+        import ssl
+        import tempfile
+        try:
+            from cryptography import x509
+            from cryptography.x509.oid import NameOID
+            from cryptography.hazmat.primitives import hashes, serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            import datetime as _dt
+
+            key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+            subject = issuer = x509.Name([
+                x509.NameAttribute(NameOID.COMMON_NAME, "pawflow-relay"),
+            ])
+            cert = (
+                x509.CertificateBuilder()
+                .subject_name(subject)
+                .issuer_name(issuer)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(_dt.datetime.now(_dt.timezone.utc))
+                .not_valid_after(_dt.datetime.now(_dt.timezone.utc) + _dt.timedelta(days=1))
+                .sign(key, hashes.SHA256())
+            )
+            # Write to temp files
+            self._cert_file = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
+            self._cert_file.write(cert.public_bytes(serialization.Encoding.PEM))
+            self._cert_file.close()
+            self._key_file = tempfile.NamedTemporaryFile(suffix=".pem", delete=False)
+            self._key_file.write(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.TraditionalOpenSSL,
+                serialization.NoEncryption(),
+            ))
+            self._key_file.close()
+
+            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            ctx.load_cert_chain(self._cert_file.name, self._key_file.name)
+            logger.info("TLS enabled for filesystem listener (ephemeral cert)")
+            return ctx
+        except ImportError:
+            logger.warning("cryptography package not installed — TLS disabled for filesystem relay")
+            return None
+
     async def _serve(self):
+        ssl_ctx = self._create_ssl_context()
         self._server = await asyncio.start_server(
             self._handle_connection, "0.0.0.0", self._port,
+            ssl=ssl_ctx,
         )
-        logger.info("Filesystem WS listener started on port %d", self._port)
+        proto = "wss" if ssl_ctx else "ws"
+        logger.info("Filesystem WS listener started on port %d (%s)", self._port, proto)
         async with self._server:
             await self._server.serve_forever()
 

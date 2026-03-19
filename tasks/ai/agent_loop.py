@@ -695,8 +695,9 @@ class AgentLoopTask(BaseTask):
 
     def _execute_tool_calls(self, tool_calls, registry, consecutive_tracker: dict,
                             max_consecutive: int, *, parallel: bool = True,
-                            agent_name: str = "assistant", agent_svc: str = ""):
-        """Execute tool calls with consecutive-call limiting.
+                            agent_name: str = "assistant", agent_svc: str = "",
+                            conversation_id: str = "", user_id: str = ""):
+        """Execute tool calls with consecutive-call limiting + approval gate.
 
         Returns list of (tool_call, result_text) in original order.
         """
@@ -719,6 +720,15 @@ class AgentLoopTask(BaseTask):
                     f"Stop and explain to the user what you've tried so far, "
                     f"and ask if they want you to continue."
                 )
+            # Approval gate: check if user has pre-approved this tool/action
+            from core.tool_approval import ToolApprovalGate
+            approval = ToolApprovalGate.check(
+                tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                conversation_id, user_id,
+                arguments=tc.arguments,
+            )
+            if approval != "approved":
+                return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
             # Re-inject thread-local source agent (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():
@@ -4796,6 +4806,8 @@ class AgentLoopTask(BaseTask):
                 parallel=False,
                 agent_name=ctx.get("active_agent_name") or "assistant",
                 agent_svc=ctx.get("active_llm_service", ""),
+                conversation_id=ctx.get("conversation_id", ""),
+                user_id=ctx.get("user_id", ""),
             )
             for tc, result_text in results:
                 tools_called.append(tc.name)
@@ -5732,6 +5744,8 @@ class AgentLoopTask(BaseTask):
                         _max_consec_s, parallel=True,
                         agent_name=_agent_name or "assistant",
                         agent_svc=_agent_svc or "",
+                        conversation_id=conversation_id,
+                        user_id=ctx.get("user_id", ""),
                     )
 
                     # Process results in original order

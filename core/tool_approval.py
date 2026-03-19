@@ -21,13 +21,25 @@ class ToolApprovalGate:
     EXEMPT_TOOLS = frozenset({
         "recall", "semantic_recall", "pawflow_help", "list_secrets",
         "get_agent_results", "show_file", "manage_resource",
+        "remember", "forget", "notify_user", "web_search",
     })
 
     # Tools that always need approval (dangerous operations)
     ALWAYS_ASK = frozenset({
-        "remote_exec", "execute_script", "local_files",
-        "filesystem", "browser_action",
+        "remote_exec", "execute_script", "browser_action",
     })
+
+    # Filesystem: read-only actions are exempt, write actions ask once,
+    # dangerous actions always ask
+    _FS_EXEMPT = frozenset({
+        "list_dir", "read_file", "stat", "exists", "search", "grep",
+        "git_status", "git_log", "git_diff",
+    })
+    _FS_ALWAYS_ASK = frozenset({
+        "exec", "git_push", "git_checkout",
+    })
+    # Everything else (write_file, edit, mkdir, delete_file, find_replace,
+    # git_commit) = ask once, allow "session" option
 
     _lock = threading.Lock()
     _pending: Dict[str, threading.Event] = {}
@@ -37,35 +49,68 @@ class ToolApprovalGate:
     def check(
         cls, tool_name: str, action_summary: str,
         conversation_id: str, user_id: str,
+        arguments: dict = None,
     ) -> str:
         """Check if tool execution is approved.
 
         Returns "approved" or "denied" or "timeout".
+        For filesystem tool, the action field determines the approval level.
+        Users can always override with "always_allow" — even for dangerous tools.
         """
-        if tool_name in cls.EXEMPT_TOOLS:
+        # Determine effective approval level
+        effective_name = tool_name
+        needs_ask = tool_name in cls.ALWAYS_ASK
+        is_exempt = tool_name in cls.EXEMPT_TOOLS
+
+        # Filesystem: action-aware approval
+        if tool_name == "filesystem" and arguments:
+            fs_action = arguments.get("action", "")
+            effective_name = f"filesystem.{fs_action}"
+            if fs_action in cls._FS_EXEMPT:
+                is_exempt = True
+                needs_ask = False
+            elif fs_action in cls._FS_ALWAYS_ASK:
+                needs_ask = True
+                is_exempt = False
+            else:
+                # Write actions: ask once, allow session
+                needs_ask = True
+                is_exempt = False
+
+        if is_exempt:
             return "approved"
 
-        # Check conversation-level permissions
+        # Check conversation-level permissions (user can override anything)
         perms = cls._get_permissions(conversation_id)
-
-        tool_perm = perms.get(tool_name, "")
-        if tool_perm == "always_allow":
+        # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:filesystem.localFS)
+        if tool_name == "filesystem" and arguments:
+            svc_name = arguments.get("service", "")
+            if svc_name and perms.get(f"_allow_all:filesystem.{svc_name}") == "always_allow":
+                return "approved"
+            if perms.get("_allow_all:filesystem") == "always_allow":
+                return "approved"
+        if perms.get(f"_allow_all:{tool_name}") == "always_allow":
             return "approved"
-        if tool_perm == "session_allow":
+        tool_perm = perms.get(effective_name, "") or perms.get(tool_name, "")
+        if tool_perm in ("always_allow", "session_allow"):
+            return "approved"
+
+        if not needs_ask:
             return "approved"
 
         # Need to ask the user
         if not conversation_id:
-            # No conversation context — can't show dialog
-            if tool_name not in cls.ALWAYS_ASK:
-                return "approved"
             return "denied"
 
         request_id = uuid.uuid4().hex[:12]
         event = threading.Event()
 
         with cls._lock:
-            cls._pending[request_id] = event
+            cls._pending[request_id] = {
+                "event": event,
+                "effective_name": effective_name,
+                "conversation_id": conversation_id,
+            }
 
         # Publish SSE event for approval dialog
         try:
@@ -73,7 +118,7 @@ class ToolApprovalGate:
             ConversationEventBus.instance().publish_event(
                 conversation_id, "tool_approval_request", {
                     "request_id": request_id,
-                    "tool_name": tool_name,
+                    "tool_name": effective_name,
                     "action_summary": action_summary,
                 },
             )
@@ -94,21 +139,22 @@ class ToolApprovalGate:
             return "timeout"
 
         with cls._lock:
+            pending_info = cls._pending.pop(request_id, {})
             result = cls._results.pop(request_id, None)
-            cls._pending.pop(request_id, None)
 
         if result is None:
             return "denied"
 
         choice = result.get("choice", "deny")
+        perm_name = pending_info.get("effective_name", effective_name) if isinstance(pending_info, dict) else effective_name
 
         if choice == "allow_once":
             return "approved"
         elif choice == "allow_session":
-            cls._set_permission(conversation_id, tool_name, "session_allow")
+            cls._set_permission(conversation_id, perm_name, "session_allow")
             return "approved"
         elif choice == "always_allow":
-            cls._set_permission(conversation_id, tool_name, "always_allow")
+            cls._set_permission(conversation_id, perm_name, "always_allow")
             return "approved"
         else:
             return "denied"
@@ -117,10 +163,11 @@ class ToolApprovalGate:
     def resolve_request(cls, request_id: str, result: Dict[str, Any]) -> bool:
         """Called when the user responds to an approval dialog."""
         with cls._lock:
-            event = cls._pending.get(request_id)
-            if event is None:
+            pending = cls._pending.get(request_id)
+            if pending is None:
                 logger.warning("tool_approval: resolve for unknown id: %s", request_id)
                 return False
+            event = pending["event"] if isinstance(pending, dict) else pending
             cls._results[request_id] = result
             event.set()
         return True
@@ -137,6 +184,19 @@ class ToolApprovalGate:
             ) or {}
         except Exception:
             return {}
+
+    @classmethod
+    def allow_all(cls, conversation_id: str, scope: str):
+        """Auto-approve all operations for a scope (e.g. 'filesystem.localFS' or 'filesystem').
+
+        Used by /allow-all command. Can be revoked with deny_all().
+        """
+        cls._set_permission(conversation_id, f"_allow_all:{scope}", "always_allow")
+
+    @classmethod
+    def deny_all(cls, conversation_id: str, scope: str):
+        """Revoke auto-approve for a scope."""
+        cls._set_permission(conversation_id, f"_allow_all:{scope}", "")
 
     @classmethod
     def _set_permission(cls, conversation_id: str, tool_name: str, level: str):

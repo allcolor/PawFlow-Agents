@@ -5219,19 +5219,18 @@ async function loadConvFiles() {
       list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
       return;
     }
+    const available = files.filter(f => f.available);
+    if (!available.length) {
+      list.innerHTML = '<span style="color:#555;font-size:12px">No files</span>';
+      return;
+    }
     list.innerHTML = '';
-    for (const f of files) {
-      const statusCls = f.available ? 'available' : 'expired';
-      const statusTip = f.available ? 'Available' : 'Expired/cleaned';
+    for (const f of available) {
       const href = window.location.origin + '/files/' + f.file_id + '/' + f.filename;
       const chip = document.createElement('span');
       chip.className = 'file-chip';
-      if (f.available) {
-        chip.innerHTML = `<span class="file-status ${statusCls}" title="${statusTip}"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;
-        chip.addEventListener('contextmenu', (e) => showFileMenu(e, f.file_id, f.filename));
-      } else {
-        chip.innerHTML = `<span class="file-status ${statusCls}" title="${statusTip}"></span><span style="text-decoration:line-through;color:#808090" title="${statusTip}">${escapeHtml(f.filename)}</span>`;
-      }
+      chip.innerHTML = `<span class="file-status available" title="Available"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;
+      chip.addEventListener('contextmenu', (e) => showFileMenu(e, f.file_id, f.filename));
       list.appendChild(chip);
     }
   } catch (e) {

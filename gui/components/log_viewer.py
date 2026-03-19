@@ -38,7 +38,7 @@ class LogCapture(logging.Handler):
             with cls._lock:
                 if cls._global_instance is None:
                     cls._global_instance = cls(max_records=1000)
-                    # Attach to root logger for pyfi2 modules
+                    # Attach to root logger for openpaw modules
                     for module in ["engine", "core", "tasks", "services"]:
                         logger = logging.getLogger(module)
                         if cls._global_instance not in logger.handlers:
@@ -180,7 +180,7 @@ def render_log_viewer(
             st.download_button(
                 f"📥 {t('logs.export')}",
                 data=export_text,
-                file_name=f"pyfi2_logs{'_' + flow_id if flow_id else ''}.log",
+                file_name=f"openpaw_logs{'_' + flow_id if flow_id else ''}.log",
                 mime="text/plain",
                 key=f"log_export_{key_suffix}",
             )

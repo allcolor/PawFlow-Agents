@@ -1,4 +1,4 @@
-# Documentation Technique et Fonctionnelle - PyFi2
+# Documentation Technique et Fonctionnelle - OpenPaw
 
 ## Table des Matières
 
@@ -26,7 +26,7 @@
 
 ### 1.1. Objectif du Projet
 
-PyFi2 est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes. Il sépare clairement deux états :
+OpenPaw est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes. Il sépare clairement deux états :
 
 - **État Création** : Design et édition des flux, services et tâches dans un dépôt (Git/DB/Fichier)
 - **État Runtime** : Déploiement, configuration et exécution des flux avec gestion des variables
@@ -57,7 +57,7 @@ Repository
 ### 2.1. Structure du Projet
 
 ```
-pyfi2/
+openpaw/
 ├── core/
 │   ├── __init__.py
 │   ├── interface_task.py        # Interface abstraite Task
@@ -338,7 +338,7 @@ Une relation définit comment les FlowFiles circulent entre composants :
 
 ```json
 {
-  "$schema": "http://pyfi2.org/schemas/flow-v1.json",
+  "$schema": "http://openpaw.org/schemas/flow-v1.json",
   "metadata": {
     "name": "mon-flux",
     "version": "1.0.0",
@@ -1031,9 +1031,9 @@ STANDARD_ATTRIBUTES = {
     'line.count': 'Nombre de lignes',
     
     # Système
-    'pyfi2.task.id': 'ID de la tâche en cours',
-    'pyfi2.flow.id': 'ID du flow',
-    'pyfi2.execution.id': 'ID de l\'exécution'
+    'openpaw.task.id': 'ID de la tâche en cours',
+    'openpaw.flow.id': 'ID du flow',
+    'openpaw.execution.id': 'ID de l\'exécution'
 }
 ```
 

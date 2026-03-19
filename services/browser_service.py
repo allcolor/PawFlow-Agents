@@ -6,9 +6,9 @@ a conversation and auto-cleaned after inactivity.
 Playwright is optional — graceful import with clear error if absent.
 
 Config env vars:
-    PYFI2_BROWSER_TIMEOUT: Session inactivity timeout (default: 300s)
-    PYFI2_BROWSER_ALLOWED_DOMAINS: Comma-separated allowlist (empty = all)
-    PYFI2_BROWSER_BLOCKED_DOMAINS: Comma-separated blocklist
+    OPENPAW_BROWSER_TIMEOUT: Session inactivity timeout (default: 300s)
+    OPENPAW_BROWSER_ALLOWED_DOMAINS: Comma-separated allowlist (empty = all)
+    OPENPAW_BROWSER_BLOCKED_DOMAINS: Comma-separated blocklist
 """
 
 import logging
@@ -53,12 +53,12 @@ class BrowserService:
         self._started = False
         self._stop_event = threading.Event()
         self._cleanup_thread: Optional[threading.Thread] = None
-        self._timeout = int(os.environ.get("PYFI2_BROWSER_TIMEOUT", "300"))
+        self._timeout = int(os.environ.get("OPENPAW_BROWSER_TIMEOUT", "300"))
 
-        allowed = os.environ.get("PYFI2_BROWSER_ALLOWED_DOMAINS", "")
+        allowed = os.environ.get("OPENPAW_BROWSER_ALLOWED_DOMAINS", "")
         self._allowed_domains = {d.strip().lower() for d in allowed.split(",") if d.strip()} if allowed else set()
 
-        blocked = os.environ.get("PYFI2_BROWSER_BLOCKED_DOMAINS", "")
+        blocked = os.environ.get("OPENPAW_BROWSER_BLOCKED_DOMAINS", "")
         self._blocked_domains = {d.strip().lower() for d in blocked.split(",") if d.strip()} if blocked else set()
 
     @classmethod

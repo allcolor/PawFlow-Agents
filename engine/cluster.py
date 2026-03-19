@@ -1,4 +1,4 @@
-"""Cluster mode — multi-instance coordination for PyFi2."""
+"""Cluster mode — multi-instance coordination for OpenPaw."""
 
 import json
 import os

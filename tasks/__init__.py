@@ -1,7 +1,7 @@
-# PyFi2 Tasks Module
+# OpenPaw Tasks Module
 
 """
-Module principal des tâches PyFi2.
+Module principal des tâches OpenPaw.
 Fournit et enregistre toutes les tâches disponibles.
 """
 

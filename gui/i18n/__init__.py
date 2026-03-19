@@ -1,4 +1,4 @@
-"""Internationalization for PyFi2 GUI."""
+"""Internationalization for OpenPaw GUI."""
 
 import json
 import os

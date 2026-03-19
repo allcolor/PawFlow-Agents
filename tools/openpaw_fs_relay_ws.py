@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""PyFi2 Filesystem Relay — Standalone WebSocket relay for filesystem access.
+"""OpenPaw Filesystem Relay — Standalone WebSocket relay for filesystem access.
 
-Same functionality as pyfi2_fs_relay.py but over persistent WebSocket
+Same functionality as openpaw_fs_relay.py but over persistent WebSocket
 connections for lower latency on frequent operations. Zero external
 dependencies (stdlib only).
 
 Usage:
-    python pyfi2_fs_relay_ws.py --port 9877 --dir /home/user/data --secret abc123
-    python pyfi2_fs_relay_ws.py --port 9877 --dir C:\\Users\\me\\project --secret abc --readonly
+    python openpaw_fs_relay_ws.py --port 9877 --dir /home/user/data --secret abc123
+    python openpaw_fs_relay_ws.py --port 9877 --dir C:\\Users\\me\\project --secret abc --readonly
 """
 
 import argparse
@@ -289,7 +289,7 @@ def _action_git_diff(root_dir, path, req):
 
 
 def _action_git_commit(root_dir, path, req):
-    message = req.get("message", "PyFi2 auto-commit")
+    message = req.get("message", "OpenPaw auto-commit")
     _git_run(path, ["add", "-A"])
     _git_run(path, ["commit", "-m", message])
     h = _git_run(path, ["rev-parse", "HEAD"])
@@ -446,7 +446,7 @@ async def _serve(bind: str, port: int, root_dir: str, secret: str, readonly: boo
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PyFi2 Filesystem Relay — Secure WebSocket filesystem access",
+        description="OpenPaw Filesystem Relay — Secure WebSocket filesystem access",
     )
     parser.add_argument("--port", type=int, default=9877,
                         help="Port to listen on (default: 9877)")
@@ -469,7 +469,7 @@ def main():
     masked = args.secret[:2] + "*" * max(0, len(args.secret) - 2)
 
     sys.stderr.write(
-        f"\n  PyFi2 Filesystem Relay (WebSocket)\n"
+        f"\n  OpenPaw Filesystem Relay (WebSocket)\n"
         f"  ──────────────────────────────────\n"
         f"  Bind:      {args.bind}:{args.port}\n"
         f"  Directory: {root_dir}\n"

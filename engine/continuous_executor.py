@@ -1,6 +1,6 @@
 """Continuous Flow Executor - NiFi-style execution with queues and backpressure.
 
-The single execution engine for PyFi2:
+The single execution engine for OpenPaw:
 - Tasks are scheduled in a loop when they have input and are RUNNING
 - FlowFiles live in Connection queues between tasks
 - Transaction model: FlowFile is only removed from input queue after

@@ -310,7 +310,7 @@ class WebhookTrigger(BaseTrigger):
 
 
 class EventTrigger(BaseTrigger):
-    """Reacts to internal PyFi2 events (via NotificationManager).
+    """Reacts to internal OpenPaw events (via NotificationManager).
 
     Config:
         events: List[str] -- event patterns to listen for

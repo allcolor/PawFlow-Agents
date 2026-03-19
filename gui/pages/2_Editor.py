@@ -13,7 +13,7 @@ from datetime import datetime
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Editeur de flux - PyFi2",
+    page_title="Editeur de flux - OpenPaw",
     page_icon="✏️",
     layout="wide",
 )

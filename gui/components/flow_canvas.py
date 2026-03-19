@@ -206,7 +206,7 @@ class FlowCanvas:
             task_types = _build_task_types_for_palette(available_task_types)
 
         result_state = streamlit_flow(
-            "pyfi2_canvas",
+            "openpaw_canvas",
             state=state,
             fit_view=True,
             height=height,

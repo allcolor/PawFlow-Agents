@@ -198,22 +198,22 @@ def prometheus_metrics():
             lines.append(f"{name} {value}")
 
     # System info
-    _metric("pyfi2_info", 1, "PyFi2 system info", "gauge",
+    _metric("openpaw_info", 1, "OpenPaw system info", "gauge",
             labels={"version": __version__})
-    _metric("pyfi2_uptime_seconds", f"{time.time() - _start_time:.0f}",
+    _metric("openpaw_uptime_seconds", f"{time.time() - _start_time:.0f}",
             "Seconds since API started")
 
     # Task/service counts
-    _metric("pyfi2_tasks_registered_total", len(TaskFactory.list_types()),
+    _metric("openpaw_tasks_registered_total", len(TaskFactory.list_types()),
             "Number of registered task types")
-    _metric("pyfi2_services_registered_total", len(ServiceFactory.list_types()),
+    _metric("openpaw_services_registered_total", len(ServiceFactory.list_types()),
             "Number of registered service types")
 
     # Audit log
     try:
         audit = AuditLog.get_instance()
         stats = audit.stats()
-        _metric("pyfi2_audit_events_total", stats.get("total_events", 0),
+        _metric("openpaw_audit_events_total", stats.get("total_events", 0),
                 "Total audit events recorded", "counter")
     except Exception:
         pass
@@ -222,11 +222,11 @@ def prometheus_metrics():
     try:
         nm = NotificationManager.get_instance()
         nm_stats = nm.get_stats()
-        _metric("pyfi2_notifications_sent_total", nm_stats.get("total_sent", 0),
+        _metric("openpaw_notifications_sent_total", nm_stats.get("total_sent", 0),
                 "Total notifications sent", "counter")
-        _metric("pyfi2_webhooks_registered", nm_stats.get("webhooks_count", 0),
+        _metric("openpaw_webhooks_registered", nm_stats.get("webhooks_count", 0),
                 "Number of registered webhooks")
-        _metric("pyfi2_handlers_registered", nm_stats.get("handlers_count", 0),
+        _metric("openpaw_handlers_registered", nm_stats.get("handlers_count", 0),
                 "Number of registered handlers")
     except Exception:
         pass
@@ -234,9 +234,9 @@ def prometheus_metrics():
     # Security
     try:
         sm = get_security_manager()
-        _metric("pyfi2_active_sessions", len(sm.list_sessions()),
+        _metric("openpaw_active_sessions", len(sm.list_sessions()),
                 "Number of active sessions")
-        _metric("pyfi2_users_total", len(sm.list_users()),
+        _metric("openpaw_users_total", len(sm.list_users()),
                 "Number of registered users")
     except Exception:
         pass

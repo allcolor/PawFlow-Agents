@@ -3,7 +3,7 @@
   "name": "Example Pipeline",
   "version": "1.0.0",
   "description": "Pipeline de demo: lit des fichiers, log le contenu, ecrit le resultat",
-  "author": "PyFi2 Team",
+  "author": "OpenPaw Team",
   "parameters": {},
   "entries": [],
   "exits": [],
@@ -22,7 +22,7 @@
       "parameters": {
         "set": {
           "pipeline": "example",
-          "processed_by": "PyFi2"
+          "processed_by": "OpenPaw"
         }
       }
     },

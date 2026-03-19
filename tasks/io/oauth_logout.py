@@ -26,7 +26,7 @@ class OAuthLogoutTask(BaseTask):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "cookie_name": {
-                "type": "string", "required": False, "default": "pyfi2_token",
+                "type": "string", "required": False, "default": "openpaw_token",
                 "description": "Name of the session cookie to clear",
             },
             "redirect_to": {
@@ -36,7 +36,7 @@ class OAuthLogoutTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        cookie_name = self.config.get("cookie_name", "pyfi2_token")
+        cookie_name = self.config.get("cookie_name", "openpaw_token")
         redirect_to = self.config.get("redirect_to", "/chat")
 
         # Try to invalidate the session in SecurityManager

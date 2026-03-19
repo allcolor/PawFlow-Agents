@@ -1,6 +1,6 @@
 # Notification System
 
-"""Système de notifications pour PyFi2.
+"""Système de notifications pour OpenPaw.
 
 Envoie des notifications sur les événements de flow (succès, échec, etc.)
 via webhook HTTP, et supporte des handlers custom.

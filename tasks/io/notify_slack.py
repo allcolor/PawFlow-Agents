@@ -27,7 +27,7 @@ class NotifySlackTask(BaseTask):
         super().__init__(config)
         self.webhook_url = self.config.get('webhook_url', '')
         self.channel = self.config.get('channel', '')
-        self.username = self.config.get('username', 'PyFi2')
+        self.username = self.config.get('username', 'OpenPaw')
         self.icon_emoji = self.config.get('icon_emoji', ':robot_face:')
         self.message = self.config.get('message', '')
         self.use_flowfile_content = self.config.get('use_flowfile_content', False)
@@ -78,7 +78,7 @@ class NotifySlackTask(BaseTask):
         return {
             'webhook_url': {'type': 'secret', 'required': False, 'description': 'Slack Incoming Webhook URL'},
             'channel': {'type': 'string', 'required': False, 'description': 'Override channel (#channel)'},
-            'username': {'type': 'string', 'required': False, 'default': 'PyFi2'},
+            'username': {'type': 'string', 'required': False, 'default': 'OpenPaw'},
             'icon_emoji': {'type': 'string', 'required': False, 'default': ':robot_face:'},
             'message': {'type': 'string', 'required': False, 'description': 'Custom message (default: FlowFile content)'},
             'use_flowfile_content': {'type': 'boolean', 'required': False, 'default': False},

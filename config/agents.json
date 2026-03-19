@@ -1,5 +1,5 @@
 {
-  "__global__.grok": {
+  "__global__:grok": {
     "model": "",
     "tools": [],
     "max_depth": 1,
@@ -11,7 +11,7 @@
     "created_at": 1710400000.0,
     "updated_at": 1710400000.0
   },
-  "__global__.claude": {
+  "__global__:claude": {
     "model": "",
     "tools": [],
     "max_depth": 1,
@@ -23,7 +23,7 @@
     "created_at": 1710400000.0,
     "updated_at": 1710400000.0
   },
-  "__global__.qwen": {
+  "__global__:qwen": {
     "model": "",
     "tools": [],
     "max_depth": 1,
@@ -35,7 +35,19 @@
     "created_at": 1773843000.0,
     "updated_at": 1773843000.0
   },
-  "bob.basic": {
+  "quentin.anciaux:ImagePromptMaster": {
+    "model": "",
+    "tools": [],
+    "max_depth": 1,
+    "timeout": 120,
+    "description": "",
+    "llm_service": "",
+    "prompt": "Tu es un maître des prompts pour image gen cyberpunk/Ponyverse. Raffine prompts, propose variantes absurdes/épiques, analyse galeries existantes. Style: direct, créatif, meme-aware. Outils: generate_image si dispo, sinon mockups textuels.",
+    "name": "ImagePromptMaster",
+    "created_at": 1773866718.8048701,
+    "updated_at": 1773866718.8048706
+  },
+  "bob:basic": {
     "model": "",
     "tools": [],
     "max_depth": 1,
@@ -44,7 +56,7 @@
     "llm_service": "",
     "prompt": "Basic assistant",
     "name": "basic",
-    "created_at": 1773841380.589766,
-    "updated_at": 1773841380.5897665
+    "created_at": 1773932711.217095,
+    "updated_at": 1773932711.2170954
   }
 }

@@ -1,14 +1,14 @@
 """validateSessionAuth — validates session-based authentication (cookies + Bearer).
 
 Validates auth from SecurityManager sessions. Supports:
-1. Cookie-based: reads pyfi2_token from Cookie header
+1. Cookie-based: reads openpaw_token from Cookie header
 2. Bearer token: reads session_id from Authorization: Bearer <token>
 
 On success, sets http.auth.principal, http.auth.roles, http.auth.valid.
 On failure, returns 401 JSON or redirects to login page.
 
 Config:
-    cookie_name: str      — cookie name (default "pyfi2_token")
+    cookie_name: str      — cookie name (default "openpaw_token")
     login_redirect: str   — URL to redirect on failure (default "", returns 401 JSON)
     auto_respond: bool    — auto-send error response (default True)
     listener_service_id: str — HTTPListenerService for auto-response
@@ -47,7 +47,7 @@ class ValidateSessionAuthTask(BaseTask):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "cookie_name": {
-                "type": "string", "required": False, "default": "pyfi2_token",
+                "type": "string", "required": False, "default": "openpaw_token",
                 "description": "Session cookie name",
             },
             "login_redirect": {
@@ -65,7 +65,7 @@ class ValidateSessionAuthTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        cookie_name = self.config.get("cookie_name", "pyfi2_token")
+        cookie_name = self.config.get("cookie_name", "openpaw_token")
 
         # Try to extract session token from multiple sources
         token = self._extract_token(flowfile, cookie_name)
@@ -89,7 +89,7 @@ class ValidateSessionAuthTask(BaseTask):
             if refreshed_session:
                 session = refreshed_session
                 # Re-set the cookie with the new session_id
-                cookie_name = self.config.get("cookie_name", "pyfi2_token")
+                cookie_name = self.config.get("cookie_name", "openpaw_token")
                 cookie_max_age = 28800
                 cookie = (
                     f"{cookie_name}={session.session_id}; "
@@ -106,7 +106,7 @@ class ValidateSessionAuthTask(BaseTask):
             refreshed_session = self._try_silent_refresh(flowfile, sm)
             if refreshed_session:
                 session = refreshed_session
-                cookie_name = self.config.get("cookie_name", "pyfi2_token")
+                cookie_name = self.config.get("cookie_name", "openpaw_token")
                 cookie_max_age = 28800
                 cookie = (
                     f"{cookie_name}={session.session_id}; "
@@ -161,7 +161,7 @@ class ValidateSessionAuthTask(BaseTask):
             # The cookie is invalid/expired, so we can't get user from session.
             # But we can extract user from the old (expired) session if it existed,
             # or from stored tokens.
-            cookie_name = self.config.get("cookie_name", "pyfi2_token")
+            cookie_name = self.config.get("cookie_name", "openpaw_token")
             old_token = self._extract_token(flowfile, cookie_name)
 
             # Check if there's an expired session we can identify the user from
@@ -262,7 +262,7 @@ class ValidateSessionAuthTask(BaseTask):
                     # Return 401 JSON
                     headers = {
                         "Content-Type": "application/json",
-                        "WWW-Authenticate": 'Bearer realm="PyFi2"',
+                        "WWW-Authenticate": 'Bearer realm="OpenPaw"',
                     }
                     body = json.dumps({
                         "error": "Unauthorized",

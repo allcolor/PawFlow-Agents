@@ -1,8 +1,8 @@
-# POC GUI - PyFi2
+# POC GUI - OpenPaw
 
 ## Résumé du POC
 
-Ce document présente la Preuve de Concept (POC) de l'interface graphique pour le projet PyFi2.
+Ce document présente la Preuve de Concept (POC) de l'interface graphique pour le projet OpenPaw.
 
 ## Architecture Implémentée
 

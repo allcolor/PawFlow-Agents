@@ -294,17 +294,17 @@ class TestFlowExecutorParameters:
 
     def test_mixed_expression_types(self):
         """${flow.parameters.X} and ${env.Y} should both resolve."""
-        os.environ["_PYFI2_TEST_VAR"] = "env_value"
+        os.environ["_OPENPAW_TEST_VAR"] = "env_value"
         try:
             flow = self._make_flow(
                 flow_params={"key": "param_value"},
-                task_config={"message": "${flow.parameters.key}-${env._PYFI2_TEST_VAR}"},
+                task_config={"message": "${flow.parameters.key}-${env._OPENPAW_TEST_VAR}"},
             )
             result = ContinuousFlowExecutor.run_batch(flow, input_flowfiles=[FlowFile(content=b"")], max_workers=1)
             assert result.success
             assert flow.tasks["task1"].config["message"] == "param_value-env_value"
         finally:
-            del os.environ["_PYFI2_TEST_VAR"]
+            del os.environ["_OPENPAW_TEST_VAR"]
 
 
 # ============================================================================

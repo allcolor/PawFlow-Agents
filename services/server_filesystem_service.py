@@ -200,7 +200,7 @@ class ServerFilesystemBackend(FilesystemBackend):
 
     def git_commit(self, path: str = ".", message: str = "") -> Dict[str, Any]:
         self._git_run(path, ["add", "-A"])
-        self._git_run(path, ["commit", "-m", message or "PyFi2 auto-commit"])
+        self._git_run(path, ["commit", "-m", message or "OpenPaw auto-commit"])
         h = self._git_run(path, ["rev-parse", "HEAD"])
         return {"hash": h.stdout.strip(), "message": message}
 

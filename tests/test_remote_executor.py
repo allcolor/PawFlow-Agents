@@ -165,28 +165,28 @@ class TestApprovalFlow(unittest.TestCase):
 # ═══════════════════════════════════════════════════════════════════
 
 class TestRelayScript(unittest.TestCase):
-    """Test pyfi2_executor_relay.py functions."""
+    """Test openpaw_executor_relay.py functions."""
 
     def test_detect_shell(self):
-        from tools.pyfi2_executor_relay import _detect_shell
+        from tools.openpaw_executor_relay import _detect_shell
         shell = _detect_shell()
         self.assertIsInstance(shell, str)
         self.assertTrue(len(shell) > 0)
 
     def test_default_deny_patterns(self):
-        from tools.pyfi2_executor_relay import _DEFAULT_DENY
+        from tools.openpaw_executor_relay import _DEFAULT_DENY
         self.assertIsInstance(_DEFAULT_DENY, list)
         self.assertTrue(len(_DEFAULT_DENY) >= 4)
 
     def test_action_dispatch_table(self):
-        from tools.pyfi2_executor_relay import _ACTIONS
+        from tools.openpaw_executor_relay import _ACTIONS
         expected = {"shell", "python_exec", "git_status", "git_diff", "git_log",
                     "git_add", "git_commit", "git_push", "git_pull",
                     "git_checkout", "git_reset", "git_branch"}
         self.assertEqual(set(_ACTIONS.keys()), expected)
 
     def test_run_process_success(self):
-        from tools.pyfi2_executor_relay import _run_process
+        from tools.openpaw_executor_relay import _run_process
         import sys, os
         result = _run_process(
             [sys.executable, "-c", "print('hello')"],
@@ -197,7 +197,7 @@ class TestRelayScript(unittest.TestCase):
         self.assertIn("duration_ms", result)
 
     def test_run_process_failure(self):
-        from tools.pyfi2_executor_relay import _run_process
+        from tools.openpaw_executor_relay import _run_process
         import sys, os
         result = _run_process(
             [sys.executable, "-c", "import sys; sys.exit(1)"],
@@ -206,7 +206,7 @@ class TestRelayScript(unittest.TestCase):
         self.assertEqual(result["exit_code"], 1)
 
     def test_run_process_timeout(self):
-        from tools.pyfi2_executor_relay import _run_process
+        from tools.openpaw_executor_relay import _run_process
         import sys, os
         with self.assertRaises(TimeoutError):
             _run_process(
@@ -216,7 +216,7 @@ class TestRelayScript(unittest.TestCase):
 
     def test_handler_resolve_cwd(self):
         """Test path traversal prevention."""
-        from tools.pyfi2_executor_relay import ExecutorRelayHandler
+        from tools.openpaw_executor_relay import ExecutorRelayHandler
         import tempfile
         handler = ExecutorRelayHandler.__new__(ExecutorRelayHandler)
         handler.root_dir = tempfile.gettempdir()
@@ -228,7 +228,7 @@ class TestRelayScript(unittest.TestCase):
         self.assertIsNone(result)
 
     def test_handler_check_deny(self):
-        from tools.pyfi2_executor_relay import ExecutorRelayHandler, _DEFAULT_DENY
+        from tools.openpaw_executor_relay import ExecutorRelayHandler, _DEFAULT_DENY
         handler = ExecutorRelayHandler.__new__(ExecutorRelayHandler)
         handler.deny_patterns = list(_DEFAULT_DENY)
         # Should block
@@ -239,7 +239,7 @@ class TestRelayScript(unittest.TestCase):
         self.assertIsNone(handler._check_deny("git status"))
 
     def test_handler_truncate(self):
-        from tools.pyfi2_executor_relay import ExecutorRelayHandler, MAX_OUTPUT
+        from tools.openpaw_executor_relay import ExecutorRelayHandler, MAX_OUTPUT
         handler = ExecutorRelayHandler.__new__(ExecutorRelayHandler)
         short = "hello"
         self.assertEqual(handler._truncate(short), short)
@@ -249,7 +249,7 @@ class TestRelayScript(unittest.TestCase):
         self.assertIn("truncated", truncated)
 
     def test_make_handler_class(self):
-        from tools.pyfi2_executor_relay import _make_handler_class
+        from tools.openpaw_executor_relay import _make_handler_class
         cls = _make_handler_class("/tmp/test", "secret123", "/bin/bash", set(), [])
         self.assertEqual(cls.root_dir, "/tmp/test")
         self.assertEqual(cls.secret, "secret123")

@@ -1,9 +1,9 @@
 {
   "id": "exemple-flux-1",
-  "name": "Exemple de Flux PyFi2",
+  "name": "Exemple de Flux OpenPaw",
   "version": "1.0.0",
   "description": "Un flux de test simple pour démontrer le GUI",
-  "author": "PyFi2 Team",
+  "author": "OpenPaw Team",
   "created_at": "2026-03-03T00:00:00Z",
   "parameters": {},
   "entries": [],
@@ -21,7 +21,7 @@
       "type": "replace_text",
       "parameters": {
         "search_pattern": "test",
-        "replacement": "PYFI2",
+        "replacement": "OPENPAW",
         "regex": false,
         "case_sensitive": true
       }

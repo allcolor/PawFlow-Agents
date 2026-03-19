@@ -1,8 +1,8 @@
-# PyFi2 - Pipeline Framework
+# OpenPaw - Pipeline Framework
 
 ## Vue d'Ensemble
 
-PyFi2 est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes.
+OpenPaw est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes.
 
 ### Principales Caractéristiques
 
@@ -37,7 +37,7 @@ PyFi2 est un framework Python de type Apache NiFi permettant de créer, déploye
 ## Structure du Projet
 
 ```
-pyfi2/
+openpaw/
 ├── core/                  # Interfaces abstraites et classes de base
 │   ├── __init__.py       # Definitions (Task, Service, Flow, FlowFile)
 │   ├── base_task.py      # Implémentation de base pour les tâches
@@ -77,8 +77,8 @@ pyfi2/
 
 ```bash
 # Cloner le repository
-git clone https://github.com/your-org/pyfi2.git
-cd pyfi2
+git clone https://github.com/your-org/openpaw.git
+cd openpaw
 
 # Installer les dépendances
 pip install -r requirements.txt
@@ -201,7 +201,7 @@ Exemple simplifié :
 
 ```json
 {
-  "$schema": "http://pyfi2.org/schemas/flow-v1.json",
+  "$schema": "http://openpaw.org/schemas/flow-v1.json",
   "metadata": {
     "name": "mon-flux",
     "version": "1.0.0"
@@ -297,7 +297,7 @@ MIT License - Voir le fichier LICENSE
 
 ## Auteur
 
-PyFi2 Team
+OpenPaw Team
 
 ---
 

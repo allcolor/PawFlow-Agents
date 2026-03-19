@@ -1,7 +1,7 @@
 # Data Tasks
 
 """
-Modules Data pour PyFi2.
+Modules Data pour OpenPaw.
 Tâches pour le traitement, la transformation et la validation de données.
 """
 

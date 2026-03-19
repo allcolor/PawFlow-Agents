@@ -1,6 +1,6 @@
 """Plugin System - Dynamic loading of tasks, services, and flows.
 
-Supports .pfp (PyFi2 Plugin) archives — zip files containing:
+Supports .pfp (OpenPaw Plugin) archives — zip files containing:
     plugin.json          # descriptor (required)
     requirements.txt     # pip dependencies (optional)
     tasks/               # task modules (optional)
@@ -15,7 +15,7 @@ plugin.json format:
     "version": "1.0.0",
     "author": "Author",
     "description": "What this plugin does",
-    "min_pyfi2_version": "1.0.0",
+    "min_openpaw_version": "1.0.0",
     "tasks": ["tasks/my_task.py:MyTaskClass"],
     "services": ["services/my_svc.py:MySvcClass"],
     "flows": ["flows/my_flow.json"]
@@ -132,7 +132,7 @@ class PluginDescriptor:
     version: str = "1.0.0"
     author: str = ""
     description: str = ""
-    min_pyfi2_version: str = "1.0.0"
+    min_openpaw_version: str = "1.0.0"
     tasks: List[str] = field(default_factory=list)
     services: List[str] = field(default_factory=list)
     flows: List[str] = field(default_factory=list)
@@ -146,7 +146,7 @@ class PluginDescriptor:
             version=data.get("version", "1.0.0"),
             author=data.get("author", ""),
             description=data.get("description", ""),
-            min_pyfi2_version=data.get("min_pyfi2_version", "1.0.0"),
+            min_openpaw_version=data.get("min_openpaw_version", "1.0.0"),
             tasks=data.get("tasks", []),
             services=data.get("services", []),
             flows=data.get("flows", []),
@@ -160,7 +160,7 @@ class PluginDescriptor:
             "version": self.version,
             "author": self.author,
             "description": self.description,
-            "min_pyfi2_version": self.min_pyfi2_version,
+            "min_openpaw_version": self.min_openpaw_version,
             "tasks": self.tasks,
             "services": self.services,
             "flows": self.flows,
@@ -282,14 +282,14 @@ class PluginManager:
         return descriptor
 
     def _check_compatibility(self, descriptor: PluginDescriptor):
-        """Check if plugin is compatible with current PyFi2 version."""
+        """Check if plugin is compatible with current OpenPaw version."""
         # Simple version check (major.minor)
-        required = descriptor.min_pyfi2_version.split('.')
+        required = descriptor.min_openpaw_version.split('.')
         current = __version__.split('.')
         try:
             if int(current[0]) < int(required[0]):
                 raise ValueError(
-                    f"Plugin {descriptor.id} requires PyFi2 >= {descriptor.min_pyfi2_version}, "
+                    f"Plugin {descriptor.id} requires OpenPaw >= {descriptor.min_openpaw_version}, "
                     f"current is {__version__}"
                 )
         except (ValueError, IndexError):
@@ -956,7 +956,7 @@ def export_flow_as_plugin(
         "version": "1.0.0",
         "author": author,
         "description": description or f"Exported flow: {flow_name}",
-        "min_pyfi2_version": "1.0.0",
+        "min_openpaw_version": "1.0.0",
         "tasks": task_refs,
         "services": service_refs,
         "flows": ["flows/flow.json"],

@@ -474,7 +474,7 @@ def process(input_var_name):
 
 ## 12. Référence Complète des Services
 
-PyFi2 fournit 5 services partagés, accessibles dans les tasks via `self.get_service("service_id")`.
+OpenPaw fournit 5 services partagés, accessibles dans les tasks via `self.get_service("service_id")`.
 
 ### 12.1. Database Connection Pool (`dbConnectionPool`)
 
@@ -830,7 +830,7 @@ storage:
   type: postgres
   host: db.example.com
   port: 5432
-  database: pyfi2
+  database: openpaw
   
 execution:
   max_workers: 50
@@ -861,14 +861,14 @@ CMD ["streamlit", "run", "gui/runtime/app.py"]
 
 ## 18. Services Filesystem
 
-PyFi2 fournit une couche d'abstraction filesystem unifiée. Voir `docs/filesystem.md` pour le guide complet.
+OpenPaw fournit une couche d'abstraction filesystem unifiée. Voir `docs/filesystem.md` pour le guide complet.
 
 ### 18.1. Types de services
 
 | Type | Description | Git | Requis |
 |------|-------------|-----|--------|
-| `localFilesystem` | Relay HTTP vers machine user | Oui | Script `pyfi2_fs_relay.py` |
-| `wsFilesystem` | Relay WebSocket | Oui | Script `pyfi2_fs_relay_ws.py` |
+| `localFilesystem` | Relay HTTP vers machine user | Oui | Script `openpaw_fs_relay.py` |
+| `wsFilesystem` | Relay WebSocket | Oui | Script `openpaw_fs_relay_ws.py` |
 | `browserFilesystem` | File System Access API | Non | Chrome/Edge |
 | `serverFilesystem` | Disque serveur (admin only) | Oui | Rôle admin |
 | `googleDrive` | Google Drive REST API v3 | Non | OAuth2 |

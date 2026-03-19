@@ -1,7 +1,7 @@
-# PyFi2 Core
+# OpenPaw Core
 
 """
-Core module de PyFi2.
+Core module de OpenPaw.
 Définit les interfaces et classes abstraites du framework.
 """
 
@@ -12,39 +12,39 @@ import uuid
 import io
 
 __version__ = "1.0.0"
-__author__ = "PyFi2 Team"
+__author__ = "OpenPaw Team"
 
 
 # ============================================================================
 # Exceptions
 # ============================================================================
 
-class PyFi2Error(Exception):
-    """Exception de base pour PyFi2."""
+class OpenPawError(Exception):
+    """Exception de base pour OpenPaw."""
     pass
 
 
-class TaskError(PyFi2Error):
+class TaskError(OpenPawError):
     """Erreur lors de l'exécution d'une tâche."""
     pass
 
 
-class ServiceError(PyFi2Error):
+class ServiceError(OpenPawError):
     """Erreur lors de l'utilisation d'un service."""
     pass
 
 
-class FlowError(PyFi2Error):
+class FlowError(OpenPawError):
     """Erreur de configuration ou d'exécution d'un flow."""
     pass
 
 
-class ValidationError(PyFi2Error):
+class ValidationError(OpenPawError):
     """Erreur de validation."""
     pass
 
 
-class VariableResolutionError(PyFi2Error):
+class VariableResolutionError(OpenPawError):
     """Erreur de résolution de variables."""
     pass
 

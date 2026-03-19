@@ -1,6 +1,6 @@
-# Architecture Détaillée - PyFi2
+# Architecture Détaillée - OpenPaw
 
-Ce document décrit l'architecture interne de PyFi2, ses composants principaux et leurs interactions.
+Ce document décrit l'architecture interne de OpenPaw, ses composants principaux et leurs interactions.
 
 ---
 
@@ -8,7 +8,7 @@ Ce document décrit l'architecture interne de PyFi2, ses composants principaux e
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
-│                              PyFi2 Architecture                              │
+│                              OpenPaw Architecture                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │                                                                              │
 │  ┌──────────────┐  ┌───────────────────┐  ┌──────────┐  ┌────────────────┐ │
@@ -36,7 +36,7 @@ Ce document décrit l'architecture interne de PyFi2, ses composants principaux e
 
 ### Définition
 
-Le **FlowFile** est l'unité fondamentale de données dans PyFi2. Il contient du contenu binaire et des attributs metadata, avec support transparent du streaming et du disk-spill.
+Le **FlowFile** est l'unité fondamentale de données dans OpenPaw. Il contient du contenu binaire et des attributs metadata, avec support transparent du streaming et du disk-spill.
 
 ### Structure
 
@@ -356,7 +356,7 @@ Le module `engine/cluster.py` fournit un mode cluster pour la coordination multi
 
 ## API Client
 
-Le client Python (`gui/services/api_client.py`) permet de piloter PyFi2 depuis la GUI ou des scripts :
+Le client Python (`gui/services/api_client.py`) permet de piloter OpenPaw depuis la GUI ou des scripts :
 
 ```python
 from gui.services.api_client import APIClient
@@ -374,7 +374,7 @@ client.inject_flowfile(flow_id, content, attributes)
 
 ## Deploiement Docker
 
-PyFi2 fournit un `Dockerfile` et un `docker-compose.yml` pour le deploiement containerise :
+OpenPaw fournit un `Dockerfile` et un `docker-compose.yml` pour le deploiement containerise :
 
 - **api** : Serveur FastAPI (uvicorn) sur le port 8000
 - **gui** : Interface Streamlit sur le port 8501

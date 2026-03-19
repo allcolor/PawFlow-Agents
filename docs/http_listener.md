@@ -1,11 +1,11 @@
 # HTTP Listener — Shared HTTP Server for Flows
 
-PyFi2 provides a shared HTTP listener service that lets multiple flows handle incoming HTTP requests on the same port, with method+URL pattern routing, authentication validation, and custom response control.
+OpenPaw provides a shared HTTP listener service that lets multiple flows handle incoming HTTP requests on the same port, with method+URL pattern routing, authentication validation, and custom response control.
 
 ## Architecture
 
 ```
-HTTP Client                          PyFi2
+HTTP Client                          OpenPaw
     │                                  │
     │  GET /api/users/42               │
     ├─────────────────────────────────►│

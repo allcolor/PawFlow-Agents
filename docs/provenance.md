@@ -1,6 +1,6 @@
-# Système de Provenance - PyFi2
+# Système de Provenance - OpenPaw
 
-Le système de provenance de PyFi2 permet de tracer le cycle de vie complet de chaque FlowFile à travers le pipeline de traitement. Il enregistre tous les événements significatifs pour permettre l'audit, le débogage et la reconstruction du lignage des données.
+Le système de provenance de OpenPaw permet de tracer le cycle de vie complet de chaque FlowFile à travers le pipeline de traitement. Il enregistre tous les événements significatifs pour permettre l'audit, le débogage et la reconstruction du lignage des données.
 
 ---
 
@@ -16,7 +16,7 @@ Le système de provenance de PyFi2 permet de tracer le cycle de vie complet de c
 
 ## Types d'Événements de Provenance
 
-PyFi2 définit **7 types d'événements** :
+OpenPaw définit **7 types d'événements** :
 
 | Type | Quand | Contexte |
 |------|-------|----------|

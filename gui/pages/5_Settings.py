@@ -11,7 +11,7 @@ from typing import Dict, Any
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Paramètres - PyFi2",
+    page_title="Paramètres - OpenPaw",
     page_icon="⚙️",
     layout="wide",
 )
@@ -52,7 +52,7 @@ def render_sidebar():
 
         st.markdown("---")
         st.markdown(f"### {t('common.version')}")
-        st.caption("PyFi2 v0.1.0")
+        st.caption("OpenPaw v0.1.0")
 
         return menu
 
@@ -64,7 +64,7 @@ def render_general_settings():
     # Nom de l'application
     st.session_state.settings["app_name"] = st.text_input(
         t("settings.app_name_label"),
-        value=st.session_state.settings.get("app_name", "PyFi2 - Pipeline Framework"),
+        value=st.session_state.settings.get("app_name", "OpenPaw - Pipeline Framework"),
         key="settings_app_name",
     )
 
@@ -194,7 +194,7 @@ def render_storage_settings():
 
             st.session_state.settings["postgres_db"] = st.text_input(
                 t("settings.database"),
-                value=st.session_state.settings.get("postgres_db", "pyfi2"),
+                value=st.session_state.settings.get("postgres_db", "openpaw"),
                 key="settings_pg_db",
             )
 
@@ -209,7 +209,7 @@ def render_storage_settings():
 
             st.session_state.settings["postgres_user"] = st.text_input(
                 t("settings.users"),
-                value=st.session_state.settings.get("postgres_user", "pyfi2"),
+                value=st.session_state.settings.get("postgres_user", "openpaw"),
                 key="settings_pg_user",
             )
 
@@ -272,7 +272,7 @@ def render_reset():
             type="secondary",
         ):
             st.session_state.settings = {
-                "app_name": "PyFi2 - Pipeline Framework",
+                "app_name": "OpenPaw - Pipeline Framework",
                 "theme": "light",
                 "auto_save": True,
                 "auto_validate": True,
@@ -283,8 +283,8 @@ def render_reset():
                 "git_auto_commit": True,
                 "postgres_host": "localhost",
                 "postgres_port": 5432,
-                "postgres_db": "pyfi2",
-                "postgres_user": "pyfi2",
+                "postgres_db": "openpaw",
+                "postgres_user": "openpaw",
                 "sqlite_path": "./flows.db",
                 "max_workers": 10,
                 "max_retries": 3,
@@ -778,7 +778,7 @@ def render_cluster_tab():
                             st.rerun()
     else:
         st.info(t("cluster.no_instances"))
-        st.caption("PYFI2_CLUSTER_ENABLED=true")
+        st.caption("OPENPAW_CLUSTER_ENABLED=true")
 
     # -- Workers --
     st.markdown("---")
@@ -840,13 +840,13 @@ def render_cluster_tab():
     st.markdown(f"#### {t('common.configuration')}")
     import os
     env_vars = {
-        "PYFI2_CLUSTER_ENABLED": os.environ.get("PYFI2_CLUSTER_ENABLED", "false"),
-        "PYFI2_CLUSTER_HOST": os.environ.get("PYFI2_CLUSTER_HOST", "localhost"),
-        "PYFI2_CLUSTER_PORT": os.environ.get("PYFI2_CLUSTER_PORT", "8001"),
-        "PYFI2_CORS_ORIGINS": os.environ.get("PYFI2_CORS_ORIGINS", "localhost"),
-        "PYFI2_RATE_LIMIT": os.environ.get("PYFI2_RATE_LIMIT", "false"),
-        "PYFI2_MAX_BODY_SIZE": os.environ.get("PYFI2_MAX_BODY_SIZE", "10485760"),
-        "PYFI2_SECRET_KEY": "***" if os.environ.get("PYFI2_SECRET_KEY") else "(not set)",
+        "OPENPAW_CLUSTER_ENABLED": os.environ.get("OPENPAW_CLUSTER_ENABLED", "false"),
+        "OPENPAW_CLUSTER_HOST": os.environ.get("OPENPAW_CLUSTER_HOST", "localhost"),
+        "OPENPAW_CLUSTER_PORT": os.environ.get("OPENPAW_CLUSTER_PORT", "8001"),
+        "OPENPAW_CORS_ORIGINS": os.environ.get("OPENPAW_CORS_ORIGINS", "localhost"),
+        "OPENPAW_RATE_LIMIT": os.environ.get("OPENPAW_RATE_LIMIT", "false"),
+        "OPENPAW_MAX_BODY_SIZE": os.environ.get("OPENPAW_MAX_BODY_SIZE", "10485760"),
+        "OPENPAW_SECRET_KEY": "***" if os.environ.get("OPENPAW_SECRET_KEY") else "(not set)",
     }
     import pandas as pd
     df = pd.DataFrame([{"Variable": k, t("common.status"): v} for k, v in env_vars.items()])
@@ -931,7 +931,7 @@ Or in service configs:
 }
 ```
 
-Set `PYFI2_SECRET_KEY` environment variable for production encryption key.
+Set `OPENPAW_SECRET_KEY` environment variable for production encryption key.
 """)
 
 
@@ -1415,7 +1415,7 @@ def render_about():
     import sys
     import importlib
 
-    from core import __version__ as pyfi2_version
+    from core import __version__ as openpaw_version
     python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
     try:
@@ -1433,7 +1433,7 @@ def render_about():
         {t('doc.architecture_desc')}
 
         #### {t('common.version')}
-        - **PyFi2:** v{pyfi2_version}
+        - **OpenPaw:** v{openpaw_version}
         - **Python:** {python_version}
         - **Streamlit:** {streamlit_version}
         - **Streamlit Flow:** {sf_version}
@@ -1457,7 +1457,7 @@ def main():
     # Initialiser les settings si nécessaire
     if "settings" not in st.session_state:
         st.session_state.settings = {
-            "app_name": "PyFi2 - Pipeline Framework",
+            "app_name": "OpenPaw - Pipeline Framework",
             "theme": "light",
             "auto_save": True,
             "auto_validate": True,
@@ -1468,8 +1468,8 @@ def main():
             "git_auto_commit": True,
             "postgres_host": "localhost",
             "postgres_port": 5432,
-            "postgres_db": "pyfi2",
-            "postgres_user": "pyfi2",
+            "postgres_db": "openpaw",
+            "postgres_user": "openpaw",
             "sqlite_path": "./flows.db",
             "max_workers": 10,
             "max_retries": 3,

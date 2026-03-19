@@ -17,7 +17,7 @@ def get_streamlit_config() -> Dict[str, Any]:
         Configuration de Streamlit
     """
     return {
-        "page_title": "PyFi2 - Pipeline Framework",
+        "page_title": "OpenPaw - Pipeline Framework",
         "page_icon": "🚀",
         "layout": "wide",
         "initial_sidebar_state": "expanded",

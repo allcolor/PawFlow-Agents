@@ -70,7 +70,7 @@ class TestMemoryStore(unittest.TestCase):
 
     def test_recall_by_tags(self):
         self.store.remember("user1", "Likes Python", ["preference", "language"])
-        self.store.remember("user1", "Works on PyFi2", ["project"])
+        self.store.remember("user1", "Works on OpenPaw", ["project"])
         results = self.store.recall("user1", tags=["preference"])
         assert len(results) == 1
         assert "Python" in results[0].text

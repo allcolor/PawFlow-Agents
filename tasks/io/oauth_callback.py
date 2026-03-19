@@ -77,7 +77,7 @@ class OAuthCallbackTask(BaseTask):
                 "description": "URL to redirect after successful login",
             },
             "cookie_name": {
-                "type": "string", "required": False, "default": "pyfi2_token",
+                "type": "string", "required": False, "default": "openpaw_token",
                 "description": "Name of the session cookie",
             },
             "cookie_max_age": {
@@ -228,7 +228,7 @@ class OAuthCallbackTask(BaseTask):
             self._pending_token_data = None
 
         # Build redirect response with session cookie
-        cookie_name = self.config.get("cookie_name", "pyfi2_token")
+        cookie_name = self.config.get("cookie_name", "openpaw_token")
         cookie_max_age = int(self.config.get("cookie_max_age", 28800))
         success_redirect = self.config.get("success_redirect", "/chat")
 

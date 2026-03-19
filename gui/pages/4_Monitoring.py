@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Monitoring - PyFi2",
+    page_title="Monitoring - OpenPaw",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",

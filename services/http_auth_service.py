@@ -9,7 +9,7 @@ Config:
     auth_type: str         — "bearer" | "basic" | "custom"
     tokens: list[str]      — valid bearer tokens (for static validation)
     users: dict            — username: password mapping (for basic auth)
-    realm: str             — HTTP auth realm (default "PyFi2")
+    realm: str             — HTTP auth realm (default "OpenPaw")
 """
 
 import base64
@@ -48,7 +48,7 @@ class HTTPAuthService(BaseService):
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "auth_type": {"type": "select", "required": False, "default": "bearer", "options": ["bearer", "basic", "custom"], "description": "Authentication type"},
-            "realm": {"type": "string", "required": False, "default": "PyFi2", "description": "HTTP auth realm"},
+            "realm": {"type": "string", "required": False, "default": "OpenPaw", "description": "HTTP auth realm"},
             "tokens": {"type": "list", "required": False, "default": [], "description": "Valid bearer tokens (for static validation)"},
             "users": {"type": "map", "required": False, "default": {}, "description": "Username:password mapping (for basic auth)"},
         }
@@ -56,7 +56,7 @@ class HTTPAuthService(BaseService):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._auth_type = self.config.get("auth_type", "bearer")
-        self._realm = self.config.get("realm", "PyFi2")
+        self._realm = self.config.get("realm", "OpenPaw")
 
         # Static bearer tokens
         self._valid_tokens: set = set(self.config.get("tokens", []))

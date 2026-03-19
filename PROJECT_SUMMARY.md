@@ -1,4 +1,4 @@
-# Résumé du Projet PyFi2 - Version 1.0.0
+# Résumé du Projet OpenPaw - Version 1.0.0
 
 ## ✅ Ce qui a été accompli
 
@@ -90,7 +90,7 @@
 ## 📋 Structure du Projet
 
 ```
-pyfi2/
+openpaw/
 ├── core/                          # Interfaces et classes abstraites
 │   ├── __init__.py               # FlowFile, Task, Service, Flow, Factories
 │   ├── base_task.py              # BaseTask avec utilitaires

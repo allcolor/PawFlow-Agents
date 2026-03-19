@@ -387,10 +387,10 @@ class TestServerFilesystemBackend(unittest.TestCase):
         self.assertEqual(results[0]["match"], "TODO")
 
     def test_find_replace(self):
-        result = self.backend.find_replace("hello.txt", "World", "PyFi2")
+        result = self.backend.find_replace("hello.txt", "World", "OpenPaw")
         self.assertEqual(result["replacements"], 1)
         data = self.backend.read_file("hello.txt")
-        self.assertEqual(data, b"Hello PyFi2")
+        self.assertEqual(data, b"Hello OpenPaw")
 
     def test_traversal_blocked(self):
         with self.assertRaises(PermissionError):
@@ -515,7 +515,7 @@ class TestRelayScript(unittest.TestCase):
         """The relay script resolves paths and checks they stay under root."""
         import importlib.util
         spec = importlib.util.spec_from_file_location(
-            "relay", "tools/pyfi2_fs_relay.py")
+            "relay", "tools/openpaw_fs_relay.py")
         relay = importlib.util.module_from_spec(spec)
 
         # We test the resolve_path concept: path must stay under root
@@ -537,7 +537,7 @@ class TestRelayScript(unittest.TestCase):
     def test_relay_script_compiles(self):
         """The relay script should be valid Python."""
         import py_compile
-        py_compile.compile("tools/pyfi2_fs_relay.py", doraise=True)
+        py_compile.compile("tools/openpaw_fs_relay.py", doraise=True)
 
 
 # ── GetFile/PutFile Sandbox ────────────────────────────────────────

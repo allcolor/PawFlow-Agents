@@ -1,1 +1,1 @@
-"""PyFi2 REST API - FastAPI application."""
+"""OpenPaw REST API - FastAPI application."""

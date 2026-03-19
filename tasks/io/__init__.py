@@ -1,7 +1,7 @@
 # IO Tasks
 
 """
-Modules IO pour PyFi2.
+Modules IO pour OpenPaw.
 Tâches pour la lecture/écriture de fichiers, HTTP, email, messaging, cloud.
 """
 

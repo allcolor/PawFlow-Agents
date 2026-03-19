@@ -35,7 +35,7 @@ def _get_spill_dir() -> Path:
     if _spill_dir is None:
         with _spill_lock:
             if _spill_dir is None:
-                _spill_dir = Path(tempfile.mkdtemp(prefix="pyfi2_spill_"))
+                _spill_dir = Path(tempfile.mkdtemp(prefix="openpaw_spill_"))
     return _spill_dir
 
 

@@ -1,7 +1,7 @@
 # Expression Language
 
 """
-Moteur de résolution d'expressions ${...} pour PyFi2.
+Moteur de résolution d'expressions ${...} pour OpenPaw.
 Résout les variables depuis les attributs FlowFile, les paramètres de flow,
 l'environnement, et les secrets chiffrés.
 """

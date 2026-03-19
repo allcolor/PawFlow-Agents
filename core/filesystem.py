@@ -1,8 +1,8 @@
-"""Filesystem abstraction layer for PyFi2.
+"""Filesystem abstraction layer for OpenPaw.
 
 Provides a unified interface for accessing filesystems from various backends
 (HTTP relay, WebSocket relay, browser File System Access API, server local,
-Google Drive, OneDrive). All file access in PyFi2 should go through this
+Google Drive, OneDrive). All file access in OpenPaw should go through this
 interface to enforce permissions and path safety.
 
 Key classes:

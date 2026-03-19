@@ -15,7 +15,7 @@ class SecretsManager:
     (no external deps). For production, use a proper secrets vault.
 
     The master key is derived from:
-    1. PYFI2_SECRET_KEY environment variable (recommended)
+    1. OPENPAW_SECRET_KEY environment variable (recommended)
     2. A generated key stored in config/secret.key (fallback)
     """
 
@@ -25,11 +25,11 @@ class SecretsManager:
     @staticmethod
     def _resolve_key(key: Optional[str] = None) -> bytes:
         if key:
-            return hashlib.pbkdf2_hmac('sha256', key.encode(), b'pyfi2-salt', 100000)
+            return hashlib.pbkdf2_hmac('sha256', key.encode(), b'openpaw-salt', 100000)
 
-        env_key = os.environ.get("PYFI2_SECRET_KEY")
+        env_key = os.environ.get("OPENPAW_SECRET_KEY")
         if env_key:
-            return hashlib.pbkdf2_hmac('sha256', env_key.encode(), b'pyfi2-salt', 100000)
+            return hashlib.pbkdf2_hmac('sha256', env_key.encode(), b'openpaw-salt', 100000)
 
         # Fallback: generate and store a key
         key_path = os.path.join("config", "secret.key")

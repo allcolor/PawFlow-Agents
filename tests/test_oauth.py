@@ -250,7 +250,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         assert results[0].get_attribute("http.response.status") == "302"
         assert results[0].get_attribute("http.response.header.Location") == "/chat"
         cookie = results[0].get_attribute("http.response.header.Set-Cookie")
-        assert "pyfi2_token=" in cookie
+        assert "openpaw_token=" in cookie
         assert results[0].get_attribute("http.auth.valid") == "true"
         assert results[0].get_attribute("http.auth.principal") != ""
 
@@ -350,14 +350,14 @@ class TestOAuthLogoutTask(unittest.TestCase):
 
     def test_logout_clears_cookie(self):
         from tasks.io.oauth_logout import OAuthLogoutTask
-        task = OAuthLogoutTask({"cookie_name": "pyfi2_token", "redirect_to": "/chat"})
+        task = OAuthLogoutTask({"cookie_name": "openpaw_token", "redirect_to": "/chat"})
         ff = FlowFile(content=b"")
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "302"
         assert results[0].get_attribute("http.response.header.Location") == "/chat"
         cookie = results[0].get_attribute("http.response.header.Set-Cookie")
         assert "Max-Age=0" in cookie
-        assert "pyfi2_token=" in cookie
+        assert "openpaw_token=" in cookie
 
     def test_logout_invalidates_session(self):
         from core.security import SecurityManager
@@ -368,7 +368,7 @@ class TestOAuthLogoutTask(unittest.TestCase):
         from tasks.io.oauth_logout import OAuthLogoutTask
         task = OAuthLogoutTask({})
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.header.cookie", "pyfi2_token=test-token-abc")
+        ff.set_attribute("http.header.cookie", "openpaw_token=test-token-abc")
         task.execute(ff)
 
         assert "test-token-abc" not in sm._sessions
@@ -412,7 +412,7 @@ class TestValidateSessionAuthTask(unittest.TestCase):
         from tasks.io.validate_session_auth import ValidateSessionAuthTask
         task = ValidateSessionAuthTask({})
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.header.cookie", "other=x; pyfi2_token=valid-session-123; foo=bar")
+        ff.set_attribute("http.header.cookie", "other=x; openpaw_token=valid-session-123; foo=bar")
         results = task.execute(ff)
         assert results[0].get_attribute("http.auth.valid") == "true"
         assert results[0].get_attribute("http.auth.principal") == "testuser"

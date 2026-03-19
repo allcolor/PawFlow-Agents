@@ -1,7 +1,7 @@
 # Core Storage Module
 
 """
-Module de stockage abstrait pour PyFi2.
+Module de stockage abstrait pour OpenPaw.
 Fournit une interface unifiée pour différents backends de stockage.
 """
 

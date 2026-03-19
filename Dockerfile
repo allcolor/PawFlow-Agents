@@ -13,11 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Create non-root user and set ownership
-RUN groupadd -r pyfi2 && useradd -r -g pyfi2 -d /app -s /sbin/nologin pyfi2 \
+RUN groupadd -r openpaw && useradd -r -g openpaw -d /app -s /sbin/nologin openpaw \
     && mkdir -p /app/flows /app/config /app/plugins /app/logs \
-    && chown -R pyfi2:pyfi2 /app
+    && chown -R openpaw:openpaw /app
 
-USER pyfi2
+USER openpaw
 
 # Expose ports: API (8000) + GUI (8501)
 EXPOSE 8000 8501

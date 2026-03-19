@@ -1,6 +1,6 @@
 """IdentityService — Cross-channel identity mapping.
 
-Links external channel identities (Telegram, etc.) to PyFi2 user IDs,
+Links external channel identities (Telegram, etc.) to OpenPaw user IDs,
 enabling shared conversations across channels.
 
 Storage: JSON file at data/identity_mappings.json
@@ -49,7 +49,7 @@ class IdentityService:
 
     def link(self, user_id: str, channel: str, channel_id: str,
              bot_token: str = "") -> bool:
-        """Link a channel identity to a PyFi2 user.
+        """Link a channel identity to a OpenPaw user.
 
         Called from the web chat (authenticated) to link e.g. Telegram.
         Returns False if the channel_id is already linked to another user.
@@ -88,7 +88,7 @@ class IdentityService:
     # ── Resolve ────────────────────────────────────────────────────
 
     def resolve_user(self, channel: str, channel_id: str) -> Optional[str]:
-        """Resolve a channel identity to a PyFi2 user_id.
+        """Resolve a channel identity to a OpenPaw user_id.
 
         Returns None if no mapping exists.
         """

@@ -128,7 +128,7 @@ class ConsumeKafkaTask(BaseTask):
         super().__init__(config)
         self.bootstrap_servers = self.config.get('bootstrap_servers', 'localhost:9092')
         self.topic = self.config.get('topic', '')
-        self.group_id = self.config.get('group_id', 'pyfi2-consumer')
+        self.group_id = self.config.get('group_id', 'openpaw-consumer')
         self.auto_offset_reset = self.config.get('auto_offset_reset', 'latest')
         self.max_poll_records = int(self.config.get('max_poll_records', 10))
         self.poll_timeout_ms = int(self.config.get('poll_timeout_ms', 1000))
@@ -192,7 +192,7 @@ class ConsumeKafkaTask(BaseTask):
         return {
             'bootstrap_servers': {'type': 'string', 'required': False, 'default': 'localhost:9092'},
             'topic': {'type': 'string', 'required': False, 'description': 'Kafka topic'},
-            'group_id': {'type': 'string', 'required': False, 'default': 'pyfi2-consumer'},
+            'group_id': {'type': 'string', 'required': False, 'default': 'openpaw-consumer'},
             'auto_offset_reset': {'type': 'string', 'required': False, 'default': 'latest',
                                   'enum': ['earliest', 'latest']},
             'max_poll_records': {'type': 'integer', 'required': False, 'default': 10},

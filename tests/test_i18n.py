@@ -39,7 +39,7 @@ def test_init_invalid_locale_falls_back_to_en():
 def test_t_returns_english_text():
     """t() returns correct English translation."""
     i18n_module.init("en")
-    assert i18n_module.t("app.name") == "PyFi2"
+    assert i18n_module.t("app.name") == "OpenPaw"
     assert i18n_module.t("nav.dashboard") == "Dashboard"
     assert i18n_module.t("common.save") == "Save"
 
@@ -80,7 +80,7 @@ def test_t_fallback_to_english():
     original = fr_translations.pop("app.name", None)
     try:
         result = i18n_module.t("app.name")
-        assert result == "PyFi2"  # Falls back to English
+        assert result == "OpenPaw"  # Falls back to English
     finally:
         if original is not None:
             fr_translations["app.name"] = original

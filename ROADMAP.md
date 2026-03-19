@@ -1,4 +1,4 @@
-# PyFi2 - Roadmap / Reste à faire
+# OpenPaw - Roadmap / Reste à faire
 
 ## État actuel
 - 73 tasks, 10 services, plugin system (versioning semver, upgrade/downgrade)
@@ -56,7 +56,7 @@
 - [x] Suppression d'exécutions (delete_execution + rerun)
 - [x] Graphiques time-series pour métriques (st.line_chart durée + succès/échecs)
 - [x] Upload fichier d'entrée (st.file_uploader remplace le file browser)
-- [x] Connecter la GUI à l'API REST (mode dual : direct + API HTTP via `PyFi2ApiClient`)
+- [x] Connecter la GUI à l'API REST (mode dual : direct + API HTTP via `OpenPawApiClient`)
 
 ---
 
@@ -108,7 +108,7 @@
 
 - [x] WebSocket streaming temps réel (`/ws/bulletins`, `/ws/execution/{id}`, `/ws/metrics`)
 - [x] Audit log complet (qui, quoi, quand) — `core/audit.py` + API endpoints
-- [x] Rate limiting API — `api/rate_limit.py` (env var PYFI2_RATE_LIMIT=true)
+- [x] Rate limiting API — `api/rate_limit.py` (env var OPENPAW_RATE_LIMIT=true)
 - [x] 17 tests (audit, rate limiter, websocket)
 
 ### Notifications ✅
@@ -121,7 +121,7 @@
 
 ### Métriques ✅
 - [x] **Endpoint Prometheus** : `GET /api/v1/system/metrics` — format text/plain compatible Prometheus
-  - pyfi2_info, uptime, tasks_registered, services_registered, audit_events, notifications, sessions, users
+  - openpaw_info, uptime, tasks_registered, services_registered, audit_events, notifications, sessions, users
 
 ### Reste (optionnel)
 - [x] Cluster mode (coordination multi-instance) — `engine/cluster.py`, filesystem-backed state, auto-promotion, heartbeat, election
@@ -175,9 +175,9 @@
 
 ---
 
-## P9 — Import NiFi → PyFi2 ✅ DONE (core)
+## P9 — Import NiFi → OpenPaw ✅ DONE (core)
 
-> **Objectif** : Pouvoir importer un flow NiFi (XML/JSON export) et le convertir en flow PyFi2,
+> **Objectif** : Pouvoir importer un flow NiFi (XML/JSON export) et le convertir en flow OpenPaw,
 > incluant la conversion/adaptation des scripts Groovy en Python.
 > Le tout faisable depuis la GUI.
 
@@ -185,27 +185,27 @@
 - [x] **Parser NiFi XML** : templates XML et processGroup (`engine/nifi_converter.py`)
 - [x] **Parser NiFi JSON** : format REST API NiFi (processGroupFlow, processors, connections)
 - [x] **Auto-detection format** : XML ou JSON automatique
-- [x] **Mapping processeurs NiFi → tasks PyFi2** : 50+ processeurs mappés (IO, Data, Control, Script, Kafka, S3, MQTT, SFTP, etc.)
-- [x] **Mapping controller services NiFi → services PyFi2** : DBCPConnectionPool→dbConnectionPool, etc.
-- [x] **Extraction des relations** : connexions NiFi (relationships success/failure/etc.) → relations PyFi2
-- [x] **Extraction des paramètres** : parameter contexts NiFi → flow.parameters PyFi2
-- [x] **Input/Output ports** : conversion vers inputPort/outputPort PyFi2, entries/exits
+- [x] **Mapping processeurs NiFi → tasks OpenPaw** : 50+ processeurs mappés (IO, Data, Control, Script, Kafka, S3, MQTT, SFTP, etc.)
+- [x] **Mapping controller services NiFi → services OpenPaw** : DBCPConnectionPool→dbConnectionPool, etc.
+- [x] **Extraction des relations** : connexions NiFi (relationships success/failure/etc.) → relations OpenPaw
+- [x] **Extraction des paramètres** : parameter contexts NiFi → flow.parameters OpenPaw
+- [x] **Input/Output ports** : conversion vers inputPort/outputPort OpenPaw, entries/exits
 - [x] **Processeurs non-mappés** : identifiés et remplacés par log task avec warning
 - [x] **Extraction des scripts** : Groovy scripts extraits pour conversion séparée
 - [x] 36 tests (XML, JSON, auto-detect, mapping, scripts, ports, params, e2e)
 
 ### 9.2 Conversion de scripts Groovy → Python ⭐ IMPORTANT
 
-> **Architecture** : La conversion est une **feature interne PyFi2** (pas une task/flux).
-> Elle a sa propre config LLM (api_key, base_url, model) dans `config/pyfi2.json` (ou Settings GUI).
+> **Architecture** : La conversion est une **feature interne OpenPaw** (pas une task/flux).
+> Elle a sa propre config LLM (api_key, base_url, model) dans `config/openpaw.json` (ou Settings GUI).
 > Le code de communication LLM est **partagé** avec `services/llm_connection.py` (module commun).
 > C'est du **one-shot** : la conversion a lieu une seule fois lors de l'import du flux NiFi.
 
 - [x] **Module LLM partagé** : `core/llm_client.py` (LLMClient standalone, zero deps) — réutilisé par LLMConnectionService et NiFi converter
 - [x] **NiFiScriptConverter** : `engine/nifi_script_converter.py` — conversion Groovy→Python
 - [x] **Conversion via LLM** : appeler le LLM configuré avec un prompt spécialisé
-  - Prompt système taillé pour la conversion NiFi Groovy → PyFi2 Python
-  - Inclure dans le prompt : la table de mapping API NiFi → API PyFi2
+  - Prompt système taillé pour la conversion NiFi Groovy → OpenPaw Python
+  - Inclure dans le prompt : la table de mapping API NiFi → API OpenPaw
     - `session.get()` → `flowfile` (paramètre de execute)
     - `session.read(flowfile)` → `flowfile.get_content()`
     - `session.write(flowfile)` → `flowfile.set_content()`
@@ -214,7 +214,7 @@
     - `flowfile.putAttribute()` → `flowfile.set_attribute()`
     - Types Java (String, ArrayList, HashMap) → types Python (str, list, dict)
     - Imports Java courants → équivalents Python (JsonSlurper→json.loads, etc.)
-  - Le LLM reçoit le script Groovy complet + la doc API PyFi2 + exemples de conversion
+  - Le LLM reçoit le script Groovy complet + la doc API OpenPaw + exemples de conversion
   - Réponse structurée : code Python + liste de warnings/points à vérifier manuellement
 - [x] **Fallback règles statiques** : conversion regex sans LLM (session API, types Java, imports, JSON, logging)
 - [x] **Mode semi-auto** : le LLM marque les zones incertaines avec `# TODO: manual review`
@@ -229,11 +229,11 @@
 - [x] **Config LLM** : section configurable (provider, api_key, base_url, model)
 - [x] **Édition des scripts** : Groovy original et Python généré côte à côte, éditable
 - [x] **Aller/retour LLM** : champ feedback pour re-soumettre au LLM avec indications
-- [x] **Boutons Finaliser** : "Importer dans PyFi2" (sauve en flows/) ou "Ouvrir dans l'éditeur"
+- [x] **Boutons Finaliser** : "Importer dans OpenPaw" (sauve en flows/) ou "Ouvrir dans l'éditeur"
 
 ### 9.4 Mapping étendu & process groups ✅ DONE (core)
 - [x] 50+ processeurs NiFi mappés (IO, Data, Control, Script, Kafka, S3, MQTT, SFTP, XML, Avro, Parquet)
-- [x] **Process groups NiFi → subflows PyFi2** : chaque process group imbriqué génère un subflow séparé + executeFlow dans le parent
+- [x] **Process groups NiFi → subflows OpenPaw** : chaque process group imbriqué génère un subflow séparé + executeFlow dans le parent
 - [x] Récursif : process groups imbriqués N niveaux
 - [x] Connexions parent ↔ process group mappées via id_map
 - [x] GUI: subflows sauvés automatiquement lors de l'import, métrique affichée
@@ -243,15 +243,15 @@
 ### Notes techniques
 - NiFi export XML : `<template>` ou `<processGroup>` avec `<processors>`, `<connections>`, `<controllerServices>`
 - NiFi REST JSON : `/flow/process-groups/{id}` retourne `processGroupFlow` avec `processors[]`, `connections[]`
-- Les scripts Groovy NiFi utilisent l'API `ProcessSession` — mapping bien documenté vers l'API FlowFile PyFi2
-- Certains processeurs NiFi (UpdateAttribute, RouteOnAttribute) ont déjà un mapping 1:1 avec PyFi2
+- Les scripts Groovy NiFi utilisent l'API `ProcessSession` — mapping bien documenté vers l'API FlowFile OpenPaw
+- Certains processeurs NiFi (UpdateAttribute, RouteOnAttribute) ont déjà un mapping 1:1 avec OpenPaw
 
 ---
 
 ## P10 — Sécurité production ✅ DONE
 
 - [x] **PBKDF2 password hashing** : 600K itérations, salt 32 bytes, auto-upgrade des hash legacy
-- [x] **CORS restrictif** : configurable via `PYFI2_CORS_ORIGINS` (défaut localhost seulement)
+- [x] **CORS restrictif** : configurable via `OPENPAW_CORS_ORIGINS` (défaut localhost seulement)
 - [x] **Secrets chiffrés** : `core/secrets.py` (XOR+PBKDF2+HMAC, clé via env var ou fichier)
 - [x] **Sandbox executeScript** : imports restreints, builtins filtrés, `allowed_modules` configurable
 - [x] **Validation requêtes** : middleware taille max body (10MB, configurable)

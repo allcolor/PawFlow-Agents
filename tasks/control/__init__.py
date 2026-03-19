@@ -1,7 +1,7 @@
 # Control Tasks
 
 """
-Modules Control pour PyFi2.
+Modules Control pour OpenPaw.
 Tâches pour le contrôle de flux.
 """
 

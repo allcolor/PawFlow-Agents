@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""PyFi2 Executor Relay — Standalone relay for remote command execution.
+"""OpenPaw Executor Relay — Standalone relay for remote command execution.
 
-Runs on the user's machine to give the PyFi2 agent secure shell/python/git
+Runs on the user's machine to give the OpenPaw agent secure shell/python/git
 access. Zero external dependencies (stdlib only).
 
 Two modes:
   HTTP (legacy, local only):
-    python pyfi2_executor_relay.py --port 9877 --dir . --secret abc123
+    python openpaw_executor_relay.py --port 9877 --dir . --secret abc123
 
   WS Reverse (recommended, works across NAT/firewalls):
-    python pyfi2_executor_relay.py --connect ws://pyfi2.example.com/ws/relay \
+    python openpaw_executor_relay.py --connect ws://openpaw.example.com/ws/relay \
         --token <api_key> --secret abc --dir /home/user/project
 
 Security:
@@ -67,7 +67,7 @@ _DEFAULT_DENY = [
 class ExecutorRelayHandler(BaseHTTPRequestHandler):
     """HTTP handler for executor relay operations."""
 
-    server_version = "PyFi2-ExecRelay/1.0"
+    server_version = "OpenPaw-ExecRelay/1.0"
 
     # Set by factory
     root_dir: str = "."
@@ -137,7 +137,7 @@ class ExecutorRelayHandler(BaseHTTPRequestHandler):
         actions = [a for a in actions if a not in self.disabled_actions]
         py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
         self._send_json(True, data={
-            "service": "PyFi2-ExecRelay",
+            "service": "OpenPaw-ExecRelay",
             "version": VERSION,
             "platform": sys.platform,
             "shell": self.shell,
@@ -294,7 +294,7 @@ def _action_git_add(handler, cwd, req, timeout):
 
 
 def _action_git_commit(handler, cwd, req, timeout):
-    message = req.get("message", "PyFi2 auto-commit")
+    message = req.get("message", "OpenPaw auto-commit")
     return _action_git(handler, cwd, req, timeout, ["commit", "-m", message])
 
 
@@ -361,7 +361,7 @@ def _make_handler_class(root_dir: str, secret: str, shell: str,
 # ── WS Reverse client ─────────────────────────────────────────────
 
 def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
-    """Connect to the PyFi2 server via WebSocket and process commands.
+    """Connect to the OpenPaw server via WebSocket and process commands.
 
     Minimal WS client using stdlib only (RFC 6455).
     """
@@ -626,7 +626,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PyFi2 Executor Relay — Secure command execution (HTTP or WS)",
+        description="OpenPaw Executor Relay — Secure command execution (HTTP or WS)",
     )
     parser.add_argument("--port", type=int, default=9877,
                         help="Port to listen on in HTTP mode (default: 9877)")
@@ -650,7 +650,7 @@ def main():
                         help="Bind address for HTTP mode (default: 127.0.0.1)")
     # WS Reverse mode
     parser.add_argument("--connect", default="",
-                        help="WS URL to connect to (e.g. ws://pyfi2.example.com/ws/relay)")
+                        help="WS URL to connect to (e.g. ws://openpaw.example.com/ws/relay)")
     parser.add_argument("--token", default="",
                         help="API key for WS authentication")
     parser.add_argument("--relay-id", default="",
@@ -691,7 +691,7 @@ def main():
         relay_id = args.relay_id or f"exec-{os.getpid()}"
 
         sys.stderr.write(
-            f"\n  PyFi2 Executor Relay (WS Reverse)\n"
+            f"\n  OpenPaw Executor Relay (WS Reverse)\n"
             f"  ──────────────────────────────────\n"
             f"  Server:    {args.connect}\n"
             f"  Relay ID:  {relay_id}\n"
@@ -708,7 +708,7 @@ def main():
     else:
         # HTTP mode (legacy)
         sys.stderr.write(
-            f"\n  PyFi2 Executor Relay (HTTP)\n"
+            f"\n  OpenPaw Executor Relay (HTTP)\n"
             f"  ───────────────────────────\n"
             f"  Bind:      {args.bind}:{args.port}\n"
             f"  Directory: {root_dir}\n"

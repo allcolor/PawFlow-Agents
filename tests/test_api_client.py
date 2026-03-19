@@ -4,13 +4,13 @@ import json
 import io
 import pytest
 from unittest.mock import patch, MagicMock
-from gui.services.api_client import PyFi2ApiClient, ApiError
+from gui.services.api_client import OpenPawApiClient, ApiError
 
 
 class TestApiClient:
 
     def setup_method(self):
-        self.client = PyFi2ApiClient("http://localhost:8000")
+        self.client = OpenPawApiClient("http://localhost:8000")
 
     def _mock_response(self, data, status=200):
         """Create a mock urllib response."""
@@ -120,5 +120,5 @@ class TestApiClient:
         assert result["valid"] is True
 
     def test_base_url_trailing_slash(self):
-        client = PyFi2ApiClient("http://localhost:8000/")
+        client = OpenPawApiClient("http://localhost:8000/")
         assert client.base_url == "http://localhost:8000"

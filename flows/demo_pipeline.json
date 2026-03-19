@@ -1,9 +1,9 @@
 {
   "name": "Demo Pipeline - All Task Types",
-  "description": "Demonstrates PyFi2 capabilities with 25 task types",
+  "description": "Demonstrates OpenPaw capabilities with 25 task types",
   "version": "1.0.0",
   "parameters": {
-    "greeting": "Bienvenue dans PyFi2"
+    "greeting": "Bienvenue dans OpenPaw"
   },
   "tasks": {
     "generate": {

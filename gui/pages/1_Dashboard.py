@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Configuration de la page
 st.set_page_config(
-    page_title="Tableau de bord - PyFi2",
+    page_title="Tableau de bord - OpenPaw",
     page_icon="🏠",
     layout="wide",
 )

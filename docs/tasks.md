@@ -1,12 +1,12 @@
-# Catalogue des Tâches - PyFi2
+# Catalogue des Tâches - OpenPaw
 
-Ce document décrit toutes les tâches disponibles dans PyFi2, organisées par catégorie.
+Ce document décrit toutes les tâches disponibles dans OpenPaw, organisées par catégorie.
 
 ---
 
 ## Organisation
 
-PyFi2 regroupe les tâches en **4 catégories** :
+OpenPaw regroupe les tâches en **4 catégories** :
 
 1. **System** : Tâches système de base (log, wait, fail, etc.)
 2. **IO** : Tâches d'entrée/sortie (fichiers, HTTP)

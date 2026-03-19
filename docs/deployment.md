@@ -1,6 +1,6 @@
-# PyFi2 Deployment Guide
+# OpenPaw Deployment Guide
 
-Ce guide couvre les options de deploiement de PyFi2 : local, Docker, et production.
+Ce guide couvre les options de deploiement de OpenPaw : local, Docker, et production.
 
 ---
 
@@ -62,14 +62,14 @@ cp .env.example .env
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PYFI2_SECRET_KEY` | Cle secrete pour les sessions et tokens | `changeme` |
-| `PYFI2_CORS_ORIGINS` | Origines CORS autorisees (separees par virgule) | `http://localhost:8501,http://localhost:8000` |
-| `PYFI2_RATE_LIMIT` | Activer le rate limiting | `false` |
-| `PYFI2_RATE_LIMIT_MAX` | Nombre max de requetes par fenetre | `100` |
-| `PYFI2_RATE_LIMIT_WINDOW` | Fenetre de rate limiting en secondes | `60` |
-| `PYFI2_MAX_BODY_SIZE` | Taille max du body HTTP en bytes | `10485760` (10 MB) |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (profil postgres) | `pyfi2secret` |
-| `PYFI2_API_URL` | URL de l'API pour la GUI | `http://localhost:8000` |
+| `OPENPAW_SECRET_KEY` | Cle secrete pour les sessions et tokens | `changeme` |
+| `OPENPAW_CORS_ORIGINS` | Origines CORS autorisees (separees par virgule) | `http://localhost:8501,http://localhost:8000` |
+| `OPENPAW_RATE_LIMIT` | Activer le rate limiting | `false` |
+| `OPENPAW_RATE_LIMIT_MAX` | Nombre max de requetes par fenetre | `100` |
+| `OPENPAW_RATE_LIMIT_WINDOW` | Fenetre de rate limiting en secondes | `60` |
+| `OPENPAW_MAX_BODY_SIZE` | Taille max du body HTTP en bytes | `10485760` (10 MB) |
+| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (profil postgres) | `openpawsecret` |
+| `OPENPAW_API_URL` | URL de l'API pour la GUI | `http://localhost:8000` |
 
 ---
 
@@ -99,12 +99,12 @@ Lance deux services :
 
 ### Securite
 
-- [ ] Changer `PYFI2_SECRET_KEY` avec une valeur aleatoire forte
-- [ ] Activer le rate limiting (`PYFI2_RATE_LIMIT=true`)
+- [ ] Changer `OPENPAW_SECRET_KEY` avec une valeur aleatoire forte
+- [ ] Activer le rate limiting (`OPENPAW_RATE_LIMIT=true`)
 - [ ] Configurer les origines CORS strictement
 - [ ] Activer l'authentification dans l'API (RBAC)
 - [ ] Generer des API keys pour les integrations
-- [ ] Restreindre `PYFI2_MAX_BODY_SIZE` selon les besoins
+- [ ] Restreindre `OPENPAW_MAX_BODY_SIZE` selon les besoins
 
 ### Reseau
 

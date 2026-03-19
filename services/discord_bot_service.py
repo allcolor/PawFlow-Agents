@@ -1,7 +1,7 @@
 """DiscordBotService — Discord bot via discord.py (optional dependency).
 
 Manages a Discord bot client in a daemon thread with asyncio event loop.
-Communication between sync PyFi2 code and async discord.py via
+Communication between sync OpenPaw code and async discord.py via
 asyncio.run_coroutine_threadsafe().
 
 Config:

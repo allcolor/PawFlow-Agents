@@ -1,4 +1,4 @@
-"""Unified script sandbox for PyFi2.
+"""Unified script sandbox for OpenPaw.
 
 Provides a secure execution environment used by both:
 - ExecuteScriptTask (flow task)

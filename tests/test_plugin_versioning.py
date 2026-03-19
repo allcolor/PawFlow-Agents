@@ -29,7 +29,7 @@ def _make_plugin_dir(tmp_path, plugin_id, version, deps=None, tasks=None):
         "id": plugin_id,
         "name": f"Plugin {plugin_id}",
         "version": version,
-        "min_pyfi2_version": "1.0.0",
+        "min_openpaw_version": "1.0.0",
         "tasks": tasks or [],
         "services": [],
         "flows": [],

@@ -2,7 +2,7 @@
 
 """
 Module Engine.
-Moteur d'exécution des flux PyFi2.
+Moteur d'exécution des flux OpenPaw.
 """
 
 from engine.continuous_executor import ContinuousFlowExecutor, ExecutionResult, TaskStats

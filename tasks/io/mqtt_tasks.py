@@ -39,7 +39,7 @@ class PublishMQTTTask(BaseTask):
         self.topic = self.config.get('topic', '')
         self.qos = int(self.config.get('qos', 1))
         self.retain = self.config.get('retain', False)
-        self.client_id = self.config.get('client_id', 'pyfi2-publisher')
+        self.client_id = self.config.get('client_id', 'openpaw-publisher')
         self.username = self.config.get('username', '')
         self.password = self.config.get('password', '')
         self.timeout = int(self.config.get('timeout', 10))
@@ -89,7 +89,7 @@ class PublishMQTTTask(BaseTask):
             'topic': {'type': 'string', 'required': False, 'description': 'MQTT topic'},
             'qos': {'type': 'integer', 'required': False, 'default': 1, 'enum': [0, 1, 2]},
             'retain': {'type': 'boolean', 'required': False, 'default': False},
-            'client_id': {'type': 'string', 'required': False, 'default': 'pyfi2-publisher'},
+            'client_id': {'type': 'string', 'required': False, 'default': 'openpaw-publisher'},
             'username': {'type': 'string', 'required': False},
             'password': {'type': 'string', 'required': False, 'sensitive': True},
             'timeout': {'type': 'integer', 'required': False, 'default': 10},
@@ -115,7 +115,7 @@ class ConsumeMQTTTask(BaseTask):
         self.broker_port = int(self.config.get('broker_port', 1883))
         self.topic = self.config.get('topic', '#')
         self.qos = int(self.config.get('qos', 1))
-        self.client_id = self.config.get('client_id', 'pyfi2-consumer')
+        self.client_id = self.config.get('client_id', 'openpaw-consumer')
         self.username = self.config.get('username', '')
         self.password = self.config.get('password', '')
         self.max_messages = int(self.config.get('max_messages', 10))
@@ -180,7 +180,7 @@ class ConsumeMQTTTask(BaseTask):
             'broker_port': {'type': 'integer', 'required': False, 'default': 1883},
             'topic': {'type': 'string', 'required': False, 'default': '#', 'description': 'MQTT topic (wildcards supported)'},
             'qos': {'type': 'integer', 'required': False, 'default': 1, 'enum': [0, 1, 2]},
-            'client_id': {'type': 'string', 'required': False, 'default': 'pyfi2-consumer'},
+            'client_id': {'type': 'string', 'required': False, 'default': 'openpaw-consumer'},
             'username': {'type': 'string', 'required': False},
             'password': {'type': 'string', 'required': False, 'sensitive': True},
             'max_messages': {'type': 'integer', 'required': False, 'default': 10},

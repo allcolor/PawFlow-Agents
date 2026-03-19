@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "author": "Test Author",
   "description": "A sample plugin for testing the plugin system",
-  "min_pyfi2_version": "1.0.0",
+  "min_openpaw_version": "1.0.0",
   "tasks": ["tasks/uppercase_task.py:UppercaseTask"],
   "services": ["services/counter_service.py:CounterService"],
   "flows": ["flows/sample_flow.json"],

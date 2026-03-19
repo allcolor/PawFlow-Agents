@@ -2957,6 +2957,10 @@ class AssignTaskHandler(ToolHandler):
                     "type": "string",
                     "description": "Agent that verifies completion (optional)",
                 },
+                "variables": {
+                    "type": "object",
+                    "description": "Variables to substitute in prompt/criteria. E.g. {\"nbr_images\": \"20\"} replaces ${nbr_images} in the task definition. Use \\${...} in definitions to keep literal ${...} unresolved.",
+                },
             },
             "required": ["agent"],
         }
@@ -3004,6 +3008,31 @@ class AssignTaskHandler(ToolHandler):
             return random.randint(iv.get("min", 60), iv.get("max", 60))
         return 60
 
+    @staticmethod
+    def _resolve_task_vars(text: str, variables: dict, user_id: str = "") -> str:
+        """Resolve variables in task prompt/criteria.
+
+        Resolution order:
+        1. Escaped \\${...} → preserved as literal ${...}
+        2. Custom variables from 'variables' dict: ${key} → value
+        3. Standard expressions: ${global.*}, ${secrets.*}, ${env.*}
+        """
+        import re
+        # Step 1: protect escaped \${...} with placeholder
+        _placeholder = "\x00ESC_EXPR\x00"
+        text = text.replace("\\${", _placeholder)
+        # Step 2: replace custom variables ${key}
+        if variables:
+            for key, val in variables.items():
+                text = text.replace(f"${{{key}}}", str(val))
+        # Step 3: resolve remaining ${global.*}, ${secrets.*}, ${env.*}
+        if "${" in text:
+            from core.expression import resolve_expression
+            text = resolve_expression(text, owner=user_id)
+        # Step 4: restore escaped expressions
+        text = text.replace(_placeholder, "${")
+        return text
+
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
@@ -3039,7 +3068,13 @@ class AssignTaskHandler(ToolHandler):
         if not self._conversation_id:
             return "Error: no conversation context"
 
+        # Variable substitution in prompt and criteria
+        _vars = arguments.get("variables") or {}
+        if _vars or "${" in task_desc:
+            task_desc = self._resolve_task_vars(task_desc, _vars, self._user_id)
         criteria = arguments.get("completion_criteria", "")
+        if criteria and (_vars or "${" in criteria):
+            criteria = self._resolve_task_vars(criteria, _vars, self._user_id)
         _raw_iv = arguments.get("interval")
         interval_spec = str(_raw_iv) if _raw_iv else "6/1m"
         max_iter = int(arguments.get("max_iterations", 50))

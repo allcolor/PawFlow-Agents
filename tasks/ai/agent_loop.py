@@ -3734,6 +3734,7 @@ class AgentLoopTask(BaseTask):
                 "interval": body.get("interval"),
                 "max_iterations": body.get("max_iterations", 50),
                 "verifier": body.get("verifier", ""),
+                "variables": body.get("variables"),
             })
             # Ensure poller is running (task needs it for scheduled wake-ups)
             poll_interval = int(self.config.get("poll_interval", 0))

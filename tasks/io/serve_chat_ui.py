@@ -2844,8 +2844,11 @@ const HELP_DATA = {
       + '  /task list                    \u2014 Show library + running tasks\n\n'
       + '**Assignment (from library or inline):**\n'
       + '  /task assign <agent> <taskname>              \u2014 From library\n'
-      + '  /task assign <agent> <taskname> --interval XX \u2014 From library, override interval\n'
+      + '  /task assign <agent> <taskname> --var nbr_images=20 --var style=cyberpunk\n'
+      + '  /task assign <agent> <taskname> --interval XX \u2014 Override interval\n'
       + '  /task assign <agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier <agent>]\n\n'
+      + 'Variables: use ${name} in task definitions, resolved at assign time.\n'
+      + 'Use \\${...} to keep literal ${...}. ${global.*} and ${secrets.*} also resolved.\n\n'
       + '**Control:**\n'
       + '  /task pause <task_id|agent>   \u2014 Pause a task or all tasks of an agent\n'
       + '  /task resume <task_id|agent>  \u2014 Resume a paused task or all of an agent\n'
@@ -3559,11 +3562,17 @@ async function handleSlashCommand(text) {
         return true;
       }
       let interval = null, maxIter = 50, verifier = '', criteria = '';
+      const variables = {};
       for (let i = 4; i < qargs.length; i++) {
         if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
         else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 50; }
         else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
         else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
+        else if (qargs[i] === '--var' && qargs[i+1]) {
+          const kv = qargs[++i];
+          const eq = kv.indexOf('=');
+          if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
+        }
       }
       // Detect library name vs inline description:
       // If taskArg has no spaces and no --criteria was given → library lookup
@@ -3572,6 +3581,7 @@ async function handleSlashCommand(text) {
         action: 'assign_task', conversation_id: conversationId,
         agent_name: taskAgent, max_iterations: maxIter, verifier,
         ...(interval != null ? { interval } : {}),
+        ...(Object.keys(variables).length ? { variables } : {}),
       };
       if (isLibrary) {
         body.task_def_name = taskArg;

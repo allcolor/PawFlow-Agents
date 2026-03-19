@@ -3110,15 +3110,18 @@ class AgentLoopTask(BaseTask):
                     if ac_cfg.get("enabled"):
                         entry["autoconv"] = ac_cfg.get("frequency", "on")
                 agents_out.append(entry)
-            # Also check assistant autoconv
+            # Always include assistant as built-in agent (first in list)
+            asst_entry = {
+                "name": "assistant",
+                "description": "Default assistant (built-in)",
+                "scope": "built-in",
+                "active": not active.get("agent"),  # active when no other agent selected
+            }
             if conv_id:
                 ac_asst = store.get_extra(conv_id, "random_thought::assistant") or {}
                 if ac_asst.get("enabled"):
-                    # Find assistant in agents_out or add info
-                    for e in agents_out:
-                        if e["name"] == "assistant":
-                            e["autoconv"] = ac_asst.get("frequency", "on")
-                            break
+                    asst_entry["autoconv"] = ac_asst.get("frequency", "on")
+            agents_out.insert(0, asst_entry)
             result = {
                 "agents": agents_out,
                 "skills": [{

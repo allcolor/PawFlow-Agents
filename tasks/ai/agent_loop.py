@@ -3726,10 +3726,11 @@ class AgentLoopTask(BaseTask):
             h.set_conversation_id(conv_id)
             h.set_agent_name("user")
             h.set_user_id(user_id)
+            _default_iv = int(self.config.get("poll_recheck_delay", 7200))
             result = h.execute({
                 "agent": agent, "task": task_desc,
                 "completion_criteria": body.get("completion_criteria", ""),
-                "interval": body.get("interval", 60),
+                "interval": body.get("interval", str(_default_iv)),
                 "max_iterations": body.get("max_iterations", 50),
                 "verifier": body.get("verifier", ""),
             })
@@ -6530,6 +6531,9 @@ class AgentLoopTask(BaseTask):
                 h.set_agent_name(agent_name)
                 if hasattr(h, 'set_user_id'):
                     h.set_user_id(user_id)
+                if isinstance(h, AssignTaskHandler):
+                    h.set_default_interval(
+                        int(self.config.get("poll_recheck_delay", 7200)))
                 if hasattr(h, 'set_agent_name'):
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):

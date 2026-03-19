@@ -2911,6 +2911,7 @@ class AssignTaskHandler(ToolHandler):
         self._conversation_id = ""
         self._agent_name = ""
         self._user_id = ""
+        self._default_interval = 0  # 0 = use poll_recheck_delay
 
     @property
     def name(self) -> str:
@@ -2943,7 +2944,7 @@ class AssignTaskHandler(ToolHandler):
                 },
                 "interval": {
                     "type": "string",
-                    "description": "Schedule frequency. Examples: '60' (every 60s), '3/5m' (3 times per 5min), '2-4/h' (2-4 per hour). Default: '60'",
+                    "description": "Schedule frequency. Examples: '60' (every 60s), '3/5m' (3 times per 5min), '2-4/h' (2-4 per hour). Default: same as autoconv poll interval",
                 },
                 "max_iterations": {
                     "type": "integer",
@@ -3009,6 +3010,10 @@ class AssignTaskHandler(ToolHandler):
     def set_user_id(self, uid: str):
         self._user_id = uid
 
+    def set_default_interval(self, seconds: int):
+        """Set default interval from flow config (e.g. poll_recheck_delay)."""
+        self._default_interval = seconds
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _t
         target = arguments.get("agent", "")
@@ -3021,7 +3026,8 @@ class AssignTaskHandler(ToolHandler):
             return "Error: no conversation context"
 
         criteria = arguments.get("completion_criteria", "")
-        interval_spec = str(arguments.get("interval", "60"))
+        _default_iv = str(self._default_interval) if self._default_interval > 0 else "7200"
+        interval_spec = str(arguments.get("interval", _default_iv))
         max_iter = int(arguments.get("max_iterations", 50))
         verifier = arguments.get("verifier", "")
 

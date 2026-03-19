@@ -4383,10 +4383,10 @@ function cmdAgentMsg(agentName, text) {
   pendingFiles = [];
   renderAttachments();
 
-  const displayText = '[\u2192 ' + agentName + '] ' + text;
-  const msgEl = addMsg('user', displayText);
+  const userSource = { type: 'user', name: '', target_agent: agentName };
+  const msgEl = addMsg('user', text, { source: userSource });
   if (attachmentsForDisplay.length > 0) {
-    msgEl.innerHTML = escapeHtml(displayText) + renderUserAttachments(attachmentsForDisplay);
+    msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text) + renderUserAttachments(attachmentsForDisplay);
   }
   clearStream(agentName);
   showTyping();
@@ -4425,7 +4425,7 @@ function cmdAgentMsgAll(text) {
     addMsg('system', 'Start a conversation first before broadcasting.');
     return;
   }
-  addMsg('user', '[→ ALL] ' + text);
+  addMsg('user', text, { source: { type: 'user', name: '', target_agent: 'ALL' } });
   showTyping();
   sending = true;
   lastSSEActivity = Date.now();
@@ -4478,7 +4478,7 @@ function cmdAgentBtw(target, question) {
   if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
   const agent = target || '';
   const isAll = agent.toUpperCase() === 'ALL';
-  addMsg('user', '[btw' + (agent ? ' → ' + agent : '') + '] ' + question);
+  addMsg('user', question, { source: { type: 'user', name: '', target_agent: agent || '', btw: true } });
   fetch(API, { method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({
       action: 'btw', conversation_id: conversationId,
@@ -5644,10 +5644,10 @@ async function send() {
 
   // Show user message with target badge (all messages explicitly show who they go to)
   const targetAgent = selectedAgent || 'assistant';
-  const displayText = '[\u2192 ' + targetAgent + '] ' + (text || '');
-  const msgEl = addMsg('user', displayText);
+  const userSource = { type: 'user', name: '', target_agent: targetAgent };
+  const msgEl = addMsg('user', text || '', { source: userSource });
   if (attachmentsForDisplay.length > 0) {
-    msgEl.innerHTML = escapeHtml(displayText) + renderUserAttachments(attachmentsForDisplay);
+    msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
   }
   scrollBottom(true);  // Force scroll when user sends
   clearStream(targetAgent);

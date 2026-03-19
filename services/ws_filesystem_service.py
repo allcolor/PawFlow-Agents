@@ -46,32 +46,21 @@ class RelayWebSocketBackend(FilesystemBackend):
         self._writer: Optional[asyncio.StreamWriter] = None
         self._lock = threading.Lock()
         self._connected = False
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     def _ensure_connected(self):
         """Ensure WebSocket connection is established (blocking)."""
         if self._connected and self._writer and not self._writer.is_closing():
             return
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're inside an async context — run in a new thread
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(self._connect_sync)
-                    future.result(timeout=self._timeout)
-            else:
-                loop.run_until_complete(self._connect_async())
-        except RuntimeError:
-            # No event loop — create one
-            self._connect_sync()
+        self._connect_sync()
 
     def _connect_sync(self):
-        """Connect synchronously by creating a temporary event loop."""
-        loop = asyncio.new_event_loop()
-        try:
-            loop.run_until_complete(self._connect_async())
-        finally:
-            loop.close()
+        """Connect synchronously using a dedicated persistent event loop."""
+        if self._loop and not self._loop.is_closed():
+            self._loop.run_until_complete(self._connect_async())
+        else:
+            self._loop = asyncio.new_event_loop()
+            self._loop.run_until_complete(self._connect_async())
 
     async def _connect_async(self):
         """Perform WebSocket handshake."""
@@ -117,13 +106,9 @@ class RelayWebSocketBackend(FilesystemBackend):
             text = json.dumps(payload)
 
             try:
-                loop = asyncio.new_event_loop()
-                try:
-                    result = loop.run_until_complete(
-                        self._send_and_receive(text)
-                    )
-                finally:
-                    loop.close()
+                result = self._loop.run_until_complete(
+                    self._send_and_receive(text)
+                )
             except Exception as e:
                 self._connected = False
                 raise ServiceError(f"WebSocket request failed: {e}")
@@ -254,6 +239,12 @@ class RelayWebSocketBackend(FilesystemBackend):
             except Exception:
                 pass
         self._connected = False
+        if self._loop and not self._loop.is_closed():
+            try:
+                self._loop.close()
+            except Exception:
+                pass
+            self._loop = None
 
 
 class WebSocketFilesystemService(BaseService):

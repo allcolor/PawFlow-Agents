@@ -1176,7 +1176,8 @@ function sourceBadge(source) {
     let h = 0;
     for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
     const hue = Math.abs(h) % 360;
-    const label = svc ? name + ' via ' + svc : name;
+    let label = svc ? name + ' via ' + svc : name;
+    if (source.reply_to) label += ' \u2192 ' + displayAgentName(source.reply_to);
     return '<span class="source-badge" style="background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(label) + '</span> ';
   }
   if (source.type === 'user') {
@@ -2070,6 +2071,7 @@ function connectSSE(cid) {
     const header = srcInfo + displayAgentName(agent) + svcInfo;
     if (data.response) {
       const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
+      if (data.source_agent) extra.source.reply_to = data.source_agent;
       if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
       if (data.duration_s) extra.duration_ms = data.duration_s * 1000;
       addMsg('assistant', data.response, extra);

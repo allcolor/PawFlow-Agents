@@ -193,6 +193,10 @@ def register_all_tasks():
     # Tâches AI
     from tasks.ai.agent_loop import AgentLoopTask
 
+    # Auto-register ToolHandlers as flow tasks (tool.*)
+    from core.tool_task_adapter import register_tool_tasks
+    register_tool_tasks()
+
 
 
 

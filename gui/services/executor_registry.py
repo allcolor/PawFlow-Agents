@@ -273,7 +273,7 @@ class ExecutorRegistry:
         return changed
 
     def _hot_reload_loop(self):
-        """Background loop: scan for changes, debounce, restart."""
+        """Background loop: scan for changes, debounce, restart process."""
         while True:
             _time.sleep(_HOT_RELOAD_INTERVAL)
             try:
@@ -285,41 +285,35 @@ class ExecutorRegistry:
                 changed = self._check_changes()
                 if not changed:
                     continue
-                # Update snapshot BEFORE restart
-                self._snapshot_mtimes()
                 short = [os.path.basename(p) for p in changed[:5]]
                 if len(changed) > 5:
                     short.append(f"... +{len(changed) - 5} more")
-                logger.info("Hot-reload: %d file(s) changed (%s), restarting flows...",
+                logger.info("Hot-reload: %d file(s) changed (%s), restarting server...",
                              len(changed), ", ".join(short))
-                self._restart_all_flows()
+                print(f"\n[HOT-RELOAD] {len(changed)} file(s) changed: "
+                      f"{', '.join(short)} — restarting server...")
+                self._restart_server()
             except Exception as e:
                 logger.error("Hot-reload error: %s", e)
 
-    def _restart_all_flows(self):
-        """Stop and restart all running flows using DeploymentRegistry info."""
-        dr = _get_deployment_registry()
-        if not dr:
-            return
-        with self._executor_lock:
-            running = {iid: ex for iid, ex in self._executors.items()
-                       if ex.is_running}
-        if not running:
-            return
-        restarted = 0
-        for iid, ex in running.items():
-            inst = dr.get_all().get(iid)
-            if not inst:
-                continue
-            try:
-                ex.stop()
-                logger.info("Hot-reload: stopped '%s'", iid)
-            except Exception as e:
-                logger.warning("Hot-reload: failed to stop '%s': %s", iid, e)
-            # Re-parse and start fresh
-            if self._restore_instance(iid, inst.flow_path,
-                                       inst.max_workers, inst.max_retries,
-                                       parameters=inst.parameters):
-                restarted += 1
-        logger.info("Hot-reload: restarted %d/%d flow(s)", restarted, len(running))
+    @staticmethod
+    def _restart_server():
+        """Restart the entire server process.
+
+        Gracefully stops all executors, then re-exec's the process with
+        the same arguments. Flows auto-restore via restore_from_disk().
+        """
+        import sys
+        # Stop all running executors gracefully
+        try:
+            reg = ExecutorRegistry.get_instance()
+            for iid, ex in list(reg.get_all().items()):
+                try:
+                    ex.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Re-exec the process
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 

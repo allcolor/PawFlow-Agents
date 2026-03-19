@@ -5765,7 +5765,11 @@ class AgentLoopTask(BaseTask):
                         compact_client=compact_client,
                         use_streaming=True,
                         token_callback=lambda text: bus.publish_event(
-                            conversation_id, "token", {"text": text}),
+                            conversation_id, "token", {
+                                "text": text,
+                                "agent_name": _agent_name or "assistant",
+                                "source": _agent_source(),
+                            }),
                         tools_called=tools_called, compact_threshold=1.0,
                         conversation_id=conversation_id,
                     )
@@ -5833,7 +5837,11 @@ class AgentLoopTask(BaseTask):
                     compact_client=compact_client,
                     use_streaming=True,
                     token_callback=lambda text: bus.publish_event(
-                        conversation_id, "token", {"text": text}),
+                        conversation_id, "token", {
+                            "text": text,
+                            "agent_name": _agent_name or "assistant",
+                            "source": _agent_source(),
+                        }),
                     tools_called=tools_called,
                     conversation_id=conversation_id,
                 )

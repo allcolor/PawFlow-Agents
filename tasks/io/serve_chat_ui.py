@@ -270,7 +270,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   </div>
   <div class="sidebar-settings" id="resourcesPanel" style="display:none">
     <label style="cursor:pointer;user-select:none;" onclick="toggleResourcesSection()">&#x25BC; Resources</label>
-    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;"></div>
+    <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;max-height:55vh;overflow-y:auto;"></div>
   </div>
 </div>
 <div class="main">
@@ -6058,16 +6058,33 @@ function _scopeBadge(s) {
   return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
 }
 
+// Collapsed state per section (persisted in localStorage)
+const _collapsedSections = JSON.parse(localStorage.getItem('pyfi2_collapsed_sections') || '{}');
+function _toggleSection(id) {
+  _collapsedSections[id] = !_collapsedSections[id];
+  localStorage.setItem('pyfi2_collapsed_sections', JSON.stringify(_collapsedSections));
+  const el = document.getElementById('res-section-' + id);
+  if (el) el.style.display = _collapsedSections[id] ? 'none' : 'block';
+  const arrow = document.getElementById('res-arrow-' + id);
+  if (arrow) arrow.textContent = _collapsedSections[id] ? '\u25B6' : '\u25BC';
+}
+// Default collapsed: variables, secrets
+if (!('_param' in _collapsedSections)) _collapsedSections['_param'] = true;
+if (!('_secret' in _collapsedSections)) _collapsedSections['_secret'] = true;
+
 function _sectionHeader(title, rtype) {
   const isParamSecret = rtype === '_param' || rtype === '_secret';
   const onclick = isParamSecret
     ? `_showParamEditor('','','${rtype === '_secret'}',true)`
     : `showResourceCreator('${rtype}')`;
+  const collapsed = _collapsedSections[rtype] || false;
+  const arrow = collapsed ? '\u25B6' : '\u25BC';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-    <span style="color:#6c5ce7;font-weight:600;">${title}</span>
+    <span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection('${rtype}')"><span id="res-arrow-${rtype}">${arrow}</span> ${title}</span>
     <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${onclick}" title="Create new">+</span>
-  </div>`;
+  </div><div id="res-section-${rtype}" style="display:${collapsed ? 'none' : 'block'};">`;
 }
+function _sectionFooter() { return '</div>'; }
 
 async function loadResources() {
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
@@ -6091,6 +6108,7 @@ async function loadResources() {
           ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // Skills
     if (data.skills && data.skills.length) {
@@ -6102,6 +6120,7 @@ async function loadResources() {
           ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // MCP
     if (data.mcp_servers && data.mcp_servers.length) {
@@ -6113,6 +6132,7 @@ async function loadResources() {
           ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // Task definitions
     if (data.task_defs && data.task_defs.length) {
@@ -6123,10 +6143,11 @@ async function loadResources() {
           <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // Services
     if (data.services && data.services.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Services</div>';
+      html += _sectionHeader('Services', '_svc');
       data.services.forEach(s => {
         const statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}';
         const svcCtx = s.scope === 'user' ? ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"` : '';
@@ -6134,10 +6155,11 @@ async function loadResources() {
           ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span></span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // Deployed flows
     if (data.flows && data.flows.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Flows</div>';
+      html += _sectionHeader('Flows', '_flow');
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
@@ -6146,6 +6168,7 @@ async function loadResources() {
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
         </div>`;
       });
+      html += _sectionFooter();
     }
     // Variables & Secrets (separate fetch)
     try {
@@ -6162,6 +6185,7 @@ async function loadResources() {
             ${_scopeBadge(p.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
+        html += _sectionFooter();
       }
       if (ps.secrets && ps.secrets.length) {
         html += _sectionHeader('Secrets', '_secret');
@@ -6170,6 +6194,7 @@ async function loadResources() {
             ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
+        html += _sectionFooter();
       }
     } catch (_) {}
     if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';

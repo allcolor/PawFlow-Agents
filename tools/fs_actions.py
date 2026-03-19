@@ -58,6 +58,40 @@ def action_read_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return {"content": base64.b64encode(content).decode("ascii"), "size": len(content)}
 
 
+def action_read_pdf(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Extract text from a PDF file. Requires pypdf or PyPDF2."""
+    max_pages = req.get("max_pages", 50)
+    p = Path(path)
+    if not p.suffix.lower() == ".pdf":
+        raise ValueError(f"Not a PDF file: {p.name}")
+
+    # Try pypdf (modern), then PyPDF2 (legacy), then raw fallback
+    text_pages = []
+    try:
+        try:
+            from pypdf import PdfReader
+        except ImportError:
+            from PyPDF2 import PdfReader
+        reader = PdfReader(str(p))
+        total = len(reader.pages)
+        for i, page in enumerate(reader.pages[:max_pages]):
+            page_text = page.extract_text() or ""
+            text_pages.append({"page": i + 1, "text": page_text})
+        return {
+            "pages": text_pages,
+            "total_pages": total,
+            "extracted_pages": min(total, max_pages),
+        }
+    except ImportError:
+        # No PDF library — return base64 raw content
+        content = p.read_bytes()
+        return {
+            "error": "No PDF library installed (pip install pypdf). Returning raw base64.",
+            "content": base64.b64encode(content).decode("ascii"),
+            "size": len(content),
+        }
+
+
 def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     content = req.get("content", "")
     raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
@@ -357,6 +391,7 @@ def action_write_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> 
 ACTIONS = {
     "list_dir": action_list_dir,
     "read_file": action_read_file,
+    "read_pdf": action_read_pdf,
     "write_file": action_write_file,
     "delete_file": action_delete_file,
     "mkdir": action_mkdir,

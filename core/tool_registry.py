@@ -4736,7 +4736,8 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files and run commands on the user's filesystem through a configured service. "
-            "Actions: list_dir, read_file, write_file, edit (exact string replace), "
+            "Actions: list_dir, read_file, read_pdf (extract text from PDF), "
+            "write_file, edit (exact string replace), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
             "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
             "Git: git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout. "
@@ -4759,7 +4760,7 @@ class FilesystemToolHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": [
-                        "list_dir", "read_file", "write_file", "edit",
+                        "list_dir", "read_file", "read_pdf", "write_file", "edit",
                         "delete_file", "mkdir", "stat", "exists",
                         "search", "grep", "find_replace", "exec",
                         "git_status", "git_log", "git_diff", "git_commit",
@@ -4806,6 +4807,10 @@ class FilesystemToolHandler(ToolHandler):
                 "command": {
                     "type": "string",
                     "description": "Shell command to execute (for exec action)",
+                },
+                "max_pages": {
+                    "type": "integer",
+                    "description": "Max pages to extract from PDF (default: 50, for read_pdf action)",
                 },
                 "ref": {
                     "type": "string",
@@ -4925,11 +4930,47 @@ class FilesystemToolHandler(ToolHandler):
 
             elif action == "read_file":
                 data = svc.read_file(path)
+                fname = path.rsplit("/", 1)[-1] if "/" in path else path
+                # Images: store in FileStore and return viewable URL
+                _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
+                if any(fname.lower().endswith(ext) for ext in _img_exts):
+                    from core.file_store import FileStore
+                    import mimetypes
+                    mime = mimetypes.guess_type(fname)[0] or "image/png"
+                    fid = FileStore.instance().store(fname, data, mime)
+                    file_base = self.config.get("file_base_url", "") or ""
+                    if file_base:
+                        url = f"{file_base}/files/{fid}/{fname}"
+                    else:
+                        url = f"/files/{fid}/{fname}"
+                    return f"Image: {url}"
+                # PDF: auto-redirect to read_pdf
+                if fname.lower().endswith(".pdf"):
+                    max_pages = arguments.get("max_pages", 50)
+                    result = svc._request("read_pdf", path, max_pages=max_pages)
+                    if isinstance(result, dict) and "pages" in result:
+                        lines = [f"PDF: {result.get('total_pages', '?')} pages"]
+                        for p_data in result["pages"]:
+                            lines.append(f"\n--- Page {p_data['page']} ---\n{p_data['text']}")
+                        return "\n".join(lines)
+                    return json.dumps(result)
+                # Text files
                 try:
                     return data.decode("utf-8")
                 except UnicodeDecodeError:
-                    import base64
-                    return f"(binary file, {len(data)} bytes, base64): {base64.b64encode(data[:1000]).decode()}"
+                    import base64 as _b64
+                    return f"(binary file, {len(data)} bytes)"
+
+            elif action == "read_pdf":
+                max_pages = arguments.get("max_pages", 50)
+                result = svc._request("read_pdf", path, max_pages=max_pages)
+                if isinstance(result, dict) and "pages" in result:
+                    lines = [f"PDF: {result.get('total_pages', '?')} pages "
+                             f"({result.get('extracted_pages', '?')} extracted)"]
+                    for p_data in result["pages"]:
+                        lines.append(f"\n--- Page {p_data['page']} ---\n{p_data['text']}")
+                    return "\n".join(lines)
+                return json.dumps(result)
 
             elif action == "write_file":
                 content = arguments.get("content", "")

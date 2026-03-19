@@ -40,8 +40,8 @@ from pathlib import Path
 # ── Actions that require write access ─────────────────────────────
 
 _WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace",
-    "git_commit", "git_push",
+    "write_file", "delete_file", "mkdir", "find_replace", "edit",
+    "git_commit", "git_push", "exec",
 })
 
 
@@ -117,7 +117,8 @@ class FSRelayHandler(BaseHTTPRequestHandler):
         rel_path = req.get("path", ".")
 
         # Readonly check
-        if self.readonly and action in _WRITE_ACTIONS:
+        from fs_actions import WRITE_ACTIONS
+        if self.readonly and action in WRITE_ACTIONS:
             self._log_op(action, rel_path, False, "readonly mode")
             self._send_json(False, error="Operation not allowed in readonly mode")
             return
@@ -129,15 +130,20 @@ class FSRelayHandler(BaseHTTPRequestHandler):
             self._send_json(False, error=f"Path traversal blocked: {rel_path}")
             return
 
-        # Dispatch
-        handler = _ACTIONS.get(action)
-        if not handler:
+        # Dispatch via shared fs_actions module
+        from fs_actions import ACTIONS as _FS_ACTIONS, WRITE_ACTIONS
+        handler_fn = _FS_ACTIONS.get(action)
+        if not handler_fn:
             self._log_op(action, rel_path, False, "unknown action")
             self._send_json(False, error=f"Unknown action: {action}")
             return
 
         try:
-            result = handler(self, abs_path, req)
+            if action == "exec":
+                result = handler_fn(self.root_dir, abs_path, req,
+                                     allow_exec=getattr(self, 'allow_exec', False))
+            else:
+                result = handler_fn(self.root_dir, abs_path, req)
             self._log_op(action, rel_path, True)
             self._send_json(True, data=result)
         except Exception as e:
@@ -285,6 +291,51 @@ def _action_find_replace(handler, path, req):
     return {"replacements": count, "path": rel.replace("\\", "/")}
 
 
+def _action_edit(handler, path, req):
+    """Exact string replacement (like Claude Code Edit tool)."""
+    old_string = req.get("old_string", "")
+    new_string = req.get("new_string", "")
+    replace_all = req.get("replace_all", False)
+    if not old_string:
+        raise ValueError("Missing 'old_string' parameter")
+    p = Path(path)
+    text = p.read_text(encoding="utf-8")
+    count = text.count(old_string)
+    if count == 0:
+        raise ValueError(f"old_string not found in {p.name}")
+    if count > 1 and not replace_all:
+        raise ValueError(f"old_string found {count} times (use replace_all=true)")
+    if replace_all:
+        new_text = text.replace(old_string, new_string)
+    else:
+        new_text = text.replace(old_string, new_string, 1)
+    p.write_text(new_text, encoding="utf-8")
+    root = Path(handler.root_dir).resolve()
+    rel = str(p.relative_to(root)).replace("\\", "/")
+    return {"replacements": count if replace_all else 1, "path": rel}
+
+
+def _action_exec(handler, path, req):
+    """Execute a shell command in the sandbox directory."""
+    if not getattr(handler, 'allow_exec', False):
+        raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
+    command = req.get("command", "")
+    timeout = min(req.get("timeout", 30), 120)  # cap at 2 minutes
+    if not command:
+        raise ValueError("Missing 'command' parameter")
+    result = subprocess.run(
+        command, shell=True,
+        capture_output=True, text=True,
+        timeout=timeout,
+        cwd=handler.root_dir,
+    )
+    return {
+        "stdout": result.stdout[-10000:],  # cap output
+        "stderr": result.stderr[-5000:],
+        "returncode": result.returncode,
+    }
+
+
 # ── Git actions ───────────────────────────────────────────────────
 
 def _git_run(cwd, args, timeout=30):
@@ -396,12 +447,15 @@ _ACTIONS = {
     "git_pull": _action_git_pull,
     "git_push": _action_git_push,
     "git_checkout": _action_git_checkout,
+    "edit": _action_edit,
+    "exec": _action_exec,
 }
 
 
 # ── Main ──────────────────────────────────────────────────────────
 
-def _make_handler_class(root_dir: str, secret: str, readonly: bool):
+def _make_handler_class(root_dir: str, secret: str, readonly: bool,
+                        allow_exec: bool = False):
     """Create a handler class with bound config (avoids lambda issues)."""
 
     class ConfiguredHandler(FSRelayHandler):
@@ -410,6 +464,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool):
     ConfiguredHandler.root_dir = root_dir
     ConfiguredHandler.secret = secret
     ConfiguredHandler.readonly = readonly
+    ConfiguredHandler.allow_exec = allow_exec
     return ConfiguredHandler
 
 
@@ -626,6 +681,8 @@ def main():
                         help="Shared secret for authentication")
     parser.add_argument("--readonly", action="store_true",
                         help="Reject write/delete operations")
+    parser.add_argument("--allow-exec", action="store_true",
+                        help="Allow shell command execution (disabled by default)")
     parser.add_argument("--bind", default="127.0.0.1",
                         help="Bind address for HTTP mode (default: 127.0.0.1)")
     # WS Reverse mode
@@ -676,7 +733,8 @@ def main():
             f"  Secret:    {masked}\n\n"
         )
 
-        handler_cls = _make_handler_class(root_dir, args.secret, args.readonly)
+        handler_cls = _make_handler_class(root_dir, args.secret, args.readonly,
+                                         allow_exec=args.allow_exec)
         httpd = HTTPServer((args.bind, args.port), handler_cls)
 
         try:

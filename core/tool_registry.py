@@ -4736,9 +4736,11 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files on the user's filesystem through a configured filesystem service. "
-            "Actions: list_dir, read_file, write_file, delete_file, mkdir, stat, exists, "
-            "search (glob), grep (regex), find_replace. "
+            "Actions: list_dir, read_file, write_file, edit (exact string replace), "
+            "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace, "
+            "exec (shell command). "
             "Git: git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout. "
+            "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root."
         )
         if len(self._available_services) > 1:
@@ -4757,8 +4759,9 @@ class FilesystemToolHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": [
-                        "list_dir", "read_file", "write_file", "delete_file",
-                        "mkdir", "stat", "exists", "search", "grep", "find_replace",
+                        "list_dir", "read_file", "write_file", "edit",
+                        "delete_file", "mkdir", "stat", "exists",
+                        "search", "grep", "find_replace", "exec",
                         "git_status", "git_log", "git_diff", "git_commit",
                         "git_pull", "git_push", "git_checkout",
                     ],
@@ -4791,6 +4794,18 @@ class FilesystemToolHandler(ToolHandler):
                 "service": {
                     "type": "string",
                     "description": "Service name (optional — auto-detects if omitted)",
+                },
+                "old_string": {
+                    "type": "string",
+                    "description": "Exact string to find (for edit action)",
+                },
+                "new_string": {
+                    "type": "string",
+                    "description": "Replacement string (for edit action)",
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to execute (for exec action)",
                 },
                 "ref": {
                     "type": "string",
@@ -4950,6 +4965,24 @@ class FilesystemToolHandler(ToolHandler):
                 replacement = arguments.get("replacement", "")
                 result = svc.find_replace(path, pattern, replacement)
                 return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
+
+            elif action == "edit":
+                old_string = arguments.get("old_string", "")
+                new_string = arguments.get("new_string", "")
+                replace_all = arguments.get("replace_all", False)
+                result = svc.edit(path, old_string, new_string, replace_all)
+                return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s)"
+
+            elif action == "exec":
+                command = arguments.get("command", "")
+                timeout = arguments.get("timeout", 30)
+                result = svc.exec(path, command, timeout)
+                output = result.get("stdout", "")
+                if result.get("stderr"):
+                    output += "\nSTDERR:\n" + result["stderr"]
+                if result.get("returncode", 0) != 0:
+                    output += f"\n(exit code: {result['returncode']})"
+                return output or "(no output)"
 
             # Git operations
             elif action == "git_status":

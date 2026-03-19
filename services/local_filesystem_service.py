@@ -111,6 +111,12 @@ class RelayHTTPBackend(FilesystemBackend):
     def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
         return self._request("find_replace", path, pattern=pattern, replacement=replacement)
 
+    def edit(self, path: str, old_string: str, new_string: str, replace_all: bool = False) -> Dict[str, Any]:
+        return self._request("edit", path, old_string=old_string, new_string=new_string, replace_all=replace_all)
+
+    def exec(self, path: str, command: str, timeout: int = 30) -> Dict[str, Any]:
+        return self._request("exec", path, command=command, timeout=timeout)
+
     # ── Git operations ──
 
     @property
@@ -208,6 +214,12 @@ class LocalFilesystemService(BaseService):
 
     def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
         return self._get_connection().find_replace(path, pattern, replacement)
+
+    def edit(self, path: str, old_string: str, new_string: str, replace_all: bool = False) -> Dict[str, Any]:
+        return self._get_connection().edit(path, old_string, new_string, replace_all)
+
+    def exec(self, path: str, command: str, timeout: int = 30) -> Dict[str, Any]:
+        return self._get_connection().exec(path, command, timeout)
 
     # Git convenience
     def git_status(self, path: str = ".") -> Dict[str, Any]:

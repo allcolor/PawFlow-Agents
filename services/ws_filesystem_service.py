@@ -218,6 +218,12 @@ class RelayWebSocketBackend(FilesystemBackend):
     def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
         return self._request("find_replace", path, pattern=pattern, replacement=replacement)
 
+    def edit(self, path: str, old_string: str, new_string: str, replace_all: bool = False) -> Dict[str, Any]:
+        return self._request("edit", path, old_string=old_string, new_string=new_string, replace_all=replace_all)
+
+    def exec(self, path: str, command: str, timeout: int = 30) -> Dict[str, Any]:
+        return self._request("exec", path, command=command, timeout=timeout)
+
     # ── Git ──
 
     @property
@@ -284,6 +290,8 @@ class WebSocketFilesystemService(BaseService):
     def search(self, path, pattern, recursive=True): return self._get_connection().search(path, pattern, recursive)
     def grep(self, path, regex, recursive=True): return self._get_connection().grep(path, regex, recursive)
     def find_replace(self, path, pattern, replacement): return self._get_connection().find_replace(path, pattern, replacement)
+    def edit(self, path, old_string, new_string, replace_all=False): return self._get_connection().edit(path, old_string, new_string, replace_all)
+    def exec(self, path, command, timeout=30): return self._get_connection().exec(path, command, timeout)
     def git_status(self, path="."): return self._get_connection().git_status(path)
     def git_log(self, path=".", count=10): return self._get_connection().git_log(path, count)
     def git_diff(self, path=".", ref=""): return self._get_connection().git_diff(path, ref)

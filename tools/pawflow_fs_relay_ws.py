@@ -27,13 +27,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 
-# ── Actions requiring write access ───────────────────────────────
-
-_WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace",
-    "git_commit", "git_push",
-})
-
 # ── WebSocket opcodes ────────────────────────────────────────────
 
 OP_TEXT = 0x1
@@ -124,212 +117,18 @@ def _resolve(root_dir: str, rel_path: str) -> Optional[str]:
     return str(target)
 
 
-def _rel_path(abs_path: str, root_dir: str) -> str:
-    """Convert absolute path back to relative (for responses)."""
-    try:
-        return str(Path(abs_path).relative_to(Path(root_dir).resolve())).replace("\\", "/")
-    except ValueError:
-        return abs_path
 
+# Actions imported from shared module (no duplication)
+from fs_actions import ACTIONS as _ACTIONS, WRITE_ACTIONS as _WRITE_ACTIONS
 
-def _action_list_dir(root_dir, path, req):
-    entries = []
-    for e in sorted(Path(path).iterdir()):
-        st = e.stat()
-        entries.append({
-            "name": e.name,
-            "kind": "directory" if e.is_dir() else "file",
-            "size": st.st_size if e.is_file() else 0,
-            "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
-        })
-    return entries
-
-
-def _action_read_file(root_dir, path, req):
-    content = Path(path).read_bytes()
-    return {"content": base64.b64encode(content).decode("ascii"), "size": len(content)}
-
-
-def _action_write_file(root_dir, path, req):
-    content = base64.b64decode(req.get("content", ""))
-    p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_bytes(content)
-    return {"size": len(content)}
-
-
-def _action_delete_file(root_dir, path, req):
-    p = Path(path)
-    if p.is_file():
-        p.unlink()
-    elif p.is_dir():
-        shutil.rmtree(p)
-    else:
-        raise FileNotFoundError(f"Not found: {path}")
-    return {"deleted": True}
-
-
-def _action_mkdir(root_dir, path, req):
-    Path(path).mkdir(parents=True, exist_ok=True)
-    return {"created": True}
-
-
-def _action_stat(root_dir, path, req):
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(f"Not found: {path}")
-    st = p.stat()
-    return {
-        "name": p.name,
-        "kind": "directory" if p.is_dir() else "file",
-        "size": st.st_size if p.is_file() else 0,
-        "modified": datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat(),
-    }
-
-
-def _action_exists(root_dir, path, req):
-    return {"exists": Path(path).exists()}
-
-
-def _action_search(root_dir, path, req):
-    pattern = req.get("pattern", "*")
-    recursive = req.get("recursive", True)
-    p = Path(path)
-    root = Path(root_dir).resolve()
-    matches = p.rglob(pattern) if recursive else p.glob(pattern)
-    return [_rel_path(str(m), root_dir) for m in sorted(matches)]
-
-
-def _action_grep(root_dir, path, req):
-    regex_str = req.get("regex", "")
-    recursive = req.get("recursive", True)
-    if not regex_str:
-        raise ValueError("Missing 'regex' parameter")
-    compiled = re.compile(regex_str)
-    p = Path(path)
-    results = []
-    files = p.rglob("*") if recursive else p.glob("*")
-    for fp in sorted(files):
-        if not fp.is_file():
-            continue
-        try:
-            text = fp.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        for i, line in enumerate(text.splitlines(), 1):
-            m = compiled.search(line)
-            if m:
-                results.append({
-                    "path": _rel_path(str(fp), root_dir),
-                    "line_number": i, "line": line, "match": m.group(),
-                })
-    return results
-
-
-def _action_find_replace(root_dir, path, req):
-    pattern = req.get("pattern", "")
-    replacement = req.get("replacement", "")
-    if not pattern:
-        raise ValueError("Missing 'pattern' parameter")
-    compiled = re.compile(pattern)
-    p = Path(path)
-    text = p.read_text(encoding="utf-8", errors="replace")
-    new_text, count = compiled.subn(replacement, text)
-    if count > 0:
-        p.write_text(new_text, encoding="utf-8")
-    return {"replacements": count, "path": _rel_path(str(p), root_dir)}
-
-
-# ── Git actions ───────────────────────────────────────────────────
-
-def _git_run(cwd, args, timeout=30):
-    return subprocess.run(
-        ["git"] + args, cwd=cwd,
-        capture_output=True, text=True, timeout=timeout,
-    )
-
-
-def _action_git_status(root_dir, path, req):
-    br = _git_run(path, ["branch", "--show-current"])
-    st = _git_run(path, ["status", "--porcelain"])
-    staged, modified, untracked = [], [], []
-    for line in st.stdout.splitlines():
-        if len(line) < 3:
-            continue
-        x, y = line[0], line[1]
-        name = line[3:]
-        if x == "?":
-            untracked.append(name)
-        elif x != " ":
-            staged.append(name)
-        if y != " " and y != "?":
-            modified.append(name)
-    return {
-        "branch": br.stdout.strip() or "HEAD",
-        "clean": not staged and not modified and not untracked,
-        "staged": staged, "modified": modified, "untracked": untracked,
-    }
-
-
-def _action_git_log(root_dir, path, req):
-    count = req.get("count", 10)
-    r = _git_run(path, ["log", f"-n{count}", "--pretty=format:%H%x00%an%x00%aI%x00%s"])
-    entries = []
-    for line in r.stdout.splitlines():
-        parts = line.split("\x00", 3)
-        if len(parts) == 4:
-            entries.append({"hash": parts[0], "author": parts[1], "date": parts[2], "message": parts[3]})
-    return entries
-
-
-def _action_git_diff(root_dir, path, req):
-    ref = req.get("ref", "")
-    cmd = ["diff", ref] if ref else ["diff"]
-    return _git_run(path, cmd).stdout
-
-
-def _action_git_commit(root_dir, path, req):
-    message = req.get("message", "PawFlow auto-commit")
-    _git_run(path, ["add", "-A"])
-    _git_run(path, ["commit", "-m", message])
-    h = _git_run(path, ["rev-parse", "HEAD"])
-    return {"hash": h.stdout.strip(), "message": message}
-
-
-def _action_git_pull(root_dir, path, req):
-    r = _git_run(path, ["pull"], timeout=60)
-    return {"updated": r.returncode == 0, "conflicts": "conflict" in r.stdout.lower() or r.returncode != 0}
-
-
-def _action_git_push(root_dir, path, req):
-    r = _git_run(path, ["push"], timeout=120)
-    return {"pushed": r.returncode == 0, "remote": "origin"}
-
-
-def _action_git_checkout(root_dir, path, req):
-    ref = req.get("ref", "main")
-    _git_run(path, ["checkout", ref])
-    br = _git_run(path, ["branch", "--show-current"])
-    return {"branch": br.stdout.strip() or ref}
-
-
-_ACTIONS = {
-    "list_dir": _action_list_dir, "read_file": _action_read_file,
-    "write_file": _action_write_file, "delete_file": _action_delete_file,
-    "mkdir": _action_mkdir, "stat": _action_stat, "exists": _action_exists,
-    "search": _action_search, "grep": _action_grep, "find_replace": _action_find_replace,
-    "git_status": _action_git_status, "git_log": _action_git_log,
-    "git_diff": _action_git_diff, "git_commit": _action_git_commit,
-    "git_pull": _action_git_pull, "git_push": _action_git_push,
-    "git_checkout": _action_git_checkout,
-}
 
 
 # ── WebSocket connection handler ─────────────────────────────────
 
 async def _handle_client(reader: asyncio.StreamReader,
                          writer: asyncio.StreamWriter,
-                         root_dir: str, secret: str, readonly: bool):
+                         root_dir: str, secret: str, readonly: bool,
+                         allow_exec: bool = False):
     """Handle a single WebSocket client."""
     addr = writer.get_extra_info("peername")
     tag = f"{addr[0]}:{addr[1]}" if addr else "?"
@@ -416,7 +215,10 @@ async def _handle_client(reader: asyncio.StreamReader,
                 continue
 
             try:
-                result = handler_fn(root_dir, abs_path, req)
+                if action == "exec":
+                    result = handler_fn(root_dir, abs_path, req, allow_exec=allow_exec)
+                else:
+                    result = handler_fn(root_dir, abs_path, req)
                 sys.stderr.write(f"[FSRelay-WS] [OK] {action} path={rel_path}\n")
                 await ws_send_json(writer, True, data=result)
             except Exception as e:
@@ -434,9 +236,10 @@ async def _handle_client(reader: asyncio.StreamReader,
 
 # ── Main ──────────────────────────────────────────────────────────
 
-async def _serve(bind: str, port: int, root_dir: str, secret: str, readonly: bool):
+async def _serve(bind: str, port: int, root_dir: str, secret: str, readonly: bool,
+                  allow_exec: bool = False):
     server = await asyncio.start_server(
-        lambda r, w: _handle_client(r, w, root_dir, secret, readonly),
+        lambda r, w: _handle_client(r, w, root_dir, secret, readonly, allow_exec),
         bind, port,
     )
     sys.stderr.write(f"[FSRelay-WS] Listening on {bind}:{port} ...\n")
@@ -454,6 +257,8 @@ def main():
                         help="Root directory for filesystem access")
     parser.add_argument("--secret", required=True,
                         help="Shared secret for authentication")
+    parser.add_argument("--allow-exec", action="store_true",
+                        help="Allow shell command execution (disabled by default)")
     parser.add_argument("--readonly", action="store_true",
                         help="Reject write/delete operations")
     parser.add_argument("--bind", default="127.0.0.1",
@@ -478,7 +283,8 @@ def main():
     )
 
     try:
-        asyncio.run(_serve(args.bind, args.port, root_dir, args.secret, args.readonly))
+        asyncio.run(_serve(args.bind, args.port, root_dir, args.secret, args.readonly,
+                           allow_exec=args.allow_exec))
     except KeyboardInterrupt:
         sys.stderr.write("\n[FSRelay-WS] Shutting down.\n")
 

@@ -28,9 +28,8 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
-html { width: 100%; height: 100%; overflow: hidden; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #1a1a2e; color: #e0e0e0; height: 100%; width: 100%; display: flex; overflow: hidden; }
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
            display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
@@ -71,7 +70,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .sidebar.open { left: 0; }
   .sidebar-toggle { display: block; }
 }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; width: 0; overflow: hidden; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; }
 .header h1 { font-size: 18px; color: #e94560; }
@@ -1410,6 +1409,15 @@ function renderMarkdown(text) {
       }
     }
   } catch(e) {}
+  // Strip dangerous HTML tags (XSS prevention + layout protection)
+  text = text.replace(/<style[\s\S]*?<\/style>/gi, '');
+  text = text.replace(/<script[\s\S]*?<\/script>/gi, '');
+  text = text.replace(/<link[^>]*>/gi, '');
+  text = text.replace(/<iframe[\s\S]*?<\/iframe>/gi, '');
+  text = text.replace(/<object[\s\S]*?<\/object>/gi, '');
+  text = text.replace(/<embed[^>]*>/gi, '');
+  text = text.replace(/<form[\s\S]*?<\/form>/gi, '');
+  text = text.replace(/\bon\w+\s*=\s*["'][^"']*["']/gi, '');  // onclick, onerror, etc.
   // Code blocks first (protect from other replacements)
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
   text = text.replace(/`([^`]+)`/g, '<code>$1</code>');
@@ -6857,16 +6865,6 @@ const _msgObserver = new MutationObserver((mutations) => {
 _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
-
-// Fix main width to prevent content from pushing layout
-function fixMainWidth() {
-  const sidebar = document.getElementById('sidebar');
-  const main = document.querySelector('.main');
-  const sidebarW = sidebar ? sidebar.offsetWidth : 0;
-  main.style.width = (window.innerWidth - sidebarW) + 'px';
-}
-fixMainWidth();
-window.addEventListener('resize', fixMainWidth);
 
 loadConversations();
 </script>

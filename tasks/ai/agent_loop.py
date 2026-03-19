@@ -3197,7 +3197,7 @@ class AgentLoopTask(BaseTask):
             uid = user_id or "anonymous"
             target_uid = "__global__" if scope == "global" else uid
             try:
-                rs.update(rtype, rname, data, target_uid)
+                rs.update(rtype, rname, target_uid, data)
                 flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -3218,7 +3218,7 @@ class AgentLoopTask(BaseTask):
             if rtype == "task_def":
                 data.setdefault("created_by", uid)
             try:
-                rs.create(rtype, rname, data, target_uid)
+                rs.create(rtype, rname, target_uid, data)
                 flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -3257,12 +3257,12 @@ class AgentLoopTask(BaseTask):
             target_uid = "__global__" if target_scope == "global" else uid
             data = {k: v for k, v in item.items() if k not in ("name", "_scope")}
             try:
-                rs.create(rtype, rname, data, target_uid)
+                rs.create(rtype, rname, target_uid, data)
                 flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope}).encode())
             except Exception as e:
                 # If exists, update instead
                 try:
-                    rs.update(rtype, rname, data, target_uid)
+                    rs.update(rtype, rname, target_uid, data)
                     flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "updated": True}).encode())
                 except Exception as e2:
                     flowfile.set_content(json.dumps({"error": str(e2)}).encode())
@@ -4145,7 +4145,7 @@ class AgentLoopTask(BaseTask):
             uid = user_id or "anonymous"
             data["created_by"] = uid
             try:
-                rs.create("task_def", name, data, uid)
+                rs.create("task_def", name, uid, data)
                 flowfile.set_content(json.dumps(
                     {"ok": True, "name": name}).encode())
             except Exception as e:

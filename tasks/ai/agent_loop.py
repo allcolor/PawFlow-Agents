@@ -4904,6 +4904,7 @@ class AgentLoopTask(BaseTask):
                         ctx.get("context_keep_recent", 6),
                         conversation_id=conversation_id,
                         agent_name=_agent_name or "assistant",
+                        tool_defs=ctx.get("tool_defs"),
                     )
                     # If compaction happened, mark context as diverged so
                     # _flush_new() appends subsequent messages to the agent
@@ -4988,6 +4989,7 @@ class AgentLoopTask(BaseTask):
                                 0.5,  # aggressive threshold
                                 ctx.get("context_keep_recent", 6),
                                 conversation_id=conversation_id,
+                                tool_defs=ctx.get("tool_defs"),
                             )
                             try:
                                 heartbeat_stop.clear()
@@ -6681,12 +6683,17 @@ class AgentLoopTask(BaseTask):
     # ── Context compaction ────────────────────────────────────────────
 
     @staticmethod
-    def _estimate_tokens(messages: List[LLMMessage]) -> int:
+    @staticmethod
+    def _estimate_tokens(messages: List[LLMMessage],
+                         tool_defs: list = None) -> int:
         """Token estimate: ~3 chars per token (conservative to avoid overflow).
 
         Uses 3 chars/token instead of 3.5-4 to ensure compaction triggers
         before the real limit is hit.  Each message also adds ~4 tokens of
         overhead (role, separators).
+
+        *tool_defs* are the tool schemas sent alongside messages — these
+        consume tokens too and must be counted.
         """
         total_chars = 0
         for m in messages:
@@ -6704,6 +6711,15 @@ class AgentLoopTask(BaseTask):
             if m.tool_calls:
                 for tc in m.tool_calls:
                     total_chars += len(tc.name) + len(json.dumps(tc.arguments))
+        # Tool definitions (JSON schemas) are sent with every request
+        if tool_defs:
+            for td in tool_defs:
+                # name + description + parameter schema
+                total_chars += len(getattr(td, 'name', '') or '')
+                total_chars += len(getattr(td, 'description', '') or '')
+                params = getattr(td, 'parameters', None)
+                if params:
+                    total_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
         return int(total_chars / 3)
 
     def _compact_if_needed(
@@ -6715,6 +6731,7 @@ class AgentLoopTask(BaseTask):
         keep_recent: int,
         conversation_id: str = "",
         agent_name: str = "",
+        tool_defs: list = None,
     ) -> List[LLMMessage]:
         """Compact conversation history if approaching the token limit.
 
@@ -6729,7 +6746,7 @@ class AgentLoopTask(BaseTask):
         If *conversation_id* is given, the resulting summary is persisted
         to the ConversationStore so it can be reused after a restart.
         """
-        estimated = self._estimate_tokens(messages)
+        estimated = self._estimate_tokens(messages, tool_defs=tool_defs)
         limit = int(max_tokens * threshold)
 
         if estimated <= limit:

@@ -1232,22 +1232,20 @@ class AgentLoopTask(BaseTask):
                 _id_parts.append(f"provider={_client_provider_name}")
             if _active_llm_service:
                 _id_parts.append(f"service={_active_llm_service}")
-            _identity_msg = LLMMessage(
-                role="system",
-                content=(
-                    f"[Platform] Your identity: agent_id={_active_agent_name}, "
-                    + ", ".join(_id_parts) + ". "
-                    "Report these values when asked about your model/identity."
-                ),
-                source={"type": "ephemeral", "name": "_platform_identity"},
+            _id_text = (
+                f"[Platform identity] agent_id={_active_agent_name}, "
+                + ", ".join(_id_parts) + ". "
+                "Report these exact values when asked about your model/identity."
             )
-            # Insert before the last user message (if any)
-            _insert_idx = len(messages)
-            for _i in range(len(messages) - 1, -1, -1):
-                if messages[_i].role == "user":
-                    _insert_idx = _i
-                    break
-            messages.insert(_insert_idx, _identity_msg)
+            # Append to the main system prompt (index 0) instead of inserting
+            # a separate system message — many LLMs (Qwen, Llama) reject
+            # system messages that aren't at the beginning.
+            if messages and messages[0].role == "system":
+                messages[0] = LLMMessage(
+                    role="system",
+                    content=messages[0].content + "\n\n" + _id_text,
+                    source=messages[0].source,
+                )
 
         # Configure all handlers with full context
         self._configure_tool_handlers(

@@ -5906,8 +5906,8 @@ function handleKey(e) {
     }
     return;
   }
-  // Arrow down: navigate back toward current draft
-  if (e.key === 'ArrowDown' && historyIndex >= 0) {
+  // Arrow down: navigate back toward current draft (only when cursor is at the end)
+  if (e.key === 'ArrowDown' && historyIndex >= 0 && input.selectionStart === input.value.length) {
     e.preventDefault();
     historyIndex--;
     if (historyIndex < 0) {

@@ -809,9 +809,8 @@ async function _recoverConversation(cid) {
     console.log('[poll] recovering', newMsgs.length, 'new messages');
     serverMsgCount = data.message_count || serverMsgCount;
 
-    // Clean up any stale streaming state
-    clearAllStreams();
-    hideTyping();
+    // Do NOT clearAllStreams — agents may be actively streaming.
+    // Only clear streams that have no active chunks being appended.
 
     // Display the new messages, skipping messages already shown locally
     const msgContainer = document.getElementById('messages');

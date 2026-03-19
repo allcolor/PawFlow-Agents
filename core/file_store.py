@@ -233,7 +233,16 @@ class FileStore:
             tmp = path + ".tmp"
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False)
-            os.replace(tmp, path)
+            # os.replace can fail on Windows if another process holds the file
+            for _attempt in range(3):
+                try:
+                    os.replace(tmp, path)
+                    break
+                except OSError:
+                    if _attempt < 2:
+                        time.sleep(0.1)
+                    else:
+                        raise
         except Exception as e:
             logger.error(f"FileStore: failed to save index: {e}")
 

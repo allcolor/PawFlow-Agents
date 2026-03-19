@@ -3714,6 +3714,40 @@ class AgentLoopTask(BaseTask):
             return self._handle_random_thought(body, body.get("conversation_id", ""), user_id, flowfile)
 
         # ── Task management ───────────────────────────────────────────
+        if action == "create_task_def":
+            name = body.get("name", "").strip()
+            data = body.get("data", {})
+            if not name or not data.get("prompt"):
+                flowfile.set_content(json.dumps(
+                    {"error": "Missing name or prompt"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            data["created_by"] = uid
+            try:
+                rs.create("task_def", name, data, uid)
+                flowfile.set_content(json.dumps(
+                    {"ok": True, "name": name}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps(
+                    {"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "delete_task_def":
+            name = body.get("name", "").strip()
+            if not name:
+                flowfile.set_content(json.dumps(
+                    {"error": "Missing name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            deleted = rs.delete("task_def", name, uid)
+            flowfile.set_content(json.dumps(
+                {"ok": True, "deleted": deleted}).encode())
+            return [flowfile]
+
         if action == "assign_task":
             conv_id = body.get("conversation_id", "")
             agent = body.get("agent_name", "")

@@ -3543,10 +3543,9 @@ async function handleSlashCommand(text) {
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({
-          action: 'manage_resource', resource_type: 'task_def',
-          name: taskName, _action: 'create',
+          action: 'create_task_def',
+          name: taskName,
           data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
-          conversation_id: conversationId,
         }),
       }).then(r => r.json()).then(data => {
         if (data.error) addMsg('error', data.error);
@@ -3603,9 +3602,8 @@ async function handleSlashCommand(text) {
       fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({
-          action: 'manage_resource', resource_type: 'task_def',
-          name: taskName, _action: 'delete',
-          conversation_id: conversationId,
+          action: 'delete_task_def',
+          name: taskName,
         }),
       }).then(r => r.json()).then(data => {
         if (data.error) addMsg('error', data.error);

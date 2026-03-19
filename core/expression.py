@@ -75,6 +75,7 @@ def _load_user_secrets(username: str) -> Dict[str, str]:
 def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = None,
                        parameters: Optional[Dict[str, Any]] = None,
                        owner: Optional[str] = None,
+                       conversation_id: Optional[str] = None,
                        _depth: int = 0) -> str:
     """
     Résoudre toutes les expressions ${...} dans un template.
@@ -113,6 +114,8 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     global_secrets = None
     user_params = None
     user_secrets = None
+    conv_params = None
+    conv_secrets = None
 
     def _resolve_value(value):
         """Convert a value (possibly ConfigValue) to string for interpolation."""
@@ -148,8 +151,41 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             user_secrets = _load_user_secrets(owner)
         return user_secrets or {}
 
+    def _get_conv_params():
+        nonlocal conv_params
+        if conv_params is None and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                conv_params = ConversationStore.instance().get_extra(
+                    conversation_id, "conv_parameters") or {}
+            except Exception:
+                conv_params = {}
+        return conv_params or {}
+
+    def _get_conv_secrets():
+        nonlocal conv_secrets
+        if conv_secrets is None and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                from core.secrets import SecretsManager
+                raw = ConversationStore.instance().get_extra(
+                    conversation_id, "conv_secrets") or {}
+                sm = SecretsManager.get_instance()
+                conv_secrets = {}
+                for k, v in raw.items():
+                    try:
+                        conv_secrets[k] = sm.decrypt(v) if v.startswith("enc:") else v
+                    except Exception:
+                        conv_secrets[k] = v
+            except Exception:
+                conv_secrets = {}
+        return conv_secrets or {}
+
     def _cascade_param(key):
-        """Cascade lookup: user params → global params. Returns (value, found)."""
+        """Cascade lookup: conv → user params → global params. Returns (value, found)."""
+        cp = _get_conv_params()
+        if key in cp:
+            return str(cp[key]), True
         if owner:
             up = _get_user_params()
             if key in up:
@@ -164,7 +200,10 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         return None, False
 
     def _cascade_secret(key):
-        """Cascade lookup: user secrets → global secrets. Returns (value, found)."""
+        """Cascade lookup: conv → user secrets → global secrets. Returns (value, found)."""
+        cs = _get_conv_secrets()
+        if key in cs:
+            return str(cs[key]), True
         if owner:
             us = _get_user_secrets()
             if key in us:
@@ -207,6 +246,22 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             if key in secrets:
                 resolved = _resolve_value(secrets[key])
                 return match.group(0) if resolved is None else resolved
+            return match.group(0)
+
+        # secrets.conv.key_name → conv secrets → user secrets → global secrets (cascade)
+        if expr.startswith('secrets.conv.'):
+            key = expr[len('secrets.conv.'):]
+            val, found = _cascade_secret(key)
+            if found:
+                return val
+            return match.group(0)
+
+        # conv.key_name → conv params → user params → global params (cascade)
+        if expr.startswith('conv.'):
+            key = expr[len('conv.'):]
+            val, found = _cascade_param(key)
+            if found:
+                return val
             return match.group(0)
 
         # global.key_name → global parameters only

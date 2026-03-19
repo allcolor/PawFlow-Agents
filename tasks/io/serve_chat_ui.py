@@ -5976,9 +5976,13 @@ function _scopeBadge(s) {
 }
 
 function _sectionHeader(title, rtype) {
+  const isParamSecret = rtype === '_param' || rtype === '_secret';
+  const onclick = isParamSecret
+    ? `_showParamEditor('','','${rtype === '_secret'}',true)`
+    : `showResourceCreator('${rtype}')`;
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
     <span style="color:#6c5ce7;font-weight:600;">${title}</span>
-    <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="showResourceCreator('${rtype}')" title="Create new ${rtype}">+</span>
+    <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="${onclick}" title="Create new">+</span>
   </div>`;
 }
 
@@ -6036,6 +6040,31 @@ async function loadResources() {
         </div>`;
       });
     }
+    // Variables & Secrets (separate fetch)
+    try {
+      const psResp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'list_params_secrets', conversation_id: conversationId }),
+      });
+      const ps = await psResp.json();
+      if (ps.parameters && ps.parameters.length) {
+        html += _sectionHeader('Variables', '_param');
+        ps.parameters.forEach(p => {
+          const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
+            ${_scopeBadge(p.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
+          </div>`;
+        });
+      }
+      if (ps.secrets && ps.secrets.length) {
+        html += _sectionHeader('Secrets', '_secret');
+        ps.secrets.forEach(s => {
+          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
+            ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
+          </div>`;
+        });
+      }
+    } catch (_) {}
     if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
     el.innerHTML = html;
   } catch (e) {
@@ -6236,6 +6265,78 @@ function _saveResourceCreate(rtype) {
   }).then(r => r.json()).then(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
+}
+
+// ── Param/Secret context menu + create ────────────────────────────
+function showParamMenu(e, key, scope, isSecret) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
+  item('\u{1F5D1} Delete', () => {
+    if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: isSecret ? 'delete_secret' : 'delete_param', key, scope, conversation_id: conversationId }),
+    }).then(() => loadResources()).catch(e => addMsg('error', e.message));
+  }, true);
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+function _showParamEditor(key, scope, isSecret, isNew) {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const title = isNew ? `New ${isSecret ? 'secret' : 'variable'}` : `Edit ${isSecret ? 'secret' : 'variable'}: ${key}`;
+  let formHtml = '';
+  if (isNew) {
+    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Key</label><input id="pv-key" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="pv-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="conversation">Conversation</option><option value="user">User</option><option value="global">Global</option></select></div>';
+  }
+  const inputType = isSecret ? 'password' : 'text';
+  formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Value</label><input id="pv-value" type="${inputType}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:400px;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${title}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div>` + formHtml + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_saveParam('${key}','${scope}',${isSecret},${isNew})" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+  </div>`;
+  overlay.appendChild(panel);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function _saveParam(origKey, origScope, isSecret, isNew) {
+  const key = isNew ? (document.getElementById('pv-key').value || '').trim() : origKey;
+  const scope = isNew ? (document.getElementById('pv-scope').value || 'conversation') : origScope;
+  const value = document.getElementById('pv-value').value;
+  if (!key) { alert('Key is required'); return; }
+  const action = isSecret ? 'set_secret' : 'set_param';
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action, key, value, scope, conversation_id: conversationId }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   }).catch(e => addMsg('error', e.message));
 }
 

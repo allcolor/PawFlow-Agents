@@ -3214,6 +3214,149 @@ class AgentLoopTask(BaseTask):
                     flowfile.set_content(json.dumps({"error": str(e2)}).encode())
             return [flowfile]
 
+        if action == "list_params_secrets":
+            conv_id = body.get("conversation_id", "")
+            uid = user_id or "anonymous"
+            params_out = []
+            secrets_out = []
+            # Global params
+            from core.expression import _load_global_parameters, _load_global_secrets
+            for k, v in _load_global_parameters().items():
+                params_out.append({"key": k, "value": str(v), "scope": "global"})
+            # User params
+            if uid and uid != "anonymous":
+                from core.expression import _load_user_parameters, _load_user_secrets
+                for k, v in _load_user_parameters(uid).items():
+                    params_out.append({"key": k, "value": str(v), "scope": "user"})
+                # User secrets (names only)
+                for k in _load_user_secrets(uid).keys():
+                    secrets_out.append({"key": k, "scope": "user"})
+            # Global secrets (names only)
+            for k in _load_global_secrets().keys():
+                secrets_out.append({"key": k, "scope": "global"})
+            # Conv params/secrets
+            if conv_id:
+                cp = store.get_extra(conv_id, "conv_parameters") or {}
+                for k, v in cp.items():
+                    params_out.append({"key": k, "value": str(v), "scope": "conversation"})
+                cs = store.get_extra(conv_id, "conv_secrets") or {}
+                for k in cs.keys():
+                    secrets_out.append({"key": k, "scope": "conversation"})
+            flowfile.set_content(json.dumps({
+                "parameters": params_out, "secrets": secrets_out,
+            }, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "set_param":
+            key = body.get("key", "").strip()
+            value = body.get("value", "")
+            scope = body.get("scope", "global")
+            conv_id = body.get("conversation_id", "")
+            if not key:
+                flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
+                return [flowfile]
+            if scope == "conversation" and conv_id:
+                cp = store.get_extra(conv_id, "conv_parameters") or {}
+                cp[key] = value
+                store.set_extra(conv_id, "conv_parameters", cp)
+            elif scope == "user":
+                uid = user_id or "anonymous"
+                from core.config_store import ConfigStore
+                path = Path(f"config/users/{uid}/parameters.json")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                data = ConfigStore.load_params(path)
+                data[key] = value
+                ConfigStore.save_params(path, data)
+            else:  # global
+                from core.config_store import ConfigStore
+                data = ConfigStore.load_params(Path("config/global_parameters.json"))
+                data[key] = value
+                ConfigStore.save_params(Path("config/global_parameters.json"), data)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
+        if action == "delete_param":
+            key = body.get("key", "").strip()
+            scope = body.get("scope", "global")
+            conv_id = body.get("conversation_id", "")
+            if not key:
+                flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
+                return [flowfile]
+            if scope == "conversation" and conv_id:
+                cp = store.get_extra(conv_id, "conv_parameters") or {}
+                cp.pop(key, None)
+                store.set_extra(conv_id, "conv_parameters", cp)
+            elif scope == "user":
+                uid = user_id or "anonymous"
+                from core.config_store import ConfigStore
+                path = Path(f"config/users/{uid}/parameters.json")
+                data = ConfigStore.load_params(path)
+                data.pop(key, None)
+                ConfigStore.save_params(path, data)
+            else:
+                from core.config_store import ConfigStore
+                data = ConfigStore.load_params(Path("config/global_parameters.json"))
+                data.pop(key, None)
+                ConfigStore.save_params(Path("config/global_parameters.json"), data)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
+        if action == "set_secret":
+            key = body.get("key", "").strip()
+            value = body.get("value", "")
+            scope = body.get("scope", "global")
+            conv_id = body.get("conversation_id", "")
+            if not key:
+                flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
+                return [flowfile]
+            from core.secrets import SecretsManager
+            sm = SecretsManager.get_instance()
+            if scope == "conversation" and conv_id:
+                cs = store.get_extra(conv_id, "conv_secrets") or {}
+                cs[key] = sm.encrypt(value)
+                store.set_extra(conv_id, "conv_secrets", cs)
+            elif scope == "user":
+                uid = user_id or "anonymous"
+                from core.config_store import ConfigStore
+                path = Path(f"config/users/{uid}/secrets.json")
+                path.parent.mkdir(parents=True, exist_ok=True)
+                data = ConfigStore.load_secrets(path)
+                data[key] = value  # ConfigStore.save_secrets encrypts
+                ConfigStore.save_secrets(path, data)
+            else:
+                from core.config_store import ConfigStore
+                data = ConfigStore.load_secrets(Path("config/global_secrets.json"))
+                data[key] = value
+                ConfigStore.save_secrets(Path("config/global_secrets.json"), data)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
+        if action == "delete_secret":
+            key = body.get("key", "").strip()
+            scope = body.get("scope", "global")
+            conv_id = body.get("conversation_id", "")
+            if not key:
+                flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
+                return [flowfile]
+            if scope == "conversation" and conv_id:
+                cs = store.get_extra(conv_id, "conv_secrets") or {}
+                cs.pop(key, None)
+                store.set_extra(conv_id, "conv_secrets", cs)
+            elif scope == "user":
+                uid = user_id or "anonymous"
+                from core.config_store import ConfigStore
+                path = Path(f"config/users/{uid}/secrets.json")
+                data = ConfigStore.load_secrets(path)
+                data.pop(key, None)
+                ConfigStore.save_secrets(path, data)
+            else:
+                from core.config_store import ConfigStore
+                data = ConfigStore.load_secrets(Path("config/global_secrets.json"))
+                data.pop(key, None)
+                ConfigStore.save_secrets(Path("config/global_secrets.json"), data)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
         if action == "activate_resource":
             conv_id = body.get("conversation_id", "")
             rtype = body.get("resource_type", "")

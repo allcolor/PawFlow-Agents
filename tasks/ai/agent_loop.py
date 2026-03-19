@@ -3110,6 +3110,49 @@ class AgentLoopTask(BaseTask):
                     "default_interval": t.get("default_interval", "6/1m"),
                 } for t in rs.list_all("task_def", uid, conversation_id=conv_id)],
             }
+            # Services (global + user)
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                from gui.services.user_service_registry import UserServiceRegistry
+                svcs = []
+                greg = GlobalServiceRegistry.get_instance()
+                for sid, sdef in greg.get_all_definitions().items():
+                    svcs.append({
+                        "service_id": sid,
+                        "service_type": getattr(sdef, "service_type", ""),
+                        "enabled": getattr(sdef, "enabled", True),
+                        "description": getattr(sdef, "description", ""),
+                        "scope": "global",
+                    })
+                if uid and uid != "anonymous":
+                    ureg = UserServiceRegistry.get_instance()
+                    for sid, sdef in ureg.get_all_for_user(uid).items():
+                        svcs.append({
+                            "service_id": sid,
+                            "service_type": getattr(sdef, "service_type", ""),
+                            "enabled": getattr(sdef, "enabled", True),
+                            "description": getattr(sdef, "description", ""),
+                            "scope": "user",
+                        })
+                result["services"] = svcs
+            except Exception:
+                result["services"] = []
+            # Deployed flows
+            try:
+                from gui.services.deployment_registry import DeploymentRegistry
+                flows = []
+                dr = DeploymentRegistry.get_instance()
+                for iid, inst in dr.get_all().items():
+                    flows.append({
+                        "instance_id": iid,
+                        "flow_name": inst.flow_name,
+                        "status": inst.status,
+                        "owner": inst.owner or "global",
+                        "scope": "user" if inst.owner and inst.owner != "global" else "global",
+                    })
+                result["flows"] = flows
+            except Exception:
+                result["flows"] = []
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
             return [flowfile]
 
@@ -3355,6 +3398,118 @@ class AgentLoopTask(BaseTask):
                 data.pop(key, None)
                 ConfigStore.save_secrets(Path("config/global_secrets.json"), data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
+            return [flowfile]
+
+        if action == "get_service_detail":
+            sid = body.get("service_id", "")
+            scope = body.get("scope", "global")
+            if not sid:
+                flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+                return [flowfile]
+            try:
+                if scope == "user" and user_id:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    ureg = UserServiceRegistry.get_instance()
+                    sdef = ureg.get_all_for_user(user_id).get(sid)
+                else:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    sdef = GlobalServiceRegistry.get_instance().get_all_definitions().get(sid)
+                if not sdef:
+                    flowfile.set_content(json.dumps({"error": f"Service '{sid}' not found"}).encode())
+                    return [flowfile]
+                flowfile.set_content(json.dumps({
+                    "service_id": sid,
+                    "service_type": getattr(sdef, "service_type", ""),
+                    "config": getattr(sdef, "config", {}),
+                    "enabled": getattr(sdef, "enabled", True),
+                    "description": getattr(sdef, "description", ""),
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "update_service":
+            sid = body.get("service_id", "")
+            scope = body.get("scope", "global")
+            config = body.get("config", {})
+            if not sid:
+                flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+                return [flowfile]
+            try:
+                if scope == "user" and user_id:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    ureg = UserServiceRegistry.get_instance()
+                    ureg.update_config(user_id, sid, config)
+                else:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    GlobalServiceRegistry.get_instance().update_config(sid, config)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "toggle_service":
+            sid = body.get("service_id", "")
+            enabled = body.get("enabled", True)
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                ureg = UserServiceRegistry.get_instance()
+                uid = user_id or "anonymous"
+                ureg.set_enabled(uid, sid, enabled)
+                flowfile.set_content(json.dumps({"ok": True, "enabled": enabled}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "delete_service":
+            sid = body.get("service_id", "")
+            scope = body.get("scope", "user")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot delete global services from chat"}).encode())
+                return [flowfile]
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                uid = user_id or "anonymous"
+                UserServiceRegistry.get_instance().delete(uid, sid)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action in ("start_flow", "stop_flow", "undeploy_flow"):
+            iid = body.get("instance_id", "")
+            if not iid:
+                flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+                return [flowfile]
+            try:
+                from gui.services.executor_registry import ExecutorRegistry
+                from gui.services.deployment_registry import DeploymentRegistry
+                reg = ExecutorRegistry.get_instance()
+                dr = DeploymentRegistry.get_instance()
+                if action == "stop_flow":
+                    ex = reg.get(iid)
+                    if ex and ex.is_running:
+                        ex.stop()
+                    reg.unregister(iid)
+                    flowfile.set_content(json.dumps({"ok": True, "status": "stopped"}).encode())
+                elif action == "start_flow":
+                    inst = dr.get_all().get(iid)
+                    if not inst:
+                        flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
+                        return [flowfile]
+                    reg._restore_instance(iid, inst.flow_path,
+                                           inst.max_workers, inst.max_retries,
+                                           parameters=inst.parameters)
+                    flowfile.set_content(json.dumps({"ok": True, "status": "running"}).encode())
+                elif action == "undeploy_flow":
+                    ex = reg.get(iid)
+                    if ex and ex.is_running:
+                        ex.stop()
+                    reg.unregister(iid)
+                    dr.undeploy(iid)
+                    flowfile.set_content(json.dumps({"ok": True, "status": "undeployed"}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
         if action == "activate_resource":

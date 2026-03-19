@@ -6051,6 +6051,29 @@ async function loadResources() {
         </div>`;
       });
     }
+    // Services
+    if (data.services && data.services.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Services</div>';
+      data.services.forEach(s => {
+        const statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}';
+        const svcCtx = s.scope === 'user' ? ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"` : '';
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
+          ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span></span>
+        </div>`;
+      });
+    }
+    // Deployed flows
+    if (data.flows && data.flows.length) {
+      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Flows</div>';
+      data.flows.forEach(f => {
+        const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
+        const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
+        const flowCtx = f.scope !== 'global' ? ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}');return false;"` : '';
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
+          ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
+        </div>`;
+      });
+    }
     // Variables & Secrets (separate fetch)
     try {
       const psResp = await fetch(API, {
@@ -6280,6 +6303,147 @@ function _saveResourceCreate(rtype) {
 }
 
 // ── Param/Secret context menu + create ────────────────────────────
+// ── Service context menu ──────────────────────────────────────────
+function showServiceMenu(e, serviceId, scope, enabled) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  item('\u270F Edit...', () => _showServiceEditor(serviceId, scope));
+  item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'toggle_service', service_id: serviceId, enabled: !enabled }),
+    }).then(r => r.json()).then(d => {
+      if (d.error) addMsg('error', d.error);
+      else loadResources();
+    }).catch(e => addMsg('error', e.message));
+  });
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  menu.appendChild(sep);
+  item('\u{1F5D1} Delete', () => {
+    if (!confirm(`Delete service '${serviceId}'?`)) return;
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_service', service_id: serviceId, scope }),
+    }).then(r => r.json()).then(d => {
+      if (d.error) addMsg('error', d.error);
+      else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
+    }).catch(e => addMsg('error', e.message));
+  }, true);
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+async function _showServiceEditor(serviceId, scope) {
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_service_detail', service_id: serviceId, scope }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    let overlay = document.getElementById('resourceEditorOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'resourceEditorOverlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+    const config = data.config || {};
+    let formHtml = '';
+    for (const [k, v] of Object.entries(config)) {
+      const isSecret = k.toLowerCase().includes('key') || k.toLowerCase().includes('secret') || k.toLowerCase().includes('token');
+      const inputType = isSecret ? 'password' : 'text';
+      const val = String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
+      formHtml += `<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">${k}</label>
+        <input id="svc-${k}" type="${inputType}" value="${val}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:5px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+    }
+    const panel = document.createElement('div');
+    panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+    panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Edit Service: ${serviceId} ${_scopeBadge(scope)}</h3>
+      <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+    </div>` + formHtml + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+      <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+      <button onclick="_saveServiceEdit('${serviceId}','${scope}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+    </div>`;
+    panel.dataset.configKeys = JSON.stringify(Object.keys(config));
+    overlay.appendChild(panel);
+    overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+    document.body.appendChild(overlay);
+  } catch (e) { addMsg('error', e.message); }
+}
+
+function _saveServiceEdit(serviceId, scope) {
+  const panel = document.querySelector('#resourceEditorOverlay > div');
+  const keys = JSON.parse(panel.dataset.configKeys || '[]');
+  const config = {};
+  for (const k of keys) {
+    const el = document.getElementById('svc-' + k);
+    if (el) config[k] = el.value;
+  }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'update_service', service_id: serviceId, scope, config }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', `Service '${serviceId}' updated.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
+}
+
+// ── Flow instance context menu ───────────────────────────────────
+function showFlowInstanceMenu(e, instanceId, status) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  if (status === 'running') {
+    item('\u23F9 Stop', () => _flowAction(instanceId, 'stop_flow'));
+  } else {
+    item('\u25B6 Start', () => _flowAction(instanceId, 'start_flow'));
+  }
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  menu.appendChild(sep);
+  item('\u{1F5D1} Undeploy', () => {
+    if (!confirm(`Undeploy flow '${instanceId}'?`)) return;
+    _flowAction(instanceId, 'undeploy_flow');
+  }, true);
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+function _flowAction(instanceId, action) {
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action, instance_id: instanceId }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', `${action.replace('_', ' ')}: ${instanceId}`); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
+}
+
 function showParamMenu(e, key, scope, isSecret) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');

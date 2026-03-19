@@ -3684,6 +3684,42 @@ Use cronTrigger as root task (see pawflow_help topic 'triggers' for details).
 ### Data transformation
 tasks: fetchData → updateAttribute → transformJSON → routeOnAttribute → output
 
+## Agent Tools as Flow Tasks
+
+Every agent tool is also available as a flow task with the prefix `tool.`.
+Use these when you need tool functionality in a flow (not in agent context).
+
+Available tool tasks (use `pawflow_help topic='tasks'` for full list):
+- `tool.generate_image` — Generate an image via the configured image service
+- `tool.generate_video` — Generate a video
+- `tool.notify_user` — Send a notification to a user/conversation
+- `tool.create_file` — Create a file in the FileStore
+- `tool.remember` / `tool.recall` — Memory store/retrieve
+- `tool.scrape_url` — Scrape a web page
+- `tool.web_search` — Web search
+- `tool.execute_script` — Run a sandboxed Python script
+- `tool.spawn_agents` — Spawn sub-agents
+- `tool.assign_task` — Assign a task to an agent
+- `tool.manage_flow` — Create/deploy/manage flows
+
+Tool task parameters match the tool's parameter schema.
+Arguments are read from: task config → FlowFile attributes → FlowFile content (JSON).
+Output: tool result as FlowFile content, with `tool.name` and `tool.status` attributes.
+
+Example: generate an image from an upstream prompt
+```json
+{
+  "tasks": {
+    "prompt": { "type": "inferLLM", "parameters": { "system_prompt": "Generate a Ponyverse image prompt" } },
+    "gen": { "type": "tool.generate_image", "parameters": { "negative_prompt": "blurry, deformed" } }
+  },
+  "relations": [
+    { "from": "prompt", "to": "gen", "type": "success" }
+  ]
+}
+```
+The prompt task output flows as FlowFile content → tool.generate_image reads `prompt` from it.
+
 ## Task Configuration
 - Parameters go in the `parameters` key inside the task definition
 - Tasks read config via `self.config.get("key")`

@@ -27,15 +27,13 @@ from core.tool_registry import CreateFileHandler, create_default_registry
 
 
 def _reset_filestore():
-    """Reset FileStore singleton for tests (cleanup temp files + clear instance)."""
-    import shutil
+    """Reset FileStore singleton for tests.
+
+    Only clears the in-memory singleton reference — NEVER deletes files
+    from disk.  Previous code iterated _remove_entry() on all entries
+    which deleted production files when the singleton pointed to data/files.
+    """
     with FileStore._lock:
-        inst = FileStore._instance
-        if inst is not None:
-            with inst._store_lock:
-                for fid in list(inst._entries.keys()):
-                    inst._remove_entry(fid)
-                inst._save_index()
         FileStore._instance = None
 
 

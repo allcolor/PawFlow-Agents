@@ -28,8 +28,8 @@ _CHAT_HTML = r"""<!DOCTYPE html>
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #555; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-       background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
+html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+       background: #1a1a2e; color: #e0e0e0; height: 100vh; width: 100vw; display: flex; overflow: hidden; max-width: 100vw; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
            display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
@@ -70,7 +70,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   .sidebar.open { left: 0; }
   .sidebar-toggle { display: block; }
 }
-.main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.main { flex: 1; display: flex; flex-direction: column; min-width: 0; max-width: calc(100vw - 260px); overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; }
 .header h1 { font-size: 18px; color: #e94560; }

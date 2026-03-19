@@ -1221,9 +1221,9 @@ class AgentLoopTask(BaseTask):
             provider=_client_provider_name,
         ) + system_prompt
 
-        # Inject identity as ephemeral system message near end of conversation
-        # (LLMs trained via RLHF often ignore system prompt identity claims,
-        # but respect recent context — this ensures the model can self-report)
+        # Build ephemeral identity suffix (injected into system prompt at call
+        # time, NEVER persisted — each agent gets its own identity per request)
+        _identity_suffix = ""
         if _client_model_name or _client_provider_name:
             _id_parts = []
             if _client_model_name:
@@ -1232,20 +1232,11 @@ class AgentLoopTask(BaseTask):
                 _id_parts.append(f"provider={_client_provider_name}")
             if _active_llm_service:
                 _id_parts.append(f"service={_active_llm_service}")
-            _id_text = (
-                f"[Platform identity] agent_id={_active_agent_name}, "
+            _identity_suffix = (
+                f"\n\n[Platform identity] agent_id={_active_agent_name}, "
                 + ", ".join(_id_parts) + ". "
                 "Report these exact values when asked about your model/identity."
             )
-            # Append to the main system prompt (index 0) instead of inserting
-            # a separate system message — many LLMs (Qwen, Llama) reject
-            # system messages that aren't at the beginning.
-            if messages and messages[0].role == "system":
-                messages[0] = LLMMessage(
-                    role="system",
-                    content=messages[0].content + "\n\n" + _id_text,
-                    source=messages[0].source,
-                )
 
         # Configure all handlers with full context
         self._configure_tool_handlers(
@@ -1259,6 +1250,7 @@ class AgentLoopTask(BaseTask):
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,
+            "_identity_suffix": _identity_suffix,
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,
             "max_consecutive_tool_calls": max_consecutive_tool_calls,
@@ -4140,6 +4132,7 @@ class AgentLoopTask(BaseTask):
 
             _id_nicks_ns = ctx.get("_nicknames") or {}
             _llm_msgs = self._inject_identity(messages, _id_nicks_ns)
+            _llm_msgs = self._apply_identity_suffix(_llm_msgs, ctx.get("_identity_suffix", ""))
 
             response = client.complete(
                 messages=_llm_msgs,
@@ -4921,6 +4914,7 @@ class AgentLoopTask(BaseTask):
                     # Inject identity prefixes so LLM knows who said what
                     _id_nicks = ctx.get("_nicknames") or {}
                     llm_context = self._inject_identity(llm_context, _id_nicks)
+                    llm_context = self._apply_identity_suffix(llm_context, ctx.get("_identity_suffix", ""))
 
                     # Check cancellation before LLM call
                     if not self._is_current_generation(gen_key, my_generation):
@@ -7262,6 +7256,25 @@ class AgentLoopTask(BaseTask):
                     else:
                         entry["source"] = {"type": "agent", "name": "assistant"}
                 result.append(entry)
+        return result
+
+    @staticmethod
+    def _apply_identity_suffix(messages: List[LLMMessage],
+                               suffix: str) -> List[LLMMessage]:
+        """Append identity suffix to system prompt for LLM call only.
+
+        Returns a shallow copy with messages[0] replaced — the original
+        list is NOT mutated, so the suffix is never persisted.
+        """
+        if not suffix or not messages or messages[0].role != "system":
+            return messages
+        result = list(messages)
+        m0 = result[0]
+        result[0] = LLMMessage(
+            role="system",
+            content=m0.content + suffix,
+            source=m0.source,
+        )
         return result
 
     @staticmethod

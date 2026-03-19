@@ -3113,6 +3113,107 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
             return [flowfile]
 
+        if action == "get_resource_detail":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            if not rtype or not rname:
+                flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            conv_id = body.get("conversation_id", "")
+            item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
+            if not item:
+                flowfile.set_content(json.dumps({"error": f"{rtype} '{rname}' not found"}).encode())
+                return [flowfile]
+            flowfile.set_content(json.dumps(item, ensure_ascii=False).encode())
+            return [flowfile]
+
+        if action == "update_resource":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            data = body.get("data", {})
+            scope = body.get("scope", "user")
+            if not rtype or not rname:
+                flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            target_uid = "__global__" if scope == "global" else uid
+            try:
+                rs.update(rtype, rname, data, target_uid)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "create_resource":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            data = body.get("data", {})
+            scope = body.get("scope", "user")
+            if not rtype or not rname:
+                flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            target_uid = "__global__" if scope == "global" else uid
+            if rtype == "task_def":
+                data.setdefault("created_by", uid)
+            try:
+                rs.create(rtype, rname, data, target_uid)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "delete_resource":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            scope = body.get("scope", "user")
+            if not rtype or not rname:
+                flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            target_uid = "__global__" if scope == "global" else uid
+            deleted = rs.delete(rtype, rname, target_uid)
+            flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
+            return [flowfile]
+
+        if action == "copy_resource_scope":
+            rtype = body.get("resource_type", "")
+            rname = body.get("name", "").strip()
+            target_scope = body.get("target_scope", "")
+            if not rtype or not rname or not target_scope:
+                flowfile.set_content(json.dumps({"error": "Missing resource_type, name, or target_scope"}).encode())
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = user_id or "anonymous"
+            conv_id = body.get("conversation_id", "")
+            item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
+            if not item:
+                flowfile.set_content(json.dumps({"error": f"{rtype} '{rname}' not found"}).encode())
+                return [flowfile]
+            target_uid = "__global__" if target_scope == "global" else uid
+            data = {k: v for k, v in item.items() if k not in ("name", "_scope")}
+            try:
+                rs.create(rtype, rname, data, target_uid)
+                flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope}).encode())
+            except Exception as e:
+                # If exists, update instead
+                try:
+                    rs.update(rtype, rname, data, target_uid)
+                    flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope, "updated": True}).encode())
+                except Exception as e2:
+                    flowfile.set_content(json.dumps({"error": str(e2)}).encode())
+            return [flowfile]
+
         if action == "activate_resource":
             conv_id = body.get("conversation_id", "")
             rtype = body.get("resource_type", "")

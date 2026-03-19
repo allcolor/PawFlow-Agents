@@ -5968,6 +5968,20 @@ async function cmdListResources() {
 }
 
 // ── Sidebar Resources ───────────────────────────────────────────
+function _scopeBadge(s) {
+  if (!s) return '';
+  const colors = { global: '#2d5a8e', user: '#5a2d8e', conversation: '#8e5a2d' };
+  const labels = { global: 'G', user: 'U', conversation: 'C' };
+  return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
+}
+
+function _sectionHeader(title, rtype) {
+  return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+    <span style="color:#6c5ce7;font-weight:600;">${title}</span>
+    <span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="showResourceCreator('${rtype}')" title="Create new ${rtype}">+</span>
+  </div>`;
+}
+
 async function loadResources() {
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
@@ -5978,61 +5992,251 @@ async function loadResources() {
     });
     const data = await resp.json();
     const el = document.getElementById('resourcesContent');
-    const scopeBadge = (s) => {
-      if (!s) return '';
-      const colors = { global: '#2d5a8e', user: '#5a2d8e', conversation: '#8e5a2d' };
-      const labels = { global: 'G', user: 'U', conversation: 'C' };
-      return `<span style="font-size:9px;padding:0 3px;border-radius:3px;background:${colors[s]||'#444'};color:#ccc;margin-right:3px;" title="${s}">${labels[s]||s[0]}</span>`;
-    };
     let html = '';
     // Agents
     if (data.agents && data.agents.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Agents</div>';
+      html += _sectionHeader('Agents', 'agent');
       data.agents.forEach(a => {
         const active = a.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'agent','${a.name}','${a.scope||''}');return false;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${a.name}</span>
+          ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>
         </div>`;
       });
     }
     // Skills
     if (data.skills && data.skills.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Skills</div>';
+      html += _sectionHeader('Skills', 'skill');
       data.skills.forEach(s => {
         const active = s.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
+          ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
         </div>`;
       });
     }
     // MCP
     if (data.mcp_servers && data.mcp_servers.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">MCP</div>';
+      html += _sectionHeader('MCP', 'mcp');
       data.mcp_servers.forEach(m => {
         const active = m.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'mcp','${m.name}','${m.scope||''}');return false;">
           <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'mcp',name:'${m.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
+          ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
         </div>`;
       });
     }
     // Task definitions
     if (data.task_defs && data.task_defs.length) {
-      html += '<div style="margin-bottom:4px;color:#6c5ce7;font-weight:600;">Tasks</div>';
+      html += _sectionHeader('Tasks', 'task_def');
       data.task_defs.forEach(t => {
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">
-          ${scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;" title="${escapeHtml(t.description)}">${t.name}</span>
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'task_def','${t.name}','${t.scope||''}');return false;">
+          ${_scopeBadge(t.scope)}<span style="color:#8888aa;font-size:12px;cursor:default;" title="${escapeHtml(t.description)}">${t.name}</span>
           <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
         </div>`;
       });
     }
-    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use /agent create, /add-skill, /task create</div>';
+    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
     el.innerHTML = html;
   } catch (e) {
     document.getElementById('resourcesContent').innerHTML = '';
   }
+}
+
+// ── Resource context menu ─────────────────────────────────────────
+function showResourceMenu(e, rtype, name, scope) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  const sep = () => {
+    const s = document.createElement('div');
+    s.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    menu.appendChild(s);
+  };
+
+  item('\u270F Edit...', () => showResourceEditor(rtype, name));
+  if (rtype === 'agent') {
+    item('\u25B6 Select', () => cmdAgentSelect(name));
+  }
+  if (rtype === 'task_def') {
+    item('\u25B6 Assign to agent...', () => {
+      const agent = prompt('Agent name:');
+      if (agent) {
+        fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'assign_task', conversation_id: conversationId,
+            agent_name: agent, task_def_name: name }),
+        }).then(r => r.json()).then(d => addMsg('system', d.result || d.error || 'Done')).catch(e => addMsg('error', e.message));
+      }
+    });
+  }
+  sep();
+  if (scope !== 'global') item('\u2191 Copy to Global', () => _copyResource(rtype, name, 'global'));
+  if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource(rtype, name, 'user'));
+  sep();
+  item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
+
+  document.body.appendChild(menu);
+  setTimeout(() => document.addEventListener('click', function _close() {
+    menu.remove(); document.removeEventListener('click', _close);
+  }), 0);
+}
+
+function _copyResource(rtype, name, targetScope) {
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'copy_resource_scope', resource_type: rtype,
+      name, target_scope: targetScope, conversation_id: conversationId }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else addMsg('system', `${rtype} '${name}' copied to ${targetScope}.`);
+    loadResources();
+  }).catch(e => addMsg('error', e.message));
+}
+
+function _deleteResource(rtype, name, scope) {
+  if (!confirm(`Delete ${rtype} '${name}' (${scope})?`)) return;
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'delete_resource', resource_type: rtype,
+      name, scope: scope || 'user' }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else addMsg('system', `${rtype} '${name}' deleted.`);
+    loadResources();
+  }).catch(e => addMsg('error', e.message));
+}
+
+// ── Resource editor overlay ───────────────────────────────────────
+const _RESOURCE_FIELDS = {
+  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['max_depth','number'],['timeout','number']],
+  skill:    [['prompt','textarea'],['description','text']],
+  mcp:      [['url','text'],['description','text']],
+  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['description','text']],
+  prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
+};
+
+function _buildResourceForm(rtype, data, isNew) {
+  const fields = _RESOURCE_FIELDS[rtype] || [];
+  let html = '';
+  if (isNew) {
+    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
+    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="user">User</option><option value="global">Global</option></select></div>';
+  }
+  for (const [key, type] of fields) {
+    const val = (data && data[key] != null) ? data[key] : '';
+    const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
+    html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
+    if (type === 'textarea') {
+      html += `<textarea id="res-${key}" style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;">${escaped}</textarea>`;
+    } else if (type === 'number') {
+      html += `<input id="res-${key}" type="number" value="${escaped}" style="width:80px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>`;
+    } else {
+      html += `<input id="res-${key}" value="${escaped}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>`;
+    }
+    html += '</div>';
+  }
+  return html;
+}
+
+async function showResourceEditor(rtype, name) {
+  // Fetch current data
+  let data = {};
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_resource_detail', resource_type: rtype, name, conversation_id: conversationId }),
+    });
+    data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+  } catch (e) { addMsg('error', e.message); return; }
+
+  const scope = data._scope || 'user';
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Edit ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div>` + _buildResourceForm(rtype, data, false)
+    + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
+  </div>`;
+  overlay.appendChild(panel);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function _saveResourceEdit(rtype, name, scope) {
+  const fields = _RESOURCE_FIELDS[rtype] || [];
+  const data = {};
+  for (const [key, type] of fields) {
+    const el = document.getElementById('res-' + key);
+    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'update_resource', resource_type: rtype, name, scope, data }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', `${rtype} '${name}' updated.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
+}
+
+function showResourceCreator(rtype) {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">New ${rtype}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div>` + _buildResourceForm(rtype, {}, true)
+    + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_saveResourceCreate('${rtype}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
+  </div>`;
+  overlay.appendChild(panel);
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+  document.body.appendChild(overlay);
+}
+
+function _saveResourceCreate(rtype) {
+  const nameEl = document.getElementById('res-name');
+  const scopeEl = document.getElementById('res-scope');
+  const name = (nameEl && nameEl.value || '').trim();
+  const scope = scopeEl ? scopeEl.value : 'user';
+  if (!name) { alert('Name is required'); return; }
+  const fields = _RESOURCE_FIELDS[rtype] || [];
+  const data = {};
+  for (const [key, type] of fields) {
+    const el = document.getElementById('res-' + key);
+    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'create_resource', resource_type: rtype, name, scope, data }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
 }
 
 function toggleResourcesSection() {

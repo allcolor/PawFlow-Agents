@@ -184,7 +184,7 @@ class TestPersistence:
         agent_file = reset_singleton / "agents.json"
         assert agent_file.exists()
         data = json.loads(agent_file.read_text(encoding="utf-8"))
-        assert "u1.a1" in data
+        assert "u1:a1" in data
 
         # Reset and reload
         ResourceStore.reset()

@@ -564,7 +564,11 @@ class AgentLoopTask(BaseTask):
         return event
 
     def _decrement_active(self, conversation_id: str, ctx: dict = None):
-        """Decrement the active-conversation refcount and clean up tracking."""
+        """Decrement the active-conversation refcount and clean up tracking.
+
+        Also refreshes the poll cooldown so that agent-generated messages
+        don't trigger other agents to wake up (only user messages should).
+        """
         with self._active_lock:
             rc = self._active_conversations.get(conversation_id, 1) - 1
             if rc <= 0:
@@ -6799,19 +6803,24 @@ class AgentLoopTask(BaseTask):
                         f"Inform the user."
                     )
                 else:
+                    from datetime import datetime as _DTtask
+                    _created_str = _DTtask.fromtimestamp(
+                        _td.get("created_at", 0)).strftime("%Y-%m-%d %H:%M") if _td.get("created_at") else "?"
                     checkin_content = (
                         f"[System: Task {_tid} — iteration {_iter + 1}/{_max}]\n\n"
+                        f"**Task ID:** {_tid} (assigned {_created_str})\n"
                         f"**Task:** {_td.get('task', '?')}\n"
                         + (f"**Criteria:** {_td.get('completion_criteria', '')}\n" if _td.get("completion_criteria") else "")
-                        + (f"**Progress:** {_td.get('last_result', '')}\n" if _td.get("last_result") else "")
+                        + (f"**Progress so far (this instance only):** {_td.get('last_result', 'None yet')}\n"
+                           if _iter > 0 else f"**Progress:** None yet — this is iteration 1. "
+                           f"Start working on the task.\n")
                         + _rej_text + "\n\n"
-                        f"Call complete_task(task_id=\"{_tid}\", done=true/false, progress=\"...\").\n"
-                        "IMPORTANT: Check the criteria FIRST. If the criteria are ALREADY "
-                        f"met, call complete_task(task_id=\"{_tid}\", done=true, "
-                        "progress=\"Criteria met.\") IMMEDIATELY and do nothing else. "
-                        "Do NOT generate new work if the task is already done.\n"
-                        "Do NOT repeat information already shared in previous iterations. "
-                        "Focus on NEW progress only. Be concise.\n"
+                        "WORK on the task first. After making real progress, report it:\n"
+                        f"  complete_task(task_id=\"{_tid}\", done=false, progress=\"what you did\")\n"
+                        f"When the criteria are fully met BY YOUR OWN WORK in this instance:\n"
+                        f"  complete_task(task_id=\"{_tid}\", done=true, progress=\"summary\")\n\n"
+                        "Do NOT call done=true unless YOU actually did the work in THIS session.\n"
+                        "Do NOT count work from previous conversations or task instances.\n"
                         "Do NOT respond with [NO_PENDING_WORK]."
                     )
             else:

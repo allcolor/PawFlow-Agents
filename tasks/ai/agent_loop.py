@@ -96,6 +96,8 @@ class AgentLoopTask(BaseTask):
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
         self._context_op_lock = threading.Lock()
+        # Calibrated chars-per-token ratio per LLM service (learned from actual usage)
+        self._calibrated_cpt: Dict[str, float] = {}  # service_id -> chars_per_token
 
     @staticmethod
     def _resolve_agent_name(name: str, conv_id: str) -> str:
@@ -579,6 +581,33 @@ class AgentLoopTask(BaseTask):
             gen_key = ctx.get("_gen_key", conversation_id)
             with self._interactions_lock:
                 self._active_interactions.pop(gen_key, None)
+
+    def _calibrate_cpt(self, service_id: str, total_chars: int,
+                       actual_tokens: int):
+        """Update the calibrated chars-per-token ratio from actual API usage.
+
+        Uses exponential moving average (alpha=0.3) so the ratio adapts
+        quickly but doesn't swing wildly on a single outlier.
+        """
+        if not service_id or actual_tokens <= 0 or total_chars <= 0:
+            return
+        measured = total_chars / actual_tokens
+        old = self._calibrated_cpt.get(service_id)
+        if old is None:
+            self._calibrated_cpt[service_id] = measured
+        else:
+            alpha = 0.3
+            self._calibrated_cpt[service_id] = old * (1 - alpha) + measured * alpha
+
+    def _get_cpt(self, service_id: str, fallback: float = 0) -> float:
+        """Get the best chars-per-token ratio for a service.
+
+        Priority: calibrated (learned) → service config → default (2.0).
+        """
+        cal = self._calibrated_cpt.get(service_id)
+        if cal and cal > 0:
+            return cal
+        return fallback if fallback > 0 else 2.0
 
     @staticmethod
     def _track_tokens(user_id: str, tokens_in: int, tokens_out: int,
@@ -4151,6 +4180,17 @@ class AgentLoopTask(BaseTask):
             final_model = response.model
             finish_reason = response.finish_reason
 
+            # Calibrate chars_per_token from actual usage (sync path)
+            if response.tokens_in > 0:
+                _cal_chars = sum(
+                    len(m.content) if isinstance(m.content, str) else 0
+                    for m in _llm_msgs
+                )
+                _svc_id = ctx.get("active_llm_service") or ""
+                self._calibrate_cpt(_svc_id, _cal_chars, response.tokens_in)
+                ctx["chars_per_token"] = self._get_cpt(
+                    _svc_id, ctx.get("chars_per_token", 0))
+
             if not response.tool_calls:
                 _source_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
                 action, msgs, final, _need_more_retried_ns = self._handle_response_no_tools(
@@ -5038,6 +5078,24 @@ class AgentLoopTask(BaseTask):
                     total_tokens_out += response.tokens_out
                     final_model = response.model
                     finish_reason = response.finish_reason
+
+                    # Calibrate chars_per_token from actual usage
+                    if response.tokens_in > 0:
+                        _cal_chars = sum(
+                            len(m.content) if isinstance(m.content, str) else 0
+                            for m in llm_context
+                        )
+                        if tool_defs:
+                            for _td in tool_defs:
+                                _cal_chars += len(getattr(_td, 'name', '') or '')
+                                _cal_chars += len(getattr(_td, 'description', '') or '')
+                                _p = getattr(_td, 'parameters', None)
+                                if _p:
+                                    _cal_chars += len(json.dumps(_p) if isinstance(_p, dict) else str(_p))
+                        _svc_id = ctx.get("active_llm_service") or ""
+                        self._calibrate_cpt(_svc_id, _cal_chars, response.tokens_in)
+                        ctx["chars_per_token"] = self._get_cpt(
+                            _svc_id, ctx.get("chars_per_token", 0))
 
                     logger.info(f"[agent:{conversation_id[:8]}] LLM responded: "
                                 f"tokens_in={response.tokens_in}, tokens_out={response.tokens_out}, "

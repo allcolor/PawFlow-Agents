@@ -1309,21 +1309,28 @@ function inlineImageHtml(url, filename, sizeInfo) {
   // Render authenticated inline image (max 512px) with click-to-view
   const token = getToken();
   const imgId = 'img_' + Math.random().toString(36).substring(2, 8);
-  // We need to fetch with auth then create blob URL
+  // Fetch with auth, hide entirely on 404 (no broken image placeholder)
   setTimeout(() => {
     const el = document.getElementById(imgId);
     if (!el) return;
+    const wrapper = el.closest('.img-wrapper');
     const headers = {};
     if (token) headers['Authorization'] = 'Bearer ' + token;
-    fetch(url, { headers, credentials: 'same-origin' }).then(r => {
-      if (!r.ok) throw new Error('HTTP ' + r.status);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 5000);  // 5s timeout
+    fetch(url, { headers, credentials: 'same-origin', signal: ctrl.signal }).then(r => {
+      clearTimeout(timer);
+      if (!r.ok) throw new Error(r.status);
       return r.blob();
     }).then(blob => {
       el.src = URL.createObjectURL(blob);
       el.style.display = 'block';
-    }).catch((err) => { el.alt = 'Failed to load image: ' + err.message; el.style.display = 'block'; });
+    }).catch(() => {
+      clearTimeout(timer);
+      if (wrapper) wrapper.style.display = 'none';
+    });
   }, 50);
-  return '<div style="margin:6px 0;">'
+  return '<div class="img-wrapper" style="margin:6px 0;">'
     + '<img id="' + imgId + '" style="display:none;max-width:512px;max-height:512px;border-radius:8px;cursor:pointer;border:1px solid #0f3460;" '
     + 'onclick="openFileViewer(\'' + url + '\')" title="Click to view full size" />'
     + '<div style="font-size:11px;color:#6c6c8a;margin-top:2px;">'

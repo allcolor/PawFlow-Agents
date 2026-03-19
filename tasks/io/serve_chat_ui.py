@@ -1258,7 +1258,7 @@ function addMsg(role, text, extra) {
 
   // Action buttons (copy + delete) for all user-visible messages
   let actionsHtml = '';
-  if (role === 'user' || role === 'assistant' || role === 'system') {
+  if (role === 'user' || role === 'assistant') {
     actionsHtml = '<span class="msg-actions">'
       + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
       + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'

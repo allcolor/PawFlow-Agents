@@ -2138,10 +2138,11 @@ function connectSSE(cid) {
     if (data.response) {
       const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
       if (data.source_agent) extra.source.reply_to = data.source_agent;
-      if (data.model) extra.model = data.model;
-      if (data.provider) extra.provider = data.provider;
-      if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
-      if (data.duration_s) extra.duration_ms = data.duration_s * 1000;
+      extra.model = data.model || '';
+      extra.provider = data.provider || '';
+      extra.tokens_in = data.tokens_in || 0;
+      extra.tokens_out = data.tokens_out || 0;
+      extra.duration_ms = (data.duration_s || 0) * 1000;
       addMsg('assistant', data.response, extra);
     } else if (data.error) {
       addMsg('agent-result', 'Error: ' + data.error, agent);
@@ -2313,14 +2314,15 @@ function connectSSE(cid) {
     resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
     resp = resp.replace(/^\[[^\]]+\]:\s*/, '');
     const finalText = resp || s.text.replace(/^\[[^\]]+\]:\s*/, '') || '';
-    // Build metadata
+    // Build metadata — these fields ALWAYS exist for every message
     const extra = {};
     extra.source = data.source || {type: 'agent', name: doneAgent};
-    if (data.model) extra.model = data.model;
-    if (data.provider) extra.provider = data.provider;
-    if (data.base_url) extra.base_url = data.base_url;
-    if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
-    if (data.duration_ms) extra.duration_ms = data.duration_ms;
+    extra.model = data.model || '';
+    extra.provider = data.provider || '';
+    extra.base_url = data.base_url || '';
+    extra.tokens_in = data.tokens_in || 0;
+    extra.tokens_out = data.tokens_out || 0;
+    extra.duration_ms = data.duration_ms || 0;
     // If there's a streaming element with content, upgrade it in-place
     // instead of remove+recreate (avoids flash of disappearance)
     if (s.el && s.el.parentNode && finalText) {

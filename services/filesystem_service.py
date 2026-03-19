@@ -225,6 +225,21 @@ class FilesystemWSListener:
             # Store relay connection on the service
             service._set_relay(reader, writer, self._loop)
 
+            # Auto-fetch project context in background
+            try:
+                import threading as _th
+                def _fetch_ctx():
+                    try:
+                        ctx = service._request("project_context", ".")
+                        service._project_context = ctx
+                        logger.info("Project context loaded for '%s': %s",
+                                     relay_id, ctx.get("project_types", []))
+                    except Exception as e:
+                        logger.debug("Failed to load project context: %s", e)
+                _th.Thread(target=_fetch_ctx, daemon=True).start()
+            except Exception:
+                pass
+
             # Main loop: read results from relay
             while True:
                 try:
@@ -311,6 +326,8 @@ class FilesystemService:
         self._service_id = config.get("_service_id", "")
         self._connection = None
 
+        self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
+
         # Relay state
         self._relay_reader: Optional[asyncio.StreamReader] = None
         self._relay_writer: Optional[asyncio.StreamWriter] = None
@@ -324,6 +341,32 @@ class FilesystemService:
     @property
     def service_id(self) -> str:
         return self._service_id
+
+    def get_project_prompt(self) -> str:
+        """Build a system prompt supplement from the auto-scanned project context."""
+        ctx = self._project_context
+        if not ctx:
+            return ""
+        lines = [f"\n\n## Filesystem: {self._service_id}"]
+        if ctx.get("project_types"):
+            lines.append(f"Project type: {', '.join(ctx['project_types'])}")
+        if ctx.get("git"):
+            lines.append(f"Git repo (branch: {ctx.get('git_branch', '?')})")
+        # .pawflow.md or CLAUDE.md — project instructions
+        for key in (".pawflow.md", "CLAUDE.md"):
+            if key in ctx.get("config_files", {}):
+                lines.append(f"\n### {key}\n{ctx['config_files'][key]}")
+        # README summary (first 2000 chars)
+        for key in ("README.md", "readme.md"):
+            if key in ctx.get("config_files", {}):
+                readme = ctx["config_files"][key][:2000]
+                lines.append(f"\n### {key} (excerpt)\n{readme}")
+                break
+        # File tree
+        if ctx.get("tree"):
+            tree = ctx["tree"][:3000]
+            lines.append(f"\n### Project structure\n```\n{tree}\n```")
+        return "\n".join(lines)
 
     def connect(self):
         """Register route on the shared listener."""

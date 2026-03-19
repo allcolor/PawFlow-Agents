@@ -49,6 +49,93 @@ def action_list_dir(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     return entries
 
 
+def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Auto-scan project root and build a context summary."""
+    root = Path(root_dir)
+    context = {"root": root_dir, "files": [], "config_files": {}, "tree": ""}
+
+    # List top-level entries (max 100)
+    try:
+        entries = sorted(root.iterdir())[:100]
+        context["files"] = [
+            {"name": e.name, "kind": "dir" if e.is_dir() else "file",
+             "size": e.stat().st_size if e.is_file() else 0}
+            for e in entries
+        ]
+    except Exception:
+        pass
+
+    # Read key config/context files
+    _KEY_FILES = [
+        ".pawflow.md", "CLAUDE.md", "README.md", "readme.md",
+        "package.json", "pyproject.toml", "Cargo.toml", "go.mod",
+        "Makefile", "Dockerfile", "docker-compose.yml",
+        ".gitignore", "requirements.txt", "setup.py", "setup.cfg",
+        "tsconfig.json", "pom.xml", "build.gradle",
+    ]
+    for fname in _KEY_FILES:
+        fpath = root / fname
+        if fpath.is_file():
+            try:
+                text = fpath.read_text(encoding="utf-8", errors="replace")
+                # Cap at 5KB per file for the summary
+                context["config_files"][fname] = text[:5000]
+            except Exception:
+                pass
+
+    # Build a tree (2 levels deep, max 200 entries)
+    tree_lines = []
+    count = 0
+    for entry in sorted(root.iterdir()):
+        if entry.name.startswith(".") and entry.name not in (".gitignore", ".pawflow.md"):
+            continue
+        if count >= 200:
+            tree_lines.append("... (more files)")
+            break
+        prefix = "📁 " if entry.is_dir() else "📄 "
+        tree_lines.append(f"{prefix}{entry.name}")
+        count += 1
+        if entry.is_dir():
+            try:
+                for sub in sorted(entry.iterdir())[:20]:
+                    sub_prefix = "  📁 " if sub.is_dir() else "  📄 "
+                    tree_lines.append(f"{sub_prefix}{sub.name}")
+                    count += 1
+                    if count >= 200:
+                        break
+                if len(list(entry.iterdir())) > 20:
+                    tree_lines.append(f"  ... (+{len(list(entry.iterdir())) - 20} more)")
+            except PermissionError:
+                pass
+    context["tree"] = "\n".join(tree_lines)
+
+    # Detect project type
+    types = []
+    names = {e.name for e in root.iterdir() if e.is_file()}
+    if "package.json" in names: types.append("Node.js")
+    if "pyproject.toml" in names or "setup.py" in names or "requirements.txt" in names: types.append("Python")
+    if "Cargo.toml" in names: types.append("Rust")
+    if "go.mod" in names: types.append("Go")
+    if "pom.xml" in names or "build.gradle" in names: types.append("Java")
+    if "Makefile" in names: types.append("Make")
+    if "Dockerfile" in names: types.append("Docker")
+    context["project_types"] = types
+
+    # Git info
+    git_dir = root / ".git"
+    if git_dir.is_dir():
+        context["git"] = True
+        try:
+            import subprocess
+            br = subprocess.run(["git", "branch", "--show-current"],
+                                cwd=root_dir, capture_output=True, text=True, timeout=5)
+            context["git_branch"] = br.stdout.strip()
+        except Exception:
+            pass
+
+    return context
+
+
 def action_read_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     max_size = req.get("max_size", MAX_FILE_SIZE)
     size = Path(path).stat().st_size
@@ -431,6 +518,7 @@ def action_write_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> 
 
 ACTIONS = {
     "list_dir": action_list_dir,
+    "project_context": action_project_context,
     "read_file": action_read_file,
     "read_pdf": action_read_pdf,
     "read_notebook": action_read_notebook,

@@ -6694,6 +6694,16 @@ function _showAssignDialog(taskDefName) {
   </div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Agent</label>
     <input id="assign-agent" value="assistant" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
+  <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Context mode</label>
+    <select id="assign-context" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
+      <option value="isolated">isolated (default — only task prompt)</option>
+      <option value="last:10">last:10 (last 10 messages)</option>
+      <option value="last:20">last:20 (last 20 messages)</option>
+      <option value="last:50">last:50 (last 50 messages)</option>
+      <option value="summary:2000">summary:2000 (summarized ~2000 tokens)</option>
+      <option value="summary:4000">summary:4000 (summarized ~4000 tokens)</option>
+      <option value="full">full (entire conversation context)</option>
+    </select></div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Interval (optional override)</label>
     <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Variables (key=value, one per line)</label>
@@ -6709,11 +6719,13 @@ function _showAssignDialog(taskDefName) {
 
 function _submitAssign(taskDefName) {
   const agent = (document.getElementById('assign-agent').value || '').trim();
+  const context = (document.getElementById('assign-context').value || '').trim();
   const interval = (document.getElementById('assign-interval').value || '').trim();
   const varsText = (document.getElementById('assign-vars').value || '').trim();
   if (!agent) { alert('Agent is required'); return; }
   const body = { action: 'assign_task', conversation_id: conversationId,
     agent_name: agent, task_def_name: taskDefName };
+  if (context && context !== 'isolated') body.context = context;
   if (interval) body.interval = interval;
   if (varsText) {
     const variables = {};

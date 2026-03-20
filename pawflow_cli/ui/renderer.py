@@ -153,14 +153,19 @@ class TerminalRenderer:
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
         # Don't print raw tokens — just accumulate and update status bar
-        # This avoids the "leftover chunks" problem entirely
-        word_count = len(self._streams[agent].split())
-        self._set_status(f"▶ {agent}  writing... ({word_count} words)")
+        # Show all active agents in status
+        active = []
+        for a, s in self._streams.items():
+            wc = len(s.split())
+            active.append(f"{a} ({wc}w)")
+        self._set_status(f"▶ writing: {', '.join(active)}")
 
     def end_stream(self, agent: str, final_text: str = ""):
         streamed = self._streams.pop(agent, "")
         text = final_text or streamed
-        self._set_status("")
+        # Only clear status if no more active streams
+        if not self._streams:
+            self._set_status("")
         # Render the complete response as a Rich Markdown Panel
         if text and self.console:
             color = _agent_color(agent)

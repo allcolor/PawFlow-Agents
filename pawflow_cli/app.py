@@ -118,13 +118,14 @@ class PawCode:
                     self._display_history(messages, len(messages))
                     # Auto-summary for long conversations
                     if total > 100 and messages:
-                        last_assistant = ""
                         for m in reversed(messages):
                             if m.get("type") in ("assistant", "agent_response"):
-                                last_assistant = m.get("content", "")[:200]
+                                source = m.get("source", {})
+                                agent = source.get("name", "assistant") if isinstance(source, dict) else "assistant"
+                                preview = m.get("content", "")[:200]
+                                if preview:
+                                    self.renderer.print_system(f"Last ({agent}): {preview}...")
                                 break
-                        if last_assistant:
-                            self.renderer.print_system(f"Last response: {last_assistant}...")
                     self._ensure_sse()
             except Exception:
                 pass
@@ -453,19 +454,15 @@ class PawCode:
             if thinking_agent:
                 self.renderer.end_thinking(thinking_agent)
                 self._ev_thinking_agent = ""
-            if agent != streaming_agent:
-                if streaming_agent:
-                    self.renderer.end_stream(streaming_agent)
-                self._ev_streaming_agent = agent
+            # Multi-agent: each agent accumulates independently
+            if agent not in self.renderer._streams:
                 source = data.get("source", {})
                 svc = source.get("llm_service", "") if isinstance(source, dict) else ""
                 self.renderer.start_stream(agent, svc)
             self.renderer.stream_token(agent, data.get("text", ""))
 
         elif ev_type == "tool_call":
-            if streaming_agent:
-                self.renderer.end_stream(streaming_agent)
-                self._ev_streaming_agent = ""
+            # Don't end other agents' streams — they continue independently
             agent = data.get("agent_name", "assistant")
             svc = data.get("llm_service", "")
             self.renderer.print_tool_call(
@@ -550,9 +547,10 @@ class PawCode:
 
         elif ev_type == "done":
             response_text = data.get("response", "")
-            if streaming_agent:
-                self.renderer.end_stream(streaming_agent, response_text)
-                self._ev_streaming_agent = ""
+            agent = data.get("agent_name", "assistant")
+            # End this specific agent's stream (multi-agent safe)
+            if agent in self.renderer._streams:
+                self.renderer.end_stream(agent, response_text)
             elif response_text:
                 agent = data.get("agent_name", "assistant")
                 self.renderer.print_agent_badge(agent)

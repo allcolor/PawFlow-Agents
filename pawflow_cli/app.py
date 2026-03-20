@@ -191,11 +191,9 @@ class PawCode:
                     # Empty — just accept (no-op, prompt stays)
                     buf.validate_and_handle()
 
-            @bindings.add('s-enter')
-            @bindings.add('c-enter')
             @bindings.add('escape', 'enter')
             def _newline(event):
-                """Shift+Enter, Ctrl+Enter, or Escape+Enter: insert newline."""
+                """Alt+Enter (Escape then Enter): insert newline."""
                 event.current_buffer.insert_text('\n')
 
             @bindings.add('c-v')

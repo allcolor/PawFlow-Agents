@@ -1,6 +1,7 @@
 """Terminal rendering for PawCode using Rich."""
 
 import re
+import sys
 from typing import Dict, Optional
 
 try:
@@ -125,13 +126,10 @@ class TerminalRenderer:
     def end_stream(self, agent: str, final_text: str = ""):
         streamed = self._streams.pop(agent, "")
         text = final_text or streamed
-        # Clear the raw streamed text with \r and overwrite with Rich Panel
-        if streamed:
-            # Move cursor up to overwrite raw text, then clear
-            line_count = streamed.count("\n") + 1
-            sys.stdout.write(f"\033[{line_count}F\033[J")
-            sys.stdout.flush()
-        # Render final content as a proper Rich Markdown Panel
+        # Newline after raw streamed text
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        # Render final as Rich Markdown Panel (below the raw stream)
         if text and self.console:
             color = _agent_color(agent)
             svc_info = f" via {self._stream_service}" if self._stream_service else ""

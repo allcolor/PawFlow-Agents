@@ -286,6 +286,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .ask-user-options{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
 .ask-user-btn{background:#e94560;border:none;color:#fff;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:13px}
 .ask-user-btn:hover{background:#c73e54}
+.load-more-banner{text-align:center;padding:8px;color:#e94560;cursor:pointer;font-size:13px;border-bottom:1px solid #0f3460;background:#0f1629}
+.load-more-banner:hover{background:#16213e}
 </style>
 </head>
 <body>
@@ -623,6 +625,10 @@ let lastSSEActivity = 0;  // timestamp of last SSE event received
 let serverMsgCount = 0;    // last known message_count from server (for poll delta)
 let pollTimer = null;      // 30s fallback poll interval
 let resourcesTimer = null; // 10s resources panel refresh
+let displayWindow = 50;          // messages per page
+let currentOffset = 0;           // how many older messages already loaded
+let hasMoreMessages = false;     // server says there are older messages
+let loadingMore = false;         // prevent concurrent load-more
 
 // ── Message history (arrow key navigation) ──
 let messageHistory = JSON.parse(localStorage.getItem('pawflow_msg_history') || '[]');
@@ -774,7 +780,7 @@ async function resumeConv(cid) {
     const resp = await fetch(API, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: cid }),
+      body: JSON.stringify({ action: 'load_history', conversation_id: cid, limit: displayWindow, offset: 0 }),
       credentials: 'same-origin',
     });
     if (!resp.ok) {
@@ -807,6 +813,9 @@ async function resumeConv(cid) {
       addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
+    currentOffset = 0;
+    hasMoreMessages = data.has_more || false;
+    _updateLoadMoreBanner();
     selectedAgent = data.active_agent || '';
     // Apply per-conversation custom CSS theme
     let themeEl = document.getElementById('custom-theme');
@@ -834,6 +843,87 @@ async function resumeConv(cid) {
     addMsg('error', t('connError', {msg: e.message}));
     document.getElementById('status').textContent = t('error');
   }
+}
+
+function _updateLoadMoreBanner() {
+  let banner = document.getElementById('loadMoreBanner');
+  if (hasMoreMessages) {
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = 'loadMoreBanner';
+      banner.className = 'load-more-banner';
+      banner.onclick = loadMoreMessages;
+      const container = document.getElementById('messages');
+      container.insertBefore(banner, container.firstChild);
+    }
+    const shown = document.querySelectorAll('#messages > .msg').length;
+    const total = serverMsgCount || '?';
+    banner.innerHTML = '&#x25B2; Load more messages (showing ' + shown + ' of ' + total + ')';
+  } else if (banner) {
+    banner.remove();
+  }
+}
+
+async function loadMoreMessages() {
+  if (loadingMore || !conversationId || !hasMoreMessages) return;
+  loadingMore = true;
+  const container = document.getElementById('messages');
+  const banner = document.getElementById('loadMoreBanner');
+  if (banner) banner.innerHTML = 'Loading...';
+
+  // Save scroll state
+  const prevHeight = container.scrollHeight;
+
+  // Calculate next offset: current loaded messages count
+  const loadedCount = document.querySelectorAll('#messages > .msg').length;
+  const nextOffset = loadedCount;
+
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'load_history',
+        conversation_id: conversationId,
+        limit: displayWindow,
+        offset: nextOffset,
+      }),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.error) { loadingMore = false; return; }
+
+    hasMoreMessages = data.has_more || false;
+
+    // Prepend older messages before existing ones (after banner)
+    const insertPoint = banner ? banner.nextSibling : container.firstChild;
+    const beforeCount = container.children.length;
+    for (const m of (data.messages || [])) {
+      let content = m.content || '';
+      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+      }
+      addMsg(m.type || m.role, content, m);
+    }
+    // Move newly added elements (appended at end) to before insertPoint
+    const newElements = [];
+    while (container.children.length > beforeCount) {
+      newElements.push(container.lastChild);
+      container.removeChild(container.lastChild);
+    }
+    // Insert in correct order (they were collected in reverse)
+    for (let i = newElements.length - 1; i >= 0; i--) {
+      container.insertBefore(newElements[i], insertPoint);
+    }
+
+    // Preserve scroll position
+    container.scrollTop = container.scrollHeight - prevHeight;
+
+    _updateLoadMoreBanner();
+  } catch (e) {
+    console.error('Load more failed:', e);
+  }
+  loadingMore = false;
 }
 
 async function _recoverConversation(cid) {
@@ -1548,6 +1638,13 @@ function updateScrollNav() {
 
 // Listen for scroll events on the messages container
 document.getElementById('messages').addEventListener('scroll', updateScrollNav);
+
+// Auto-load older messages when user scrolls to top
+document.getElementById('messages').addEventListener('scroll', function() {
+  if (this.scrollTop === 0 && hasMoreMessages && !loadingMore) {
+    loadMoreMessages();
+  }
+});
 
 // ── Active interactions tracking ──────────────────────────────────
 let activeInteractions = {};  // agentKey (lowercase) → { name, startedAt, lastTool, activeTools, status, msgPreview }

@@ -91,6 +91,52 @@ class ConversationStore:
             # Return a copy so callers can't corrupt the canonical history
             return list(entry["messages"])
 
+    def load_page(self, conversation_id: str, limit: int = 50, offset: int = 0,
+                  user_id: str = "") -> Optional[Dict[str, Any]]:
+        """Load a page of messages from the end of conversation.
+
+        Args:
+            limit: max messages to return (default 50)
+            offset: skip this many messages from the end (0 = most recent)
+            user_id: access control
+
+        Returns:
+            {messages: [...], total_count: int, offset: int, limit: int, has_more: bool}
+            or None if not found/denied
+        """
+        all_messages = self.load(conversation_id, user_id=user_id)
+        if all_messages is None:
+            return None
+
+        total = len(all_messages)
+
+        # Slice from the end: offset=0 means last `limit` messages
+        end_idx = total - offset
+        start_idx = max(0, end_idx - limit)
+
+        # Boundary safety: don't split tool_call from its tool_results
+        # If start_idx lands on a "tool" role message, extend backward to include
+        # the preceding assistant message with tool_calls
+        if start_idx > 0:
+            while start_idx > 0:
+                msg = all_messages[start_idx]
+                role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "role", "")
+                if role == "tool":
+                    start_idx -= 1  # include the tool_call that triggered this result
+                else:
+                    break
+
+        page = all_messages[start_idx:end_idx]
+        has_more = start_idx > 0
+
+        return {
+            "messages": page,
+            "total_count": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": has_more,
+        }
+
     def save(self, conversation_id: str, messages: List[Dict[str, Any]],
              ttl: int = 0, user_id: str = "", status: str = ""):
         """Replace conversation messages (full overwrite).

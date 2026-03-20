@@ -1878,24 +1878,30 @@ class AgentLoopTask(BaseTask):
 
         if action == "load_history":
             conv_id = body.get("conversation_id", "")
+            limit = int(body.get("limit", 50))
+            offset = int(body.get("offset", 0))
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            messages = store.load(conv_id, user_id=user_id)
-            if messages is None:
+
+            page = store.load_page(conv_id, limit=limit, offset=offset, user_id=user_id)
+            if page is None:
                 flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
                 flowfile.set_attribute("http.response.status", "404")
                 return [flowfile]
-            # Return all display-relevant messages with type classification
-            history = self._classify_messages_for_display(messages)
+
+            history = self._classify_messages_for_display(page["messages"])
             nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
             active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
             custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
+
             result = json.dumps({
                 "conversation_id": conv_id,
                 "messages": history,
-                "message_count": len(messages),  # total raw count for polling
+                "message_count": page["total_count"],
+                "has_more": page["has_more"],
+                "offset": page["offset"],
                 "nicknames": nicknames,
                 "active_agent": active_res.get("agent", ""),
                 "custom_css": custom_css,

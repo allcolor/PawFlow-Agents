@@ -83,15 +83,18 @@ class PawCode:
         atexit.register(self._cleanup)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        # Load last conversation
+        # Load last conversation (just check it exists, don't dump messages)
         config = load_config()
         last_cid = config.get("last_conversation_id")
         if last_cid:
             try:
-                data = self.api.send_action("load_history", conversation_id=last_cid)
+                data = self.api.send_action("load_history",
+                                             conversation_id=last_cid, limit=1, offset=0)
                 if not data.get("error"):
                     self.conversation_id = last_cid
-                    self.renderer.print_system(f"Resumed conversation {last_cid[:8]}")
+                    total = data.get("message_count", 0)
+                    self.renderer.print_system(f"Resumed conversation {last_cid[:8]} ({total} messages)")
+                    self._ensure_sse()
             except Exception:
                 pass
 
@@ -499,13 +502,15 @@ class PawCode:
                 return
             parts = arg.split()
             cid_partial = parts[0]
-            show_n = int(parts[1]) if len(parts) > 1 else 10
+            show_n = int(parts[1]) if len(parts) > 1 else 50
             full_cid = self._resolve_conversation_id(cid_partial)
             if not full_cid:
                 self.renderer.print_error(f"No conversation matching '{cid_partial}'")
                 return
             try:
-                data = self.api.send_action("load_history", conversation_id=full_cid)
+                data = self.api.send_action("load_history",
+                                             conversation_id=full_cid,
+                                             limit=show_n, offset=0)
                 if data.get("error"):
                     self.renderer.print_error(data["error"])
                 else:
@@ -516,26 +521,39 @@ class PawCode:
                         self.sse.disconnect()
                     self.sse = SSEClient(self.server_url, self.session_token)
                     self.sse.connect(full_cid)
-                    count = data.get("message_count", 0)
-                    self.renderer.print_system(f"Resumed {full_cid[:8]} ({count} messages)")
+                    total = data.get("message_count", 0)
+                    has_more = data.get("has_more", False)
+                    shown = len(self._last_history)
+                    more_hint = f" — /history for older" if has_more else ""
+                    self.renderer.print_system(
+                        f"Resumed {full_cid[:8]} (showing {shown} of {total}{more_hint})")
                     self._display_history(self._last_history, show_n)
             except Exception as e:
                 self.renderer.print_error(str(e))
             return
 
         if cmd == "/history":
-            n = int(arg) if arg and arg.isdigit() else 20
             if not self.conversation_id:
                 self.renderer.print_error("No active conversation")
                 return
-            if not hasattr(self, '_last_history') or not self._last_history:
-                try:
-                    data = self.api.send_action("load_history", conversation_id=self.conversation_id)
-                    self._last_history = data.get("messages", [])
-                except Exception as e:
-                    self.renderer.print_error(str(e))
+            parts = arg.split() if arg else []
+            n = int(parts[0]) if parts and parts[0].isdigit() else 50
+            offset = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 0
+            try:
+                data = self.api.send_action("load_history",
+                                             conversation_id=self.conversation_id,
+                                             limit=n, offset=offset)
+                if data.get("error"):
+                    self.renderer.print_error(data["error"])
                     return
-            self._display_history(self._last_history, n)
+                messages = data.get("messages", [])
+                total = data.get("message_count", 0)
+                has_more = data.get("has_more", False)
+                self._display_history(messages, len(messages))
+                more_hint = f" — /history {n} {offset + len(messages)} for older" if has_more else ""
+                self.renderer.print_system(f"Showing {len(messages)} of {total}{more_hint}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
             return
 
         if cmd == "/compact":

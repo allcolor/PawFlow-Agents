@@ -126,34 +126,37 @@ class RelayThread:
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
-        # Suppress relay stderr output by monkey-patching sys.stderr.write
-        # only within pawflow_relay module (not globally)
-        import io
-        _null_stderr = io.StringIO()
+        # Suppress [FSRelay] logs by replacing sys.stderr with a thread-local
+        # wrapper that silences writes from the relay thread only
+        import os as _os
         _real_stderr = sys.stderr
+        _relay_thread_id = threading.get_ident()
 
-        # Patch the relay module's stderr writes
+        class _QuietStderr:
+            """Stderr wrapper that silences writes from the relay thread."""
+            def write(self, s):
+                if threading.get_ident() == _relay_thread_id:
+                    return  # suppress relay thread output
+                _real_stderr.write(s)
+            def flush(self):
+                _real_stderr.flush()
+            def __getattr__(self, name):
+                return getattr(_real_stderr, name)
+
+        sys.stderr = _QuietStderr()
+
         import pawflow_relay as _relay_mod
-        _orig_ws_connect = _relay_mod._ws_connect
-
-        def _quiet_ws_connect(*args, **kwargs):
-            _saved = sys.stderr
-            sys.stderr = _null_stderr
-            try:
-                return _orig_ws_connect(*args, **kwargs)
-            finally:
-                sys.stderr = _saved
-
-        _relay_mod._ws_connect = _quiet_ws_connect
 
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:
-            _quiet_ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                              self.directory, False, allow_exec=self.allow_exec)
+            _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
+                                    self.directory, False, allow_exec=self.allow_exec)
         except Exception:
             ws_url = f"ws://localhost:{self.port}/ws/relay"
             try:
-                _quiet_ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                  self.directory, False, allow_exec=self.allow_exec)
+                _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
+                                        self.directory, False, allow_exec=self.allow_exec)
             except Exception:
                 pass
+        finally:
+            sys.stderr = _real_stderr

@@ -161,8 +161,12 @@ class PawCode:
             self._process_events()
 
         except PermissionError:
+            self._safe_stop_live()
             self.renderer.print_error("Session expired. Run /login to re-authenticate.")
         except Exception as e:
+            self._safe_stop_live()
+            import traceback
+            traceback.print_exc()
             self.renderer.print_error(f"Error: {e}")
         finally:
             self._sending = False
@@ -179,152 +183,159 @@ class PawCode:
             except queue.Empty:
                 continue
 
-            ev_type = event.get("event", "")
-            data = event.get("data", {})
+            try:
+                waiting = self._dispatch_event(event, streaming_agent, thinking_agent)
+                # Update local state from dispatch
+                streaming_agent = self._ev_streaming_agent
+                thinking_agent = self._ev_thinking_agent
+            except Exception as e:
+                self._safe_stop_live()
+                import traceback
+                traceback.print_exc()
+                self.renderer.print_error(f"Event error: {e}")
 
-            if ev_type == "thinking" or ev_type == "thinking_content":
-                agent = data.get("agent_name", "assistant")
-                if ev_type == "thinking" and not thinking_agent:
-                    thinking_agent = agent
-                    self.renderer.start_thinking(agent)
-                elif ev_type == "thinking_content":
-                    self.renderer.thinking_token(agent, data.get("text", ""))
+    def _dispatch_event(self, event, streaming_agent, thinking_agent):
+        """Dispatch a single SSE event. Returns True to keep waiting, False when done."""
+        self._ev_streaming_agent = streaming_agent
+        self._ev_thinking_agent = thinking_agent
+        ev_type = event.get("event", "")
+        data = event.get("data", {})
 
-            elif ev_type == "token":
-                agent = data.get("agent_name", "assistant")
-                if thinking_agent:
-                    self.renderer.end_thinking(thinking_agent)
-                    thinking_agent = ""
-                if agent != streaming_agent:
-                    if streaming_agent:
-                        self.renderer.end_stream(streaming_agent)
-                    streaming_agent = agent
-                    source = data.get("source", {})
-                    svc = source.get("llm_service", "") if isinstance(source, dict) else ""
-                    self.renderer.start_stream(agent, svc)
-                self.renderer.stream_token(agent, data.get("text", ""))
+        if ev_type == "thinking" or ev_type == "thinking_content":
+            agent = data.get("agent_name", "assistant")
+            if ev_type == "thinking" and not thinking_agent:
+                self._ev_thinking_agent = agent
+                self.renderer.start_thinking(agent)
+            elif ev_type == "thinking_content":
+                self.renderer.thinking_token(agent, data.get("text", ""))
 
-            elif ev_type == "tool_call":
+        elif ev_type == "token":
+            agent = data.get("agent_name", "assistant")
+            if thinking_agent:
+                self.renderer.end_thinking(thinking_agent)
+                self._ev_thinking_agent = ""
+            if agent != streaming_agent:
                 if streaming_agent:
                     self.renderer.end_stream(streaming_agent)
-                    streaming_agent = ""
-                agent = data.get("agent_name", "assistant")
-                svc = data.get("llm_service", "")
-                self.renderer.print_tool_call(
-                    data.get("tool", "?"),
-                    data.get("arguments", {}),
-                    agent, svc,
-                )
+                self._ev_streaming_agent = agent
+                source = data.get("source", {})
+                svc = source.get("llm_service", "") if isinstance(source, dict) else ""
+                self.renderer.start_stream(agent, svc)
+            self.renderer.stream_token(agent, data.get("text", ""))
 
-            elif ev_type == "tool_result":
-                self.renderer.print_tool_result(
-                    data.get("tool", "?"),
-                    data.get("result", ""),
-                    data.get("agent_name", ""),
-                )
+        elif ev_type == "tool_call":
+            if streaming_agent:
+                self.renderer.end_stream(streaming_agent)
+                self._ev_streaming_agent = ""
+            agent = data.get("agent_name", "assistant")
+            svc = data.get("llm_service", "")
+            self.renderer.print_tool_call(
+                data.get("tool", "?"),
+                data.get("arguments", {}),
+                agent, svc,
+            )
 
-            elif ev_type == "iteration_status":
-                self.renderer.print_iteration(
-                    data.get("agent_name", ""),
-                    data.get("iteration", 0),
-                    data.get("round", 0),
-                    data.get("max_rounds", 0),
-                    data.get("total_tools", 0),
-                )
+        elif ev_type == "tool_result":
+            self.renderer.print_tool_result(
+                data.get("tool", "?"),
+                data.get("result", ""),
+                data.get("agent_name", ""),
+            )
 
-            elif ev_type == "exec_approval_request":
-                self._handle_exec_approval(data)
+        elif ev_type == "iteration_status":
+            self.renderer.print_iteration(
+                data.get("agent_name", ""),
+                data.get("iteration", 0),
+                data.get("round", 0),
+                data.get("max_rounds", 0),
+                data.get("total_tools", 0),
+            )
 
-            elif ev_type == "tool_approval_request":
-                self._handle_tool_approval(data)
+        elif ev_type == "exec_approval_request":
+            self._handle_exec_approval(data)
 
-            elif ev_type == "ask_user":
-                self.renderer.print_ask_user(
-                    data.get("question", ""),
-                    data.get("options", []),
-                )
+        elif ev_type == "tool_approval_request":
+            self._handle_tool_approval(data)
 
-            elif ev_type == "btw_thinking":
-                agent = data.get("agent_name", "assistant")
-                self.renderer.print_system(f"[{agent} btw] thinking...")
+        elif ev_type == "ask_user":
+            self.renderer.print_ask_user(
+                data.get("question", ""),
+                data.get("options", []),
+            )
 
-            elif ev_type == "btw_token":
-                agent = data.get("agent_name", "assistant")
-                # Use a separate btw stream
-                btw_key = f"btw:{agent}"
-                if btw_key != streaming_agent:
-                    if streaming_agent:
-                        self.renderer.end_stream(streaming_agent)
-                    streaming_agent = btw_key
-                    self.renderer.print(f"[dim italic]  [{agent} btw][/dim italic]")
-                    self.renderer.start_stream(btw_key)
-                self.renderer.stream_token(btw_key, data.get("text", ""))
+        elif ev_type == "btw_thinking":
+            agent = data.get("agent_name", "assistant")
+            self.renderer.print_system(f"[{agent} btw] thinking...")
 
-            elif ev_type == "btw_done":
-                agent = data.get("agent_name", "assistant")
-                btw_key = f"btw:{agent}"
-                if streaming_agent == btw_key:
-                    self.renderer.end_stream(btw_key, data.get("response", ""))
-                    streaming_agent = ""
-
-            elif ev_type == "sub_agent_start":
-                agent = data.get("agent_name", "?")
-                self.renderer.print_system(f"Sub-agent [{agent}] started")
-
-            elif ev_type == "sub_agent_done":
-                agent = data.get("agent_name", "?")
-                tokens = data.get("tokens_in", 0) + data.get("tokens_out", 0)
-                self.renderer.print_system(f"Sub-agent [{agent}] done ({tokens} tokens)")
-                resp = data.get("response", "")
-                if resp:
-                    self.renderer.print_agent_badge(agent, data.get("llm_service", ""))
-                    self.renderer.print_markdown(resp[:500])
-
-            elif ev_type == "exec_output":
-                cmd = data.get("command", "")
-                rc = data.get("exit_code", -1)
-                stdout = data.get("stdout", "")
-                stderr = data.get("stderr", "")
-                self.renderer.print_exec_output(cmd, rc, stdout, stderr)
-
-            elif ev_type == "notification":
-                msg = data.get("message", "")
-                urgency = data.get("urgency", "normal")
-                if urgency == "high":
-                    self.renderer.print_error(msg)
-                else:
-                    self.renderer.print_system(msg)
-
-            elif ev_type == "done":
+        elif ev_type == "btw_token":
+            agent = data.get("agent_name", "assistant")
+            btw_key = f"btw:{agent}"
+            if btw_key != streaming_agent:
                 if streaming_agent:
-                    self.renderer.end_stream(streaming_agent, data.get("response", ""))
-                    streaming_agent = ""
-                elif data.get("response"):
-                    agent = data.get("agent_name", "assistant")
-                    self.renderer.print_agent_badge(agent)
-                    self.renderer.print_markdown(data["response"])
-                self.renderer.print_done(
-                    data.get("agent_name", ""),
-                    data.get("tokens_in", 0),
-                    data.get("tokens_out", 0),
-                    data.get("duration_ms", 0),
-                    data.get("model", ""),
-                )
-                # Check if agent is continuing
-                if not data.get("continuing"):
-                    waiting = False
+                    self.renderer.end_stream(streaming_agent)
+                self._ev_streaming_agent = btw_key
+                self.renderer.print(f"[dim italic]  [{agent} btw][/dim italic]")
+                self.renderer.start_stream(btw_key)
+            self.renderer.stream_token(btw_key, data.get("text", ""))
 
-            elif ev_type == "error_event":
-                self.renderer.print_error(data.get("message", "Unknown error"))
-                waiting = False
+        elif ev_type == "btw_done":
+            agent = data.get("agent_name", "assistant")
+            btw_key = f"btw:{agent}"
+            if streaming_agent == btw_key:
+                self.renderer.end_stream(btw_key, data.get("response", ""))
+                self._ev_streaming_agent = ""
 
-            elif ev_type == "cancelled":
-                self.renderer.print_system(f"[{data.get('agent_name', '?')}] Cancelled")
-                waiting = False
+        elif ev_type == "sub_agent_start":
+            self.renderer.print_system(f"Sub-agent [{data.get('agent_name', '?')}] started")
 
-            elif ev_type == "_sse_error":
-                # SSE connection error — will auto-reconnect
-                pass
+        elif ev_type == "sub_agent_done":
+            agent = data.get("agent_name", "?")
+            tokens = data.get("tokens_in", 0) + data.get("tokens_out", 0)
+            self.renderer.print_system(f"Sub-agent [{agent}] done ({tokens} tokens)")
+            resp = data.get("response", "")
+            if resp:
+                self.renderer.print_agent_badge(agent, data.get("llm_service", ""))
+                self.renderer.print_markdown(resp[:500])
+
+        elif ev_type == "exec_output":
+            self.renderer.print_exec_output(
+                data.get("command", ""), data.get("exit_code", -1),
+                data.get("stdout", ""), data.get("stderr", ""))
+
+        elif ev_type == "notification":
+            msg = data.get("message", "")
+            if data.get("urgency") == "high":
+                self.renderer.print_error(msg)
+            else:
+                self.renderer.print_system(msg)
+
+        elif ev_type == "done":
+            if streaming_agent:
+                self.renderer.end_stream(streaming_agent, data.get("response", ""))
+                self._ev_streaming_agent = ""
+            elif data.get("response"):
+                agent = data.get("agent_name", "assistant")
+                self.renderer.print_agent_badge(agent)
+                self.renderer.print_markdown(data["response"])
+            self.renderer.print_done(
+                data.get("agent_name", ""),
+                data.get("tokens_in", 0),
+                data.get("tokens_out", 0),
+                data.get("duration_ms", 0),
+                data.get("model", ""),
+            )
+            if not data.get("continuing"):
+                return False
+
+        elif ev_type == "error_event":
+            self.renderer.print_error(data.get("message", "Unknown error"))
+            return False
+
+        elif ev_type == "cancelled":
+            self.renderer.print_system(f"[{data.get('agent_name', '?')}] Cancelled")
+            return False
+
+        return True  # keep waiting
 
     def _handle_exec_approval(self, data: dict):
         """Handle exec approval request."""
@@ -594,6 +605,15 @@ class PawCode:
             except Exception as e:
                 sys.stderr.write(f"Render error msg {i}: {e}\n")
                 _tb.print_exc(file=sys.stderr)
+
+    def _safe_stop_live(self):
+        """Force-stop any active Rich Live display to prevent output corruption."""
+        try:
+            if self.renderer._live:
+                self.renderer._live.stop()
+                self.renderer._live = None
+        except Exception:
+            pass
 
     def _resolve_conversation_id(self, partial: str) -> str:
         """Resolve a partial conversation ID to full ID."""

@@ -2867,10 +2867,17 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            context_data = _ctx_load(conv_id, _ctx_agent)
-            diverged = context_data is not None
-            if context_data is None:
-                context_data = store.load(conv_id, user_id=user_id) or []
+            # Sub-conversation context: load from sub-conv directly
+            if _ctx_agent.startswith("task:"):
+                _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
+                _sub_cid = f"{conv_id}::task::{_sub_tid}"
+                context_data = store.load(_sub_cid) or []
+                diverged = True
+            else:
+                context_data = _ctx_load(conv_id, _ctx_agent)
+                diverged = context_data is not None
+                if context_data is None:
+                    context_data = store.load(conv_id, user_id=user_id) or []
             deserialized = self._deserialize_messages(context_data)
             estimated = self._estimate_tokens(deserialized)
             # Classify messages for display
@@ -2890,6 +2897,19 @@ class AgentLoopTask(BaseTask):
                 })
             # Include agent context status map
             _agent_ctx_map = store.list_agent_contexts(conv_id)
+            # Include active sub-conversations (task contexts)
+            _extras = store.get_extras(conv_id, user_id=user_id) or {}
+            for ek in _extras:
+                if ek.startswith("task_log:"):
+                    _tid = ek[9:]
+                    _sub_cid = f"{conv_id}::task::{_tid}"
+                    _sub_msgs = store.load(_sub_cid)
+                    if _sub_msgs:
+                        # Find agent name from task data
+                        _tasks_data = _extras.get("agent_tasks", {})
+                        _t_entry = _tasks_data.get(_tid, {}) if isinstance(_tasks_data, dict) else {}
+                        _t_agent = _t_entry.get("agent", "?")
+                        _agent_ctx_map[f"task:{_tid} ({_t_agent})"] = "sub-conv"
             flowfile.set_content(json.dumps({
                 "context": display_msgs,
                 "message_count": len(context_data),

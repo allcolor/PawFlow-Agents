@@ -1172,9 +1172,18 @@ class PawCode:
                 return
             try:
                 data = self.api.send_action("get_context", conversation_id=self.conversation_id, agent_name=arg or "")
-                messages = data.get("messages", [])
-                tokens = data.get("estimated_tokens", 0)
-                self.renderer.print_system(f"Context: {len(messages)} messages, ~{tokens:,} tokens")
+                messages = data.get("context", data.get("messages", []))
+                tokens = data.get("token_estimate", data.get("estimated_tokens", 0))
+                diverged = data.get("diverged", False)
+                agent_name = data.get("agent_name", arg or "shared")
+                label = f"{agent_name} ({'diverged' if diverged else 'shared'})"
+                self.renderer.print_system(f"Context [{label}]: {len(messages)} messages, ~{tokens:,} tokens")
+                # Show available sub-contexts
+                agent_ctxs = data.get("agent_contexts", {})
+                if agent_ctxs:
+                    ctx_list = ", ".join(f"{k} ({v})" for k, v in agent_ctxs.items() if k != "*")
+                    if ctx_list:
+                        self.renderer.print_system(f"Available: {ctx_list}")
                 for i, m in enumerate(messages[-20:]):
                     role = m.get("role", "?")
                     content = m.get("content", "")[:100]

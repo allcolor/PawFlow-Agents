@@ -1770,4 +1770,19 @@ def main():
         from pawflow_cli.config import clear_session
         clear_session()
 
-    cli.start()
+    try:
+        cli.start()
+    except ConnectionRefusedError:
+        print(f"\n  Error: Cannot connect to PawFlow server at {args.server}")
+        print(f"  Make sure the server is running and the URL is correct.")
+        print(f"  Set PAWFLOW_SERVER env var or use --server to change the URL.\n")
+        sys.exit(1)
+    except TimeoutError as e:
+        print(f"\n  Error: {e}\n")
+        sys.exit(1)
+    except Exception as e:
+        if "Connection refused" in str(e) or "connect" in str(e).lower():
+            print(f"\n  Error: Cannot connect to PawFlow server at {args.server}")
+            print(f"  Make sure the server is running.\n")
+            sys.exit(1)
+        raise

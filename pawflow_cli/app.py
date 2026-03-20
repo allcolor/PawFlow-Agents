@@ -157,6 +157,13 @@ class PawCode:
             with patch_stdout(raw=True):
                 # Re-create Rich Console to write through the patched stdout
                 self.renderer.init_patched_console()
+                # Filter [FSRelay] from stderr AFTER patch_stdout has wrapped it
+                _real_stderr_write = sys.stderr.write
+                def _filter_relay(s):
+                    if isinstance(s, str) and "[FSRelay]" in s:
+                        return len(s)
+                    return _real_stderr_write(s)
+                sys.stderr.write = _filter_relay
                 while self._running:
                     try:
                         text = session.prompt("❯ ")

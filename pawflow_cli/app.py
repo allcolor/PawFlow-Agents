@@ -194,6 +194,12 @@ class PawCode:
 
     def _handle_input(self, text: str):
         """Process a single input line."""
+        # Detect dragged file path (file exists on disk)
+        clean = text.strip().strip('"').strip("'")
+        if not text.startswith("/") and os.path.isfile(clean):
+            self.renderer.print_system(f"File detected: {clean}")
+            self._upload_file(clean)
+            return
         if text.startswith("/"):
             self._handle_command(text)
         else:
@@ -227,6 +233,72 @@ class PawCode:
             self.renderer.print_error("Session expired. Run /login to re-authenticate.")
         except Exception as e:
             self.renderer.print_error(f"Send error: {e}")
+
+    def _upload_file(self, file_path: str):
+        """Upload a local file as attachment to the conversation."""
+        import base64
+        import mimetypes
+        path = Path(file_path)
+        if not path.is_file():
+            self.renderer.print_error(f"File not found: {file_path}")
+            return
+        if path.stat().st_size > 10 * 1024 * 1024:
+            self.renderer.print_error(f"File too large (max 10MB): {path.name}")
+            return
+        mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        data = path.read_bytes()
+        b64 = base64.b64encode(data).decode("ascii")
+        try:
+            resp = self.api.send_message(
+                message=f"[Attached file: {path.name}]",
+                conversation_id=self.conversation_id,
+                target_agent=self.selected_agent,
+                attachments=[{
+                    "filename": path.name,
+                    "mime_type": mime,
+                    "data": b64,
+                }],
+            )
+            cid = resp.get("conversation_id")
+            if cid:
+                self.conversation_id = cid
+            self.renderer.print_system(f"Uploaded {path.name} ({len(data):,} bytes)")
+            self._ensure_sse()
+        except Exception as e:
+            self.renderer.print_error(f"Upload failed: {e}")
+
+    def _paste_clipboard_image(self):
+        """Paste image from clipboard and upload."""
+        import base64
+        try:
+            from PIL import ImageGrab
+            img = ImageGrab.grabclipboard()
+            if img is None:
+                self.renderer.print_error("No image in clipboard")
+                return
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+            resp = self.api.send_message(
+                message="[Pasted image from clipboard]",
+                conversation_id=self.conversation_id,
+                target_agent=self.selected_agent,
+                attachments=[{
+                    "filename": "clipboard.png",
+                    "mime_type": "image/png",
+                    "data": b64,
+                }],
+            )
+            cid = resp.get("conversation_id")
+            if cid:
+                self.conversation_id = cid
+            self.renderer.print_system(f"Clipboard image uploaded ({len(buf.getvalue()):,} bytes)")
+            self._ensure_sse()
+        except ImportError:
+            self.renderer.print_error("Install Pillow for clipboard support: pip install Pillow")
+        except Exception as e:
+            self.renderer.print_error(f"Clipboard paste failed: {e}")
 
     def _ensure_sse(self):
         """Ensure SSE client is connected for the current conversation."""
@@ -409,6 +481,65 @@ class PawCode:
             self.renderer.print_system(f"[{data.get('agent_name', '?')}] Cancelled")
             return False
 
+        elif ev_type == "compact_progress":
+            stage = data.get("stage", "")
+            detail = data.get("detail", "")
+            if stage == "done":
+                before = data.get("before", 0)
+                after = data.get("after", 0)
+                self.renderer.print_system(f"Compacted: {before} → {after} messages")
+                self._update_status("")
+            else:
+                self._update_status(f"▶ Compacting... {stage} {detail}")
+
+        elif ev_type == "task_progress":
+            stage = data.get("stage", "")
+            agent = data.get("agent", "")
+            task = data.get("task", "")
+            if stage == "done":
+                self.renderer.print_system(f"Task '{task}' completed by {agent}")
+                self._update_status("")
+            else:
+                self._update_status(f"▶ {agent} task: {stage}")
+
+        elif ev_type == "thought_scheduled":
+            agent = data.get("agent", "")
+            delay = data.get("delay", 0)
+            self.renderer.print_system(f"[{agent}] next auto-message in ~{delay}s")
+
+        elif ev_type == "thought_firing":
+            agent = data.get("agent", "")
+            self._update_status(f"▶ {agent} thinking...")
+
+        elif ev_type == "sub_agent_iteration":
+            agent = data.get("agent_name", "")
+            iteration = data.get("iteration", 0)
+            tools = data.get("total_tools", 0)
+            self._update_status(f"▶ sub:{agent} iter {iteration} · {tools} tools")
+
+        elif ev_type == "sub_agent_tool":
+            agent = data.get("agent_name", "")
+            tool = data.get("tool", "")
+            self._update_status(f"▶ sub:{agent} {tool}...")
+
+        elif ev_type == "interrupting":
+            agent = data.get("agent", "")
+            self.renderer.print_system(f"Interrupting {agent}...")
+
+        elif ev_type == "discard":
+            pass  # silently discard
+
+        elif ev_type == "agent_response":
+            agent = data.get("agent_name", data.get("source", {}).get("name", "assistant") if isinstance(data.get("source"), dict) else "assistant")
+            response = data.get("response", "")
+            if response:
+                self.renderer.print_system("")  # spacing
+                self.renderer.end_stream(agent, response)
+
+        elif ev_type == "broadcast_done":
+            count = data.get("agent_count", 0)
+            self.renderer.print_system(f"Broadcast complete — {count} agent(s) responded")
+
         return True  # keep waiting
 
     def _handle_exec_approval(self, data: dict):
@@ -461,21 +592,77 @@ class PawCode:
 
         if cmd == "/help":
             self.renderer.print_markdown(
-                "## Commands\n"
+                "## Conversation\n"
                 "- `/new` — New conversation\n"
                 "- `/conv` — List conversations\n"
-                "- `/resume <id> [N]` — Resume conversation (show last N messages, default 10)\n"
-                "- `/history [N]` — Show last N messages (default 20)\n"
+                "- `/resume <id> [N]` — Resume conversation\n"
+                "- `/history [N] [offset]` — Show messages\n"
                 "- `/delete <id>` — Delete conversation\n"
                 "- `/export [json|md]` — Export conversation\n"
-                "- `/agent list|<name>` — List or select agent\n"
                 "- `/compact` — Compact context\n"
-                "- `/model <name>` — Switch model\n"
-                "- `/resources` — List resources\n"
-                "- `/tools` — List tools\n"
-                "- `/cost` — Show token usage/cost\n"
-                "- `/explore` — File explorer\n"
                 "- `/clear` — Clear screen\n"
+                "\n## Agents\n"
+                "- `/agent list` — List agents\n"
+                "- `/agent create <name> <prompt>` — Create agent\n"
+                "- `/agent delete <name>` — Delete agent\n"
+                "- `/agent setname <real> [nick]` — Set nickname\n"
+                "- `/agent enable|disable|promote <name>` — Agent state\n"
+                "- `/agent <name>` — Switch to agent\n"
+                "- `/msg <agent|ALL> <text>` — Send to agent\n"
+                "- `/btw <agent|ALL> <question>` — Side question\n"
+                "- `/stop <agent|ALL> [-f]` — Interrupt/cancel agent\n"
+                "\n## Context\n"
+                "- `/rebuild` — Rebuild context\n"
+                "- `/restart [agent] [keep]` — Restart context\n"
+                "- `/summary [agent] [tokens]` — Summarize context\n"
+                "- `/context` — Show context info\n"
+                "\n## Memory\n"
+                "- `/memory list` — List memories\n"
+                "- `/memory add <text>` — Add memory\n"
+                "- `/memory del <id>` — Delete memory\n"
+                "- `/memory edit <id> <text>` — Edit memory\n"
+                "- `/memory search <query>` — Search memories\n"
+                "\n## Skills\n"
+                "- `/skill list` — List skills\n"
+                "- `/skill add <name> <prompt>` — Create skill\n"
+                "- `/skill del <name>` — Delete skill\n"
+                "\n## Tasks\n"
+                "- `/task list` — List tasks\n"
+                "- `/task create <name> <prompt>` — Create task\n"
+                "- `/task assign <agent> <task>` — Assign task\n"
+                "- `/task del <name>` — Delete task\n"
+                "- `/task pause|resume|cancel <id>` — Task control\n"
+                "\n## Services\n"
+                "- `/service list` — List services\n"
+                "- `/service install <type> <name> [config]` — Install\n"
+                "- `/service uninstall <name>` — Remove\n"
+                "- `/service enable|disable <name>` — Toggle\n"
+                "\n## Resources\n"
+                "- `/resources` — List all resources\n"
+                "- `/activate <type> <name>` — Activate resource\n"
+                "- `/deactivate <type> <name>` — Deactivate resource\n"
+                "- `/tools` — List tools\n"
+                "- `/call <tool> {json}` — Call tool directly\n"
+                "\n## Secrets & Variables\n"
+                "- `/add-secret <name> <value>` — Store secret\n"
+                "- `/secrets` — List secrets\n"
+                "- `/add-variable <name> <value>` — Set variable\n"
+                "- `/variables` — List variables\n"
+                "\n## Schedules\n"
+                "- `/schedules list` — List schedules\n"
+                "- `/schedules add <when>` — Add schedule\n"
+                "- `/schedules clear` — Clear schedules\n"
+                "\n## LLM & Model\n"
+                "- `/model <name>` — Switch model\n"
+                "- `/llm <agent> <service>` — Override LLM service\n"
+                "\n## Files & Prompts\n"
+                "- `/files` — List conversation files\n"
+                "- `/upload <path>` — Upload file (or drag file onto terminal)\n"
+                "- `/paste` — Upload image from clipboard\n"
+                "- `/prompt list` — List prompts\n"
+                "- `/prompt use <name>` — Show prompt\n"
+                "\n## Other\n"
+                "- `/cost` — Token usage/cost\n"
                 "- `/login` — Re-authenticate\n"
                 "- `/quit` — Exit\n"
             )
@@ -611,8 +798,54 @@ class PawCode:
                 except Exception as e:
                     self.renderer.print_error(str(e))
             else:
-                self.selected_agent = arg
-                self.renderer.print_system(f"Switched to agent: {arg}")
+                parts = arg.split(None, 2)
+                subcmd = parts[0].lower()
+
+                if subcmd == "create":
+                    if len(parts) < 3:
+                        self.renderer.print_error("Usage: /agent create <name> <prompt>")
+                        return
+                    try:
+                        data = self.api.send_action("create_agent", conversation_id=self.conversation_id or "", name=parts[1], prompt=parts[2])
+                        self.renderer.print_system(f"Agent '{parts[1]}' created")
+                    except Exception as e:
+                        self.renderer.print_error(str(e))
+
+                elif subcmd == "delete":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /agent delete <name>")
+                        return
+                    try:
+                        data = self.api.send_action("delete_agent", name=parts[1])
+                        self.renderer.print_system(f"Agent '{parts[1]}' deleted")
+                    except Exception as e:
+                        self.renderer.print_error(str(e))
+
+                elif subcmd == "setname":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /agent setname <real> [nickname]")
+                        return
+                    nick = parts[2] if len(parts) > 2 else ""
+                    try:
+                        self.api.send_action("set_agent_nickname", conversation_id=self.conversation_id, real_name=parts[1], nickname=nick)
+                        self.renderer.print_system(f"Nickname set: {parts[1]} → {nick or '(cleared)'}")
+                    except Exception as e:
+                        self.renderer.print_error(str(e))
+
+                elif subcmd in ("disable", "enable", "promote"):
+                    if len(parts) < 2:
+                        self.renderer.print_error(f"Usage: /agent {subcmd} <name>")
+                        return
+                    try:
+                        action = f"agent_{subcmd}"
+                        self.api.send_action(action, agent_name=parts[1], conversation_id=self.conversation_id or "")
+                        self.renderer.print_system(f"Agent '{parts[1]}' {subcmd}d")
+                    except Exception as e:
+                        self.renderer.print_error(str(e))
+
+                else:
+                    self.selected_agent = arg
+                    self.renderer.print_system(f"Switched to agent: {arg}")
             return
 
         if cmd == "/resources":
@@ -676,6 +909,462 @@ class PawCode:
                         self.conversation_id = None
             except Exception as e:
                 self.renderer.print_error(str(e))
+            return
+
+        # --- Agent Messaging ---
+
+        if cmd in ("/msg", "/message"):
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /msg <agent|ALL> <text>")
+                return
+            target, message = parts
+            try:
+                if target.upper() == "ALL":
+                    data = self.api.send_action("broadcast_agents", conversation_id=self.conversation_id, message=message)
+                    self.renderer.print_system(f"Broadcast sent")
+                else:
+                    self.api.send_message(message, conversation_id=self.conversation_id, target_agent=target)
+                    self.renderer.print_system(f"Message sent to {target}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/btw":
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /btw <agent|ALL> <question>")
+                return
+            target, question = parts
+            try:
+                self.api.send_action("btw", conversation_id=self.conversation_id, message=question, agent_name=target)
+                self.renderer.print_system(f"Side question sent to {target}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd in ("/stop", "/interrupt"):
+            if not arg:
+                self.renderer.print_error("Usage: /stop <agent|ALL> [-f]")
+                return
+            force = "-f" in arg
+            target = arg.replace("-f", "").strip()
+            try:
+                action = "cancel" if force else "interrupt"
+                self.api.send_action(action, conversation_id=self.conversation_id, target=target, agent_name=target)
+                self.renderer.print_system(f"{'Cancelled' if force else 'Interrupted'} {target}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Context Management ---
+
+        if cmd == "/rebuild":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                self.api.send_action("rebuild", conversation_id=self.conversation_id, agent_name=arg or "")
+                self.renderer.print_system("Rebuild started")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/restart":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            parts = arg.split()
+            agent = parts[0] if parts else ""
+            keep = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 5
+            try:
+                self.api.send_action("restart_from", conversation_id=self.conversation_id, agent_name=agent, keep_last=keep)
+                self.renderer.print_system(f"Context restarted (keeping last {keep})")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/summary":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            parts = arg.split()
+            agent = parts[0] if parts else ""
+            tokens = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 4000
+            try:
+                self.api.send_action("resume_conversation", conversation_id=self.conversation_id, agent_name=agent, max_tokens=tokens)
+                self.renderer.print_system("Summary started")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/context":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                data = self.api.send_action("get_context", conversation_id=self.conversation_id, agent_name=arg or "")
+                messages = data.get("messages", [])
+                tokens = data.get("estimated_tokens", 0)
+                self.renderer.print_system(f"Context: {len(messages)} messages, ~{tokens:,} tokens")
+                for i, m in enumerate(messages[-20:]):
+                    role = m.get("role", "?")
+                    content = m.get("content", "")[:100]
+                    self.renderer.print(f"  [{i}] {role}: {content}...")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Memory Management ---
+
+        if cmd == "/memory":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            parts = arg.split(None, 1) if arg else ["list"]
+            subcmd = parts[0].lower()
+            subarg = parts[1] if len(parts) > 1 else ""
+
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("list_memories", conversation_id=self.conversation_id, agent_name=subarg or "")
+                    memories = data.get("memories", [])
+                    if not memories:
+                        self.renderer.print_system("No memories.")
+                    else:
+                        for m in memories:
+                            tags = " ".join(f"#{t}" for t in m.get("tags", []))
+                            self.renderer.print(f"  [{m.get('id', '?')[:8]}] {m.get('content', '')[:80]} {tags}")
+
+                elif subcmd == "add":
+                    if not subarg:
+                        self.renderer.print_error("Usage: /memory add <text> [@agent] [#tag1 #tag2]")
+                        return
+                    self.api.send_action("add_memory", conversation_id=self.conversation_id, content=subarg)
+                    self.renderer.print_system("Memory added")
+
+                elif subcmd in ("del", "delete"):
+                    if not subarg:
+                        self.renderer.print_error("Usage: /memory del <id>")
+                        return
+                    self.api.send_action("delete_memory", conversation_id=self.conversation_id, memory_id=subarg)
+                    self.renderer.print_system("Memory deleted")
+
+                elif subcmd == "edit":
+                    edit_parts = subarg.split(None, 1)
+                    if len(edit_parts) < 2:
+                        self.renderer.print_error("Usage: /memory edit <id> <new text>")
+                        return
+                    self.api.send_action("edit_memory", conversation_id=self.conversation_id, memory_id=edit_parts[0], content=edit_parts[1])
+                    self.renderer.print_system("Memory updated")
+
+                elif subcmd == "search":
+                    data = self.api.send_action("search_memories", conversation_id=self.conversation_id, query=subarg)
+                    results = data.get("results", [])
+                    for r in results:
+                        self.renderer.print(f"  [{r.get('id', '?')[:8]}] ({r.get('score', 0):.2f}) {r.get('content', '')[:80]}")
+
+                else:
+                    self.renderer.print_error("Usage: /memory list|add|del|edit|search")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Skill Management ---
+
+        if cmd == "/skill":
+            parts = arg.split(None, 2) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("list_resources", conversation_id=self.conversation_id or "")
+                    skills = data.get("skill", data.get("skills", []))
+                    if isinstance(skills, list):
+                        for s in skills:
+                            name = s.get("name", "?")
+                            active = " ✓" if s.get("active") else ""
+                            self.renderer.print(f"  {name}{active}: {s.get('description', '')[:60]}")
+                    else:
+                        self.renderer.print_system("No skills.")
+                elif subcmd == "add":
+                    if len(parts) < 3:
+                        self.renderer.print_error("Usage: /skill add <name> <prompt>")
+                        return
+                    self.api.send_action("create_resource", resource_type="skill", name=parts[1], prompt=parts[2], conversation_id=self.conversation_id or "")
+                    self.renderer.print_system(f"Skill '{parts[1]}' created")
+                elif subcmd in ("del", "delete"):
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /skill del <name>")
+                        return
+                    self.api.send_action("delete_resource", resource_type="skill", name=parts[1])
+                    self.renderer.print_system(f"Skill '{parts[1]}' deleted")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Task Management ---
+
+        if cmd == "/task":
+            parts = arg.split(None, 2) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("task_status", conversation_id=self.conversation_id or "")
+                    tasks = data.get("tasks", [])
+                    for t in tasks:
+                        status = t.get("status", "?")
+                        self.renderer.print(f"  [{status}] {t.get('name', '?')}: {t.get('description', '')[:60]}")
+                    if not tasks:
+                        self.renderer.print_system("No tasks.")
+                elif subcmd == "create":
+                    if len(parts) < 3:
+                        self.renderer.print_error("Usage: /task create <name> <prompt>")
+                        return
+                    self.api.send_action("create_task_def", name=parts[1], prompt=parts[2], conversation_id=self.conversation_id or "")
+                    self.renderer.print_system(f"Task '{parts[1]}' created")
+                elif subcmd == "assign":
+                    assign_parts = (parts[1] if len(parts) > 1 else "").split(None, 1)
+                    if len(assign_parts) < 2:
+                        self.renderer.print_error("Usage: /task assign <agent> <task>")
+                        return
+                    self.api.send_action("assign_task", agent_name=assign_parts[0], task_name=assign_parts[1], conversation_id=self.conversation_id or "")
+                    self.renderer.print_system(f"Task assigned to {assign_parts[0]}")
+                elif subcmd in ("del", "delete"):
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /task del <name>")
+                        return
+                    self.api.send_action("delete_task_def", name=parts[1])
+                    self.renderer.print_system(f"Task '{parts[1]}' deleted")
+                elif subcmd in ("pause", "resume", "cancel"):
+                    if len(parts) < 2:
+                        self.renderer.print_error(f"Usage: /task {subcmd} <task_id|agent>")
+                        return
+                    self.api.send_action(f"{subcmd}_task", task_id=parts[1], conversation_id=self.conversation_id or "")
+                    self.renderer.print_system(f"Task {subcmd}d: {parts[1]}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Service Management ---
+
+        if cmd == "/service":
+            parts = arg.split(None, 2) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("service_list")
+                    services = data.get("services", [])
+                    for s in services:
+                        status = "+" if s.get("enabled") or s.get("connected") else "-"
+                        self.renderer.print(f"  [{status}] {s.get('id', '?')} ({s.get('type', '?')}): {s.get('description', '')[:50]}")
+                    if not services:
+                        self.renderer.print_system("No services.")
+                elif subcmd == "install":
+                    if len(parts) < 3:
+                        self.renderer.print_error("Usage: /service install <type> <name> [key=val,...]")
+                        return
+                    rest = parts[2].split(None, 1)
+                    name = rest[0]
+                    config_str = rest[1] if len(rest) > 1 else ""
+                    self.api.send_action("service_install", service_type=parts[1], service_name=name, config_str=config_str)
+                    self.renderer.print_system(f"Service '{name}' installed")
+                elif subcmd == "uninstall":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /service uninstall <name>")
+                        return
+                    self.api.send_action("service_uninstall", service_id=parts[1])
+                    self.renderer.print_system(f"Service '{parts[1]}' removed")
+                elif subcmd in ("enable", "disable"):
+                    if len(parts) < 2:
+                        self.renderer.print_error(f"Usage: /service {subcmd} <name>")
+                        return
+                    self.api.send_action(f"service_{subcmd}", service_id=parts[1])
+                    self.renderer.print_system(f"Service '{parts[1]}' {subcmd}d")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Secrets & Variables ---
+
+        if cmd in ("/add-secret", "/secret"):
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /add-secret <name> <value>")
+                return
+            try:
+                self.api.send_action("add_secret", name=parts[0], value=parts[1])
+                self.renderer.print_system(f"Secret '{parts[0]}' stored")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd in ("/secrets", "/list-secrets"):
+            try:
+                data = self.api.send_action("list_secrets")
+                secrets = data.get("secrets", [])
+                for s in secrets:
+                    self.renderer.print(f"  {s}")
+                if not secrets:
+                    self.renderer.print_system("No secrets.")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd in ("/add-variable", "/add-var"):
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /add-variable <name> <value>")
+                return
+            try:
+                self.api.send_action("add_variable", name=parts[0], value=parts[1])
+                self.renderer.print_system(f"Variable '{parts[0]}' set")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd in ("/variables", "/vars", "/list-variables"):
+            try:
+                data = self.api.send_action("list_variables")
+                variables = data.get("variables", {})
+                for k, v in variables.items() if isinstance(variables, dict) else []:
+                    self.renderer.print(f"  {k} = {v}")
+                if not variables:
+                    self.renderer.print_system("No variables.")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Schedules ---
+
+        if cmd in ("/schedules", "/tasks"):
+            parts = arg.split(None, 1) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list" or not arg:
+                    data = self.api.send_action("list_schedules", conversation_id=self.conversation_id or "")
+                    scheds = data.get("schedules", [])
+                    for s in scheds:
+                        import datetime
+                        at = datetime.datetime.fromtimestamp(s.get("recheck_at", 0))
+                        self.renderer.print(f"  {at.strftime('%Y-%m-%d %H:%M')} — {s.get('reason', 'recheck')}")
+                    if not scheds:
+                        self.renderer.print_system("No scheduled tasks.")
+                elif subcmd == "add":
+                    subarg = parts[1] if len(parts) > 1 else ""
+                    self.api.send_action("add_schedule", conversation_id=self.conversation_id or "", when=subarg)
+                    self.renderer.print_system("Schedule added")
+                elif subcmd in ("del", "delete", "clear"):
+                    self.api.send_action("delete_schedule", conversation_id=self.conversation_id or "")
+                    self.renderer.print_system("Schedules cleared")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- LLM Override ---
+
+        if cmd == "/llm":
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /llm <agent> <service|restore>")
+                return
+            try:
+                self.api.send_action("set_llm_service", conversation_id=self.conversation_id or "", agent_name=parts[0], llm_service=parts[1])
+                self.renderer.print_system(f"LLM service for '{parts[0]}' set to '{parts[1]}'")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Resource Activate/Deactivate ---
+
+        if cmd == "/activate":
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /activate <type> <name>")
+                return
+            try:
+                self.api.send_action("activate_resource", conversation_id=self.conversation_id or "", resource_type=parts[0], name=parts[1])
+                self.renderer.print_system(f"Activated {parts[0]} '{parts[1]}'")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/deactivate":
+            parts = arg.split(None, 1)
+            if len(parts) < 2:
+                self.renderer.print_error("Usage: /deactivate <type> <name>")
+                return
+            try:
+                self.api.send_action("deactivate_resource", conversation_id=self.conversation_id or "", resource_type=parts[0], name=parts[1])
+                self.renderer.print_system(f"Deactivated {parts[0]} '{parts[1]}'")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Call Tool ---
+
+        if cmd == "/call":
+            if not arg:
+                self.renderer.print_error("Usage: /call <tool_name> {json_args}")
+                return
+            parts = arg.split(None, 1)
+            tool_name = parts[0]
+            try:
+                import json as _json
+                args_dict = _json.loads(parts[1]) if len(parts) > 1 else {}
+                data = self.api.send_action("call_tool", tool_name=tool_name, arguments=args_dict, conversation_id=self.conversation_id or "")
+                result = data.get("result", str(data))
+                self.renderer.print_system(f"Tool result:\n{result[:1000]}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Files & Prompts ---
+
+        if cmd == "/files":
+            try:
+                data = self.api.send_action("list_conv_files", conversation_id=self.conversation_id or "")
+                files = data.get("files", [])
+                for f in files:
+                    self.renderer.print(f"  {f.get('file_id', '?')[:8]}  {f.get('filename', '?')}  ({f.get('size', 0):,} bytes)")
+                if not files:
+                    self.renderer.print_system("No files in this conversation.")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/prompt":
+            parts = arg.split(None, 1) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("list_prompts", conversation_id=self.conversation_id or "")
+                    prompts = data.get("prompts", [])
+                    for p in prompts:
+                        self.renderer.print(f"  {p.get('name', '?')}: {p.get('description', p.get('content', ''))[:60]}")
+                    if not prompts:
+                        self.renderer.print_system("No prompts.")
+                elif subcmd == "use":
+                    name = parts[1] if len(parts) > 1 else ""
+                    data = self.api.send_action("get_prompt", conversation_id=self.conversation_id or "", name=name)
+                    content = data.get("content", "")
+                    if content:
+                        self.renderer.print_system(f"Prompt '{name}':")
+                        self.renderer.print_markdown(content)
+                    else:
+                        self.renderer.print_error(f"Prompt '{name}' not found")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/upload":
+            if not arg:
+                self.renderer.print_error("Usage: /upload <file_path>")
+                return
+            self._upload_file(arg.strip().strip('"').strip("'"))
+            return
+
+        if cmd == "/paste":
+            self._paste_clipboard_image()
             return
 
         # Unknown command — send as message (might be a skill like /review)

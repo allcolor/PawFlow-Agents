@@ -383,9 +383,19 @@ class SubAgentExecutor:
                     try:
                         from core.conversation_store import ConversationStore
                         _store = ConversationStore.instance()
+                        def _serialize_msg(m):
+                            d = {"role": m.role, "content": m.content}
+                            if hasattr(m, 'tool_calls') and m.tool_calls:
+                                d["tool_calls"] = [
+                                    {"id": tc.id, "name": tc.name,
+                                     "arguments": tc.arguments}
+                                    for tc in m.tool_calls
+                                ]
+                            if hasattr(m, 'tool_call_id') and m.tool_call_id:
+                                d["tool_call_id"] = m.tool_call_id
+                            return d
                         _store.save(sub_conv_id,
-                                    [{"role": m.role, "content": m.content}
-                                     for m in messages],
+                                    [_serialize_msg(m) for m in messages],
                                     user_id=task.user_id)
                     except Exception:
                         pass
@@ -457,14 +467,26 @@ class SubAgentExecutor:
 
     @staticmethod
     def _deserialize_sub_messages(raw_messages):
-        """Convert stored dicts back to LLMMessage."""
+        """Convert stored dicts back to LLMMessage (preserving tool_calls)."""
         result = []
         for m in raw_messages:
             if isinstance(m, dict):
-                result.append(LLMMessage(
+                msg = LLMMessage(
                     role=m.get("role", "user"),
                     content=m.get("content", ""),
-                ))
+                )
+                if m.get("tool_calls"):
+                    msg.tool_calls = [
+                        LLMToolCall(
+                            id=tc.get("id", ""),
+                            name=tc.get("name", ""),
+                            arguments=tc.get("arguments", {}),
+                        )
+                        for tc in m["tool_calls"]
+                    ]
+                if m.get("tool_call_id"):
+                    msg.tool_call_id = m["tool_call_id"]
+                result.append(msg)
             elif isinstance(m, LLMMessage):
                 result.append(m)
         return result

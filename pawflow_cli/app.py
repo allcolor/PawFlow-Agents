@@ -69,6 +69,8 @@ class PawCode:
         self._status_tick = 0  # for fade animation
         self._pending_attachments = []  # queued files/images to send with next message
         self._last_responses = []  # last N agent responses for /copy
+        self._approval_queue = queue.Queue()  # background → main thread approval requests
+        self._approval_response = queue.Queue()  # main thread → background approval responses
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
@@ -276,6 +278,13 @@ class PawCode:
 
     def _handle_input(self, text: str):
         """Process a single input line."""
+        # Check for pending approval — single char y/n/s/a responds to it
+        if text.lower() in ("y", "n", "s", "a") and not self._approval_queue.empty():
+            approval = self._approval_queue.get_nowait()
+            result = approval["result_map"].get(text.lower(), "denied")
+            self._approval_response.put(result)
+            self.renderer.print_system(f"Approval: {result}")
+            return
         # Detect dragged file path (file exists on disk)
         clean = text.strip().strip('"').strip("'")
         if not text.startswith("/") and os.path.isfile(clean):
@@ -659,15 +668,24 @@ class PawCode:
         return True  # keep waiting
 
     def _handle_exec_approval(self, data: dict):
-        """Handle exec approval request."""
+        """Handle exec approval request — delegate to main thread via queue."""
         self.renderer.print_exec_approval(
             data.get("command", "?"),
             data.get("risk_level", "normal"),
             data.get("request_id", ""),
         )
-        choice = input().strip().lower()
-        result_map = {"y": "approved", "n": "denied", "s": "session_allow", "a": "always_allow"}
-        result = result_map.get(choice, "denied")
+        # Put request in queue for main thread to handle
+        self._approval_queue.put({
+            "type": "exec",
+            "request_id": data.get("request_id", ""),
+            "result_map": {"y": "approved", "n": "denied", "s": "session_allow", "a": "always_allow"},
+            "action": "exec_result",
+        })
+        # Wait for response from main thread (timeout 60s)
+        try:
+            result = self._approval_response.get(timeout=60)
+        except queue.Empty:
+            result = "denied"
         try:
             self.api.send_action("exec_result",
                                  request_id=data.get("request_id", ""),
@@ -677,15 +695,22 @@ class PawCode:
             self.renderer.print_error(f"Approval error: {e}")
 
     def _handle_tool_approval(self, data: dict):
-        """Handle tool approval request."""
+        """Handle tool approval request — delegate to main thread via queue."""
         self.renderer.print_approval_request(
             data.get("tool_name", "?"),
             data.get("action_summary", ""),
             data.get("request_id", ""),
         )
-        choice = input().strip().lower()
-        result_map = {"y": "allow_once", "n": "denied", "s": "session_allow", "a": "always_allow"}
-        result = result_map.get(choice, "denied")
+        self._approval_queue.put({
+            "type": "tool",
+            "request_id": data.get("request_id", ""),
+            "result_map": {"y": "allow_once", "n": "denied", "s": "session_allow", "a": "always_allow"},
+            "action": "tool_approval_result",
+        })
+        try:
+            result = self._approval_response.get(timeout=60)
+        except queue.Empty:
+            result = "denied"
         try:
             self.api.send_action("tool_approval_result",
                                  request_id=data.get("request_id", ""),

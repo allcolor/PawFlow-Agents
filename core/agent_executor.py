@@ -437,35 +437,28 @@ class SubAgentExecutor:
             "provider": result.provider,
         })
 
-        # Sync new messages from sub-conv to parent (only messages added since last sync)
+        # Append new sub-conv messages to parent (append-only, thread-safe)
         if sub_conv_id and task.parent_conversation_id:
             try:
                 from core.conversation_store import ConversationStore
-                _parent_store = ConversationStore.instance()
-                _sub_msgs = _parent_store.load(sub_conv_id) or []
-                # Track how many messages were already synced
-                _sync_key = f"_sub_sync_count:{sub_conv_id}"
-                _last_sync = _parent_store.get_extra(
-                    task.parent_conversation_id, _sync_key) or 0
-                _new_msgs = _sub_msgs[_last_sync:]
-                if _new_msgs:
-                    _parent_msgs = _parent_store.load(task.parent_conversation_id) or []
-                    _source = {
-                        "type": "agent",
-                        "name": task.agent_name,
-                        "llm_service": task.llm_service,
-                    }
-                    for m in _new_msgs:
-                        if isinstance(m, dict):
-                            m = dict(m)  # copy
-                            m.setdefault("source", _source)
-                            _parent_msgs.append(m)
-                    _parent_store.save(task.parent_conversation_id, _parent_msgs,
-                                        user_id=task.user_id)
-                    _parent_store.set_extra(task.parent_conversation_id,
-                                             _sync_key, len(_sub_msgs))
+                _store = ConversationStore.instance()
+                _sub_msgs = _store.load(sub_conv_id) or []
+                # Only append messages added since last sync
+                _sync_key = f"_sub_sync:{sub_conv_id}"
+                _last_sync = _store.get_extra(task.parent_conversation_id, _sync_key) or 0
+                _new = _sub_msgs[_last_sync:]
+                if _new:
+                    # Tag with agent source
+                    _source = {"type": "agent", "name": task.agent_name,
+                               "llm_service": task.llm_service}
+                    for m in _new:
+                        if isinstance(m, dict) and "source" not in m:
+                            m["source"] = _source
+                    _store.append_messages(task.parent_conversation_id, _new,
+                                            user_id=task.user_id)
+                    _store.set_extra(task.parent_conversation_id, _sync_key, len(_sub_msgs))
             except Exception as _pe:
-                logger.debug("Failed to sync task messages to parent: %s", _pe)
+                logger.debug("Failed to sync sub-conv to parent: %s", _pe)
 
         # Cleanup sub-conversation (unless agent scheduled continuation)
         if sub_conv_id and result.status in ("completed", "error", "timeout"):

@@ -51,20 +51,34 @@ class TerminalRenderer:
     """Renders PawFlow chat events to the terminal."""
 
     def __init__(self):
+        # Force UTF-8 on Windows
+        if sys.platform == "win32":
+            import os
+            os.system("")  # Enable VT100 escape sequences
+            if hasattr(sys.stdout, "reconfigure"):
+                sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         if HAS_RICH:
-            import sys, io
-            # Force UTF-8 on Windows to support Unicode glyphs (✶ ⚡ ↳ ▶ etc.)
-            if sys.platform == "win32":
-                import os
-                os.system("")  # Enable VT100 escape sequences on Windows
-                if hasattr(sys.stdout, "reconfigure"):
-                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
             self.console = Console(force_terminal=True)
         else:
             self.console = None
-        self._streams: Dict[str, str] = {}  # agent -> accumulated markdown
+        self._streams: Dict[str, str] = {}
         self._live: Optional[Live] = None
-        self._thinking: Dict[str, str] = {}  # agent -> thinking text
+        self._thinking: Dict[str, str] = {}
+        self._status_callback = None  # set by app.py to update toolbar
+
+    def init_patched_console(self):
+        """Re-create Rich Console to write through patch_stdout's proxy."""
+        if HAS_RICH:
+            self.console = Console(force_terminal=True)
+
+    def set_status_callback(self, callback):
+        """Set callback to update bottom toolbar status text."""
+        self._status_callback = callback
+
+    def _set_status(self, text: str):
+        """Update the bottom toolbar status."""
+        if self._status_callback:
+            self._status_callback(text)
 
     def print_banner(self, directory: str):
         if self.console:
@@ -162,13 +176,16 @@ class TerminalRenderer:
 
     def start_thinking(self, agent: str):
         self._thinking[agent] = ""
-        self._status_line(agent, f"✶ {_random_verb()}...")
+        verb = f"✶ {_random_verb()}..."
+        self._set_status(f"▶ {agent} {verb}")
+        self._status_line(agent, verb)
 
     def thinking_token(self, agent: str, text: str):
         self._thinking[agent] = self._thinking.get(agent, "") + text
 
     def end_thinking(self, agent: str):
         text = self._thinking.pop(agent, "")
+        self._set_status("")  # clear thinking status
         if text:
             lines = text.strip().split("\n")
             preview = lines[0][:120] + ("..." if len(lines) > 1 or len(lines[0]) > 120 else "")
@@ -184,6 +201,7 @@ class TerminalRenderer:
             args_str = args_str[:200] + "..."
         svc_info = f" via {service}" if service else ""
         display = f"⚡ {tool}({args_str})"
+        self._set_status(f"▶ {agent or 'assistant'} {tool}...")
         self._status_line(agent or "assistant", display)
 
     def print_tool_result(self, tool: str, result: str, agent: str = ""):
@@ -233,6 +251,7 @@ class TerminalRenderer:
 
     def print_done(self, agent: str, tokens_in: int, tokens_out: int,
                    duration_ms: int, model: str = ""):
+        self._set_status("")  # clear status bar
         if self.console:
             info = f"[dim]  {tokens_in:,}↑ {tokens_out:,}↓"
             if duration_ms:
@@ -246,7 +265,10 @@ class TerminalRenderer:
 
     def print_iteration(self, agent: str, iteration: int, round_n: int,
                         max_rounds: int, tools: int):
-        self._status_line(agent, f"✶ {_random_verb()}... · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
+        verb = f"✶ {_random_verb()}..."
+        status = f"▶ {agent} {verb} · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools"
+        self._set_status(status)
+        self._status_line(agent, f"{verb} · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
 
     def print_ask_user(self, question: str, options: list):
         if self.console:

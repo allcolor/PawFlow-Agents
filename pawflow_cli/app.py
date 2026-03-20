@@ -50,9 +50,13 @@ class PawCode:
         self._sending = False
         self._running = True
         self._last_history = []
+        self._status_text = ""  # shown in bottom toolbar (thinking verb, etc.)
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
+        # Wire status callback for bottom toolbar
+        self.renderer.set_status_callback(self._update_status)
+
         # Authenticate
         self.renderer.print_banner(self.directory)
 
@@ -95,6 +99,13 @@ class PawCode:
         # Main loop
         self._main_loop()
 
+    def _get_toolbar(self):
+        """Bottom toolbar content — shows thinking status, agent activity."""
+        from prompt_toolkit.formatted_text import HTML
+        if self._status_text:
+            return HTML(f'<style bg="#16213e" fg="#e94560"> {self._status_text} </style>')
+        return HTML('<style bg="#0f1629" fg="#555"> PawCode </style>')
+
     def _main_loop(self):
         """Input loop — always available. SSE events render in background."""
         from pawflow_cli.config import HISTORY_FILE, ensure_config_dir
@@ -106,30 +117,48 @@ class PawCode:
         self._event_thread.start()
 
         if HAS_PROMPT_TOOLKIT:
+            from prompt_toolkit.patch_stdout import patch_stdout
+            from prompt_toolkit.formatted_text import HTML
+
             session = PromptSession(
                 history=FileHistory(str(HISTORY_FILE)),
                 multiline=False,
                 enable_history_search=True,
+                bottom_toolbar=self._get_toolbar,
+                refresh_interval=0.5,  # refresh toolbar every 0.5s
             )
-        else:
-            session = None
 
-        while self._running:
-            try:
-                if session:
-                    text = session.prompt("❯ ")
-                else:
+            # patch_stdout(raw=True) preserves ANSI codes from Rich
+            with patch_stdout(raw=True):
+                # Re-create Rich Console to write through the patched stdout
+                self.renderer.init_patched_console()
+                while self._running:
+                    try:
+                        text = session.prompt("❯ ")
+                    except (EOFError, KeyboardInterrupt):
+                        self._running = False
+                        break
+                    text = text.strip()
+                    if not text:
+                        continue
+                    try:
+                        self._handle_input(text)
+                    except Exception as e:
+                        self.renderer.print_error(f"Unexpected error: {e}")
+        else:
+            while self._running:
+                try:
                     text = input("❯ ")
-            except (EOFError, KeyboardInterrupt):
-                self._running = False
-                break
-            text = text.strip()
-            if not text:
-                continue
-            try:
-                self._handle_input(text)
-            except Exception as e:
-                self.renderer.print_error(f"Unexpected error: {e}")
+                except (EOFError, KeyboardInterrupt):
+                    self._running = False
+                    break
+                text = text.strip()
+                if not text:
+                    continue
+                try:
+                    self._handle_input(text)
+                except Exception as e:
+                    self.renderer.print_error(f"Unexpected error: {e}")
 
     def _handle_input(self, text: str):
         """Process a single input line."""
@@ -614,6 +643,10 @@ class PawCode:
             except Exception as e:
                 sys.stderr.write(f"Render error msg {i}: {e}\n")
                 _tb.print_exc(file=sys.stderr)
+
+    def _update_status(self, text: str):
+        """Update the bottom toolbar status text (called from renderer)."""
+        self._status_text = text
 
     def _safe_stop_live(self):
         """Force-stop any active Rich Live display to prevent output corruption."""

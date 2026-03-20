@@ -20,7 +20,12 @@ MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
 # Actions that require write access
 WRITE_ACTIONS = frozenset({
     "write_file", "delete_file", "mkdir", "find_replace", "edit",
+    "batch_edit", "apply_patch",
     "git_commit", "git_push", "exec",
+    "edit_notebook", "git_worktree_add", "git_worktree_remove",
+    "git_add", "git_reset", "git_stash", "git_branch",
+    "git_merge", "git_rebase", "git_cherry_pick", "git_tag",
+    "project_init",
 })
 
 # All available actions
@@ -220,6 +225,55 @@ def action_read_notebook(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     }
 
 
+def action_edit_notebook(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Edit, insert, or delete a cell in a Jupyter notebook."""
+    p = Path(path)
+    if not p.suffix.lower() == ".ipynb":
+        raise ValueError(f"Not a notebook: {p.name}")
+    raw = json.loads(p.read_text(encoding="utf-8"))
+    cells = raw.get("cells", [])
+    operation = req.get("operation", "edit")
+    cell_index = req.get("cell_index")
+    if cell_index is None:
+        raise ValueError("Missing 'cell_index' parameter")
+
+    if operation == "delete":
+        if cell_index < 0 or cell_index >= len(cells):
+            raise ValueError(f"cell_index {cell_index} out of range (0-{len(cells)-1})")
+        deleted = cells.pop(cell_index)
+        raw["cells"] = cells
+        p.write_text(json.dumps(raw, indent=1, ensure_ascii=False), encoding="utf-8")
+        return {"operation": "delete", "cell_index": cell_index, "deleted_type": deleted.get("cell_type", "")}
+
+    new_source = req.get("new_source", "")
+    cell_type = req.get("cell_type", "code")
+
+    if operation == "insert":
+        if cell_index < 0 or cell_index > len(cells):
+            raise ValueError(f"cell_index {cell_index} out of range for insert (0-{len(cells)})")
+        new_cell = {
+            "cell_type": cell_type,
+            "metadata": {},
+            "source": new_source.splitlines(True),
+            "outputs": [] if cell_type == "code" else [],
+        }
+        if cell_type == "code":
+            new_cell["execution_count"] = None
+        cells.insert(cell_index, new_cell)
+    elif operation == "edit":
+        if cell_index < 0 or cell_index >= len(cells):
+            raise ValueError(f"cell_index {cell_index} out of range (0-{len(cells)-1})")
+        cells[cell_index]["source"] = new_source.splitlines(True)
+        if cell_type:
+            cells[cell_index]["cell_type"] = cell_type
+    else:
+        raise ValueError(f"Unknown operation: {operation}. Use 'edit', 'insert', or 'delete'.")
+
+    raw["cells"] = cells
+    p.write_text(json.dumps(raw, indent=1, ensure_ascii=False), encoding="utf-8")
+    return {"operation": operation, "cell_index": cell_index, "total_cells": len(cells)}
+
+
 def action_write_file(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     content = req.get("content", "")
     raw = base64.b64decode(content) if req.get("base64") else content.encode("utf-8")
@@ -316,7 +370,7 @@ def action_find_replace(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
 
 
 def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
-    """Exact string replacement (like Claude Code Edit tool)."""
+    """Exact string replacement with diff context."""
     old_string = req.get("old_string", "")
     new_string = req.get("new_string", "")
     replace_all = req.get("replace_all", False)
@@ -329,12 +383,176 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         raise ValueError(f"old_string not found in {p.name}")
     if count > 1 and not replace_all:
         raise ValueError(f"old_string found {count} times (use replace_all=true)")
+
+    # Build diff context (±3 lines around the first replacement)
+    lines = text.splitlines(True)
+    diff_lines = []
+    old_lines = old_string.splitlines(True)
+    new_lines = new_string.splitlines(True)
+    # Find line number of first occurrence
+    pos = text.find(old_string)
+    line_num = text[:pos].count("\n") + 1 if pos >= 0 else 0
+    ctx_start = max(0, line_num - 4)
+    ctx_end = min(len(lines), line_num + len(old_lines) + 3)
+    for i in range(ctx_start, min(ctx_end, len(lines))):
+        in_old = line_num - 1 <= i < line_num - 1 + len(old_lines)
+        diff_lines.append({"line": i + 1, "text": lines[i].rstrip("\n\r"),
+                           "type": "remove" if in_old else "context"})
+    for j, nl in enumerate(new_lines):
+        diff_lines.append({"line": line_num + j, "text": nl.rstrip("\n\r"),
+                           "type": "add"})
+
+    # Apply replacement
     if replace_all:
         new_text = text.replace(old_string, new_string)
     else:
         new_text = text.replace(old_string, new_string, 1)
     p.write_text(new_text, encoding="utf-8")
-    return {"replacements": count if replace_all else 1, "path": _rel(path, root_dir)}
+    return {
+        "replacements": count if replace_all else 1,
+        "path": _rel(path, root_dir),
+        "diff": diff_lines,
+        "line": line_num,
+    }
+
+
+def action_batch_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Apply multiple edits atomically across files."""
+    edits = req.get("edits", [])
+    if not edits:
+        raise ValueError("Missing 'edits' parameter (list of {path, old_string, new_string})")
+
+    # Phase 1: Read all files and validate
+    file_contents = {}
+    for i, edit in enumerate(edits):
+        fpath = edit.get("path", "")
+        if not fpath:
+            raise ValueError(f"Edit {i}: missing 'path'")
+        abs_path = str(Path(root_dir).resolve() / fpath)
+        old_string = edit.get("old_string", "")
+        if not old_string:
+            raise ValueError(f"Edit {i}: missing 'old_string'")
+        if abs_path not in file_contents:
+            p = Path(abs_path)
+            if not p.is_file():
+                raise ValueError(f"Edit {i}: file not found: {fpath}")
+            file_contents[abs_path] = p.read_text(encoding="utf-8")
+        text = file_contents[abs_path]
+        count = text.count(old_string)
+        if count == 0:
+            raise ValueError(f"Edit {i}: old_string not found in {fpath}")
+        if count > 1:
+            raise ValueError(f"Edit {i}: old_string found {count} times in {fpath} (must be unique)")
+
+    # Phase 2: Apply all edits in memory
+    for edit in edits:
+        abs_path = str(Path(root_dir).resolve() / edit["path"])
+        file_contents[abs_path] = file_contents[abs_path].replace(
+            edit["old_string"], edit.get("new_string", ""), 1)
+
+    # Phase 3: Write all files
+    for abs_path, content in file_contents.items():
+        Path(abs_path).write_text(content, encoding="utf-8")
+
+    modified = list(set(str(Path(ap).relative_to(Path(root_dir).resolve())).replace("\\", "/")
+                        for ap in file_contents))
+    return {"edits_applied": len(edits), "files_modified": modified}
+
+
+def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Apply a unified diff patch."""
+    patch = req.get("patch", "")
+    if not patch:
+        raise ValueError("Missing 'patch' parameter")
+
+    # Try git apply first
+    try:
+        result = subprocess.run(
+            ["git", "apply", "--stat", "-"],
+            input=patch, cwd=root_dir,
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode == 0:
+            stat_output = result.stdout
+            # Actually apply
+            result = subprocess.run(
+                ["git", "apply", "-"],
+                input=patch, cwd=root_dir,
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode == 0:
+                return {"method": "git_apply", "stats": stat_output.strip(), "applied": True}
+            else:
+                raise ValueError(f"git apply failed: {result.stderr}")
+    except FileNotFoundError:
+        pass  # git not available, fall through to manual
+    except subprocess.TimeoutExpired:
+        raise ValueError("Patch application timed out")
+
+    # Manual fallback: parse unified diff
+    files_modified = []
+    current_file = None
+    current_content = None
+    hunks_applied = 0
+
+    lines = patch.splitlines(True)
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        # New file header
+        if line.startswith("+++ b/") or line.startswith("+++ "):
+            if current_file and current_content is not None:
+                Path(current_file).write_text(current_content, encoding="utf-8")
+            fname = line[6:].strip() if line.startswith("+++ b/") else line[4:].strip()
+            current_file = str(Path(root_dir) / fname)
+            p = Path(current_file)
+            if p.is_file():
+                current_content = p.read_text(encoding="utf-8")
+            else:
+                current_content = ""
+            files_modified.append(fname)
+            i += 1
+            continue
+        if line.startswith("--- "):
+            i += 1
+            continue
+        # Hunk header
+        if line.startswith("@@") and current_content is not None:
+            import re as _re
+            m = _re.match(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
+            if not m:
+                i += 1
+                continue
+            orig_start = int(m.group(1)) - 1
+            content_lines = current_content.splitlines(True)
+            # Ensure content_lines has enough entries
+            while len(content_lines) <= orig_start:
+                content_lines.append("")
+            j = orig_start
+            i += 1
+            while i < len(lines):
+                dl = lines[i]
+                if dl.startswith("@@") or dl.startswith("diff ") or dl.startswith("--- ") or dl.startswith("+++ "):
+                    break
+                if dl.startswith("-"):
+                    if j < len(content_lines):
+                        content_lines.pop(j)
+                elif dl.startswith("+"):
+                    content_lines.insert(j, dl[1:])
+                    j += 1
+                else:  # context line
+                    j += 1
+                i += 1
+            current_content = "".join(content_lines)
+            hunks_applied += 1
+            continue
+        i += 1
+
+    # Write last file
+    if current_file and current_content is not None:
+        Path(current_file).write_text(current_content, encoding="utf-8")
+
+    return {"method": "manual", "files_modified": files_modified, "hunks_applied": hunks_applied, "applied": True}
 
 
 def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
@@ -424,8 +642,16 @@ def action_git_commit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     message = req.get("message", "")
     if not message:
         raise ValueError("Missing 'message' parameter")
-    _git_run(path, ["add", "-A"])
-    result = _git_run(path, ["commit", "-m", message])
+    files = req.get("files", [])
+    amend = req.get("amend", False)
+    if files:
+        _git_run(path, ["add", "--"] + files)
+    else:
+        _git_run(path, ["add", "-A"])
+    args = ["commit", "-m", message]
+    if amend:
+        args = ["commit", "--amend", "-m", message]
+    result = _git_run(path, args)
     return {"output": result.stdout, "hash": result.stdout.split()[1] if result.returncode == 0 else ""}
 
 
@@ -445,6 +671,303 @@ def action_git_checkout(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
         raise ValueError("Missing 'ref' parameter")
     result = _git_run(path, ["checkout", ref])
     return {"output": result.stdout, "branch": ref}
+
+
+def action_git_add(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Stage specific files."""
+    files = req.get("files", [])
+    if not files:
+        raise ValueError("Missing 'files' parameter (list of file paths)")
+    result = _git_run(path, ["add", "--"] + files)
+    if result.returncode != 0:
+        raise ValueError(f"git add failed: {result.stderr}")
+    return {"staged": files}
+
+
+def action_git_reset(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Unstage files or reset to a ref."""
+    files = req.get("files", [])
+    ref = req.get("ref", "")
+    if files:
+        result = _git_run(path, ["reset", "HEAD", "--"] + files)
+    elif ref:
+        mode = req.get("mode", "mixed")  # mixed, soft, hard
+        result = _git_run(path, ["reset", f"--{mode}", ref])
+    else:
+        result = _git_run(path, ["reset", "HEAD"])
+    if result.returncode != 0:
+        raise ValueError(f"git reset failed: {result.stderr}")
+    return {"output": result.stdout.strip()}
+
+
+def action_git_stash(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Git stash operations: push, pop, list, drop."""
+    operation = req.get("operation", "push")
+    if operation == "push":
+        message = req.get("message", "")
+        args = ["stash", "push"]
+        if message:
+            args += ["-m", message]
+        result = _git_run(path, args)
+    elif operation == "pop":
+        result = _git_run(path, ["stash", "pop"])
+    elif operation == "list":
+        result = _git_run(path, ["stash", "list"])
+    elif operation == "drop":
+        index = req.get("index", 0)
+        result = _git_run(path, ["stash", "drop", f"stash@{{{index}}}"])
+    else:
+        raise ValueError(f"Unknown stash operation: {operation}")
+    if result.returncode != 0 and operation != "list":
+        raise ValueError(f"git stash {operation} failed: {result.stderr}")
+    return {"output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_branch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """List, create, or delete branches."""
+    operation = req.get("operation", "list")
+    branch_name = req.get("branch", "")
+    if operation == "list":
+        result = _git_run(path, ["branch", "-a", "--format=%(refname:short) %(objectname:short) %(upstream:short)"])
+        branches = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split()
+            if parts:
+                branches.append({"name": parts[0], "hash": parts[1] if len(parts) > 1 else "", "upstream": parts[2] if len(parts) > 2 else ""})
+        return branches
+    elif operation == "create":
+        if not branch_name:
+            raise ValueError("Missing 'branch' parameter")
+        base = req.get("base", "")
+        args = ["branch", branch_name]
+        if base:
+            args.append(base)
+        result = _git_run(path, args)
+    elif operation == "delete":
+        if not branch_name:
+            raise ValueError("Missing 'branch' parameter")
+        force = req.get("force", False)
+        flag = "-D" if force else "-d"
+        result = _git_run(path, ["branch", flag, branch_name])
+    else:
+        raise ValueError(f"Unknown branch operation: {operation}")
+    if result.returncode != 0:
+        raise ValueError(f"git branch {operation} failed: {result.stderr}")
+    return {"output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_merge(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Merge a branch."""
+    branch = req.get("branch", "")
+    if not branch:
+        raise ValueError("Missing 'branch' parameter")
+    no_ff = req.get("no_ff", False)
+    args = ["merge"]
+    if no_ff:
+        args.append("--no-ff")
+    args.append(branch)
+    result = _git_run(path, args, timeout=60)
+    if result.returncode != 0:
+        return {"conflict": True, "output": (result.stdout + result.stderr).strip()}
+    return {"conflict": False, "output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_rebase(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Rebase onto a branch."""
+    onto = req.get("onto", "")
+    if not onto:
+        raise ValueError("Missing 'onto' parameter")
+    operation = req.get("operation", "start")
+    if operation == "start":
+        result = _git_run(path, ["rebase", onto], timeout=60)
+    elif operation == "continue":
+        result = _git_run(path, ["rebase", "--continue"], timeout=60)
+    elif operation == "abort":
+        result = _git_run(path, ["rebase", "--abort"], timeout=30)
+    else:
+        raise ValueError(f"Unknown rebase operation: {operation}")
+    if result.returncode != 0:
+        return {"conflict": True, "output": (result.stdout + result.stderr).strip()}
+    return {"conflict": False, "output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_cherry_pick(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Cherry-pick commits."""
+    commits = req.get("commits", [])
+    if not commits:
+        raise ValueError("Missing 'commits' parameter (list of commit hashes)")
+    result = _git_run(path, ["cherry-pick"] + commits, timeout=60)
+    if result.returncode != 0:
+        return {"conflict": True, "output": (result.stdout + result.stderr).strip()}
+    return {"conflict": False, "output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_tag(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """List, create, or delete tags."""
+    operation = req.get("operation", "list")
+    tag_name = req.get("tag", "")
+    if operation == "list":
+        result = _git_run(path, ["tag", "-l", "--format=%(refname:short) %(objectname:short)"])
+        tags = []
+        for line in result.stdout.strip().splitlines():
+            parts = line.split()
+            if parts:
+                tags.append({"name": parts[0], "hash": parts[1] if len(parts) > 1 else ""})
+        return tags
+    elif operation == "create":
+        if not tag_name:
+            raise ValueError("Missing 'tag' parameter")
+        message = req.get("message", "")
+        if message:
+            result = _git_run(path, ["tag", "-a", tag_name, "-m", message])
+        else:
+            result = _git_run(path, ["tag", tag_name])
+    elif operation == "delete":
+        if not tag_name:
+            raise ValueError("Missing 'tag' parameter")
+        result = _git_run(path, ["tag", "-d", tag_name])
+    else:
+        raise ValueError(f"Unknown tag operation: {operation}")
+    if result.returncode != 0:
+        raise ValueError(f"git tag {operation} failed: {result.stderr}")
+    return {"output": (result.stdout + result.stderr).strip()}
+
+
+def action_git_blame(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Show line-by-line authorship."""
+    file_path = req.get("file", "")
+    if not file_path:
+        file_path = path  # Use the main path argument
+    start_line = req.get("start_line", 0)
+    end_line = req.get("end_line", 0)
+    args = ["blame", "--porcelain"]
+    if start_line and end_line:
+        args += [f"-L{start_line},{end_line}"]
+    args.append(file_path)
+    result = _git_run(path, args, timeout=30)
+    if result.returncode != 0:
+        raise ValueError(f"git blame failed: {result.stderr}")
+    # Parse porcelain output into structured data
+    blame_entries = []
+    current = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("\t"):
+            current["content"] = line[1:]
+            blame_entries.append(current)
+            current = {}
+        elif line.startswith("author "):
+            current["author"] = line[7:]
+        elif line.startswith("author-time "):
+            current["time"] = line[12:]
+        elif line.startswith("summary "):
+            current["summary"] = line[8:]
+        elif len(line) >= 40 and line[:40].replace(" ", "").isalnum() and "hash" not in current:
+            parts = line.split()
+            if len(parts) >= 3:
+                current["hash"] = parts[0][:8]
+                current["line"] = parts[2]
+    return blame_entries[:200]  # Cap at 200 lines
+
+
+def action_project_init(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Generate a .pawflow.md project description from auto-scan."""
+    target = Path(root_dir) / ".pawflow.md"
+    if target.exists() and not req.get("force", False):
+        raise ValueError(".pawflow.md already exists. Use force=true to overwrite.")
+
+    # Use project_context to gather info
+    ctx = action_project_context(root_dir, root_dir, {})
+
+    lines = ["# Project Context\n"]
+
+    if ctx.get("project_types"):
+        lines.append(f"**Type:** {', '.join(ctx['project_types'])}\n")
+
+    if ctx.get("git_branch"):
+        lines.append(f"**Git branch:** {ctx['git_branch']}\n")
+
+    lines.append("\n## Structure\n")
+    if ctx.get("tree"):
+        lines.append(f"```\n{ctx['tree'][:3000]}\n```\n")
+
+    # Include key config snippets
+    for fname in ("README.md", "readme.md"):
+        if fname in ctx.get("config_files", {}):
+            excerpt = ctx["config_files"][fname][:1500]
+            lines.append(f"\n## README (excerpt)\n\n{excerpt}\n")
+            break
+
+    lines.append("\n## Instructions\n\n")
+    lines.append("<!-- Add project-specific instructions for the AI agent here -->\n")
+    lines.append("<!-- Example: coding conventions, architecture notes, test commands -->\n")
+
+    content = "\n".join(lines)
+    target.write_text(content, encoding="utf-8")
+    return {"path": ".pawflow.md", "size": len(content)}
+
+
+# ── Git worktree actions ──────────────────────────────────────────
+
+def action_git_worktree_list(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """List git worktrees."""
+    result = _git_run(path, ["worktree", "list", "--porcelain"])
+    if result.returncode != 0:
+        raise ValueError(f"git worktree list failed: {result.stderr}")
+    worktrees = []
+    current = {}
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            if current:
+                worktrees.append(current)
+            current = {"path": line[9:]}
+        elif line.startswith("HEAD "):
+            current["head"] = line[5:]
+        elif line.startswith("branch "):
+            current["branch"] = line[7:]
+        elif line == "bare":
+            current["bare"] = True
+        elif line == "detached":
+            current["detached"] = True
+        elif line == "":
+            if current:
+                worktrees.append(current)
+                current = {}
+    if current:
+        worktrees.append(current)
+    return worktrees
+
+
+def action_git_worktree_add(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Create a new git worktree."""
+    branch = req.get("branch", "")
+    worktree_path = req.get("worktree_path", "")
+    if not branch:
+        raise ValueError("Missing 'branch' parameter")
+    if not worktree_path:
+        # Auto-generate under .worktrees/
+        worktree_path = str(Path(root_dir) / ".worktrees" / branch.replace("/", "_"))
+    args = ["worktree", "add", worktree_path, branch]
+    create_new = req.get("create_new_branch", False)
+    if create_new:
+        args = ["worktree", "add", "-b", branch, worktree_path]
+    result = _git_run(path, args, timeout=30)
+    if result.returncode != 0:
+        raise ValueError(f"git worktree add failed: {result.stderr}")
+    return {"worktree_path": worktree_path, "branch": branch, "output": result.stdout + result.stderr}
+
+
+def action_git_worktree_remove(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
+    """Remove a git worktree."""
+    worktree_path = req.get("worktree_path", "")
+    if not worktree_path:
+        raise ValueError("Missing 'worktree_path' parameter")
+    result = _git_run(path, ["worktree", "remove", worktree_path], timeout=30)
+    if result.returncode != 0:
+        # Try force removal
+        result = _git_run(path, ["worktree", "remove", "--force", worktree_path], timeout=30)
+        if result.returncode != 0:
+            raise ValueError(f"git worktree remove failed: {result.stderr}")
+    return {"removed": worktree_path, "output": result.stdout + result.stderr}
 
 
 # ── Chunked read/write (for large files) ─────────────────────────
@@ -531,6 +1054,8 @@ ACTIONS = {
     "grep": action_grep,
     "find_replace": action_find_replace,
     "edit": action_edit,
+    "batch_edit": action_batch_edit,
+    "apply_patch": action_apply_patch,
     "exec": action_exec,
     "read_file_chunked": action_read_file_chunked,
     "read_chunk": action_read_chunk,
@@ -542,4 +1067,18 @@ ACTIONS = {
     "git_pull": action_git_pull,
     "git_push": action_git_push,
     "git_checkout": action_git_checkout,
+    "git_add": action_git_add,
+    "git_reset": action_git_reset,
+    "git_stash": action_git_stash,
+    "git_branch": action_git_branch,
+    "git_merge": action_git_merge,
+    "git_rebase": action_git_rebase,
+    "git_cherry_pick": action_git_cherry_pick,
+    "git_tag": action_git_tag,
+    "git_blame": action_git_blame,
+    "project_init": action_project_init,
+    "edit_notebook": action_edit_notebook,
+    "git_worktree_list": action_git_worktree_list,
+    "git_worktree_add": action_git_worktree_add,
+    "git_worktree_remove": action_git_worktree_remove,
 }

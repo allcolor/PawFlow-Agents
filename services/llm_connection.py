@@ -45,6 +45,7 @@ class LLMConnectionService(BaseService):
         self.default_model = self._client.default_model
         self.timeout = self._client.timeout
         self.max_retries = self._client.max_retries
+        self.fallback_model = self._client.fallback_model
         # Capacity management
         max_conc = int(self.config.get("max_concurrent", 0))
         self._semaphore = threading.Semaphore(max_conc) if max_conc > 0 else None
@@ -205,6 +206,12 @@ class LLMConnectionService(BaseService):
                 "required": False,
                 "default": "",
                 "description": "Default model name",
+            },
+            "fallback_model": {
+                "type": "string",
+                "required": False,
+                "default": "",
+                "description": "Fallback model to try when the primary model fails after all retries",
             },
             "timeout": {
                 "type": "integer",

@@ -317,7 +317,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 35  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task
+        assert len(defs) == 36  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -420,7 +420,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 35  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task
+        assert len(registry.list_tools()) == 36  # builtins + memory + plan + notify + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})

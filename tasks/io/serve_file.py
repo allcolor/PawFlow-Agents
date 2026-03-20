@@ -48,12 +48,20 @@ class ServeFileTask(BaseTask):
             return [flowfile]
 
         store = FileStore.instance()
-        result = store.get(file_id)
+        user_id = flowfile.get_attribute("http.auth.principal") or ""
+        result = store.get(file_id, user_id=user_id)
 
         if result is None:
-            logger.info(f"serveFile: file {file_id} not found or expired")
-            flowfile.set_content(b'{"error": "Not Found", "message": "File not found or expired"}')
-            flowfile.set_attribute("http.response.status", "404")
+            # Distinguish 403 from 404
+            raw_entry = store.get(file_id)  # check if exists without user filter
+            if raw_entry:
+                logger.info(f"serveFile: file {file_id} access denied for user '{user_id}'")
+                flowfile.set_attribute("http.response.status", "403")
+                flowfile.set_content(b"Access denied")
+            else:
+                logger.info(f"serveFile: file {file_id} not found or expired")
+                flowfile.set_content(b'{"error": "Not Found", "message": "File not found or expired"}')
+                flowfile.set_attribute("http.response.status", "404")
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 

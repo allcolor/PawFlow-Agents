@@ -56,6 +56,19 @@ class ToolRegistry:
 
     def __init__(self):
         self._handlers: Dict[str, ToolHandler] = {}
+        self._hooks: Dict[str, List] = {}  # "pre:tool_name" or "post:tool_name" or "pre:*" / "post:*"
+
+    def register_hook(self, event: str, callback):
+        """Register a pre/post hook. Event format: 'pre:tool_name', 'post:tool_name', 'pre:*', 'post:*'."""
+        self._hooks.setdefault(event, []).append(callback)
+
+    def unregister_hook(self, event: str, callback):
+        """Remove a hook callback."""
+        if event in self._hooks:
+            try:
+                self._hooks[event].remove(callback)
+            except ValueError:
+                pass
 
     def register(self, handler: ToolHandler):
         """Register a tool handler."""
@@ -90,7 +103,19 @@ class ToolRegistry:
         if not handler:
             return f"Error: unknown tool '{name}'"
         try:
-            return handler.execute(arguments)
+            # Run pre-hooks (specific then wildcard)
+            args = arguments
+            for hook in self._hooks.get(f"pre:{name}", []) + self._hooks.get("pre:*", []):
+                result = hook(name, args)
+                if result is None:
+                    return f"Error: tool '{name}' blocked by pre-hook"
+                args = result
+            # Execute
+            result = handler.execute(args)
+            # Run post-hooks (specific then wildcard)
+            for hook in self._hooks.get(f"post:{name}", []) + self._hooks.get("post:*", []):
+                result = hook(name, args, result)
+            return result
         except Exception as e:
             logger.error(f"Tool '{name}' execution failed: {e}")
             return f"Error executing tool '{name}': {e}"
@@ -758,6 +783,7 @@ class CreateFileHandler(ToolHandler):
     """
 
     _base_url: str = "http://localhost:9090"
+    _user_id: str = ""
 
     @property
     def name(self) -> str:
@@ -795,6 +821,9 @@ class CreateFileHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.file_store import FileStore
 
@@ -807,10 +836,14 @@ class CreateFileHandler(ToolHandler):
 
         store = FileStore.instance()
         file_id = store.store(filename, content.encode("utf-8"),
-                              content_type=content_type)
+                              content_type=content_type,
+                              user_id=self._user_id)
 
         url = f"{self._base_url}/files/{file_id}/{filename}"
-        return f"File created: {url}"
+        return (
+            f"File created: {url}\n"
+            f"file_id: {file_id}"
+        )
 
     @staticmethod
     def _guess_content_type(filename: str) -> str:
@@ -1483,6 +1516,7 @@ class ImageGenerationHandler(ToolHandler):
 
     _base_url: str = "http://localhost:9090"
     _service_resolver = None  # () -> (service, error_msg)
+    _user_id: str = ""
 
     @property
     def name(self) -> str:
@@ -1525,6 +1559,9 @@ class ImageGenerationHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
@@ -1554,10 +1591,15 @@ class ImageGenerationHandler(ToolHandler):
             )
             filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
             file_id = FileStore.instance().store(
-                filename, result["image_bytes"], content_type=ct
+                filename, result["image_bytes"], content_type=ct,
+                user_id=self._user_id
             )
             download_url = f"{self._base_url}/files/{file_id}/{filename}"
-            return f"Image generated: {download_url}"
+            return (
+                f"Image generated: {download_url}\n"
+                f"file_id: {file_id}\n"
+                f"To save to filesystem: use filesystem(action=write_file, path=<target>, file_id={file_id}, service=<fs>)"
+            )
 
         except Exception as e:
             return f"Error generating image: {e}"
@@ -1573,6 +1615,7 @@ class VideoGenerationHandler(ToolHandler):
 
     _base_url: str = "http://localhost:9090"
     _service_resolver = None  # () -> (service, error_msg)
+    _user_id: str = ""
 
     @property
     def name(self) -> str:
@@ -1618,6 +1661,9 @@ class VideoGenerationHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
     def set_service_resolver(self, resolver):
         """Set a resolver function: () -> (service, error_msg)."""
         self._service_resolver = resolver
@@ -1648,10 +1694,14 @@ class VideoGenerationHandler(ToolHandler):
             }.get(ct.split(";")[0].strip(), "mp4")
             filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
             file_id = FileStore.instance().store(
-                filename, result["video_bytes"], content_type=ct
+                filename, result["video_bytes"], content_type=ct,
+                user_id=self._user_id
             )
             download_url = f"{self._base_url}/files/{file_id}/{filename}"
-            return f"Video generated: {download_url}"
+            return (
+                f"Video generated: {download_url}\n"
+                f"file_id: {file_id}"
+            )
 
         except Exception as e:
             return f"Error generating video: {e}"
@@ -4634,6 +4684,7 @@ class ShowFileHandler(ToolHandler):
 
     def __init__(self):
         self._base_url = "http://localhost:9090"
+        self._user_id = ""
 
     @property
     def name(self) -> str:
@@ -4643,9 +4694,10 @@ class ShowFileHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Display a file in the chat viewer panel. Supports images, "
-            "PDFs, text, and code files. The file must exist in the "
-            "FileStore (created by create_file or open() in scripts). "
-            "Pass either the file_id or filename."
+            "PDFs, text, and code files. Works with FileStore files "
+            "(from create_file, generate_image, execute_script) AND "
+            "filesystem service files (pass path + service). "
+            "Pass file_id, filename, or path+service."
         )
 
     @property
@@ -4661,43 +4713,95 @@ class ShowFileHandler(ToolHandler):
                     "type": "string",
                     "description": "Filename to search for in FileStore",
                 },
+                "path": {
+                    "type": "string",
+                    "description": "File path on a filesystem service (e.g. 'assets/player.png')",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Filesystem service name (e.g. 'localFS') — required when using path",
+                },
             },
         }
 
     def set_base_url(self, url: str):
         self._base_url = url.rstrip("/")
 
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def _find_fs_service(self, service_name: str):
+        """Find a filesystem service by name."""
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            return GlobalServiceRegistry.get_instance().get_live_instance(service_name)
+        except Exception:
+            pass
+        return None
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         from core.file_store import FileStore
+        import mimetypes
 
         store = FileStore.instance()
         file_id = arguments.get("file_id", "")
         filename = arguments.get("filename", "")
+        fs_path = arguments.get("path", "")
+        fs_service = arguments.get("service", "")
 
         if file_id:
-            result = store.get(file_id)
+            # Extract file_id from URL if needed
+            import re as _re_sf
+            url_match = _re_sf.search(r'/files/([^/]+)/', file_id)
+            if url_match:
+                file_id = url_match.group(1)
+            result = store.get(file_id, user_id=self._user_id)
+            if not result:
+                # Try by name
+                found_id = store.find_by_name(file_id, user_id=self._user_id)
+                if found_id:
+                    result = store.get(found_id, user_id=self._user_id)
+                    file_id = found_id
             if not result:
                 return f"Error: File ID '{file_id}' not found."
             fname, data, content_type = result
+        elif fs_path:
+            # Read from filesystem service, cache in FileStore
+            svc = self._find_fs_service(fs_service) if fs_service else None
+            if not svc:
+                return f"Error: Filesystem service '{fs_service}' not found or not connected."
+            try:
+                data = svc.read_file(fs_path)
+            except Exception as e:
+                return f"Error reading '{fs_path}' from {fs_service}: {e}"
+            fname = fs_path.rsplit("/", 1)[-1] if "/" in fs_path else fs_path
+            content_type = mimetypes.guess_type(fname)[0] or "application/octet-stream"
+            # Store in FileStore for the viewer URL
+            file_id = store.store(fname, data, content_type=content_type,
+                                  user_id=self._user_id)
         elif filename:
-            # Search by filename
+            # Search by filename in FileStore
             found = None
-            for f in store.list_files():
+            for f in store.list_files(user_id=self._user_id):
                 if f["filename"] == filename:
                     found = f
                     break
             if not found:
+                # Fuzzy search
+                found_id = store.find_by_name(filename, user_id=self._user_id)
+                if found_id:
+                    found = {"file_id": found_id, "filename": filename}
+            if not found:
                 return (f"Error: File '{filename}' not found in FileStore. "
-                        f"If you just created it with execute_script, call show_file "
-                        f"in a SEPARATE turn (not in the same tool_call batch).")
+                        f"Use path+service to show files from a filesystem service.")
             file_id = found["file_id"]
             fname = found["filename"]
-            result = store.get(file_id)
+            result = store.get(file_id, user_id=self._user_id)
             if not result:
                 return f"Error: Could not load file '{filename}'."
-            _, data, content_type = result
+            fname, data, content_type = result
         else:
-            return "Error: Provide either file_id or filename."
+            return "Error: Provide file_id, filename, or path+service."
 
         url = f"{self._base_url}/files/{file_id}/{fname}"
         size_kb = len(data) / 1024
@@ -4736,11 +4840,16 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files and run commands on the user's filesystem through a configured service. "
-            "Actions: list_dir, read_file, read_pdf, read_notebook (.ipynb), "
-            "write_file, edit (exact string replace), "
+            "Actions: list_dir, read_file, read_pdf, read_notebook (.ipynb), edit_notebook (edit/insert/delete cells), "
+            "write_file (use content for text OR file_id to copy a server file like generated images), "
+            "edit (exact string replace), batch_edit (atomic multi-file edit), apply_patch (unified diff), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
             "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
-            "Git: git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout. "
+            "Git: git_status, git_log, git_diff, git_commit (files, amend), git_pull, git_push, git_checkout, "
+            "git_add, git_reset, git_stash, git_branch, git_merge, git_rebase, git_cherry_pick, git_tag, git_blame, "
+            "git_worktree_list, git_worktree_add, git_worktree_remove. "
+            "Transfer: copy_to_store (filesystem→FileStore), copy_between (filesystem A→B), list_store, delete_from_store. "
+            "Project: project_init (generate .pawflow.md). "
             "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root."
         )
@@ -4761,11 +4870,18 @@ class FilesystemToolHandler(ToolHandler):
                     "type": "string",
                     "enum": [
                         "list_dir", "read_file", "read_pdf", "read_notebook",
-                        "write_file", "edit",
+                        "edit_notebook",
+                        "write_file", "edit", "batch_edit", "apply_patch",
                         "delete_file", "mkdir", "stat", "exists",
                         "search", "grep", "find_replace", "exec",
                         "git_status", "git_log", "git_diff", "git_commit",
                         "git_pull", "git_push", "git_checkout",
+                        "git_add", "git_reset", "git_stash", "git_branch",
+                        "git_merge", "git_rebase", "git_cherry_pick",
+                        "git_tag", "git_blame",
+                        "project_init",
+                        "git_worktree_list", "git_worktree_add", "git_worktree_remove",
+                        "copy_to_store", "copy_between", "list_store", "delete_from_store",
                     ],
                     "description": "The filesystem operation to perform",
                 },
@@ -4775,7 +4891,11 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "content": {
                     "type": "string",
-                    "description": "File content for write_file (text)",
+                    "description": "File content for write_file (text). For binary files, use file_id instead.",
+                },
+                "file_id": {
+                    "type": "string",
+                    "description": "Copy a server file (from generate_image, create_file, etc.) to the filesystem path. Use this instead of content for images/binary files.",
                 },
                 "pattern": {
                     "type": "string",
@@ -4825,8 +4945,122 @@ class FilesystemToolHandler(ToolHandler):
                     "type": "integer",
                     "description": "Number of entries for git_log (default: 10)",
                 },
+                "cell_index": {
+                    "type": "integer",
+                    "description": "Cell index for edit_notebook",
+                },
+                "new_source": {
+                    "type": "string",
+                    "description": "New cell source for edit_notebook",
+                },
+                "cell_type": {
+                    "type": "string",
+                    "description": "Cell type (code/markdown) for edit_notebook",
+                },
+                "operation": {
+                    "type": "string",
+                    "description": "Operation for edit_notebook: edit, insert, or delete",
+                },
+                "branch": {
+                    "type": "string",
+                    "description": "Branch name for git_worktree_add",
+                },
+                "worktree_path": {
+                    "type": "string",
+                    "description": "Worktree path for git_worktree_add/remove",
+                },
+                "create_new_branch": {
+                    "type": "boolean",
+                    "description": "Create a new branch for git_worktree_add (default: false)",
+                },
+                "files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "File paths for git_add, git_reset, or selective git_commit",
+                },
+                "commits": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Commit hashes for git_cherry_pick",
+                },
+                "tag": {
+                    "type": "string",
+                    "description": "Tag name for git_tag",
+                },
+                "onto": {
+                    "type": "string",
+                    "description": "Target branch for git_rebase",
+                },
+                "no_ff": {
+                    "type": "boolean",
+                    "description": "No fast-forward for git_merge",
+                },
+                "amend": {
+                    "type": "boolean",
+                    "description": "Amend last commit for git_commit",
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Reset mode: mixed, soft, hard (for git_reset)",
+                },
+                "index": {
+                    "type": "integer",
+                    "description": "Stash index for git_stash drop",
+                },
+                "force": {
+                    "type": "boolean",
+                    "description": "Force flag for git_branch delete",
+                },
+                "base": {
+                    "type": "string",
+                    "description": "Base ref for git_branch create",
+                },
+                "file": {
+                    "type": "string",
+                    "description": "File path for git_blame",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Start line for git_blame range",
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "End line for git_blame range",
+                },
+                "edits": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "old_string": {"type": "string"},
+                            "new_string": {"type": "string"},
+                        },
+                    },
+                    "description": "List of edits for batch_edit: [{path, old_string, new_string}]",
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff content for apply_patch",
+                },
+                "source_service": {
+                    "type": "string",
+                    "description": "Source filesystem service for copy_between",
+                },
+                "source_path": {
+                    "type": "string",
+                    "description": "Source file path for copy_between",
+                },
+                "dest_service": {
+                    "type": "string",
+                    "description": "Destination filesystem service for copy_between",
+                },
+                "dest_path": {
+                    "type": "string",
+                    "description": "Destination file path for copy_between",
+                },
             },
-            "required": ["action", "path"],
+            "required": ["action"],
         }
 
     def set_user_id(self, user_id: str):
@@ -4916,6 +5150,13 @@ class FilesystemToolHandler(ToolHandler):
                 "--dir <path> --secret <secret>"
             )
 
+        # Normalize common LLM aliases
+        _action_aliases = {
+            "read": "read_file", "write": "write_file", "delete": "delete_file",
+            "ls": "list_dir", "cat": "read_file", "rm": "delete_file",
+        }
+        action = _action_aliases.get(action, action)
+
         try:
             if action == "list_dir":
                 entries = svc.list_dir(path)
@@ -4938,13 +5179,17 @@ class FilesystemToolHandler(ToolHandler):
                     from core.file_store import FileStore
                     import mimetypes
                     mime = mimetypes.guess_type(fname)[0] or "image/png"
-                    fid = FileStore.instance().store(fname, data, mime)
+                    fid = FileStore.instance().store(fname, data, mime,
+                                                       user_id=self._user_id)
                     file_base = self.config.get("file_base_url", "") or ""
                     if file_base:
                         url = f"{file_base}/files/{fid}/{fname}"
                     else:
                         url = f"/files/{fid}/{fname}"
-                    return f"Image: {url}"
+                    # Include base64 so agent loop can send as multimodal image
+                    import base64 as _b64img
+                    b64 = _b64img.b64encode(data).decode("ascii")
+                    return f"Image: {url}\n__image_data__:{mime}:{b64}"
                 # PDF: auto-redirect to read_pdf
                 if fname.lower().endswith(".pdf"):
                     max_pages = arguments.get("max_pages", 50)
@@ -4988,8 +5233,50 @@ class FilesystemToolHandler(ToolHandler):
                     return "\n".join(lines)
                 return json.dumps(result)
 
+            elif action == "edit_notebook":
+                cell_index = arguments.get("cell_index")
+                new_source = arguments.get("new_source", "")
+                cell_type = arguments.get("cell_type", "")
+                operation = arguments.get("operation", "edit")
+                result = svc._request("edit_notebook", path,
+                                       cell_index=cell_index, new_source=new_source,
+                                       cell_type=cell_type, operation=operation)
+                op = result.get("operation", operation)
+                idx = result.get("cell_index", cell_index)
+                total = result.get("total_cells", "?")
+                return f"Notebook {op}: cell {idx} ({total} cells total)"
+
             elif action == "write_file":
-                content = arguments.get("content", "")
+                file_id = arguments.get("file_id", "")
+                if file_id:
+                    # Extract file_id from URL if the LLM passed one
+                    # e.g. "http://host/files/abc123/file.png" → "abc123"
+                    import re as _re_fid
+                    url_match = _re_fid.search(r'/files/([^/]+)/', file_id)
+                    if url_match:
+                        file_id = url_match.group(1)
+                    # Copy from FileStore to filesystem
+                    from core.file_store import FileStore
+                    store = FileStore.instance()
+                    # Try file_id directly, then search by filename
+                    entry = store.get(file_id)
+                    if not entry:
+                        found_id = store.find_by_name(file_id)
+                        if found_id:
+                            entry = store.get(found_id)
+                    if not entry:
+                        return f"Error: file_id '{file_id}' not found in FileStore"
+                    fname, data, _ct = entry
+                    svc.write_file(path, data)
+                    return f"Copied {fname} ({len(data):,} bytes) to {path}"
+                # Accept "content" (schema) or common LLM mistakes: "command", "data", "text"
+                content = (arguments.get("content")
+                           or arguments.get("command")
+                           or arguments.get("data")
+                           or arguments.get("text")
+                           or "")
+                if not content:
+                    return f"Error: write_file requires 'content' or 'file_id' parameter"
                 svc.write_file(path, content.encode("utf-8"))
                 return f"Written {len(content)} chars to {path}"
 
@@ -5037,6 +5324,15 @@ class FilesystemToolHandler(ToolHandler):
                 new_string = arguments.get("new_string", "")
                 replace_all = arguments.get("replace_all", False)
                 result = svc.edit(path, old_string, new_string, replace_all)
+                # Format diff for display
+                diff = result.get("diff", [])
+                if diff:
+                    diff_text = f"Edited {result.get('path', path)} (line {result.get('line', '?')}), " \
+                                f"{result.get('replacements', 0)} replacement(s):\n"
+                    for d in diff:
+                        prefix = "- " if d["type"] == "remove" else "+ " if d["type"] == "add" else "  "
+                        diff_text += f"{d['line']:4d} {prefix}{d['text']}\n"
+                    return diff_text
                 return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s)"
 
             elif action == "exec":
@@ -5067,7 +5363,9 @@ class FilesystemToolHandler(ToolHandler):
 
             elif action == "git_commit":
                 message = arguments.get("message", "")
-                result = svc.git_commit(path, message)
+                files = arguments.get("files", [])
+                amend = arguments.get("amend", False)
+                result = svc.git_commit(path, message, files=files, amend=amend)
                 return f"Committed: {result.get('hash', '')[:8]} — {result.get('message', '')}"
 
             elif action == "git_pull":
@@ -5083,6 +5381,190 @@ class FilesystemToolHandler(ToolHandler):
                 result = svc.git_checkout(path, ref)
                 return f"Checked out: {result.get('branch', ref)}"
 
+            elif action == "git_worktree_list":
+                result = svc.git_worktree_list(path)
+                if not result:
+                    return "(no worktrees)"
+                lines = []
+                for wt in result:
+                    branch = wt.get("branch", "detached")
+                    lines.append(f"{wt['path']} [{branch}] HEAD={wt.get('head', '?')[:8]}")
+                return "\n".join(lines)
+
+            elif action == "git_worktree_add":
+                branch = arguments.get("branch", "")
+                worktree_path = arguments.get("worktree_path", "")
+                create_new = arguments.get("create_new_branch", False)
+                result = svc.git_worktree_add(path, branch, worktree_path, create_new)
+                return f"Worktree created: {result.get('worktree_path', '')} (branch: {result.get('branch', '')})"
+
+            elif action == "git_worktree_remove":
+                worktree_path = arguments.get("worktree_path", "")
+                result = svc.git_worktree_remove(path, worktree_path)
+                return f"Worktree removed: {result.get('removed', '')}"
+
+            elif action == "git_add":
+                files = arguments.get("files", [])
+                result = svc._request("git_add", path, files=files)
+                return f"Staged: {', '.join(result.get('staged', []))}"
+
+            elif action == "git_reset":
+                files = arguments.get("files", [])
+                ref = arguments.get("ref", "")
+                mode = arguments.get("mode", "mixed")
+                result = svc._request("git_reset", path, files=files, ref=ref, mode=mode)
+                return result.get("output", "Reset done")
+
+            elif action == "git_stash":
+                operation = arguments.get("operation", "push")
+                message = arguments.get("message", "")
+                index = arguments.get("index", 0)
+                result = svc._request("git_stash", path, operation=operation, message=message, index=index)
+                output = result.get("output", "") if isinstance(result, dict) else str(result)
+                if operation == "list":
+                    return output or "(no stashes)"
+                return output or f"Stash {operation} done"
+
+            elif action == "git_branch":
+                operation = arguments.get("operation", "list")
+                branch = arguments.get("branch", "")
+                base = arguments.get("base", "")
+                force = arguments.get("force", False)
+                if operation == "list":
+                    result = svc._request("git_branch", path, operation=operation)
+                    if isinstance(result, list):
+                        lines = [f"{b['name']} {b.get('hash','')} {b.get('upstream','')}" for b in result]
+                        return "\n".join(lines) if lines else "(no branches)"
+                    return str(result)
+                result = svc._request("git_branch", path, operation=operation, branch=branch, base=base, force=force)
+                return result.get("output", f"Branch {operation} done")
+
+            elif action == "git_merge":
+                branch = arguments.get("branch", "")
+                no_ff = arguments.get("no_ff", False)
+                result = svc._request("git_merge", path, branch=branch, no_ff=no_ff)
+                prefix = "CONFLICT: " if result.get("conflict") else ""
+                return prefix + result.get("output", "Merge done")
+
+            elif action == "git_rebase":
+                onto = arguments.get("onto", "")
+                operation = arguments.get("operation", "start")
+                result = svc._request("git_rebase", path, onto=onto, operation=operation)
+                prefix = "CONFLICT: " if result.get("conflict") else ""
+                return prefix + result.get("output", f"Rebase {operation} done")
+
+            elif action == "git_cherry_pick":
+                commits = arguments.get("commits", [])
+                result = svc._request("git_cherry_pick", path, commits=commits)
+                prefix = "CONFLICT: " if result.get("conflict") else ""
+                return prefix + result.get("output", "Cherry-pick done")
+
+            elif action == "git_tag":
+                operation = arguments.get("operation", "list")
+                tag = arguments.get("tag", "")
+                message = arguments.get("message", "")
+                if operation == "list":
+                    result = svc._request("git_tag", path, operation=operation)
+                    if isinstance(result, list):
+                        lines = [f"{t['name']} {t.get('hash','')}" for t in result]
+                        return "\n".join(lines) if lines else "(no tags)"
+                    return str(result)
+                result = svc._request("git_tag", path, operation=operation, tag=tag, message=message)
+                return result.get("output", f"Tag {operation} done")
+
+            elif action == "git_blame":
+                file = arguments.get("file", "") or path
+                start_line = arguments.get("start_line", 0)
+                end_line = arguments.get("end_line", 0)
+                result = svc._request("git_blame", path, file=file, start_line=start_line, end_line=end_line)
+                if isinstance(result, list):
+                    lines = [f"{e.get('hash','?')} {e.get('author','?'):20s} L{e.get('line','?')}: {e.get('content','')}" for e in result[:50]]
+                    total = len(result)
+                    if total > 50:
+                        lines.append(f"... and {total - 50} more lines")
+                    return "\n".join(lines) if lines else "(no blame data)"
+                return str(result)
+
+            elif action == "project_init":
+                force = arguments.get("force", False)
+                result = svc._request("project_init", path, force=force)
+                return f"Generated {result.get('path', '.pawflow.md')} ({result.get('size', 0)} bytes)"
+
+            elif action == "batch_edit":
+                edits = arguments.get("edits", [])
+                result = svc._request("batch_edit", ".", edits=edits)
+                n = result.get("edits_applied", 0)
+                files = result.get("files_modified", [])
+                return f"Batch edit: {n} edits applied across {len(files)} file(s): {', '.join(files)}"
+
+            elif action == "apply_patch":
+                patch = arguments.get("patch", "")
+                result = svc._request("apply_patch", path, patch=patch)
+                method = result.get("method", "?")
+                if method == "git_apply":
+                    return f"Patch applied (git): {result.get('stats', 'ok')}"
+                files = result.get("files_modified", [])
+                hunks = result.get("hunks_applied", 0)
+                return f"Patch applied (manual): {hunks} hunks across {len(files)} file(s): {', '.join(files)}"
+
+            elif action == "copy_to_store":
+                data = svc.read_file(path)
+                fname = path.rsplit("/", 1)[-1] if "/" in path else path
+                import mimetypes as _mt_copy
+                mime = _mt_copy.guess_type(fname)[0] or "application/octet-stream"
+                from core.file_store import FileStore
+                fid = FileStore.instance().store(fname, data, mime, user_id=self._user_id)
+                return f"Stored '{fname}' ({len(data):,} bytes) in FileStore\nFile ID: {fid}\nURL: /files/{fid}/{fname}"
+
+            elif action == "copy_between":
+                source_service = arguments.get("source_service", "")
+                source_path = arguments.get("source_path", "") or path
+                dest_service = arguments.get("dest_service", "")
+                dest_path = arguments.get("dest_path", "")
+                if not source_service or not dest_service:
+                    return "Error: copy_between requires 'source_service' and 'dest_service'"
+                if not dest_path:
+                    return "Error: copy_between requires 'dest_path'"
+                src_svc = self._find_service(source_service)
+                if not src_svc:
+                    return f"Error: source service '{source_service}' not found"
+                dst_svc = self._find_service(dest_service)
+                if not dst_svc:
+                    return f"Error: destination service '{dest_service}' not found"
+                data = src_svc.read_file(source_path)
+                dst_svc.write_file(dest_path, data)
+                fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
+                return f"Copied '{fname}' ({len(data):,} bytes) from {source_service}:{source_path} to {dest_service}:{dest_path}"
+
+            elif action == "list_store":
+                from core.file_store import FileStore
+                store = FileStore.instance()
+                files = store.list_files(user_id=self._user_id)
+                if not files:
+                    return "(no files in store)"
+                lines = []
+                for f in files:
+                    fid = f.get("file_id", "?")
+                    fname = f.get("filename", "?")
+                    size = f.get("size", 0)
+                    lines.append(f"{fid}  {fname}  ({size:,} bytes)")
+                return "\n".join(lines)
+
+            elif action == "delete_from_store":
+                file_id = arguments.get("file_id", "") or path
+                if not file_id:
+                    return "Error: delete_from_store requires 'file_id' parameter"
+                # Extract file_id from URL if needed
+                import re as _re_del
+                url_match = _re_del.search(r'/files/([^/]+)/', file_id)
+                if url_match:
+                    file_id = url_match.group(1)
+                from core.file_store import FileStore
+                deleted = FileStore.instance().delete(file_id, user_id=self._user_id)
+                if deleted:
+                    return f"Deleted file {file_id} from store"
+                return f"Error: file {file_id} not found or access denied"
+
             else:
                 return f"Unknown action: {action}"
 
@@ -5096,6 +5578,108 @@ class FilesystemToolHandler(ToolHandler):
     def set_fs_service(self, service):
         """Inject the filesystem service (called by agent_loop)."""
         self._fs_service = service
+
+
+def _detect_related_tests(modified_file: str) -> list:
+    """Given a modified file path, return likely related test file paths."""
+    from pathlib import Path as _Path
+    p = _Path(modified_file)
+    if p.name.startswith("test_"):
+        return []  # Already a test file
+    stem = p.stem
+    candidates = [
+        f"test_{stem}.py",
+        f"tests/test_{stem}.py",
+        f"test/{stem}_test.py",
+        f"{p.parent}/test_{stem}.py",
+    ]
+    return candidates
+
+
+class RunTestsHandler(ToolHandler):
+    """Run pytest on specified test files via filesystem service exec."""
+
+    _user_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "run_tests"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Run pytest on test files. Provide specific test files or a pattern. "
+            "Returns pass/fail summary with first failure details."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "test_files": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of test file paths to run",
+                },
+                "test_pattern": {
+                    "type": "string",
+                    "description": "Pattern to match test functions (e.g. 'test_foo')",
+                },
+                "timeout": {
+                    "type": "integer",
+                    "description": "Timeout in seconds (default: 60)",
+                },
+                "service": {
+                    "type": "string",
+                    "description": "Filesystem service name (optional)",
+                },
+            },
+            "required": ["test_files"],
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        test_files = arguments.get("test_files", [])
+        test_pattern = arguments.get("test_pattern", "")
+        timeout = arguments.get("timeout", 60)
+        service_name = arguments.get("service", "")
+
+        if not test_files:
+            return "Error: no test files specified"
+
+        # Find filesystem service (reuse FilesystemToolHandler's logic)
+        fs_handler = FilesystemToolHandler()
+        fs_handler._user_id = self._user_id
+        svc = fs_handler._find_service(service_name)
+        if not svc:
+            svc = getattr(fs_handler, '_fs_service', None)
+        if not svc:
+            return "Error: no filesystem service available to run tests"
+
+        # Build pytest command
+        files_str = " ".join(f'"{f}"' for f in test_files)
+        cmd = f"python -m pytest {files_str} -x -q --tb=short --no-header"
+        if test_pattern:
+            cmd += f" -k \"{test_pattern}\""
+
+        try:
+            result = svc.exec(".", cmd, timeout)
+            stdout = result.get("stdout", "")
+            stderr = result.get("stderr", "")
+            rc = result.get("returncode", -1)
+            output = stdout
+            if stderr:
+                output += "\n" + stderr
+            # Truncate to 3000 chars
+            if len(output) > 3000:
+                output = output[:3000] + "\n... (truncated)"
+            status = "PASSED" if rc == 0 else "FAILED"
+            return f"Tests {status} (exit code {rc}):\n{output}"
+        except Exception as e:
+            return f"Error running tests: {e}"
 
 
 def create_default_registry() -> ToolRegistry:
@@ -5146,6 +5730,9 @@ def create_default_registry() -> ToolRegistry:
 
     # Filesystem
     registry.register(FilesystemToolHandler())
+
+    # Test runner
+    registry.register(RunTestsHandler())
 
     return registry
 

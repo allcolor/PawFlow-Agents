@@ -93,6 +93,9 @@ class LLMResponse:
     duration_ms: float = 0.0
     tool_calls: List[LLMToolCall] = field(default_factory=list)
     raw: Dict[str, Any] = field(default_factory=dict)
+    cache_creation_tokens: int = 0
+    cache_read_tokens: int = 0
+    thinking: str = ""
 
 
 class LLMClient:
@@ -139,6 +142,7 @@ class LLMClient:
         refresh_token: str = "",
         token_expires_at: float = 0.0,
         token_url: str = "",
+        fallback_model: str = "",
     ):
         self.provider = provider
         self.api_key = api_key
@@ -151,6 +155,7 @@ class LLMClient:
         self.refresh_token = refresh_token
         self.token_expires_at = token_expires_at
         self.token_url = token_url or "https://console.anthropic.com/v1/oauth/token"
+        self.fallback_model = fallback_model
         self._token_lock = threading.Lock() if refresh_token else None
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None  # callable(tokens_in, tokens_out, model)
@@ -191,6 +196,7 @@ class LLMClient:
             refresh_token=config.get("refresh_token", ""),
             token_expires_at=float(config.get("token_expires_at", 0)),
             token_url=config.get("token_url", ""),
+            fallback_model=config.get("fallback_model", ""),
         )
 
     def complete(
@@ -201,6 +207,7 @@ class LLMClient:
         max_tokens: int = 0,
         response_format: Optional[str] = None,
         tools: Optional[List[LLMToolDefinition]] = None,
+        thinking_budget: int = 0,
     ) -> LLMResponse:
         """Send a completion request to the LLM.
 
@@ -224,6 +231,7 @@ class LLMClient:
 
         model = model or self.default_model
 
+        last_error = None
         for attempt in range(1, self.max_retries + 1):
             try:
                 start = time.time()
@@ -234,7 +242,7 @@ class LLMClient:
                 elif self.provider == "gemini-cli":
                     result = self._complete_gemini_cli(messages, model, temperature, max_tokens, tools)
                 else:
-                    result = self._complete_anthropic(messages, model, temperature, max_tokens, tools)
+                    result = self._complete_anthropic(messages, model, temperature, max_tokens, tools, thinking_budget=thinking_budget)
                 result.duration_ms = (time.time() - start) * 1000
                 # Estimate tokens if provider didn't return counts
                 if not result.tokens_in and messages:
@@ -249,11 +257,41 @@ class LLMClient:
             except LLMClientError:
                 raise
             except Exception as e:
+                last_error = e
                 if attempt < self.max_retries:
                     logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying...")
                     time.sleep(attempt * 0.5)
                 else:
-                    raise LLMClientError(f"LLM request failed after {self.max_retries} attempts: {e}")
+                    # All retries exhausted — try fallback model if configured
+                    if self.fallback_model and self.fallback_model != model:
+                        logger.warning(
+                            "Primary model '%s' failed after %d attempts, trying fallback '%s'",
+                            model, self.max_retries, self.fallback_model,
+                        )
+                        try:
+                            start = time.time()
+                            fb = self.fallback_model
+                            if self.provider == "openai":
+                                result = self._complete_openai(messages, fb, temperature, max_tokens, response_format, tools)
+                            elif self.provider == "claude-code":
+                                result = self._complete_claude_code(messages, fb, temperature, max_tokens, tools)
+                            elif self.provider == "gemini-cli":
+                                result = self._complete_gemini_cli(messages, fb, temperature, max_tokens, tools)
+                            else:
+                                result = self._complete_anthropic(messages, fb, temperature, max_tokens, tools, thinking_budget=thinking_budget)
+                            result.duration_ms = (time.time() - start) * 1000
+                            if not result.tokens_in and messages:
+                                result.tokens_in = sum(
+                                    len(m.content) if isinstance(m.content, str) else
+                                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                                    else 0 for m in messages) // 4
+                            if not result.tokens_out and result.content:
+                                result.tokens_out = len(result.content) // 4
+                            self._report_tokens(result, messages)
+                            return result
+                        except Exception as fallback_err:
+                            logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fallback_err)
+                    raise LLMClientError(f"LLM request failed after {self.max_retries} attempts: {last_error}")
 
     def complete_stream(
         self,
@@ -263,6 +301,8 @@ class LLMClient:
         max_tokens: int = 0,
         tools: Optional[List[LLMToolDefinition]] = None,
         callback=None,
+        thinking_budget: int = 0,
+        thinking_callback=None,
     ) -> LLMResponse:
         """Streaming completion — calls callback(token: str) for each token.
 
@@ -275,30 +315,66 @@ class LLMClient:
             raise LLMClientError("api_key is required")
 
         model = model or self.default_model
-        start = time.time()
 
-        if self.provider == "openai":
-            result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback)
-        elif self.provider == "claude-code":
-            result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
-        elif self.provider == "gemini-cli":
-            result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
-        elif self.provider == "anthropic":
-            result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback)
-        else:
-            raise LLMClientError(f"Unknown provider '{self.provider}'")
+        try:
+            start = time.time()
 
-        result.duration_ms = (time.time() - start) * 1000
-        # Estimate tokens only if provider didn't return them
-        if not result.tokens_in and messages:
-            result.tokens_in = sum(
-                len(m.content) if isinstance(m.content, str) else
-                sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                else 0 for m in messages) // 4
-        if not result.tokens_out and result.content:
-            result.tokens_out = len(result.content) // 4
-        self._report_tokens(result, messages)
-        return result
+            if self.provider == "openai":
+                result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback)
+            elif self.provider == "claude-code":
+                result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
+            elif self.provider == "gemini-cli":
+                result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
+            elif self.provider == "anthropic":
+                result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
+            else:
+                raise LLMClientError(f"Unknown provider '{self.provider}'")
+
+            result.duration_ms = (time.time() - start) * 1000
+            # Estimate tokens only if provider didn't return them
+            if not result.tokens_in and messages:
+                result.tokens_in = sum(
+                    len(m.content) if isinstance(m.content, str) else
+                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                    else 0 for m in messages) // 4
+            if not result.tokens_out and result.content:
+                result.tokens_out = len(result.content) // 4
+            self._report_tokens(result, messages)
+            return result
+        except LLMClientError:
+            raise
+        except Exception as primary_err:
+            if self.fallback_model and self.fallback_model != model:
+                logger.warning(
+                    "Streaming with primary model '%s' failed, trying fallback '%s'",
+                    model, self.fallback_model,
+                )
+                try:
+                    start = time.time()
+                    fb = self.fallback_model
+                    if self.provider == "openai":
+                        result = self._stream_openai(messages, fb, temperature, max_tokens, tools, callback)
+                    elif self.provider == "claude-code":
+                        result = self._stream_claude_code(messages, fb, temperature, max_tokens, tools, callback)
+                    elif self.provider == "gemini-cli":
+                        result = self._stream_gemini_cli(messages, fb, temperature, max_tokens, tools, callback)
+                    elif self.provider == "anthropic":
+                        result = self._stream_anthropic(messages, fb, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
+                    else:
+                        raise LLMClientError(f"Unknown provider '{self.provider}'")
+                    result.duration_ms = (time.time() - start) * 1000
+                    if not result.tokens_in and messages:
+                        result.tokens_in = sum(
+                            len(m.content) if isinstance(m.content, str) else
+                            sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                            else 0 for m in messages) // 4
+                    if not result.tokens_out and result.content:
+                        result.tokens_out = len(result.content) // 4
+                    self._report_tokens(result, messages)
+                    return result
+                except Exception as fallback_err:
+                    logger.error("Fallback model '%s' streaming also failed: %s", self.fallback_model, fallback_err)
+            raise LLMClientError(f"LLM streaming request failed: {primary_err}")
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback) -> LLMResponse:
         """OpenAI streaming: reads SSE chunks from the API."""
@@ -425,9 +501,13 @@ class LLMClient:
         finally:
             conn.close()
 
-    def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback) -> LLMResponse:
+    def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None) -> LLMResponse:
         """Anthropic streaming: reads SSE events from the API."""
         system_text, api_messages = self._build_anthropic_messages(messages)
+
+        # Add cache_control to first user message for prompt caching
+        self._apply_anthropic_cache_control(api_messages)
+
         body = {
             "model": model,
             "messages": api_messages,
@@ -435,8 +515,11 @@ class LLMClient:
             "temperature": temperature,
             "stream": True,
         }
+        if thinking_budget > 0:
+            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         if system_text:
-            body["system"] = system_text
+            body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
         if tools:
             body["tools"] = [
                 {"name": t.name, "description": t.description, "input_schema": t.parameters}
@@ -477,6 +560,10 @@ class LLMClient:
             resp_model = model
             tokens_in = 0
             tokens_out = 0
+            cache_creation_tokens = 0
+            cache_read_tokens = 0
+            thinking_text = ""
+            current_block_type = None
 
             buffer = ""
             while True:
@@ -500,19 +587,32 @@ class LLMClient:
                                 resp_model = msg.get("model", model)
                                 usage = msg.get("usage", {})
                                 tokens_in = usage.get("input_tokens", 0)
+                                cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
+                                cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
 
                             elif evt_type == "content_block_start":
                                 block = data.get("content_block", {})
-                                if block.get("type") == "tool_use":
+                                if block.get("type") == "thinking":
+                                    current_block_type = "thinking"
+                                elif block.get("type") == "tool_use":
+                                    current_block_type = "tool_use"
                                     current_tool = {
                                         "id": block.get("id", ""),
                                         "name": block.get("name", ""),
                                     }
                                     tool_input_str = ""
+                                else:
+                                    current_block_type = block.get("type")
 
                             elif evt_type == "content_block_delta":
                                 delta = data.get("delta", {})
-                                if delta.get("type") == "text_delta":
+                                if delta.get("type") == "thinking_delta":
+                                    t_text = delta.get("thinking", "")
+                                    if t_text:
+                                        thinking_text += t_text
+                                        if thinking_callback:
+                                            thinking_callback(t_text)
+                                elif delta.get("type") == "text_delta":
                                     text = delta.get("text", "")
                                     if text:
                                         content_parts.append(text)
@@ -534,12 +634,17 @@ class LLMClient:
                                     ))
                                     current_tool = None
                                     tool_input_str = ""
+                                current_block_type = None
 
                             elif evt_type == "message_delta":
                                 delta = data.get("delta", {})
                                 finish_reason = delta.get("stop_reason", finish_reason)
                                 usage = data.get("usage", {})
                                 tokens_out = usage.get("output_tokens", tokens_out)
+                                if usage.get("cache_creation_input_tokens"):
+                                    cache_creation_tokens = usage["cache_creation_input_tokens"]
+                                if usage.get("cache_read_input_tokens"):
+                                    cache_read_tokens = usage["cache_read_input_tokens"]
 
                             elif evt_type == "message_stop":
                                 pass
@@ -547,6 +652,8 @@ class LLMClient:
                         except (json.JSONDecodeError, KeyError):
                             pass
 
+            if cache_read_tokens > 0:
+                logger.debug("Anthropic cache: %d created, %d read", cache_creation_tokens, cache_read_tokens)
             return LLMResponse(
                 content="".join(content_parts),
                 model=resp_model,
@@ -555,6 +662,9 @@ class LLMClient:
                 total_tokens=tokens_in + tokens_out,
                 finish_reason=finish_reason,
                 tool_calls=tool_calls,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=cache_read_tokens,
+                thinking=thinking_text,
             )
         finally:
             conn.close()
@@ -622,6 +732,15 @@ class LLMClient:
                     "content": m.text_content if isinstance(m.content, list) else m.content,
                     "tool_call_id": m.tool_call_id or "",
                 })
+                # OpenAI tool messages only support string content.
+                # If multimodal, inject a user message with image parts after the tool result.
+                if isinstance(m.content, list):
+                    img_parts = [p for p in m.content if p.get("type") == "image_url"]
+                    if img_parts:
+                        api_messages.append({
+                            "role": "user",
+                            "content": [{"type": "text", "text": "(image from tool result)"}] + img_parts,
+                        })
             elif m.role == "assistant" and m.tool_calls:
                 content = m.content
                 if isinstance(content, list):
@@ -743,13 +862,32 @@ class LLMClient:
                 system_text = m.text_content if isinstance(m.content, list) else m.content
             elif m.role == "tool":
                 # Anthropic: tool results are sent as user messages with tool_result content blocks
+                tool_content: Any = m.content
+                if isinstance(m.content, list):
+                    # Multimodal tool result: build content blocks (text + images)
+                    blocks = []
+                    for part in m.content:
+                        if part.get("type") == "text":
+                            blocks.append({"type": "text", "text": part["text"]})
+                        elif part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                header, _, b64data = url.partition(",")
+                                media_type = header.split(":")[1].split(";")[0] if ":" in header else "image/png"
+                                blocks.append({
+                                    "type": "image",
+                                    "source": {"type": "base64", "media_type": media_type, "data": b64data},
+                                })
+                            else:
+                                blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+                    tool_content = blocks if blocks else m.text_content
                 api_messages.append({
                     "role": "user",
                     "content": [
                         {
                             "type": "tool_result",
                             "tool_use_id": m.tool_call_id or "",
-                            "content": m.text_content if isinstance(m.content, list) else m.content,
+                            "content": tool_content,
                         }
                     ],
                 })
@@ -805,12 +943,37 @@ class LLMClient:
                 api_messages.append({"role": m.role, "content": m.content})
         return system_text, api_messages
 
-    def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None) -> LLMResponse:
+    @staticmethod
+    def _apply_anthropic_cache_control(api_messages: List[Dict[str, Any]]) -> None:
+        """Add cache_control to the first user message for Anthropic prompt caching.
+
+        Modifies api_messages in-place. If the first user message content is a
+        plain string, converts it to a list with a single text block carrying
+        cache_control. If it's already a list, adds cache_control to the last block.
+        """
+        for msg in api_messages:
+            if msg.get("role") == "user":
+                content = msg["content"]
+                if isinstance(content, str):
+                    msg["content"] = [
+                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                    ]
+                elif isinstance(content, list) and content:
+                    content[-1]["cache_control"] = {"type": "ephemeral"}
+                break
+
+    def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None, thinking_budget: int = 0) -> LLMResponse:
         system_text, api_messages = self._build_anthropic_messages(messages)
 
+        # Add cache_control to first user message for prompt caching
+        self._apply_anthropic_cache_control(api_messages)
+
         body = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
+        if thinking_budget > 0:
+            body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
+            body["temperature"] = 1  # Required by Anthropic when thinking is enabled
         if system_text:
-            body["system"] = system_text
+            body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
         if tools:
             body["tools"] = [
                 {
@@ -833,6 +996,12 @@ class LLMClient:
         content_blocks = data.get("content", [])
         text = "".join(b.get("text", "") for b in content_blocks if b.get("type") == "text")
 
+        # Parse thinking blocks
+        thinking_text = ""
+        for block in content_blocks:
+            if block.get("type") == "thinking":
+                thinking_text += block.get("thinking", "")
+
         # Parse tool_use blocks
         tool_calls = []
         for block in content_blocks:
@@ -844,6 +1013,10 @@ class LLMClient:
                 ))
 
         usage = data.get("usage", {})
+        cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
+        cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
+        if cache_read_tokens > 0:
+            logger.debug("Anthropic cache: %d created, %d read", cache_creation_tokens, cache_read_tokens)
         return LLMResponse(
             content=text,
             model=data.get("model", model),
@@ -853,6 +1026,9 @@ class LLMClient:
             finish_reason=data.get("stop_reason", ""),
             tool_calls=tool_calls,
             raw=data,
+            cache_creation_tokens=cache_creation_tokens,
+            cache_read_tokens=cache_read_tokens,
+            thinking=thinking_text,
         )
 
     @staticmethod

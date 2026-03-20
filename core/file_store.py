@@ -78,13 +78,16 @@ class FileStore:
 
     def store(self, filename: str, content: bytes,
               content_type: str = "application/octet-stream",
-              conversation_id: str = "") -> str:
+              conversation_id: str = "",
+              user_id: str = "") -> str:
         """Store a file and return its file_id.
 
         Args:
             filename: Original filename (preserved for download)
             content: File content as bytes
             content_type: MIME type
+            conversation_id: Optional conversation context
+            user_id: Owner user ID (empty = no ownership restriction)
 
         Returns:
             file_id: Unique identifier for retrieval
@@ -109,6 +112,8 @@ class FileStore:
                 "size": len(content),
                 "created_at": time.time(),
                 "conversation_id": conversation_id,
+                "user_id": user_id,
+                "shared_with": [],
             }
 
         self._save_index()
@@ -116,17 +121,28 @@ class FileStore:
                     f"({len(content)} bytes)")
         return file_id
 
-    def get(self, file_id: str) -> Optional[Tuple[str, bytes, str]]:
+    def get(self, file_id: str, user_id: str = "") -> Optional[Tuple[str, bytes, str]]:
         """Retrieve a file by ID.
 
+        Args:
+            file_id: File identifier
+            user_id: Requesting user (empty = no access control)
+
         Returns:
-            (filename, content_bytes, content_type) or None if not found/expired
+            (filename, content_bytes, content_type) or None if not found/expired/denied
         """
         with self._store_lock:
             self._ensure_loaded()
             entry = self._entries.get(file_id)
             if entry is None:
                 return None
+
+        # Access control: check ownership or sharing
+        entry_owner = entry.get("user_id", "")
+        if user_id and entry_owner and entry_owner != user_id:
+            shared = entry.get("shared_with", [])
+            if user_id not in shared:
+                return None  # access denied
 
         try:
             with open(entry["path"], "rb") as f:
@@ -138,6 +154,33 @@ class FileStore:
             self._save_index()
             return None
 
+    def find_by_name(self, filename: str, user_id: str = "") -> Optional[str]:
+        """Find the most recent file_id matching a filename (partial or full).
+
+        Args:
+            filename: Filename to search for
+            user_id: Requesting user (empty = no access filter)
+        """
+        def _accessible(entry):
+            if not user_id:
+                return True
+            owner = entry.get("user_id", "")
+            if not owner or owner == user_id:
+                return True
+            return user_id in entry.get("shared_with", [])
+
+        with self._store_lock:
+            self._ensure_loaded()
+            # Exact match first
+            for fid, entry in self._entries.items():
+                if entry["filename"] == filename and _accessible(entry):
+                    return fid
+            # Partial match (filename contained in entry filename or vice versa)
+            for fid, entry in self._entries.items():
+                if (filename in entry["filename"] or entry["filename"] in filename) and _accessible(entry):
+                    return fid
+        return None
+
     def exists(self, file_id: str) -> bool:
         with self._store_lock:
             self._ensure_loaded()
@@ -147,11 +190,28 @@ class FileStore:
             # File exists if it's in the index and on disk
             return os.path.exists(entry.get("path", ""))
 
-    def delete(self, file_id: str):
+    def delete(self, file_id: str, user_id: str = "") -> bool:
+        """Delete a file by ID.
+
+        Args:
+            file_id: File identifier
+            user_id: Requesting user (empty = no ownership check)
+
+        Returns:
+            True if deleted, False if not found or not owner
+        """
         with self._store_lock:
             self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if not entry:
+                return False
+            # Ownership check
+            entry_owner = entry.get("user_id", "")
+            if user_id and entry_owner and entry_owner != user_id:
+                return False  # not owner
             self._remove_entry(file_id)
         self._save_index()
+        return True
 
     def _remove_entry(self, file_id: str):
         """Remove entry and its files (must be called with lock held)."""
@@ -163,22 +223,66 @@ class FileStore:
             except Exception:
                 pass
 
-    def list_files(self) -> List[Dict[str, Any]]:
-        """List all stored files."""
+    def list_files(self, user_id: str = "") -> List[Dict[str, Any]]:
+        """List stored files, filtered by user access.
+
+        Args:
+            user_id: Requesting user (empty = list all files)
+        """
         result = []
         with self._store_lock:
             self._ensure_loaded()
             for fid, entry in self._entries.items():
+                if user_id:
+                    owner = entry.get("user_id", "")
+                    if owner and owner != user_id:
+                        if user_id not in entry.get("shared_with", []):
+                            continue
                 result.append({
                     "file_id": fid,
                     "filename": entry["filename"],
                     "content_type": entry["content_type"],
                     "size": entry["size"],
                     "created_at": entry["created_at"],
+                    "user_id": entry.get("user_id", ""),
+                    "shared_with": entry.get("shared_with", []),
                 })
         return result
 
 
+
+    def share(self, file_id: str, target_user_id: str, owner_user_id: str = "") -> bool:
+        """Share a file with another user."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if not entry:
+                return False
+            # Verify ownership
+            entry_owner = entry.get("user_id", "")
+            if owner_user_id and entry_owner and entry_owner != owner_user_id:
+                return False
+            shared = entry.setdefault("shared_with", [])
+            if target_user_id not in shared:
+                shared.append(target_user_id)
+            self._save_index()
+        return True
+
+    def unshare(self, file_id: str, target_user_id: str, owner_user_id: str = "") -> bool:
+        """Remove file sharing for a user."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._entries.get(file_id)
+            if not entry:
+                return False
+            entry_owner = entry.get("user_id", "")
+            if owner_user_id and entry_owner and entry_owner != owner_user_id:
+                return False
+            shared = entry.get("shared_with", [])
+            if target_user_id in shared:
+                shared.remove(target_user_id)
+            self._save_index()
+        return True
 
     def count(self) -> int:
         with self._store_lock:
@@ -207,6 +311,8 @@ class FileStore:
                         "size": e["size"],
                         "created_at": e["created_at"],
                         "conversation_id": e.get("conversation_id", ""),
+                        "user_id": e.get("user_id", ""),
+                        "shared_with": e.get("shared_with", []),
                     }
                     for fid, e in self._entries.items()
                 }

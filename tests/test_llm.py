@@ -111,8 +111,11 @@ class TestLLMConnectionService:
                 LLMMessage("user", "Hi"),
             ])
 
-        # System should be a top-level field, not in messages
-        assert captured["system"] == "Be concise"
+        # System should be a top-level field with cache_control, not in messages
+        system = captured["system"]
+        assert isinstance(system, list)
+        assert system[0]["text"] == "Be concise"
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
         assert len(captured["messages"]) == 1
         assert captured["messages"][0]["role"] == "user"
 

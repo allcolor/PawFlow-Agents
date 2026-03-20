@@ -193,8 +193,12 @@ class AgentLoopTask(BaseTask):
                 "description": "Maximum tool-use loop iterations (safety limit — agent synthesizes at the end if reached)",
             },
             "max_consecutive_tool_calls": {
-                "type": "integer", "required": False, "default": 5,
+                "type": "integer", "required": False, "default": 25,
                 "description": "Max consecutive calls to the same tool before the agent must ask for confirmation (0 = unlimited)",
+            },
+            "thinking_budget": {
+                "type": "integer", "required": False, "default": 0,
+                "description": "Anthropic extended thinking budget in tokens (0 = disabled). When enabled, temperature is forced to 1.",
             },
             "tools": {
                 "type": "string", "required": False, "default": "",
@@ -693,6 +697,113 @@ class AgentLoopTask(BaseTask):
         )
         return fallback, 0, 0, ""
 
+    # ── Image deflation (multimodal → text-only after LLM sees it) ──
+
+    @staticmethod
+    def _deflate_image_messages(messages: List[LLMMessage]):
+        """Replace multimodal image content with text-only references in-place.
+
+        Called after the LLM has seen the images so base64 data doesn't
+        persist in the conversation context.  The LLM can use view_image
+        or show_file to re-request an image if needed.
+        """
+        for m in messages:
+            if not isinstance(m.content, list):
+                continue
+            has_images = any(
+                p.get("type") == "image_url" for p in m.content
+            )
+            if not has_images:
+                continue
+            # Keep text parts, replace images with a reference
+            text_parts = []
+            img_count = 0
+            for part in m.content:
+                if part.get("type") == "text":
+                    text_parts.append(part["text"])
+                elif part.get("type") == "image_url":
+                    img_count += 1
+            text = "\n".join(text_parts)
+            m.content = f"{text}\n[{img_count} image(s) were shown — use show_file or view_image to see again]"
+
+    # ── Tool result size management ──────────────────────────────────
+
+    # Thresholds (chars) — mirrors Claude Code tiers
+    _TOOL_RESULT_SMALL = 10_000       # no truncation
+    _TOOL_RESULT_MEDIUM = 30_000      # truncate to first+last
+    _TOOL_RESULT_LARGE = 50_000       # save to FileStore, reference only
+    _TOOL_RESULT_TRUNCATED = 8_000    # how much to keep when truncating
+
+    @staticmethod
+    def _detect_base64_blob(text: str) -> bool:
+        """Check if text contains a large base64 blob (data URI or raw)."""
+        if "data:" in text and ";base64," in text:
+            return True
+        # Raw base64: long stretch of [A-Za-z0-9+/=] without spaces
+        import re
+        return bool(re.search(r'[A-Za-z0-9+/=]{1000,}', text))
+
+    def _truncate_tool_result(self, result: str, tool_name: str,
+                               conversation_id: str = "",
+                               user_id: str = "") -> str:
+        """Truncate large tool results, storing full content in FileStore.
+
+        Tiers:
+        - < 10K chars: no change
+        - 10K-50K: keep first+last sections, note omitted middle
+        - > 50K or contains base64 blob: save to FileStore, return reference
+        """
+        if not result or len(result) <= self._TOOL_RESULT_SMALL:
+            # Small result with no base64 → pass through
+            if not self._detect_base64_blob(result):
+                return result
+
+        # Any base64 blob → always store in FileStore regardless of size
+        has_base64 = self._detect_base64_blob(result)
+        result_len = len(result)
+
+        if has_base64 or result_len > self._TOOL_RESULT_LARGE:
+            # Store full result in FileStore, return reference
+            try:
+                from core.file_store import FileStore
+                store = FileStore.instance()
+                fname = f"tool_result_{tool_name}.txt"
+                fid = store.store(
+                    fname, result.encode("utf-8"),
+                    conversation_id=conversation_id,
+                )
+                url = f"/files/{fid}/{fname}"
+                # Build a useful preview (first 500 chars, no base64)
+                preview = result[:500]
+                # Strip any base64 data from preview
+                import re
+                preview = re.sub(
+                    r'data:[^;]+;base64,[A-Za-z0-9+/=]+',
+                    '[base64 data — see full result]',
+                    preview,
+                )
+                preview = re.sub(r'[A-Za-z0-9+/=]{200,}', '[...base64...]', preview)
+                return (
+                    f"{preview}\n\n"
+                    f"[Full result ({result_len:,} chars) saved to: {url} — "
+                    f"use show_file to view if needed]"
+                )
+            except Exception as e:
+                logger.warning(f"[truncate] Failed to store in FileStore: {e}")
+                # Fall through to truncation
+
+        # Medium result: keep first + last sections
+        if result_len > self._TOOL_RESULT_MEDIUM:
+            half = self._TOOL_RESULT_TRUNCATED // 2
+            omitted = result_len - self._TOOL_RESULT_TRUNCATED
+            return (
+                result[:half]
+                + f"\n\n... [{omitted:,} chars omitted] ...\n\n"
+                + result[-half:]
+            )
+
+        return result
+
     def _execute_tool_calls(self, tool_calls, registry, consecutive_tracker: dict,
                             max_consecutive: int, *, parallel: bool = True,
                             agent_name: str = "assistant", agent_svc: str = "",
@@ -738,6 +849,22 @@ class AgentLoopTask(BaseTask):
             try:
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result = registry.execute(tc.name, tc.arguments) or ""
+                # Auto-suggest related tests after file modifications
+                if tc.name == "filesystem" and tc.arguments.get("action") in ("write_file", "edit"):
+                    modified_path = tc.arguments.get("path", "")
+                    if modified_path and modified_path.endswith(".py"):
+                        from core.tool_registry import _detect_related_tests
+                        candidates = _detect_related_tests(modified_path)
+                        if candidates:
+                            hint = ", ".join(candidates[:3])
+                            result += f"\n[Related tests may exist: {hint} — use run_tests to verify]"
+                # ── Truncate large tool results (à la Claude Code) ────
+                # Large results are stored in FileStore; only a reference
+                # stays in the context.  The LLM can use show_file to
+                # retrieve the full content on demand.
+                if isinstance(result, str):
+                    result = self._truncate_tool_result(
+                        result, tc.name, conversation_id, user_id)
                 # Wrap tool output so the LLM treats it as data, not instructions
                 if result and tc.name not in ("complete_task", "assign_task"):
                     result = (
@@ -745,6 +872,29 @@ class AgentLoopTask(BaseTask):
                         + result
                         + "\n[/TOOL OUTPUT]"
                     )
+                # Extract multimodal image data for LLM vision.
+                # The image is sent for the CURRENT LLM call only.
+                # After the call, the message is deflated to text-only
+                # (see _deflate_image_messages) so base64 doesn't bloat context.
+                if isinstance(result, str) and "__image_data__:" in result:
+                    lines = result.split("\n")
+                    text_lines = []
+                    image_parts = []
+                    for line in lines:
+                        if line.startswith("__image_data__:"):
+                            parts = line.split(":", 2)
+                            if len(parts) == 3:
+                                mime, b64 = parts[1], parts[2]
+                                image_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": f"data:{mime};base64,{b64}"},
+                                })
+                        else:
+                            text_lines.append(line)
+                    if image_parts:
+                        content = [{"type": "text", "text": "\n".join(text_lines)}]
+                        content.extend(image_parts)
+                        return tc, content
                 return tc, result
             except Exception as e:
                 logger.error("Tool '%s' failed: %s", tc.name, e)
@@ -901,7 +1051,8 @@ class AgentLoopTask(BaseTask):
         temperature = float(self.config.get("temperature", 0.7))
         max_tokens = int(self.config.get("max_context_size", 0))
         max_iterations = int(self.config.get("max_iterations", 200))
-        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 5))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 25))
+        thinking_budget = int(self.config.get("thinking_budget", 0))
 
         use_conv_store = self.config.get("conversation_store", False)
         conv_ttl = int(self.config.get("conversation_ttl", 0))
@@ -1373,6 +1524,7 @@ class AgentLoopTask(BaseTask):
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,
             "max_consecutive_tool_calls": max_consecutive_tool_calls,
+            "thinking_budget": thinking_budget,
             "max_rounds": int(self.config.get("max_rounds", 1)),
             "use_conv_store": use_conv_store, "conv_ttl": conv_ttl,
             "conv_attr": conv_attr, "conversation_id": conversation_id,
@@ -1535,6 +1687,8 @@ class AgentLoopTask(BaseTask):
         "rebuild_full": 10,
         "rebuild_clean": 10,
         "restart_from": 10,
+        "clear": 10,
+        "theme": 30,
         "resume_conversation": 10,
     }
 
@@ -1724,14 +1878,16 @@ class AgentLoopTask(BaseTask):
                 return [flowfile]
             # Return all display-relevant messages with type classification
             history = self._classify_messages_for_display(messages)
-            nicknames = store.get_extra(conv_id, "agent_nicknames") or {}
-            active_res = store.get_extra(conv_id, "active_resources") or {}
+            nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
+            active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
+            custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
             result = json.dumps({
                 "conversation_id": conv_id,
                 "messages": history,
                 "message_count": len(messages),  # total raw count for polling
                 "nicknames": nicknames,
                 "active_agent": active_res.get("agent", ""),
+                "custom_css": custom_css,
             }, ensure_ascii=False)
             flowfile.set_content(result.encode("utf-8"))
             return [flowfile]
@@ -4472,6 +4628,358 @@ class AgentLoopTask(BaseTask):
             flowfile.set_content(json.dumps({"ok": True}).encode())
             return [flowfile]
 
+        if action == "clear":
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _clear_msgs = store.load(conv_id, user_id=user_id)
+            if not _clear_msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+
+            def _do_clear():
+                deserialized = self._deserialize_messages(_clear_msgs)
+                system_msgs = [m for m in deserialized if m.role == "system"]
+                serialized_ctx = self._serialize_messages(system_msgs)
+                # Clear shared context
+                store.save_agent_context(conv_id, "", serialized_ctx)
+                # Clear all agent-specific contexts
+                extras = store.get_extras(conv_id, user_id=user_id) or {}
+                agent_contexts = [k for k in extras if k.startswith("agent_context:")]
+                for k in agent_contexts:
+                    store.set_extra(conv_id, k, None, user_id=user_id)
+                return {"cleared": True, "agents_reset": len(agent_contexts) + 1}
+
+            return self._run_bg_context_op(conv_id, "clear", _do_clear, flowfile)
+
+        if action == "model":
+            model_value = body.get("model", "").strip()
+            agent_name = body.get("agent", "assistant").strip() or "assistant"
+            conv_id = body.get("conversation_id", "")
+            override_key = f"model_override:{agent_name}"
+            if not model_value or model_value == "reset":
+                # Clear override
+                if conv_id:
+                    store.set_extra(conv_id, override_key, None, user_id=user_id)
+                flowfile.set_content(json.dumps({
+                    "ok": True,
+                    "message": f"Model override cleared for '{agent_name}'. Using default model.",
+                }).encode())
+                return [flowfile]
+            # Set override
+            if conv_id:
+                store.set_extra(conv_id, override_key, model_value, user_id=user_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Model override for '{agent_name}' set to: {model_value}",
+                "model": model_value,
+                "agent": agent_name,
+            }).encode())
+            return [flowfile]
+
+        if action == "export":
+            fmt = body.get("format", "markdown")
+            conv_id = body.get("conversation_id", "")
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "No conversation to export"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            msgs = store.load(conversation_id=conv_id, user_id=user_id)
+            if not msgs:
+                flowfile.set_content(json.dumps({"error": "Conversation not found or empty"}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+
+            if fmt == "json":
+                export = json.dumps([
+                    {"role": m.get("role", ""), "content": m.get("content", ""),
+                     "source": m.get("source", None)}
+                    if isinstance(m, dict) else
+                    {"role": m.role, "content": m.content,
+                     "source": getattr(m, "source", None)}
+                    for m in msgs
+                ], indent=2, ensure_ascii=False)
+                filename = f"conversation_{conv_id[:8]}.json"
+            else:
+                lines = [f"# Conversation {conv_id[:8]}\n"]
+                for m in msgs:
+                    if isinstance(m, dict):
+                        role = (m.get("role") or "").upper()
+                        source = m.get("source")
+                        content = m.get("content", "")
+                    else:
+                        role = (m.role or "").upper()
+                        source = getattr(m, "source", None)
+                        content = m.content if isinstance(m.content, str) else str(m.content)
+                    if source and isinstance(source, dict) and source.get("name"):
+                        role = f"{role} ({source['name']})"
+                    lines.append(f"## {role}\n\n{content}\n")
+                export = "\n".join(lines)
+                filename = f"conversation_{conv_id[:8]}.md"
+
+            # Store in FileStore for download
+            from core.file_store import FileStore
+            mime = "application/json" if fmt == "json" else "text/markdown"
+            fid = FileStore.instance().store(filename, export.encode("utf-8"), mime,
+                                               user_id=user_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "url": f"/files/{fid}/{filename}",
+                "filename": filename,
+                "format": fmt,
+            }).encode())
+            return [flowfile]
+
+        # ── Filesystem explorer actions ─────────────────────────────
+        if action == "fs_list_services":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            services = []
+            # Try GlobalServiceRegistry
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                for sid, sdef in greg.get_all_definitions().items():
+                    if not getattr(sdef, "enabled", True):
+                        continue
+                    if getattr(sdef, "service_type", "") in _fsh._FS_TYPES:
+                        services.append({"id": sid, "type": getattr(sdef, "service_type", ""), "scope": "global"})
+            except Exception:
+                pass
+            # Try UserServiceRegistry
+            if user_id:
+                try:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    ureg = UserServiceRegistry.get_instance()
+                    for fs_type in _fsh._FS_TYPES:
+                        for sdef in ureg.get_compatible(fs_type, user_id):
+                            if sdef.enabled:
+                                services.append({"id": sdef.service_id, "type": fs_type, "scope": "user"})
+                except Exception:
+                    pass
+            flowfile.set_content(json.dumps({"services": services}).encode())
+            return [flowfile]
+
+        if action == "fs_list_dir":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                entries = _fs_svc.list_dir(body.get("path", "."))
+                result = [{"name": e.name, "kind": e.kind, "size": e.size, "modified": e.modified} for e in entries]
+                flowfile.set_content(json.dumps({"entries": result}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_read_file":
+            from core.tool_registry import FilesystemToolHandler
+            import base64 as _b64r
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                data = _fs_svc.read_file(body.get("path", ""))
+                # Try UTF-8, fallback to base64
+                try:
+                    text = data.decode("utf-8")
+                    flowfile.set_content(json.dumps({"content": text, "encoding": "utf-8", "size": len(data)}).encode())
+                except UnicodeDecodeError:
+                    flowfile.set_content(json.dumps({"content": _b64r.b64encode(data).decode("ascii"), "encoding": "base64", "size": len(data)}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_write_file":
+            from core.tool_registry import FilesystemToolHandler
+            import base64 as _b64w
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                content = body.get("content", "")
+                encoding = body.get("encoding", "utf-8")
+                if encoding == "base64":
+                    raw = _b64w.b64decode(content)
+                else:
+                    raw = content.encode("utf-8")
+                _fs_svc.write_file(body.get("path", ""), raw)
+                flowfile.set_content(json.dumps({"ok": True, "size": len(raw)}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_delete":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                _fs_svc.delete_file(body.get("path", ""))
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_mkdir":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                _fs_svc.mkdir(body.get("path", ""))
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_rename":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                old_path = body.get("old_path", "")
+                new_path = body.get("new_path", "")
+                if not old_path or not new_path:
+                    raise ValueError("Missing old_path or new_path")
+                data = _fs_svc.read_file(old_path)
+                _fs_svc.write_file(new_path, data)
+                _fs_svc.delete_file(old_path)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_search":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                results = _fs_svc.search(body.get("path", "."), body.get("pattern", "*"))
+                flowfile.set_content(json.dumps({"results": results[:200]}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_copy":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            src_svc = _fsh._find_service(body.get("source_service", ""))
+            dst_svc = _fsh._find_service(body.get("dest_service", ""))
+            if not src_svc or not dst_svc:
+                flowfile.set_content(json.dumps({"error": "Source or dest service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                data = src_svc.read_file(body.get("source_path", ""))
+                dst_svc.write_file(body.get("dest_path", ""), data)
+                flowfile.set_content(json.dumps({"ok": True, "size": len(data)}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "fs_copy_to_store":
+            from core.tool_registry import FilesystemToolHandler
+            import mimetypes as _mt_fcs
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                fpath = body.get("path", "")
+                data = _fs_svc.read_file(fpath)
+                fname = fpath.rsplit("/", 1)[-1] if "/" in fpath else fpath
+                mime = _mt_fcs.guess_type(fname)[0] or "application/octet-stream"
+                from core.file_store import FileStore
+                fid = FileStore.instance().store(fname, data, mime, user_id=user_id)
+                flowfile.set_content(json.dumps({"ok": True, "file_id": fid, "url": f"/files/{fid}/{fname}", "filename": fname, "size": len(data)}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "theme":
+            conv_id = body.get("conversation_id", "")
+            operation = body.get("operation", "set")  # set, get, delete
+            if not conv_id:
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            if operation == "get":
+                css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
+                flowfile.set_content(json.dumps({"ok": True, "css": css}).encode())
+                return [flowfile]
+            elif operation == "delete":
+                store.set_extra(conv_id, "custom_css", None, user_id=user_id)
+                # Push empty CSS via SSE to clear theme live
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conv_id, "theme", {"css": ""})
+                except Exception:
+                    pass
+                flowfile.set_content(json.dumps({
+                    "ok": True, "message": "Theme removed",
+                }).encode())
+                return [flowfile]
+            else:  # set
+                css = body.get("css", "")
+                if not css:
+                    flowfile.set_content(json.dumps({"error": "Missing 'css' parameter"}).encode())
+                    flowfile.set_attribute("http.response.status", "400")
+                    return [flowfile]
+                store.set_extra(conv_id, "custom_css", css, user_id=user_id)
+                # Push CSS via SSE for live update
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conv_id, "theme", {"css": css})
+                except Exception:
+                    pass
+                flowfile.set_content(json.dumps({
+                    "ok": True, "message": "Theme applied",
+                    "css_length": len(css),
+                }).encode())
+                return [flowfile]
+
         return None  # Unknown action — treat as normal message
 
     def _handle_telegram_conv_command(
@@ -4752,13 +5260,21 @@ class AgentLoopTask(BaseTask):
         conv_attr = ctx["conv_attr"]
         base_count = ctx.get("_base_message_count", 0)
 
+        # Apply per-agent model override
+        if use_conv_store and conversation_id:
+            from core.conversation_store import ConversationStore
+            _agent_n = ctx.get("active_agent_name") or "assistant"
+            _mo = ConversationStore.instance().get_extra(conversation_id, f"model_override:{_agent_n}")
+            if _mo:
+                model = _mo
+
         iteration = 0
         final_model = ""
         finish_reason = ""
         response_content = ""
         _need_more_retried_ns = False  # guards heuristic tool-mention retry
         _consecutive_tool: Dict[str, int] = {}  # tool_name → consecutive call count
-        _max_consec = ctx.get("max_consecutive_tool_calls", 5)
+        _max_consec = ctx.get("max_consecutive_tool_calls", 25)
 
         _client_provider_ns = getattr(client, "provider", "") or ""
         if not isinstance(_client_provider_ns, str):
@@ -4766,6 +5282,19 @@ class AgentLoopTask(BaseTask):
 
         while iteration < ctx["max_iterations"]:
             iteration += 1
+
+            # Compact before every LLM call — the limit is the limit
+            _pre_len_ns = len(messages)
+            messages = self._compact_if_needed(
+                messages, ctx.get("default_client") or client,
+                ctx.get("max_context_size", 64000),
+                ctx.get("context_compact_threshold", 0.8),
+                ctx.get("context_keep_recent", 6),
+                conversation_id=ctx.get("conversation_id", ""),
+                agent_name=ctx.get("active_agent_name") or "assistant",
+                tool_defs=tool_defs,
+                chars_per_token=ctx.get("chars_per_token", 0),
+            )
 
             _id_nicks_ns = ctx.get("_nicknames") or {}
             _llm_msgs = self._inject_identity(messages, _id_nicks_ns)
@@ -4777,12 +5306,16 @@ class AgentLoopTask(BaseTask):
                 temperature=ctx["temperature"],
                 max_tokens=ctx["max_tokens"],
                 tools=tool_defs if tool_defs else None,
+                thinking_budget=ctx.get("thinking_budget", 0),
             )
 
             total_tokens_in += response.tokens_in
             total_tokens_out += response.tokens_out
             final_model = response.model
             finish_reason = response.finish_reason
+
+            # Deflate images: LLM has seen them, replace base64 with references
+            self._deflate_image_messages(messages)
 
             # Calibrate chars_per_token from actual usage (sync path)
             if response.tokens_in > 0:
@@ -5375,6 +5908,14 @@ class AgentLoopTask(BaseTask):
         conv_ttl = ctx["conv_ttl"]
         channel = ctx.get("channel", "")
 
+        # Apply per-agent model override
+        if use_conv_store and conversation_id:
+            from core.conversation_store import ConversationStore
+            _agent_n = ctx.get("active_agent_name") or "assistant"
+            _mo = ConversationStore.instance().get_extra(conversation_id, f"model_override:{_agent_n}")
+            if _mo:
+                model = _mo
+
         # Track new messages added during this run for append-only persistence.
         # The canonical conversation history lives in the ConversationStore and
         # is only extended — never overwritten — by this thread.
@@ -5461,7 +6002,7 @@ class AgentLoopTask(BaseTask):
 
         # Consecutive tool call limiter
         _consecutive_tool_s: Dict[str, int] = {}
-        _max_consec_s = ctx.get("max_consecutive_tool_calls", 5)
+        _max_consec_s = ctx.get("max_consecutive_tool_calls", 25)
 
         try:
             for current_round in range(1, max_rounds + 1):
@@ -5519,6 +6060,15 @@ class AgentLoopTask(BaseTask):
                                 "source": _agent_source(),
                             })
 
+                    def on_thinking(text: str):
+                        if not self._is_current_generation(gen_key, my_generation):
+                            raise AgentCancelled()
+                        if not poll_silent:
+                            bus.publish_event(conversation_id, "thinking_content", {
+                                "text": text,
+                                "agent_name": _agent_name or "assistant",
+                            })
+
                     # Heartbeat thread (suppressed during silent poll)
                     heartbeat_stop = threading.Event()
 
@@ -5538,36 +6088,29 @@ class AgentLoopTask(BaseTask):
                     hb_thread.start()
 
                     # Compact context if approaching token limit.
-                    # Skip compaction during tool-call chains (iteration > 1
-                    # and previous response had tool calls) — compacting would
-                    # destroy tool results the LLM needs for the next step
-                    # (critical for lazy tools: get_tool_schema → use_tool).
-                    _in_tool_chain = (iteration > 1 and len(tools_called) > 0
-                                      and messages and messages[-1].role == "tool")
-                    if _in_tool_chain:
-                        llm_context = list(messages)
+                    # Always compact — even during tool chains.  The limit is
+                    # the limit; violating it means a 400 from the API.
+                    _summ = ctx.get("summarizer", (None, 0))
+                    if _summ[0]:
+                        compact_client = _summ[0]
                     else:
-                        _summ = ctx.get("summarizer", (None, 0))
-                        if _summ[0]:
-                            compact_client = _summ[0]
-                        else:
-                            compact_client = ctx.get("default_client") or client
-                        _pre_compact_len = len(messages)
-                        llm_context = self._compact_if_needed(
-                            list(messages), compact_client,
-                            ctx.get("max_context_size", 64000),
-                            ctx.get("context_compact_threshold", 0.8),
-                            ctx.get("context_keep_recent", 6),
-                            conversation_id=conversation_id,
-                            agent_name=_agent_name or "assistant",
-                            tool_defs=ctx.get("tool_defs"),
-                            chars_per_token=ctx.get("chars_per_token", 0),
-                        )
-                        # If compaction happened, mark context as diverged so
-                        # _flush_new() appends subsequent messages to the agent
-                        # context (not just to the canonical messages).
-                        if len(llm_context) < _pre_compact_len:
-                            ctx["_context_diverged"] = True
+                        compact_client = ctx.get("default_client") or client
+                    _pre_compact_len = len(messages)
+                    llm_context = self._compact_if_needed(
+                        list(messages), compact_client,
+                        ctx.get("max_context_size", 64000),
+                        ctx.get("context_compact_threshold", 0.8),
+                        ctx.get("context_keep_recent", 6),
+                        conversation_id=conversation_id,
+                        agent_name=_agent_name or "assistant",
+                        tool_defs=ctx.get("tool_defs"),
+                        chars_per_token=ctx.get("chars_per_token", 0),
+                    )
+                    # If compaction happened, mark context as diverged so
+                    # _flush_new() appends subsequent messages to the agent
+                    # context (not just to the canonical messages).
+                    if len(llm_context) < _pre_compact_len:
+                        ctx["_context_diverged"] = True
 
                     # Inject identity prefixes so LLM knows who said what
                     _id_nicks = ctx.get("_nicknames") or {}
@@ -5619,6 +6162,34 @@ class AgentLoopTask(BaseTask):
                         # Break out of both while and for loops
                         raise _InterruptComplete()
 
+                    # Hard guard: verify context fits before sending to LLM
+                    _max_ctx = ctx.get("max_context_size", 64000)
+                    _pre_send_est = self._estimate_tokens(
+                        llm_context, tool_defs=ctx.get("tool_defs"),
+                        chars_per_token=ctx.get("chars_per_token", 0))
+                    print(
+                        f"[COMPACT-GUARD] pre-send: "
+                        f"{_pre_send_est} est. tokens, {len(llm_context)} msgs, "
+                        f"max={_max_ctx}, cpt={ctx.get('chars_per_token', 0):.2f}",
+                        flush=True)
+                    if _pre_send_est > _max_ctx:
+                        print(
+                            f"[COMPACT-GUARD] STILL OVER LIMIT "
+                            f"({_pre_send_est} > {_max_ctx}), force-fitting...",
+                            flush=True)
+                        llm_context = self._force_fit_context(
+                            llm_context, _max_ctx,
+                            chars_per_token=ctx.get("chars_per_token", 0),
+                            tool_defs=ctx.get("tool_defs"),
+                        )
+                        _post_fit = self._estimate_tokens(
+                            llm_context, tool_defs=ctx.get("tool_defs"),
+                            chars_per_token=ctx.get("chars_per_token", 0))
+                        print(f"[COMPACT-GUARD] after force-fit: "
+                              f"{_post_fit} est. tokens, {len(llm_context)} msgs",
+                              flush=True)
+
+                    _thinking_budget = ctx.get("thinking_budget", 0)
                     try:
                         response = client.complete_stream(
                             messages=llm_context,
@@ -5627,6 +6198,8 @@ class AgentLoopTask(BaseTask):
                             max_tokens=ctx["max_tokens"],
                             tools=tool_defs if tool_defs else None,
                             callback=on_token,
+                            thinking_budget=_thinking_budget,
+                            thinking_callback=on_thinking if _thinking_budget > 0 else None,
                         )
                     except AgentCancelled:
                         raise
@@ -5660,6 +6233,8 @@ class AgentLoopTask(BaseTask):
                                     max_tokens=ctx["max_tokens"],
                                     tools=tool_defs if tool_defs else None,
                                     callback=on_token,
+                                    thinking_budget=_thinking_budget,
+                                    thinking_callback=on_thinking if _thinking_budget > 0 else None,
                                 )
                             except Exception as retry_err:
                                 logger.error(f"LLM retry also failed (iter {iteration}): {retry_err}")
@@ -5690,6 +6265,9 @@ class AgentLoopTask(BaseTask):
                     total_tokens_out += response.tokens_out
                     final_model = response.model
                     finish_reason = response.finish_reason
+
+                    # Deflate images: LLM has seen them, replace base64 with refs
+                    self._deflate_image_messages(messages)
 
                     # Calibrate chars_per_token from actual usage
                     # Use _estimate_tokens(cpt=1) to get raw char count (same formula)
@@ -5768,7 +6346,7 @@ class AgentLoopTask(BaseTask):
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
-                        _result_preview = result_text if tc.name == "spawn_agents" else (result_text or "")[:2000]
+                        _result_preview = result_text if tc.name == "spawn_agents" else (result_text if isinstance(result_text, str) else str(result_text[0].get("text", "") if result_text else ""))[:2000]
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": _result_preview,
                             "agent_name": _agent_name or "assistant",
@@ -6984,7 +7562,7 @@ class AgentLoopTask(BaseTask):
         if not max_tokens:
             max_tokens = 4096
         max_iterations = int(self.config.get("max_iterations", 200))
-        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 5))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 25))
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 
 
@@ -7004,6 +7582,7 @@ class AgentLoopTask(BaseTask):
             "temperature": temperature, "max_tokens": max_tokens,
             "max_iterations": max_iterations,
             "max_consecutive_tool_calls": max_consecutive_tool_calls,
+            "thinking_budget": thinking_budget,
             "max_rounds": int(self.config.get("max_rounds", 1)),
             "use_conv_store": True, "conv_ttl": conv_ttl,
             "conv_attr": "", "conversation_id": conversation_id,
@@ -7086,6 +7665,8 @@ class AgentLoopTask(BaseTask):
             if isinstance(h, CreateFileHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                if user_id:
+                    h.set_user_id(user_id)
             elif isinstance(h, ExecuteScriptHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
@@ -7107,12 +7688,16 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ImageGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                if user_id:
+                    h.set_user_id(user_id)
                 h.set_service_resolver(self._make_image_resolver(
                     user_id, conversation_id, agent_name,
                 ))
             elif isinstance(h, VideoGenerationHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                if user_id:
+                    h.set_user_id(user_id)
                 h.set_service_resolver(self._make_video_resolver(
                     user_id, conversation_id, agent_name,
                 ))
@@ -7197,6 +7782,8 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, ShowFileHandler):
                 if file_base_url:
                     h.set_base_url(file_base_url)
+                if user_id:
+                    h.set_user_id(user_id)
             elif isinstance(h, RemoteExecutorHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
@@ -7427,6 +8014,16 @@ class AgentLoopTask(BaseTask):
         byte-level tokenizers may need 1.0–1.5.  The service config key
         ``chars_per_token`` can override this per-LLM.
         """
+        # Precise counting via tiktoken
+        try:
+            from core.token_counter import count_messages_tokens
+            return count_messages_tokens([
+                {"content": m.content if hasattr(m, 'content') else str(m)}
+                for m in messages
+            ])
+        except Exception:
+            pass
+        # Fallback to character estimation
         cpt = chars_per_token if chars_per_token > 0 else 2.0
         total_chars = 0
         for m in messages:
@@ -7454,6 +8051,85 @@ class AgentLoopTask(BaseTask):
                     total_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
         return int(total_chars / cpt)
 
+    def _force_fit_context(
+        self,
+        messages: List[LLMMessage],
+        max_tokens: int,
+        chars_per_token: float = 0,
+        tool_defs: list = None,
+    ) -> List[LLMMessage]:
+        """Last resort: brute-force truncate messages to fit within max_tokens.
+
+        Strategy (from least to most destructive):
+        1. Truncate all message contents to a max char budget
+        2. Drop middle messages, keep system + last N
+        """
+        cpt = chars_per_token if chars_per_token > 0 else 2.0
+        # Budget for tool defs (constant overhead)
+        td_tokens = 0
+        if tool_defs:
+            for td in tool_defs:
+                td_tokens += len(getattr(td, 'name', '') or '') // cpt
+                td_tokens += len(getattr(td, 'description', '') or '') // cpt
+                params = getattr(td, 'parameters', None)
+                if params:
+                    td_tokens += len(json.dumps(params) if isinstance(params, dict) else str(params)) // cpt
+
+        # Target: 70% of max to leave headroom
+        target = int(max_tokens * 0.70) - int(td_tokens)
+        if target < 1000:
+            target = 1000
+
+        # Step 1: Truncate every message to a per-message char budget
+        n_msgs = max(1, len(messages))
+        chars_budget_per_msg = int(target * cpt / n_msgs)
+        # Give recent messages more budget
+        keep_n = min(6, n_msgs)
+        old_budget = max(100, int(chars_budget_per_msg * 0.3))
+        recent_budget = max(500, int(target * cpt * 0.6 / max(1, keep_n)))
+
+        result = []
+        for i, m in enumerate(messages):
+            budget = recent_budget if i >= n_msgs - keep_n else old_budget
+            # Preserve system prompt
+            if i == 0 and m.role == "system":
+                budget = max(budget, 5000)
+            new_m = LLMMessage(
+                role=m.role,
+                tool_call_id=getattr(m, 'tool_call_id', None),
+                tool_calls=m.tool_calls,
+                source=getattr(m, 'source', None),
+            )
+            if isinstance(m.content, str):
+                new_m.content = m.content[:budget] if len(m.content) > budget else m.content
+                if len(m.content) > budget:
+                    new_m.content += "\n...[truncated to fit context]..."
+            elif isinstance(m.content, list):
+                # Drop images, keep text truncated
+                text = " ".join(p.get("text", "") for p in m.content if p.get("type") == "text")
+                new_m.content = text[:budget] + ("\n...[truncated]..." if len(text) > budget else "")
+            else:
+                new_m.content = m.content
+            result.append(new_m)
+
+        est = self._estimate_tokens(result, tool_defs=tool_defs, chars_per_token=chars_per_token)
+        if est <= max_tokens:
+            print(f"[COMPACT-GUARD] force-fit step 1 OK: {est} tokens", flush=True)
+            return result
+
+        # Step 2: Drop middle messages, keep system + last N
+        print(f"[COMPACT-GUARD] step 1 insufficient ({est} > {max_tokens}), dropping middle", flush=True)
+        keep = []
+        if result and result[0].role == "system":
+            keep.append(result[0])
+            keep.append(LLMMessage(
+                role="user",
+                content=f"[{len(result) - keep_n - 1} earlier messages dropped to fit context limit]",
+            ))
+            keep.append(LLMMessage(role="assistant", content="Understood, continuing."))
+        keep.extend(result[-keep_n:])
+        return keep
+
     def _compact_if_needed(
         self,
         messages: List[LLMMessage],
@@ -7479,21 +8155,35 @@ class AgentLoopTask(BaseTask):
         If *conversation_id* is given, the resulting summary is persisted
         to the ConversationStore so it can be reused after a restart.
         """
+        # Always deflate any leftover image base64 before estimating
+        self._deflate_image_messages(messages)
+
         estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
                                           chars_per_token=chars_per_token)
         limit = int(max_tokens * threshold)
 
+        print(f"[COMPACT] check: {estimated} est. tokens, limit={limit} "
+              f"(max={max_tokens}×{threshold}), {len(messages)} msgs, "
+              f"cpt={chars_per_token:.2f}", flush=True)
+
         if estimated <= limit:
             return messages
 
-        logger.info(f"[compact] Estimated {estimated} tokens (limit {limit}), compacting...")
+        print(f"[COMPACT] TRIGGERED: {estimated} > {limit}, compacting...", flush=True)
 
-        # Pass 1: Truncate long tool results
+        # Pass 1: Aggressively truncate tool results and multimodal content
         truncated = False
         for m in messages:
-            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > 500:
-                m.content = m.content[:200] + "\n...[truncated]..."
-                truncated = True
+            if m.role == "tool":
+                if isinstance(m.content, str) and len(m.content) > 500:
+                    m.content = m.content[:200] + "\n...[truncated]..."
+                    truncated = True
+                elif isinstance(m.content, list):
+                    # Multimodal: keep only text parts, drop images
+                    text_parts = [p for p in m.content if p.get("type") == "text"]
+                    text = " ".join(p.get("text", "") for p in text_parts)
+                    m.content = text[:200] + "\n...[truncated]..." if len(text) > 500 else text
+                    truncated = True
 
         if truncated:
             estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
@@ -7501,6 +8191,24 @@ class AgentLoopTask(BaseTask):
             if estimated <= limit:
                 logger.info(f"[compact] Pass 1 (truncate tool results) sufficient: {estimated} tokens")
                 return messages
+
+        # Pass 1b: If still way over, truncate ALL non-recent messages aggressively
+        if estimated > limit * 2:
+            logger.warning(f"[compact] Still {estimated} tokens after truncation, "
+                           f"aggressive truncation of old messages")
+            _keep_n = max(keep_recent, 6)
+            _cutoff = len(messages) - _keep_n
+            for i, m in enumerate(messages):
+                if i == 0 and m.role == "system":
+                    continue  # preserve system prompt
+                if i >= _cutoff:
+                    break  # preserve recent
+                if isinstance(m.content, str) and len(m.content) > 200:
+                    m.content = m.content[:100] + "\n...[aggressively truncated]..."
+                elif isinstance(m.content, list):
+                    m.content = "[content truncated for context limit]"
+            estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
+                                              chars_per_token=chars_per_token)
 
         # Pass 2: LLM-based summarization of old messages
         if len(messages) <= keep_recent + 1:
@@ -7526,7 +8234,13 @@ class AgentLoopTask(BaseTask):
                                                conversation_id=conversation_id)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
-            return messages  # Keep original if summarization fails
+            # NEVER return the original messages if they exceed the limit.
+            # Build a minimal context with just system + placeholder + recent.
+            logger.warning("[compact] Falling back to drop-old strategy (no summary)")
+            summary = (
+                f"[Earlier conversation ({len(old_messages)} messages) could not be "
+                f"summarized due to: {e}. Context was dropped to fit within limits.]"
+            )
 
         # Rebuild messages: system + summary + recent
         compacted: List[LLMMessage] = []
@@ -7586,22 +8300,21 @@ class AgentLoopTask(BaseTask):
         target_tokens: int = 0,
         conversation_id: str = "",
     ) -> str:
-        """Summarize messages, chunking if the text is too large for the LLM.
+        """Summarize messages iteratively until they fit.
 
-        Args:
-            max_tokens: context window of the summarizer LLM
-            target_tokens: desired output size (0 = max_tokens/4)
-
-        Strategy: estimate how many tokens the summary request will use.
-        If it exceeds ~70% of max_tokens, split messages in half, summarize
-        each half recursively, combine, and do a final summary pass.
+        Strategy:
+        1. Convert messages to text
+        2. If text fits in LLM context (< 60% of max_tokens) → single summarize call
+        3. If too big → split into N chunks (each < 60% of max_tokens),
+           summarize each independently
+        4. Concatenate summaries. If still too big, repeat from step 2
+        5. Final pass: summarize combined result to ~25% of max_tokens
         """
         if not target_tokens:
             target_tokens = max(500, int(max_tokens / 4))
 
-        summary_text = self._sanitize_for_llm(self._messages_to_text(old_messages))
-        text_tokens = self._estimate_tokens([LLMMessage(role="user", content=summary_text)])
-        safe_limit = int(max_tokens * 0.65)  # leave room for system prompt + output
+        # 60% of context = safe input limit (leaves room for system prompt + output)
+        safe_limit = int(max_tokens * 0.60)
 
         def _pub(stage, detail=""):
             if conversation_id:
@@ -7614,39 +8327,81 @@ class AgentLoopTask(BaseTask):
                 except Exception:
                     pass
 
-        if text_tokens <= safe_limit:
-            _pub("summarizing", f"single pass ({text_tokens} tokens)")
-            return self._call_summarize(client, summary_text, target_tokens)
+        def _est(text: str) -> int:
+            return self._estimate_tokens([LLMMessage(role="user", content=text)])
 
-        # Too large — split in half and summarize each part recursively
-        mid = len(old_messages) // 2
-        if mid == 0:
-            truncated = summary_text[:safe_limit * 3]
-            _pub("summarizing", "single message (truncated)")
-            return self._call_summarize(client, truncated, target_tokens)
+        # Convert messages to text chunks (one per message for granular splitting)
+        text_chunks = []
+        for m in old_messages:
+            text_chunks.append(self._sanitize_for_llm(self._messages_to_text([m])))
 
-        _pub("chunking", f"splitting {len(old_messages)} messages into 2 chunks")
-        logger.info(f"[compact] Text too large ({text_tokens} tokens > {safe_limit}), "
-                    f"splitting {len(old_messages)} messages into 2 chunks")
+        _pass = 0
+        _max_passes = 5  # safety valve
 
-        chunk_target = max(250, target_tokens // 2)
-        _pub("summarizing", f"chunk 1/{2} ({mid} messages)")
-        summary_a = self._summarize_messages(old_messages[:mid], client, max_tokens,
-                                             chunk_target, conversation_id)
-        _pub("summarizing", f"chunk 2/{2} ({len(old_messages) - mid} messages)")
-        summary_b = self._summarize_messages(old_messages[mid:], client, max_tokens,
-                                             chunk_target, conversation_id)
+        while _pass < _max_passes:
+            _pass += 1
+            total_text = "\n".join(text_chunks)
+            total_tokens = _est(total_text)
 
-        combined = f"Part 1:\n{summary_a}\n\nPart 2:\n{summary_b}"
-        combined_tokens = self._estimate_tokens([LLMMessage(role="user", content=combined)])
+            logger.info(f"[compact] Pass {_pass}: {total_tokens} tokens in "
+                        f"{len(text_chunks)} chunks (safe_limit={safe_limit})")
 
-        if combined_tokens <= safe_limit:
-            _pub("summarizing", "merging chunks")
-            return self._call_summarize(client, combined, target_tokens)
-        else:
-            # Still too big — just concatenate (will be compacted on next cycle)
-            logger.warning(f"[compact] Combined summaries still large ({combined_tokens} tokens), concatenating")
-            return combined
+            # If everything fits → single summary call
+            if total_tokens <= safe_limit:
+                _pub("summarizing", f"pass {_pass}: single call ({total_tokens} tokens)")
+                return self._call_summarize(client, total_text, target_tokens)
+
+            # Split chunks into groups that each fit in safe_limit
+            groups: List[str] = []
+            current_group: List[str] = []
+            current_tokens = 0
+            # Leave 20% margin within each group for overhead
+            group_limit = int(safe_limit * 0.80)
+
+            for chunk in text_chunks:
+                chunk_tokens = _est(chunk)
+                # If a single chunk exceeds the limit, hard-truncate it
+                if chunk_tokens > group_limit:
+                    cpt = max(1.0, len(chunk) / max(1, chunk_tokens))
+                    max_chars = int(group_limit * cpt)
+                    chunk = chunk[:max_chars] + "\n...[truncated]..."
+                    chunk_tokens = _est(chunk)
+                if current_tokens + chunk_tokens > group_limit and current_group:
+                    groups.append("\n".join(current_group))
+                    current_group = []
+                    current_tokens = 0
+                current_group.append(chunk)
+                current_tokens += chunk_tokens
+
+            if current_group:
+                groups.append("\n".join(current_group))
+
+            n_groups = len(groups)
+            logger.info(f"[compact] Pass {_pass}: split into {n_groups} groups")
+            _pub("chunking", f"pass {_pass}: {n_groups} groups")
+
+            # Summarize each group independently
+            chunk_target = max(200, target_tokens // max(1, n_groups))
+            summaries = []
+            for i, group_text in enumerate(groups):
+                _pub("summarizing", f"pass {_pass}: group {i+1}/{n_groups}")
+                try:
+                    s = self._call_summarize(client, group_text, chunk_target)
+                    summaries.append(s)
+                except Exception as e:
+                    logger.error(f"[compact] Group {i+1} summarization failed: {e}")
+                    # Hard fallback: just truncate
+                    cpt = max(1.0, len(group_text) / max(1, _est(group_text)))
+                    summaries.append(group_text[:int(chunk_target * cpt)] + "\n...[truncated]...")
+
+            # Replace text_chunks with the summaries for next iteration
+            text_chunks = summaries
+
+        # Exhausted max passes — concatenate what we have
+        final = "\n\n".join(text_chunks)
+        logger.warning(f"[compact] Exhausted {_max_passes} passes, "
+                       f"final size: {_est(final)} tokens")
+        return final
 
     def _call_summarize(self, client: LLMClient, text: str,
                         target_tokens: int = 0) -> str:

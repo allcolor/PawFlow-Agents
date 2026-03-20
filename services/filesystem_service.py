@@ -531,8 +531,13 @@ class FilesystemService:
 
     def stat(self, path: str):
         from core.filesystem import FilesystemEntry
+        import dataclasses
         data = self._request("stat", path)
-        return FilesystemEntry(**data) if isinstance(data, dict) else data
+        if isinstance(data, dict):
+            # Filter to known fields only (relay may return extra like 'created')
+            valid = {f.name for f in dataclasses.fields(FilesystemEntry)}
+            return FilesystemEntry(**{k: v for k, v in data.items() if k in valid})
+        return data
 
     def exists(self, path: str) -> bool:
         data = self._request("exists", path)
@@ -551,18 +556,58 @@ class FilesystemService:
         return self._request("edit", path, old_string=old_string,
                               new_string=new_string, replace_all=replace_all)
 
+    def batch_edit(self, edits: list):
+        return self._request("batch_edit", ".", edits=edits)
+
+    def apply_patch(self, patch: str):
+        return self._request("apply_patch", ".", patch=patch)
+
+    def edit_notebook(self, path: str, cell_index: int, new_source: str = "",
+                      cell_type: str = "", operation: str = "edit"):
+        return self._request("edit_notebook", path, cell_index=cell_index,
+                              new_source=new_source, cell_type=cell_type,
+                              operation=operation)
+
     def exec(self, path: str, command: str, timeout: int = 30):
         return self._request("exec", path, command=command, timeout=timeout)
+
+    # ── Git ──
+
+    # ── Aliases (LLMs often drop the _file suffix) ──
+
+    read = read_file
+    write = write_file
+    delete = delete_file
 
     # ── Git ──
 
     def git_status(self, path="."): return self._request("git_status", path)
     def git_log(self, path=".", count=10): return self._request("git_log", path, count=count)
     def git_diff(self, path=".", ref=""): return self._request("git_diff", path, ref=ref)
-    def git_commit(self, path=".", message=""): return self._request("git_commit", path, message=message)
+    def git_commit(self, path=".", message="", files=None, amend=False): return self._request("git_commit", path, message=message, files=files or [], amend=amend)
     def git_pull(self, path="."): return self._request("git_pull", path)
     def git_push(self, path="."): return self._request("git_push", path)
     def git_checkout(self, path=".", ref=""): return self._request("git_checkout", path, ref=ref)
+    def git_add(self, path=".", files=None): return self._request("git_add", path, files=files or [])
+    def git_reset(self, path=".", files=None, ref="", mode="mixed"): return self._request("git_reset", path, files=files or [], ref=ref, mode=mode)
+    def git_stash(self, path=".", operation="push", message="", index=0): return self._request("git_stash", path, operation=operation, message=message, index=index)
+    def git_branch(self, path=".", operation="list", branch="", base="", force=False): return self._request("git_branch", path, operation=operation, branch=branch, base=base, force=force)
+    def git_merge(self, path=".", branch="", no_ff=False): return self._request("git_merge", path, branch=branch, no_ff=no_ff)
+    def git_rebase(self, path=".", onto="", operation="start"): return self._request("git_rebase", path, onto=onto, operation=operation)
+    def git_cherry_pick(self, path=".", commits=None): return self._request("git_cherry_pick", path, commits=commits or [])
+    def git_tag(self, path=".", operation="list", tag="", message=""): return self._request("git_tag", path, operation=operation, tag=tag, message=message)
+    def git_blame(self, path=".", file="", start_line=0, end_line=0): return self._request("git_blame", path, file=file, start_line=start_line, end_line=end_line)
+    def project_init(self, path=".", force=False): return self._request("project_init", path, force=force)
+
+    def git_worktree_list(self, path="."):
+        return self._request("git_worktree_list", path)
+
+    def git_worktree_add(self, path=".", branch="", worktree_path="", create_new_branch=False):
+        return self._request("git_worktree_add", path, branch=branch,
+                              worktree_path=worktree_path, create_new_branch=create_new_branch)
+
+    def git_worktree_remove(self, path=".", worktree_path=""):
+        return self._request("git_worktree_remove", path, worktree_path=worktree_path)
 
 
 # Register with ServiceFactory

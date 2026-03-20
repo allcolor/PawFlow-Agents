@@ -1,0 +1,16 @@
+{
+  ":review": {
+    "name": "review",
+    "prompt": "Review the code changes in the current context. For each file that was modified:\n1. Check for bugs, logic errors, and edge cases\n2. Check for security vulnerabilities (injection, XSS, SSRF, etc.)\n3. Check for performance issues\n4. Check for code style and readability\n5. Check for missing error handling\n\nProvide a structured review with:\n- **Summary**: One-line overview of the changes\n- **Issues**: List of problems found, with severity (critical/warning/info)\n- **Suggestions**: Improvements that could be made\n- **Verdict**: APPROVE, REQUEST_CHANGES, or NEEDS_DISCUSSION\n\nBe concise and actionable. Focus on real issues, not style nitpicks.",
+    "description": "Structured code review of recent changes",
+    "created_at": 1742472000,
+    "updated_at": 1742472000
+  },
+  ":pr": {
+    "name": "pr",
+    "prompt": "Create a pull request for the current branch. Steps:\n1. Use `filesystem` tool with `git_status` to check current state\n2. Use `filesystem` with `git_log` to get recent commits on this branch\n3. Use `filesystem` with `git_diff` with ref=main (or master) to see all changes\n4. Draft a PR title (short, under 70 chars) and description with:\n   - ## Summary (2-3 bullet points)\n   - ## Changes (list of files and what changed)\n   - ## Test plan (how to verify)\n5. Use `filesystem` with `exec` to run: `gh pr create --title \"<title>\" --body \"<body>\"`\n6. Report the PR URL back to the user\n\nIf `gh` is not installed, provide the PR title and body for manual creation.",
+    "description": "Create a GitHub pull request from current branch",
+    "created_at": 1742472000,
+    "updated_at": 1742472000
+  }
+}

@@ -369,12 +369,17 @@ class ConversationStore:
                 )
             return result
 
-    def set_extra(self, conversation_id: str, key: str, value: Any) -> bool:
+    def set_extra(self, conversation_id: str, key: str, value: Any,
+                  user_id: str = "") -> bool:
         """Store arbitrary extra data on a conversation (plan, state, etc.)."""
         with self._store_lock:
             self._ensure_loaded()
             entry = self._conversations.get(conversation_id)
             if entry is None:
+                return False
+            # Access control
+            entry_owner = entry.get("user_id", "")
+            if user_id and entry_owner and entry_owner != user_id:
                 return False
             extra = entry.setdefault("extra", {})
             extra[key] = value
@@ -382,14 +387,31 @@ class ConversationStore:
         return True
 
     def get_extra(self, conversation_id: str, key: str,
-                  default: Any = None) -> Any:
+                  default: Any = None, user_id: str = "") -> Any:
         """Retrieve extra data stored on a conversation."""
         with self._store_lock:
             self._ensure_loaded()
             entry = self._conversations.get(conversation_id)
             if entry is None:
                 return default
+            # Access control
+            entry_owner = entry.get("user_id", "")
+            if user_id and entry_owner and entry_owner != user_id:
+                return default
             return entry.get("extra", {}).get(key, default)
+
+    def get_extras(self, conversation_id: str, user_id: str = "") -> Optional[dict]:
+        """Get all extras for a conversation. Returns None if not found or access denied."""
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if not entry:
+                return None
+            # Access control
+            entry_owner = entry.get("user_id", "")
+            if user_id and entry_owner and entry_owner != user_id:
+                return None
+            return dict(entry.get("extra", {}))
 
     def delete_message(self, conversation_id: str, index: int,
                        user_id: str = "") -> bool:

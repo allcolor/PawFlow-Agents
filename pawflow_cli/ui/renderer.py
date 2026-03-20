@@ -227,17 +227,116 @@ class TerminalRenderer:
             for i, opt in enumerate(options, 1):
                 print(f"  [{i}] {opt}")
 
+    # ── Exec output ──
+
+    def print_exec_output(self, command: str, exit_code: int, stdout: str, stderr: str):
+        """Render shell command output."""
+        if self.console:
+            self.console.print(Panel(
+                Syntax(command, "bash", theme="monokai"),
+                title="exec",
+                border_style="green" if exit_code == 0 else "red",
+                subtitle=f"exit {exit_code}",
+            ))
+            if stdout:
+                self.console.print(f"[dim]{stdout[:1000]}[/dim]")
+            if stderr:
+                self.console.print(f"[red]{stderr[:500]}[/red]")
+        else:
+            print(f"$ {command}")
+            if stdout:
+                print(stdout[:1000])
+            if stderr:
+                print(f"STDERR: {stderr[:500]}")
+            print(f"(exit {exit_code})")
+
+    # ── History messages ──
+
+    def print_separator(self):
+        """Print a visual separator between messages."""
+        if self.console:
+            self.console.print("[dim]─[/dim]" * 40, style="dim")
+        else:
+            print("─" * 40)
+
+    def render_history_message(self, msg: dict):
+        """Render a classified history message."""
+        mtype = msg.get("type", msg.get("role", ""))
+        content = msg.get("content", "")
+        source = msg.get("source", {})
+        agent = source.get("name", "") if isinstance(source, dict) else ""
+        svc = source.get("llm_service", "") if isinstance(source, dict) else ""
+        channel = msg.get("channel", "")
+
+        if not content:
+            return
+
+        if mtype == "user":
+            # Separator before user messages
+            self.print_separator()
+            channel_badge = f" [dim]({channel})[/dim]" if channel and channel != "chat" else ""
+            if self.console:
+                # Truncate long user messages
+                display = content if len(content) <= 300 else content[:300] + "..."
+                self.console.print(f"[bold green]>[/bold green]{channel_badge} {display}")
+            else:
+                print(f"> {content[:300]}")
+
+        elif mtype in ("assistant", "agent_response"):
+            # Separator before agent responses
+            self.print_separator()
+            badge = agent or "assistant"
+            svc_info = f" via {svc}" if svc else ""
+            color = _agent_color(badge)
+            if self.console:
+                self.console.print(f"[bold {color}][{badge}{svc_info}][/bold {color}]")
+                # Truncate very long responses in history
+                display = content if len(content) <= 2000 else content[:2000] + "\n..."
+                try:
+                    self.console.print(Markdown(display), style="")
+                except Exception:
+                    self.console.print(display)
+            else:
+                print(f"[{badge}{svc_info}]")
+                print(content[:2000])
+
+        elif mtype == "tool_call":
+            # Tool call — yellow with tool name and args preview
+            if self.console:
+                self.console.print(f"[yellow]  {content}[/yellow]")
+            else:
+                print(f"  {content}")
+
+        elif mtype == "tool_result":
+            # Tool result — dim green, truncated
+            if self.console:
+                display = content if len(content) <= 200 else content[:200] + "..."
+                self.console.print(f"[dim green]  > {display}[/dim green]")
+            else:
+                print(f"  > {content[:200]}")
+
     # ── Conversations ──
 
     def print_conversation_list(self, conversations: list):
         if not conversations:
             self.print_system("No conversations.")
             return
-        for c in conversations:
-            cid = c.get("conversation_id", "?")[:8]
-            title = c.get("title", "") or c.get("last_message", "")[:60] or "(empty)"
-            age = c.get("age", "")
-            if self.console:
-                self.console.print(f"  [cyan]{cid}[/cyan]  {title}  [dim]{age}[/dim]")
-            else:
-                print(f"  {cid}  {title}  {age}")
+        if self.console:
+            from rich.table import Table
+            table = Table(show_header=True, header_style="bold", box=None, padding=(0, 2))
+            table.add_column("ID", style="cyan", width=10)
+            table.add_column("Last message", style="", ratio=1)
+            table.add_column("Messages", style="dim", justify="right", width=8)
+            table.add_column("Age", style="dim", width=12)
+            for c in conversations:
+                cid = c.get("conversation_id", "?")[:8]
+                title = c.get("title", "") or c.get("last_message", "")[:60] or "(empty)"
+                count = str(c.get("message_count", ""))
+                age = c.get("age", "")
+                table.add_row(cid, title, count, age)
+            self.console.print(table)
+        else:
+            for c in conversations:
+                cid = c.get("conversation_id", "?")[:8]
+                title = c.get("title", "") or c.get("last_message", "")[:60] or "(empty)"
+                print(f"  {cid}  {title}")

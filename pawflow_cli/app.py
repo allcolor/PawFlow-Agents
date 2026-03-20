@@ -241,6 +241,57 @@ class PawCode:
                     data.get("options", []),
                 )
 
+            elif ev_type == "btw_thinking":
+                agent = data.get("agent_name", "assistant")
+                self.renderer.print_system(f"[{agent} btw] thinking...")
+
+            elif ev_type == "btw_token":
+                agent = data.get("agent_name", "assistant")
+                # Use a separate btw stream
+                btw_key = f"btw:{agent}"
+                if btw_key != streaming_agent:
+                    if streaming_agent:
+                        self.renderer.end_stream(streaming_agent)
+                    streaming_agent = btw_key
+                    self.renderer.print(f"[dim italic]  [{agent} btw][/dim italic]")
+                    self.renderer.start_stream(btw_key)
+                self.renderer.stream_token(btw_key, data.get("text", ""))
+
+            elif ev_type == "btw_done":
+                agent = data.get("agent_name", "assistant")
+                btw_key = f"btw:{agent}"
+                if streaming_agent == btw_key:
+                    self.renderer.end_stream(btw_key, data.get("response", ""))
+                    streaming_agent = ""
+
+            elif ev_type == "sub_agent_start":
+                agent = data.get("agent_name", "?")
+                self.renderer.print_system(f"Sub-agent [{agent}] started")
+
+            elif ev_type == "sub_agent_done":
+                agent = data.get("agent_name", "?")
+                tokens = data.get("tokens_in", 0) + data.get("tokens_out", 0)
+                self.renderer.print_system(f"Sub-agent [{agent}] done ({tokens} tokens)")
+                resp = data.get("response", "")
+                if resp:
+                    self.renderer.print_agent_badge(agent, data.get("llm_service", ""))
+                    self.renderer.print_markdown(resp[:500])
+
+            elif ev_type == "exec_output":
+                cmd = data.get("command", "")
+                rc = data.get("exit_code", -1)
+                stdout = data.get("stdout", "")
+                stderr = data.get("stderr", "")
+                self.renderer.print_exec_output(cmd, rc, stdout, stderr)
+
+            elif ev_type == "notification":
+                msg = data.get("message", "")
+                urgency = data.get("urgency", "normal")
+                if urgency == "high":
+                    self.renderer.print_error(msg)
+                else:
+                    self.renderer.print_system(msg)
+
             elif ev_type == "done":
                 if streaming_agent:
                     self.renderer.end_stream(streaming_agent, data.get("response", ""))
@@ -527,26 +578,14 @@ class PawCode:
 
     def _display_history(self, messages: list, show_n: int = 10):
         """Display the last N messages from conversation history."""
-        displayable = [m for m in messages
-                       if m.get("type", m.get("role", "")) not in ("system", "tool_call", "tool_result")]
+        # Filter out system messages but keep tool_call/tool_result for context
+        displayable = [m for m in messages if m.get("type", m.get("role", "")) != "system"]
         recent = displayable[-show_n:] if len(displayable) > show_n else displayable
         if len(displayable) > show_n:
-            self.renderer.print_system(f"... ({len(displayable) - show_n} earlier messages, use /history {len(displayable)} to see all)")
+            self.renderer.print_system(
+                f"... ({len(displayable) - show_n} earlier messages, use /history {len(displayable)} to see all)")
         for m in recent:
-            mtype = m.get("type", m.get("role", ""))
-            content = m.get("content", "")
-            if not content:
-                continue
-            if isinstance(content, str) and len(content) > 500:
-                content = content[:500] + "..."
-            source = m.get("source", {})
-            agent = source.get("name", "") if isinstance(source, dict) else ""
-            if mtype == "user":
-                self.renderer.print(f"[bold green]❯[/bold green] {content}")
-            elif mtype in ("assistant", "agent_response"):
-                badge = agent or "assistant"
-                self.renderer.print_agent_badge(badge)
-                self.renderer.print_markdown(content)
+            self.renderer.render_history_message(m)
 
     def _resolve_conversation_id(self, partial: str) -> str:
         """Resolve a partial conversation ID to full ID."""

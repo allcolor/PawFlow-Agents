@@ -3218,6 +3218,10 @@ class AssignTaskHandler(ToolHandler):
                     "type": "object",
                     "description": "Variables to substitute in prompt/criteria. E.g. {\"nbr_images\": \"20\"} replaces ${nbr_images} in the task definition. Use \\${...} in definitions to keep literal ${...} unresolved.",
                 },
+                "context": {
+                    "type": "string",
+                    "description": "Context mode: 'isolated' (default), 'last:N' (last N messages), 'summary:N' (summary of N tokens), 'full' (entire parent context)",
+                },
             },
             "required": ["agent"],
         }
@@ -3356,6 +3360,7 @@ class AssignTaskHandler(ToolHandler):
 
         # Store in agent_tasks dict (multiple tasks per agent)
         all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+        context_mode = arguments.get("context", "isolated")
         task_data = {
             "task_id": task_id,
             "agent": target,
@@ -3371,6 +3376,7 @@ class AssignTaskHandler(ToolHandler):
             "task_def_name": task_def_name,
             "created_at": _t.time(),
             "last_result": "",
+            "context_mode": context_mode,
         }
         all_tasks[task_id] = task_data
         store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
@@ -4693,6 +4699,10 @@ class SpawnAgentsHandler(ToolHandler):
                                 "type": "string",
                                 "description": "Optional task ID for tracking",
                             },
+                            "context": {
+                                "type": "string",
+                                "description": "Context mode: 'isolated' (default), 'last:N' (last N messages), 'summary:N' (summary of N tokens), 'full' (entire parent context)",
+                            },
                         },
                         "required": ["agent", "message"],
                     },
@@ -4752,6 +4762,15 @@ class SpawnAgentsHandler(ToolHandler):
                 task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
 
+                # Resolve context mode
+                context_mode = spec.get("context", "isolated")
+                task.context_mode = context_mode
+                task.parent_conversation_id = self._conversation_id
+
+                if context_mode != "isolated" and self._conversation_id:
+                    task.context_messages = self._resolve_context(
+                        context_mode, self._conversation_id, user_id)
+
                 # Prevent agent from calling itself
                 if agent_name.lower() in _self_names:
                     return (f"Error: You ('{_src_agent}' via {_src_svc}) "
@@ -4798,6 +4817,49 @@ class SpawnAgentsHandler(ToolHandler):
             output.append(entry)
 
         return json.dumps(output, ensure_ascii=False, indent=2)
+
+    def _resolve_context(self, mode: str, conversation_id: str,
+                         user_id: str) -> list:
+        """Resolve context messages based on mode."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+
+        if mode == "full":
+            raw = store.load(conversation_id, user_id=user_id) or []
+            # Filter out system messages, keep user/assistant/tool
+            return [m for m in raw if m.get("role") != "system"]
+
+        if mode.startswith("last:"):
+            try:
+                n = int(mode.split(":")[1])
+            except (ValueError, IndexError):
+                n = 10
+            raw = store.load(conversation_id, user_id=user_id) or []
+            non_system = [m for m in raw if m.get("role") != "system"]
+            return non_system[-n:]
+
+        if mode.startswith("summary:"):
+            try:
+                max_tokens = int(mode.split(":")[1])
+            except (ValueError, IndexError):
+                max_tokens = 2000
+            raw = store.load(conversation_id, user_id=user_id) or []
+            # Build a simple text summary from recent messages
+            text_parts = []
+            for m in raw[-50:]:  # last 50 messages for summary input
+                role = m.get("role", "")
+                content = m.get("content", "")
+                if role in ("user", "assistant") and content:
+                    text_parts.append(f"{role}: {content[:200]}")
+            summary = "\n".join(text_parts)
+            # Truncate to approximate token limit
+            if len(summary) > max_tokens * 4:
+                summary = summary[-(max_tokens * 4):]
+            return [{"role": "user",
+                     "content": f"[Context summary from parent conversation]"
+                                f"\n{summary}"}]
+
+        return []  # isolated
 
 
 class GetAgentResultsHandler(ToolHandler):
@@ -5976,6 +6038,66 @@ class RunTestsHandler(ToolHandler):
             return f"Error running tests: {e}"
 
 
+class ReadParentContextHandler(ToolHandler):
+    """Read messages from the parent conversation (for sub-agents)."""
+
+    _parent_conversation_id: str = ""
+    _user_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "read_parent_context"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Read recent messages from the parent conversation that spawned "
+            "this agent. Use when you need more context about the overall "
+            "discussion."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "last_n": {
+                    "type": "integer",
+                    "description": "Number of recent messages to read (default 20)",
+                },
+            },
+        }
+
+    def set_parent_conversation_id(self, cid: str):
+        self._parent_conversation_id = cid
+
+    def set_user_id(self, uid: str):
+        self._user_id = uid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        if not self._parent_conversation_id:
+            return ("No parent conversation available (this agent was not "
+                    "spawned from a conversation).")
+
+        last_n = arguments.get("last_n", 20)
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            raw = store.load(self._parent_conversation_id,
+                             user_id=self._user_id) or []
+            non_system = [m for m in raw if m.get("role") != "system"]
+            recent = non_system[-last_n:]
+            lines = []
+            for m in recent:
+                role = m.get("role", "?")
+                content = m.get("content", "")[:300]
+                lines.append(f"[{role}] {content}")
+            return "\n\n".join(lines) if lines else (
+                "(no messages in parent conversation)")
+        except Exception as e:
+            return f"Error reading parent context: {e}"
+
+
 def create_default_registry() -> ToolRegistry:
     """Create a ToolRegistry with all builtin handlers registered."""
     registry = ToolRegistry()
@@ -6013,6 +6135,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(GetAgentResultsHandler())
     registry.register(UseSkillHandler())
     registry.register(ShowFileHandler())
+    registry.register(ReadParentContextHandler())
 
     # Browser automation (conditional — requires playwright)
     try:

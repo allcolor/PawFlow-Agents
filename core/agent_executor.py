@@ -52,6 +52,9 @@ class AgentTask:
     source_agent: str = ""  # name of the parent agent (for identity tracking)
     source_agent_nickname: str = ""  # display name of the parent agent
     source_llm_service: str = ""  # LLM service of the parent agent
+    context_mode: str = "isolated"  # isolated, last:N, summary:N, full
+    context_messages: Optional[List] = None  # pre-resolved context messages
+    parent_conversation_id: str = ""  # for read_parent_context tool
 
 
 @dataclass
@@ -223,6 +226,13 @@ class SubAgentExecutor:
         # Build tool definitions (filtered if agent specifies a whitelist)
         tool_defs, tool_handlers = self._build_tools(task.tools)
 
+        # Set parent conversation ID on read_parent_context tool
+        for h in self._registry.list_tools():
+            if hasattr(h, 'set_parent_conversation_id') and task.parent_conversation_id:
+                h.set_parent_conversation_id(task.parent_conversation_id)
+            if hasattr(h, 'set_user_id') and task.user_id:
+                h.set_user_id(task.user_id)
+
         # Detect CLI-based providers that cannot execute tools directly
         _provider = getattr(client, "provider", "") or ""
         _is_cli_provider = _provider in ("claude-code", "gemini-cli")
@@ -273,10 +283,30 @@ class SubAgentExecutor:
             if task.source_agent
             else {"type": "user", "name": task.user_id or "unknown"}
         )
-        messages = [
-            LLMMessage(role="system", content=sys_prompt),
-            LLMMessage(role="user", content=task.message, source=user_source),
-        ]
+
+        # Sub-conversation persistence
+        sub_conv_id = ""
+        if task.parent_conversation_id:
+            sub_conv_id = f"{task.parent_conversation_id}:task:{task.id}"
+            # Try to resume existing sub-conversation
+            try:
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                existing = store.load(sub_conv_id)
+                if existing and len(existing) > 1:
+                    # Resume from persisted context
+                    messages = self._deserialize_sub_messages(existing)
+                    logger.info("Resuming sub-conv %s with %d messages",
+                                sub_conv_id, len(messages))
+                else:
+                    messages = self._build_initial_context(
+                        task, sys_prompt, user_source)
+            except Exception:
+                messages = self._build_initial_context(
+                    task, sys_prompt, user_source)
+        else:
+            messages = self._build_initial_context(
+                task, sys_prompt, user_source)
 
         try:
             for iteration in range(1, max_iter + 1):
@@ -348,6 +378,18 @@ class SubAgentExecutor:
                         tool_call_id=tc.id,
                     ))
 
+                # Persist sub-conversation after each iteration
+                if sub_conv_id:
+                    try:
+                        from core.conversation_store import ConversationStore
+                        _store = ConversationStore.instance()
+                        _store.save(sub_conv_id,
+                                    [{"role": m.role, "content": m.content}
+                                     for m in messages],
+                                    user_id=task.user_id)
+                    except Exception:
+                        pass
+
                 if result.status == "timeout":
                     break
             else:
@@ -384,6 +426,47 @@ class SubAgentExecutor:
             "model": result.model,
             "provider": result.provider,
         })
+
+        # Cleanup sub-conversation (unless agent scheduled continuation)
+        if sub_conv_id and result.status in ("completed", "error", "timeout"):
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().delete(sub_conv_id)
+            except Exception:
+                pass
+
+        return result
+
+    def _build_initial_context(self, task, sys_prompt, user_source):
+        """Build initial messages for a sub-agent based on context_mode."""
+        messages = [LLMMessage(role="system", content=sys_prompt)]
+        # Inject context messages if provided
+        if task.context_messages:
+            for cm in task.context_messages:
+                if isinstance(cm, LLMMessage):
+                    messages.append(cm)
+                elif isinstance(cm, dict):
+                    messages.append(LLMMessage(
+                        role=cm.get("role", "user"),
+                        content=cm.get("content", ""),
+                    ))
+        # Add the actual task message
+        messages.append(LLMMessage(role="user", content=task.message,
+                                   source=user_source))
+        return messages
+
+    @staticmethod
+    def _deserialize_sub_messages(raw_messages):
+        """Convert stored dicts back to LLMMessage."""
+        result = []
+        for m in raw_messages:
+            if isinstance(m, dict):
+                result.append(LLMMessage(
+                    role=m.get("role", "user"),
+                    content=m.get("content", ""),
+                ))
+            elif isinstance(m, LLMMessage):
+                result.append(m)
         return result
 
     def _build_tools(

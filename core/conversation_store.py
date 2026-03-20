@@ -505,6 +505,9 @@ class ConversationStore:
                     continue
                 if user_id and entry.get("user_id") and entry["user_id"] != user_id:
                     continue
+                # Hide sub-conversations (task contexts)
+                if ":task:" in cid:
+                    continue
                 # Build a preview from the first user message
                 preview = ""
                 for msg in entry.get("messages", []):
@@ -551,7 +554,9 @@ class ConversationStore:
     def _conv_path(self, conversation_id: str) -> Path:
         """Path for a conversation's JSON file."""
         # Sanitize conversation_id for filesystem safety
-        safe_id = "".join(c for c in conversation_id if c.isalnum() or c in "-_")
+        safe_id = "".join(c for c in conversation_id if c.isalnum() or c in "-_:")
+        # ':' is invalid in Windows file paths — replace with '__'
+        safe_id = safe_id.replace(":", "__")
         return self._store_dir / f"{safe_id}.json"
 
     def _get_write_lock(self, conversation_id: str) -> threading.Lock:

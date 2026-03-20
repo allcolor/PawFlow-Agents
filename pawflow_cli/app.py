@@ -1279,10 +1279,19 @@ class PawCode:
                 elif subcmd == "assign":
                     assign_parts = (parts[1] if len(parts) > 1 else "").split(None, 1)
                     if len(assign_parts) < 2:
-                        self.renderer.print_error("Usage: /task assign <agent> <task>")
+                        self.renderer.print_error("Usage: /task assign <agent> <task> [--context last:10]")
                         return
-                    self.api.send_action("assign_task", agent_name=assign_parts[0], task_name=assign_parts[1], conversation_id=self.conversation_id or "")
-                    self.renderer.print_system(f"Task assigned to {assign_parts[0]}")
+                    # Parse optional --context
+                    task_arg = assign_parts[1]
+                    context = "isolated"
+                    if "--context" in task_arg:
+                        task_parts = task_arg.split("--context", 1)
+                        task_arg = task_parts[0].strip()
+                        context = task_parts[1].strip()
+                    self.api.send_action("assign_task", agent_name=assign_parts[0],
+                                         task_name=task_arg, context=context,
+                                         conversation_id=self.conversation_id or "")
+                    self.renderer.print_system(f"Task assigned to {assign_parts[0]} (context: {context})")
                 elif subcmd in ("del", "delete"):
                     if len(parts) < 2:
                         self.renderer.print_error("Usage: /task del <name>")

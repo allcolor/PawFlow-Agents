@@ -257,8 +257,15 @@ class TestCrossChannelServices(unittest.TestCase):
         UserServiceRegistry.reset()
         from core.relay_manager import RelayConnectionManager
         RelayConnectionManager.reset()
+        # Patch GlobalServiceRegistry to avoid interference from running services
+        self._greg_patcher = patch(
+            "gui.services.global_service_registry.GlobalServiceRegistry.get_instance"
+        )
+        mock_greg = self._greg_patcher.start()
+        mock_greg.return_value.get_all_definitions.return_value = {}
 
     def tearDown(self):
+        self._greg_patcher.stop()
         from gui.services.user_service_registry import UserServiceRegistry
         UserServiceRegistry.reset()
         from core.relay_manager import RelayConnectionManager
@@ -311,7 +318,7 @@ class TestCrossChannelServices(unittest.TestCase):
         from tasks.ai.agent_loop import AgentLoopTask
         task = AgentLoopTask.__new__(AgentLoopTask)
         mock_svc = MagicMock()
-        mock_svc.TYPE = "localFilesystem"
+        mock_svc.TYPE = "filesystem"
         task._services = {"fs": mock_svc}
         result = task._find_filesystem_service("user1")
         self.assertIs(result, mock_svc)
@@ -330,7 +337,7 @@ class TestCrossChannelServices(unittest.TestCase):
              patch.object(registry, 'get_live_instance') as mock_live:
             from gui.services.user_service_registry import UserServiceDef
             sdef = UserServiceDef(
-                service_id="fs1", service_type="localFilesystem",
+                service_id="fs1", service_type="filesystem",
                 user_id="user1", enabled=True,
             )
             mock_compat.return_value = [sdef]
@@ -351,7 +358,7 @@ class TestCrossChannelServices(unittest.TestCase):
         with patch.object(registry, 'get_compatible') as mock_compat:
             from gui.services.user_service_registry import UserServiceDef
             sdef = UserServiceDef(
-                service_id="fs1", service_type="localFilesystem",
+                service_id="fs1", service_type="filesystem",
                 user_id="user1", enabled=False,
             )
             mock_compat.return_value = [sdef]
@@ -670,8 +677,8 @@ class TestToolApprovalGate(unittest.TestCase):
         from core.tool_approval import ToolApprovalGate
         self.assertIn("remote_exec", ToolApprovalGate.ALWAYS_ASK)
         self.assertIn("execute_script", ToolApprovalGate.ALWAYS_ASK)
-        self.assertIn("local_files", ToolApprovalGate.ALWAYS_ASK)
-        self.assertIn("filesystem", ToolApprovalGate.ALWAYS_ASK)
+        self.assertIn("browser_action", ToolApprovalGate.ALWAYS_ASK)
+        # filesystem/local_files handled by action-aware _FS_ALWAYS_ASK instead
 
     def test_exempt_in_set(self):
         from core.tool_approval import ToolApprovalGate
@@ -690,7 +697,7 @@ class TestRelayAutoInstall(unittest.TestCase):
     def setUp(self):
         # Ensure service types are registered
         import services.remote_executor_service  # noqa: F401
-        import services.local_filesystem_service  # noqa: F401
+        import services.filesystem_service  # noqa: F401
         from gui.services.user_service_registry import UserServiceRegistry
         UserServiceRegistry.reset()
         from core.relay_manager import RelayConnectionManager
@@ -842,11 +849,12 @@ class TestI18nKeys(unittest.TestCase):
 class TestWSEndpoint(unittest.TestCase):
     """Test that the WS relay endpoint is properly defined."""
 
-    def test_ws_relay_route_exists(self):
-        """Verify /ws/relay endpoint is defined in the router."""
+    def test_ws_relay_route_removed(self):
+        """Relay endpoint moved from API router to FilesystemWSListener."""
         from api.routers.ws_router import router
         routes = [r.path for r in router.routes]
-        self.assertIn("/relay", routes)
+        # Old /relay route no longer in API router (handled by FilesystemWSListener)
+        self.assertNotIn("/relay", routes)
 
     def test_relay_manager_import(self):
         """Verify relay_manager module is importable."""
@@ -885,7 +893,7 @@ class TestRelayScriptArgs(unittest.TestCase):
 
     def test_fs_relay_has_connect_arg(self):
         source = open("tools/pawflow_relay.py").read()
-        self.assertIn("--connect", source)
+        self.assertIn("--server", source)
         self.assertIn("--token", source)
         self.assertIn("--relay-id", source)
 

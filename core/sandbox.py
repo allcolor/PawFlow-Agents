@@ -20,24 +20,61 @@ from typing import Any, Callable, Dict, List, Optional
 # ── Safe modules whitelist ───────────────────────────────────────────
 
 SAFE_MODULES = frozenset({
-    "datetime", "math", "re", "json", "time",
-    "collections", "itertools", "functools", "statistics",
+    # ── Basics ──
+    "datetime", "math", "cmath", "re", "json", "time", "calendar",
+    "collections", "itertools", "functools", "statistics", "operator",
     "decimal", "fractions", "random", "string", "textwrap",
+    "copy", "enum", "dataclasses", "typing", "types",
+    "abc", "numbers", "contextlib",
+    # ── Data structures ──
+    "bisect", "heapq", "array", "queue",
+    # ── Encoding / crypto (no secrets leakage) ──
+    "hashlib", "hmac", "secrets", "base64", "binascii", "codecs",
+    "uuid", "struct",
+    # ── Text / parsing ──
+    "html", "html.parser",
+    "xml", "xml.etree", "xml.etree.ElementTree",
+    "csv", "io", "pprint", "difflib",
+    "ast", "keyword", "token", "tokenize",
+    "unicodedata", "locale",
+    # ── Glob / path (read-only path manipulation, no I/O) ──
+    "pathlib", "fnmatch", "glob", "posixpath", "ntpath",
+    # ── Network (sandboxed: can fetch but can't open raw sockets) ──
     "urllib", "urllib.parse", "urllib.request", "urllib.error",
     "http", "http.client", "http.cookiejar",
-    "hashlib", "base64", "uuid",
-    "numpy", "csv", "io", "operator", "copy",
-    "struct", "html", "xml", "xml.etree", "xml.etree.ElementTree",
     "requests",
-    "zipfile", "gzip", "bz2", "lzma", "tarfile",
-    "pathlib", "fnmatch", "glob", "difflib",
-    "pprint", "enum", "dataclasses", "typing",
+    # ── Compression / archives ──
+    "zipfile", "gzip", "bz2", "lzma", "tarfile", "zlib",
+    # ── Math / science (if installed) ──
+    "numpy", "scipy", "pandas",
+    "matplotlib", "matplotlib.pyplot", "matplotlib.figure",
+    "seaborn",
+    "sklearn",
+    # ── Image / media (if installed) ──
+    "PIL", "PIL.Image", "PIL.ImageDraw", "PIL.ImageFont",
+    "PIL.ImageFilter", "PIL.ImageOps", "PIL.ImageEnhance",
+    "colorsys",
+    # ── Serialization ──
+    "yaml", "toml",
+    # ── HTML parsing (if installed) ──
+    "bs4", "lxml",
+    # ── Date extras ──
+    "zoneinfo", "dateutil",
+    # ── Formatting ──
+    "tabulate",
+    # ── Introspection (safe, no side effects) ──
+    "traceback", "inspect", "dis",
+    "warnings",
 })
 
 # Sub-imports allowed from these prefixes
 SAFE_PREFIXES = (
-    "requests.", "urllib.", "http.", "xml.", "collections.",
-    "html.", "numpy.",
+    "requests.", "urllib.", "http.", "xml.", "html.",
+    "collections.", "numpy.", "PIL.",
+    "scipy.", "pandas.", "sklearn.",
+    "matplotlib.", "seaborn.",
+    "bs4.", "lxml.", "dateutil.",
+    "yaml.", "toml.",
 )
 
 

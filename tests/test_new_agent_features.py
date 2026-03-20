@@ -283,7 +283,7 @@ class TestNotifyUserHandler(unittest.TestCase):
         h.set_conversation_id("conv1")
         result = h.execute({"message": "Hello!"})
         self.assertIn("sse", result)
-        mock_bus.publish.assert_called_once()
+        mock_bus.publish_event.assert_called_once()
 
     def test_notify_no_channels(self):
         h = NotifyUserHandler()
@@ -304,8 +304,8 @@ class TestNotifyUserHandler(unittest.TestCase):
         h.set_conversation_id("conv1")
         result = h.execute({"message": "Urgent!", "urgency": "high"})
         self.assertIn("sse", result)
-        call_args = mock_bus.publish.call_args
-        self.assertEqual(call_args[0][1]["urgency"], "high")
+        call_args = mock_bus.publish_event.call_args
+        self.assertEqual(call_args[0][2]["urgency"], "high")
 
     @patch("core.conversation_event_bus.ConversationEventBus")
     def test_notify_with_telegram_metadata(self, mock_bus_cls):

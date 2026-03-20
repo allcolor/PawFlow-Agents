@@ -7162,13 +7162,19 @@ class AgentLoopTask(BaseTask):
             entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
 
-            messages_data = store.load(cid)
+            # For task sub-conversations, load from the sub-conv — NOT the parent
+            _load_cid = cid
+            if "::task::" in entry_key:
+                _load_cid = entry_key  # the key IS the sub-conv ID
+            messages_data = store.load(_load_cid)
+            if not messages_data:
+                # Fallback to parent if sub-conv doesn't exist yet
+                messages_data = store.load(cid)
             if not messages_data:
                 continue
 
             # Extract agent name from key
             if "::task::" in entry_key or "::task_verify::" in entry_key:
-                # Task key: conv::task::t_xxx — resolve agent from task data
                 _task_id = entry_key.rsplit("::", 1)[-1]
                 _all_tasks = store.get_extra(cid, "agent_tasks") or {}
                 _task_entry = _all_tasks.get(_task_id, {})
@@ -7204,6 +7210,9 @@ class AgentLoopTask(BaseTask):
             try:
                 ctx = self._build_poll_context(cid, messages_data,
                                                scheduled_reasons=[reason])
+                # Override conversation_id in context for task sub-conversations
+                if "::task::" in entry_key and ctx:
+                    ctx["conversation_id"] = entry_key
                 if ctx is None:
                     with self._active_lock:
                         rc = self._active_conversations.get(cid, 1) - 1
@@ -7235,9 +7244,12 @@ class AgentLoopTask(BaseTask):
                     "agent_name": _thought_agent if _thought_agent != "assistant" else "",
                 })
 
+                # For task entries, use the sub-conversation ID so messages
+                # are persisted in the isolated task context
+                _loop_cid = entry_key if "::task::" in entry_key else cid
                 thread = threading.Thread(
                     target=self._streaming_agent_loop,
-                    args=(ctx, cid, bus),
+                    args=(ctx, _loop_cid, bus),
                     daemon=True,
                     name=f"agent-thought-{entry_key[-16:]}",
                 )

@@ -39,6 +39,17 @@ class TerminalRenderer:
         self._live: Optional[Live] = None
         self._thinking: Dict[str, str] = {}  # agent -> thinking text
 
+    def print_banner(self, directory: str):
+        if self.console:
+            self.console.print(Panel(
+                f"[bold]Directory:[/bold] {directory}",
+                title="[bold cyan]PawCode[/bold cyan]",
+                border_style="cyan",
+                padding=(0, 2),
+            ))
+        else:
+            print(f"\n  PawCode\n  ───────\n  Directory: {directory}\n")
+
     def print(self, text: str, style: str = ""):
         if self.console:
             self.console.print(text, style=style)
@@ -91,9 +102,16 @@ class TerminalRenderer:
     def end_stream(self, agent: str, final_text: str = ""):
         text = final_text or self._streams.pop(agent, "")
         if self._live:
+            # Update with final content, then stop (freezes in place — no re-print)
+            if text:
+                try:
+                    self._live.update(Markdown(text))
+                except Exception:
+                    self._live.update(Text(text))
             self._live.stop()
             self._live = None
-        if text:
+        elif text:
+            # No Live was active — print directly
             self.print_markdown(text)
 
     # ── Thinking ──

@@ -120,11 +120,16 @@ class RelayThread:
             self._registered = False
 
     def _run_relay(self):
-        """Run the WS relay connection loop."""
+        """Run the WS relay connection loop (stderr suppressed)."""
         # Add tools directory to path for fs_actions import
         tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
+
+        # Suppress relay stderr output (it pollutes the CLI prompt)
+        import io
+        _real_stderr = sys.stderr
+        sys.stderr = io.StringIO()
 
         from pawflow_relay import _ws_connect
         ws_url = f"wss://localhost:{self.port}/ws/relay"

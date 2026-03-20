@@ -152,20 +152,42 @@ class SSEClient:
         self.connected = True
         self.events.put({"event": "_sse_connected", "data": {}})
 
-        # Parse SSE stream
+        # Parse SSE stream (read in chunks, not byte-by-byte, for UTF-8 safety)
         event_type = ""
         data_lines = []
-        buffer = ""
+        buffer = b""
+        self._line_buf = ""
 
         while not self._stop.is_set():
             try:
-                chunk = resp.read(1)
+                chunk = resp.read(4096)
                 if not chunk:
                     break
-                buffer += chunk.decode("utf-8", errors="replace")
+                buffer += chunk
+                # Decode only complete UTF-8 sequences
+                try:
+                    text = buffer.decode("utf-8")
+                    buffer = b""
+                except UnicodeDecodeError:
+                    # Partial multi-byte char at end — keep trailing bytes
+                    for i in range(1, 4):
+                        try:
+                            text = buffer[:-i].decode("utf-8")
+                            buffer = buffer[-i:]
+                            break
+                        except UnicodeDecodeError:
+                            continue
+                    else:
+                        text = buffer.decode("utf-8", errors="replace")
+                        buffer = b""
 
-                while "\n" in buffer:
-                    line, buffer = buffer.split("\n", 1)
+                # Add decoded text to line buffer and parse lines
+                if not hasattr(self, '_line_buf'):
+                    self._line_buf = ""
+                self._line_buf += text
+
+                while "\n" in self._line_buf:
+                    line, self._line_buf = self._line_buf.split("\n", 1)
                     line = line.rstrip("\r")
 
                     if line.startswith("event:"):

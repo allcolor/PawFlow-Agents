@@ -8,6 +8,11 @@ import sys
 import time
 from pathlib import Path
 
+# Force UTF-8 on Windows
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 from pawflow_cli.auth import authenticate
 from pawflow_cli.relay import RelayThread
 from pawflow_cli.api import AgentAPIClient, SSEClient
@@ -43,13 +48,12 @@ class PawCode:
         self.session_token = ""
         self._sending = False
         self._running = True
+        self._last_history = []
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
         # Authenticate
-        self.renderer.print("\n  [bold cyan]PawCode[/bold cyan]", style="")
-        self.renderer.print(f"  Directory: {self.directory}")
-        self.renderer.print("")
+        self.renderer.print_banner(self.directory)
 
         auth = authenticate(self.server_url)
         self.session_token = auth["token"]
@@ -319,7 +323,8 @@ class PawCode:
                 "## Commands\n"
                 "- `/new` — New conversation\n"
                 "- `/conv` — List conversations\n"
-                "- `/resume <id>` — Resume conversation\n"
+                "- `/resume <id> [N]` — Resume conversation (show last N messages, default 10)\n"
+                "- `/history [N]` — Show last N messages (default 20)\n"
                 "- `/delete <id>` — Delete conversation\n"
                 "- `/export [json|md]` — Export conversation\n"
                 "- `/agent list|<name>` — List or select agent\n"
@@ -370,23 +375,47 @@ class PawCode:
 
         if cmd == "/resume":
             if not arg:
-                self.renderer.print_error("Usage: /resume <conversation_id>")
+                self.renderer.print_error("Usage: /resume <id> [num_messages]")
+                return
+            parts = arg.split()
+            cid_partial = parts[0]
+            show_n = int(parts[1]) if len(parts) > 1 else 10
+            full_cid = self._resolve_conversation_id(cid_partial)
+            if not full_cid:
+                self.renderer.print_error(f"No conversation matching '{cid_partial}'")
                 return
             try:
-                data = self.api.send_action("load_history", conversation_id=arg)
+                data = self.api.send_action("load_history", conversation_id=full_cid)
                 if data.get("error"):
                     self.renderer.print_error(data["error"])
                 else:
-                    self.conversation_id = arg
-                    save_config({"last_conversation_id": arg})
+                    self.conversation_id = full_cid
+                    self._last_history = data.get("messages", [])
+                    save_config({"last_conversation_id": full_cid})
                     if self.sse:
                         self.sse.disconnect()
                     self.sse = SSEClient(self.server_url, self.session_token)
-                    self.sse.connect(arg)
+                    self.sse.connect(full_cid)
                     count = data.get("message_count", 0)
-                    self.renderer.print_system(f"Resumed {arg[:8]} ({count} messages)")
+                    self.renderer.print_system(f"Resumed {full_cid[:8]} ({count} messages)")
+                    self._display_history(self._last_history, show_n)
             except Exception as e:
                 self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/history":
+            n = int(arg) if arg and arg.isdigit() else 20
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            if not hasattr(self, '_last_history') or not self._last_history:
+                try:
+                    data = self.api.send_action("load_history", conversation_id=self.conversation_id)
+                    self._last_history = data.get("messages", [])
+                except Exception as e:
+                    self.renderer.print_error(str(e))
+                    return
+            self._display_history(self._last_history, n)
             return
 
         if cmd == "/compact":
@@ -495,6 +524,41 @@ class PawCode:
 
         # Unknown command — send as message (might be a skill like /review)
         self._send_message(text)
+
+    def _display_history(self, messages: list, show_n: int = 10):
+        """Display the last N messages from conversation history."""
+        displayable = [m for m in messages
+                       if m.get("type", m.get("role", "")) not in ("system", "tool_call", "tool_result")]
+        recent = displayable[-show_n:] if len(displayable) > show_n else displayable
+        if len(displayable) > show_n:
+            self.renderer.print_system(f"... ({len(displayable) - show_n} earlier messages, use /history {len(displayable)} to see all)")
+        for m in recent:
+            mtype = m.get("type", m.get("role", ""))
+            content = m.get("content", "")
+            if not content:
+                continue
+            if isinstance(content, str) and len(content) > 500:
+                content = content[:500] + "..."
+            source = m.get("source", {})
+            agent = source.get("name", "") if isinstance(source, dict) else ""
+            if mtype == "user":
+                self.renderer.print(f"[bold green]❯[/bold green] {content}")
+            elif mtype in ("assistant", "agent_response"):
+                badge = agent or "assistant"
+                self.renderer.print_agent_badge(badge)
+                self.renderer.print_markdown(content)
+
+    def _resolve_conversation_id(self, partial: str) -> str:
+        """Resolve a partial conversation ID to full ID."""
+        try:
+            data = self.api.send_action("list_conversations")
+            for c in data.get("conversations", []):
+                cid = c.get("conversation_id", "")
+                if cid.startswith(partial):
+                    return cid
+        except Exception:
+            pass
+        return ""
 
     def _signal_handler(self, sig, frame):
         self.renderer.print_system("\nShutting down...")

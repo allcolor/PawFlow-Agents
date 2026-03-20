@@ -1,0 +1,63 @@
+import * as http from 'http';
+import * as https from 'https';
+import { URL } from 'url';
+import { API_PATH } from '../constants';
+import { AgentResponse, SendMessageRequest } from './types';
+
+export class AgentAPIClient {
+  private serverUrl: string;
+  private sessionToken: string;
+
+  constructor(serverUrl: string, sessionToken: string) {
+    this.serverUrl = serverUrl.replace(/\/$/, '');
+    this.sessionToken = sessionToken;
+  }
+
+  setToken(token: string): void {
+    this.sessionToken = token;
+  }
+
+  async sendMessage(request: SendMessageRequest): Promise<AgentResponse> {
+    return this.post(API_PATH, request);
+  }
+
+  async sendAction(action: string, params: Record<string, any> = {}): Promise<AgentResponse> {
+    return this.post(API_PATH, { action, ...params });
+  }
+
+  private async post(path: string, body: Record<string, any>): Promise<AgentResponse> {
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.serverUrl + path);
+      const isHttps = url.protocol === 'https:';
+      const options: http.RequestOptions = {
+        hostname: url.hostname,
+        port: url.port,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${this.sessionToken}`,
+        },
+        timeout: 30000,
+      };
+
+      const mod = isHttps ? https : http;
+      const req = mod.request(options, (res) => {
+        let data = '';
+        res.on('data', (chunk) => { data += chunk; });
+        res.on('end', () => {
+          try {
+            resolve(JSON.parse(data));
+          } catch {
+            resolve({ error: data || `HTTP ${res.statusCode}` });
+          }
+        });
+      });
+
+      req.on('error', (e) => reject(e));
+      req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+      req.write(JSON.stringify(body));
+      req.end();
+    });
+  }
+}

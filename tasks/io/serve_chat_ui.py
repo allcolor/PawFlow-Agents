@@ -289,6 +289,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .fe-preview-pane pre{flex:1;overflow:auto;padding:12px;font-size:12px;margin:0;color:#c9d1d9}
 .fe-preview-pane img{max-width:100%;max-height:100%;object-fit:contain;margin:auto;display:block}
 .fe-loading{text-align:center;padding:20px;color:#8b949e}
+.ask-user-box{background:#16213e;border:1px solid #e94560;border-radius:8px;padding:12px 16px;margin:8px 0}
+.ask-user-options{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap}
+.ask-user-btn{background:#e94560;border:none;color:#fff;padding:6px 16px;border-radius:4px;cursor:pointer;font-size:13px}
+.ask-user-btn:hover{background:#c73e54}
 </style>
 </head>
 <body>
@@ -2400,6 +2404,23 @@ function connectSSE(cid) {
     if (document.hidden && Notification.permission === 'granted') {
       new Notification('PawFlow Agent', { body: data.message });
     }
+  });
+
+  eventSource.addEventListener('ask_user', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    // Display the question prominently with optional buttons
+    let html = '<div class="ask-user-box">' + escapeHtml(data.question);
+    if (data.options && data.options.length) {
+      html += '<div class="ask-user-options">';
+      for (const opt of data.options) {
+        html += '<button class="btn ask-user-btn" onclick="document.getElementById(\'input\').value=\'' + opt.replace(/'/g, "\\'") + '\';sendMsg()">' + escapeHtml(opt) + '</button>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+    addMsg('system', html);
+    scrollBottom();
   });
 
   eventSource.addEventListener('discard', (e) => {

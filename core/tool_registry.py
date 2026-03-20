@@ -432,6 +432,124 @@ class WebSearchHandler(ToolHandler):
             return f"Error searching: {e}"
 
 
+class WebFetchHandler(ToolHandler):
+    """Fetch raw content from a URL (text or binary)."""
+
+    @property
+    def name(self) -> str:
+        return "web_fetch"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Fetch the raw content of a URL. Returns text for HTML/JSON/text content, "
+            "or base64 for binary content. Use for downloading files, reading APIs, "
+            "or fetching web page source."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "The URL to fetch",
+                },
+                "method": {
+                    "type": "string",
+                    "description": "HTTP method (default: GET)",
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Optional HTTP headers",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Request body for POST/PUT",
+                },
+                "max_size": {
+                    "type": "integer",
+                    "description": "Max response size in bytes (default: 5MB)",
+                },
+            },
+            "required": ["url"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import http.client
+        import base64
+        from urllib.parse import urlparse
+
+        url = arguments.get("url", "")
+        if not url:
+            return "Error: missing 'url' parameter"
+
+        method = arguments.get("method", "GET").upper()
+        extra_headers = arguments.get("headers", {})
+        body = arguments.get("body", "")
+        max_size = arguments.get("max_size", 5 * 1024 * 1024)
+
+        try:
+            parsed = urlparse(url)
+            use_ssl = parsed.scheme == "https"
+            host = parsed.hostname or "localhost"
+            port = parsed.port or (443 if use_ssl else 80)
+            path = parsed.path or "/"
+            if parsed.query:
+                path += "?" + parsed.query
+
+            if use_ssl:
+                import ssl
+                ctx = ssl.create_default_context()
+                conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=30)
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=30)
+
+            headers = {"User-Agent": "PawFlow/1.0"}
+            headers.update(extra_headers)
+
+            payload = body.encode("utf-8") if body else None
+            if payload and "Content-Type" not in headers:
+                headers["Content-Type"] = "application/json"
+
+            conn.request(method, path, body=payload, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read(max_size)
+            conn.close()
+
+            content_type = resp.getheader("Content-Type", "")
+            status = resp.status
+
+            # Build result
+            result = f"HTTP {status} {resp.reason}\n"
+            result += f"Content-Type: {content_type}\n"
+            result += f"Size: {len(data)} bytes\n\n"
+
+            # Try text decoding
+            is_text = any(t in content_type.lower() for t in
+                         ["text/", "json", "xml", "javascript", "html", "css", "yaml", "toml"])
+            if is_text or not content_type:
+                try:
+                    text = data.decode("utf-8")
+                    # Truncate very large text responses
+                    if len(text) > 50000:
+                        result += text[:50000] + f"\n... (truncated, {len(text)} chars total)"
+                    else:
+                        result += text
+                    return result
+                except UnicodeDecodeError:
+                    pass
+
+            # Binary content - return base64
+            b64 = base64.b64encode(data).decode("ascii")
+            result += f"(binary content, base64 encoded)\n{b64}"
+            return result
+
+        except Exception as e:
+            return f"Error fetching {url}: {e}"
+
+
 class ScraplingFetchHandler(ToolHandler):
     """Fetch a web page using Scrapling and extract its text content.
 
@@ -1798,6 +1916,76 @@ class NotifyUserHandler(ToolHandler):
         if sent_channels:
             return f"Notification sent via: {', '.join(sent_channels)}"
         return "Notification queued (no active channels detected)"
+
+
+class AskUserHandler(ToolHandler):
+    """Ask the user a question and wait for their response."""
+
+    _conversation_id: str = ""
+    _user_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "ask_user"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Ask the user a question and pause execution until they respond. "
+            "Use when you need clarification, confirmation, or a decision from the user. "
+            "The question will be displayed in the chat UI and the user can reply. "
+            "Returns the user's response text."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "question": {
+                    "type": "string",
+                    "description": "The question to ask the user",
+                },
+                "options": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Optional list of choices (e.g. ['yes', 'no', 'skip'])",
+                },
+            },
+            "required": ["question"],
+        }
+
+    def set_conversation_id(self, conv_id: str):
+        self._conversation_id = conv_id
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        question = arguments.get("question", "")
+        options = arguments.get("options", [])
+        if not question:
+            return "Error: missing 'question' parameter"
+
+        # Publish the question via SSE event bus
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+            event_data = {
+                "question": question,
+                "agent_name": "assistant",
+            }
+            if options:
+                event_data["options"] = options
+            bus.publish_event(self._conversation_id, "ask_user", event_data)
+        except Exception:
+            pass
+
+        # Return a message that tells the agent loop to pause and wait for user input
+        options_text = ""
+        if options:
+            options_text = " Options: " + ", ".join(f"[{o}]" for o in options)
+        return f"__ASK_USER__:{question}{options_text}"
 
 
 class CreateToolHandler(ToolHandler):
@@ -5687,6 +5875,7 @@ def create_default_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ExecuteScriptHandler())
     registry.register(WebSearchHandler())
+    registry.register(WebFetchHandler())
     registry.register(ScraplingFetchHandler())
     registry.register(ReadFileHandler())
     registry.register(CreateFileHandler())
@@ -5706,6 +5895,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CreatePlanHandler())
     registry.register(UpdatePlanHandler())
     registry.register(NotifyUserHandler())
+    registry.register(AskUserHandler())
     registry.register(CreateToolHandler())
     registry.register(AskAgentHandler())
     registry.register(FlowManagerHandler())

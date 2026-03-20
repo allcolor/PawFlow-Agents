@@ -849,6 +849,10 @@ class AgentLoopTask(BaseTask):
             try:
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result = registry.execute(tc.name, tc.arguments) or ""
+                # Check for ask_user pause signal
+                if isinstance(result, str) and result.startswith("__ASK_USER__:"):
+                    # Strip the prefix — the question text becomes the tool result
+                    result = result[len("__ASK_USER__:"):]
                 # Auto-suggest related tests after file modifications
                 if tc.name == "filesystem" and tc.arguments.get("action") in ("write_file", "edit"):
                     modified_path = tc.arguments.get("path", "")
@@ -7634,7 +7638,8 @@ class AgentLoopTask(BaseTask):
     ) -> None:
         """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
         from core.tool_registry import (
-            AskAgentHandler, BrowserActionHandler, CreateFileHandler,
+            AskAgentHandler, AskUserHandler, BrowserActionHandler,
+            CreateFileHandler,
             CreatePlanHandler,
             CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
             FlowManagerHandler,
@@ -7738,6 +7743,11 @@ class AgentLoopTask(BaseTask):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
             elif isinstance(h, NotifyUserHandler):
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
+            elif isinstance(h, AskUserHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
                 if user_id:

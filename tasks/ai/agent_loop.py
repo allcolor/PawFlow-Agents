@@ -7162,13 +7162,23 @@ class AgentLoopTask(BaseTask):
             entry_key = entry.get("key", cid)
             reason = entry.get("reason", "scheduled recheck")
 
-            # For task sub-conversations, load from the sub-conv — NOT the parent
-            _load_cid = cid
+            # For task sub-conversations, load from the sub-conv
             if "::task::" in entry_key:
-                _load_cid = entry_key  # the key IS the sub-conv ID
-            messages_data = store.load(_load_cid)
-            if not messages_data:
-                # Fallback to parent if sub-conv doesn't exist yet
+                messages_data = store.load(entry_key)
+                if not messages_data:
+                    # First iteration — sub-conv doesn't exist yet.
+                    # Load only the task prompt from parent extras, NOT the full parent conv.
+                    _task_id_tmp = entry_key.rsplit("::", 1)[-1]
+                    _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
+                    _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
+                    _task_prompt = _task_data_tmp.get("prompt", "") or reason
+                    # Create a minimal initial context for the task
+                    messages_data = [
+                        {"role": "user", "content": _task_prompt},
+                    ]
+                    # Save as the initial sub-conversation
+                    store.save(entry_key, messages_data, user_id=user_id)
+            else:
                 messages_data = store.load(cid)
             if not messages_data:
                 continue
@@ -7208,10 +7218,15 @@ class AgentLoopTask(BaseTask):
                 self._active_conversations[cid] = self._active_conversations.get(cid, 0) + 1
 
             try:
+                # Build context using parent cid (for metadata, user_id, services)
+                # but with the task's messages_data (isolated or sub-conv)
+                _is_task = "::task::" in entry_key
                 ctx = self._build_poll_context(cid, messages_data,
-                                               scheduled_reasons=[reason])
-                # Override conversation_id in context for task sub-conversations
-                if "::task::" in entry_key and ctx:
+                                               scheduled_reasons=[reason],
+                                               skip_agent_context=_is_task)
+                # For task sub-conversations, override the conversation_id
+                # so messages are persisted in the sub-conv, not the parent
+                if _is_task and ctx:
                     ctx["conversation_id"] = entry_key
                 if ctx is None:
                     with self._active_lock:
@@ -7393,6 +7408,7 @@ class AgentLoopTask(BaseTask):
     def _build_poll_context(self, conversation_id: str,
                             messages_data: List[Dict],
                             scheduled_reasons: Optional[List[str]] = None,
+                            skip_agent_context: bool = False,
                             ) -> Optional[Dict]:
         """Build an agent context for a poll-triggered run."""
         model = self.config.get("model", "")
@@ -7536,7 +7552,9 @@ class AgentLoopTask(BaseTask):
             system_prompt += "\n\nYou are in AGGRESSIVE mode. Retry failed operations up to 3 times with variations. If a tool fails, try an alternative approach before stopping. Continue working even if minor issues occur — only stop for critical failures."
 
         _poll_agent_key = _active_agent or "assistant"
-        _context_data = _CS3.instance().load_agent_context(conversation_id, _poll_agent_key)
+        _context_data = None
+        if not skip_agent_context:
+            _context_data = _CS3.instance().load_agent_context(conversation_id, _poll_agent_key)
         _context_diverged = False
         try:
             if _context_data is not None:

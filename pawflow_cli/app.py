@@ -83,17 +83,22 @@ class PawCode:
         atexit.register(self._cleanup)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        # Load last conversation (just check it exists, don't dump messages)
+        # Resume last conversation with sliding window
         config = load_config()
         last_cid = config.get("last_conversation_id")
         if last_cid:
             try:
                 data = self.api.send_action("load_history",
-                                             conversation_id=last_cid, limit=1, offset=0)
+                                             conversation_id=last_cid, limit=50, offset=0)
                 if not data.get("error"):
                     self.conversation_id = last_cid
                     total = data.get("message_count", 0)
-                    self.renderer.print_system(f"Resumed conversation {last_cid[:8]} ({total} messages)")
+                    has_more = data.get("has_more", False)
+                    messages = data.get("messages", [])
+                    more_hint = " — /history for older" if has_more else ""
+                    self.renderer.print_system(
+                        f"Resumed {last_cid[:8]} (showing {len(messages)} of {total}{more_hint})")
+                    self._display_history(messages, len(messages))
                     self._ensure_sse()
             except Exception:
                 pass
@@ -438,7 +443,9 @@ class PawCode:
         arg = parts[1] if len(parts) > 1 else ""
 
         if cmd in ("/quit", "/exit"):
+            self.renderer.print_system("Shutting down...")
             self._running = False
+            self._cleanup()
             return
 
         if cmd == "/help":

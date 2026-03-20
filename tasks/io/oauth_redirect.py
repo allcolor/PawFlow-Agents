@@ -51,7 +51,17 @@ class OAuthRedirectTask(BaseTask):
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
-        state = service.generate_state()
+        # Check for relay_callback in query string
+        import urllib.parse as _urlparse
+        query_string = flowfile.get_attribute("http.query") or ""
+        query_params = _urlparse.parse_qs(query_string)
+        relay_callback = query_params.get("relay_callback", [""])[0]
+
+        metadata = {}
+        if relay_callback:
+            metadata["relay_callback"] = relay_callback
+
+        state = service.generate_state(metadata=metadata)
         authorize_url = service.get_authorize_url(state)
 
         logger.info(f"OAuth2 redirect to {service.provider} (state={state[:8]}...)")

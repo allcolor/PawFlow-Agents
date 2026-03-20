@@ -144,23 +144,30 @@ class OAuthProviderService(BaseService):
     def _close_connection(self):
         pass
 
-    def generate_state(self, ttl: int = 600) -> str:
-        """Generate a CSRF state token."""
+    def generate_state(self, ttl: int = 600, metadata: dict = None) -> str:
+        """Generate a CSRF state token with optional metadata."""
         state = secrets.token_urlsafe(32)
         with self._lock:
-            self._states[state] = time.time() + ttl
+            self._states[state] = {"expires": time.time() + ttl, "metadata": metadata or {}}
             # Cleanup expired states
             now = time.time()
-            self._states = {s: exp for s, exp in self._states.items() if exp > now}
+            self._states = {s: v for s, v in self._states.items()
+                            if (v if isinstance(v, (int, float)) else v.get("expires", 0)) > now}
         return state
 
-    def validate_state(self, state: str) -> bool:
-        """Validate and consume a CSRF state token (one-time use)."""
+    def validate_state(self, state: str):
+        """Validate and consume a CSRF state token. Returns metadata dict or False."""
         with self._lock:
-            expires = self._states.pop(state, None)
-            if expires is None:
+            entry = self._states.pop(state, None)
+            if entry is None:
                 return False
-            return time.time() < expires
+            # Handle legacy format (just a float expiry)
+            if isinstance(entry, (int, float)):
+                return {} if time.time() < entry else False
+            expires = entry.get("expires", 0)
+            if time.time() >= expires:
+                return False
+            return entry.get("metadata", {})
 
     def get_authorize_url(self, state: str) -> str:
         """Build the full authorization URL with query parameters."""

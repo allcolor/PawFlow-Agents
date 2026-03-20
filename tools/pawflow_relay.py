@@ -4,11 +4,17 @@
 Runs on the user's machine and connects TO the server (reverse WebSocket).
 Works behind firewalls/NAT. Zero external dependencies (stdlib only).
 
-Usage:
+Usage (auto — default, opens browser for OAuth login):
+    python pawflow_relay.py --relay-id myfs --dir /path/to/share
+    python pawflow_relay.py --relay-id myfs --dir /path/to/share --allow-exec --port 9091
+    python pawflow_relay.py --relay-id myfs --dir /path/to/share --login-url http://host:9090
+
+Usage (manual — legacy):
     python pawflow_relay.py --server ws://host:port/ws/relay \\
         --relay-id localFS --token abc123 --dir /path/to/share
 
 Security:
+- OAuth browser login — no plaintext passwords
 - Shared secret validated via hmac.compare_digest on every request
 - Path traversal prevention (resolve + startswith check)
 - --readonly flag rejects write/delete operations (defense-in-depth)
@@ -672,22 +678,200 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         reconnect_delay = min(reconnect_delay * 2, 30)
 
 
+def _find_free_port():
+    """Find a free TCP port."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("", 0))
+        return s.getsockname()[1]
+
+
+def _api_call(api_url, method, path, body=None, session_id=""):
+    """Make an HTTP request to the PawFlow API (stdlib only)."""
+    import http.client
+    from urllib.parse import urlparse
+
+    parsed = urlparse(api_url)
+    use_ssl = parsed.scheme == "https"
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if use_ssl else 80)
+
+    if use_ssl:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        conn = http.client.HTTPSConnection(host, port, context=ctx)
+    else:
+        conn = http.client.HTTPConnection(host, port)
+
+    headers = {"Content-Type": "application/json"}
+    if session_id:
+        headers["Authorization"] = f"Bearer {session_id}"
+
+    payload = json.dumps(body).encode("utf-8") if body else None
+    conn.request(method, path, body=payload, headers=headers)
+    resp = conn.getresponse()
+    data = resp.read().decode("utf-8")
+    conn.close()
+
+    if resp.status >= 400:
+        raise Exception(f"API {method} {path} → {resp.status}: {data}")
+    return json.loads(data) if data else {}
+
+
+def _agent_api_call(login_url, session_id, action_body):
+    """Call the agent API (same port as chat UI) with an action."""
+    return _api_call(login_url, "POST", "/api/agent",
+                     body=action_body, session_id=session_id)
+
+
+def _create_service(login_url, session_id, service_id, port, relay_path, token):
+    """Create a user filesystem service via the agent API."""
+    config_str = f"port={port},path={relay_path},token={token},mode=readwrite"
+    return _agent_api_call(login_url, session_id, {
+        "action": "service_install",
+        "service_type": "filesystem",
+        "service_name": service_id,
+        "config_str": config_str,
+    })
+
+
+def _delete_service(login_url, session_id, service_id):
+    """Delete a user filesystem service via the agent API."""
+    try:
+        _agent_api_call(login_url, session_id, {
+            "action": "service_uninstall",
+            "service_id": service_id,
+        })
+    except Exception:
+        pass  # May not exist, that's OK
+
+
+def _start_callback_server():
+    """Start a tiny HTTP server to receive the OAuth callback token."""
+    from http.server import HTTPServer as _HTTPServer, BaseHTTPRequestHandler
+    import threading
+    from urllib.parse import urlparse, parse_qs
+
+    result = {"token": None, "username": None}
+    ready = threading.Event()
+
+    class CallbackHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            parsed = urlparse(self.path)
+            params = parse_qs(parsed.query)
+            result["token"] = params.get("token", [None])[0]
+            result["username"] = params.get("username", [None])[0]
+
+            # Serve a simple "you can close this" page
+            html = (
+                '<!DOCTYPE html><html><body style="font-family:sans-serif;text-align:center;'
+                'padding:60px;background:#1a1a2e;color:#e0e0e0">'
+                '<h2>&#10004; Relay authenticated</h2>'
+                '<p>You can close this window. The relay is now connected.</p>'
+                '</body></html>'
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.end_headers()
+            self.wfile.write(html.encode())
+            ready.set()
+
+        def log_message(self, *args):
+            pass  # suppress logs
+
+    server = _HTTPServer(("127.0.0.1", 0), CallbackHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.handle_request, daemon=True)
+    thread.start()
+    return port, result, ready, server
+
+
+def _auto_register(args):
+    """Auto-register: browser login, create service, return (ws_url, token, session_id, api_url)."""
+    import secrets as _secrets
+    import webbrowser
+    from urllib.parse import quote
+
+    login_url = args.login_url.rstrip("/")
+
+    # Start callback server
+    cb_port, cb_result, cb_ready, cb_server = _start_callback_server()
+    callback_url = f"http://127.0.0.1:{cb_port}/callback"
+
+    # Open browser to login page with relay_callback
+    auth_url = f"{login_url}/auth/login?relay_callback={quote(callback_url)}"
+    sys.stderr.write(f"[FSRelay] Opening browser for login: {auth_url}\n")
+    sys.stderr.write(f"[FSRelay] Waiting for authentication...\n")
+    webbrowser.open(auth_url)
+
+    # Wait for callback (timeout 120s)
+    if not cb_ready.wait(timeout=120):
+        cb_server.server_close()
+        sys.stderr.write("[FSRelay] Error: authentication timed out (120s)\n")
+        sys.exit(1)
+
+    cb_server.server_close()
+    session_id = cb_result.get("token")
+    username = cb_result.get("username", "?")
+
+    if not session_id:
+        sys.stderr.write("[FSRelay] Error: no token received from login\n")
+        sys.exit(1)
+
+    sys.stderr.write(f"[FSRelay] Authenticated as '{username}'.\n")
+
+    # Find port for WS listener
+    port = args.port or _find_free_port()
+    relay_path = args.relay_path
+    ws_token = _secrets.token_urlsafe(32)
+
+    # Delete existing service if any
+    sys.stderr.write(f"[FSRelay] Cleaning up previous service '{args.relay_id}' ...\n")
+    _delete_service(login_url, session_id, args.relay_id)
+
+    # Create new service
+    sys.stderr.write(f"[FSRelay] Creating service '{args.relay_id}' on port {port} ...\n")
+    _create_service(login_url, session_id, args.relay_id, port, relay_path, ws_token)
+    sys.stderr.write(f"[FSRelay] Service created.\n")
+
+    # Build WS URL (default to wss since FilesystemWSListener uses TLS when cryptography is installed)
+    scheme = "ws" if args.no_tls else "wss"
+    ws_url = f"{scheme}://{args.host}:{port}{relay_path}"
+
+    # Wait for the service WS listener to start
+    time.sleep(1.5)
+
+    return ws_url, ws_token, session_id, login_url
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="PawFlow Relay — Connects to PawFlow server for filesystem access",
     )
-    parser.add_argument("--server", required=True,
-                        help="PawFlow server WS URL (e.g. ws://localhost:8000/ws/relay)")
+    parser.add_argument("--server",
+                        help="PawFlow server WS URL (manual mode)")
     parser.add_argument("--relay-id", required=True,
-                        help="Service ID to connect as (must match service_id in PawFlow)")
-    parser.add_argument("--token", required=True,
-                        help="Token matching the filesystem service config")
+                        help="Service ID for this relay")
+    parser.add_argument("--token",
+                        help="Token for manual WS auth")
     parser.add_argument("--dir", required=True,
                         help="Root directory for filesystem access")
     parser.add_argument("--readonly", action="store_true",
                         help="Reject write/delete operations")
     parser.add_argument("--allow-exec", action="store_true",
                         help="Allow shell command execution (disabled by default)")
+    # Auto-registration params
+    parser.add_argument("--login-url", default="http://localhost:9090",
+                        help="PawFlow chat UI URL for OAuth login (default: http://localhost:9090)")
+    parser.add_argument("--host", default="localhost",
+                        help="Host the WS listener binds to (default: localhost)")
+    parser.add_argument("--port", type=int, default=0,
+                        help="Port for WS listener (0 = auto-select free port)")
+    parser.add_argument("--relay-path", default="/ws/relay",
+                        help="WS endpoint path (default: /ws/relay)")
+    parser.add_argument("--no-tls", action="store_true",
+                        help="Use ws:// instead of wss:// (default is wss with self-signed cert)")
     args = parser.parse_args()
 
     root_dir = str(Path(args.dir).resolve())
@@ -696,21 +880,51 @@ def main():
         sys.exit(1)
 
     mode = "readonly" if args.readonly else "readwrite"
-    masked = args.token[:2] + "*" * max(0, len(args.token) - 2)
+    session_id = ""
+    login_url = ""
+    _cleaned_up = False
+
+    if args.server and args.token:
+        # Manual mode (legacy)
+        ws_url = args.server
+        token = args.token
+        masked = token[:2] + "*" * max(0, len(token) - 2)
+    else:
+        # Auto-registration mode (default — opens browser for OAuth login)
+        ws_url, token, session_id, login_url = _auto_register(args)
+        masked = token[:4] + "****"
 
     sys.stderr.write(
         f"\n  PawFlow Relay\n"
         f"  ─────────────\n"
-        f"  Server:    {args.server}\n"
+        f"  Server:    {ws_url}\n"
         f"  Relay ID:  {args.relay_id}\n"
         f"  Directory: {root_dir}\n"
         f"  Mode:      {mode}\n"
         f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
-        f"  Token:     {masked}\n\n"
+        f"  Token:     {masked}\n"
+        f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n\n"
     )
 
-    _ws_connect(args.server, args.token, args.token, args.relay_id,
-                 root_dir, args.readonly, allow_exec=args.allow_exec)
+    # Cleanup on exit (auto-registration only)
+    def _cleanup():
+        nonlocal _cleaned_up
+        if _cleaned_up:
+            return
+        if session_id and login_url:
+            _cleaned_up = True
+            sys.stderr.write(f"[FSRelay] Cleaning up service '{args.relay_id}' ...\n")
+            _delete_service(login_url, session_id, args.relay_id)
+            sys.stderr.write(f"[FSRelay] Service deleted.\n")
+
+    import atexit
+    atexit.register(_cleanup)
+
+    try:
+        _ws_connect(ws_url, token, token, args.relay_id,
+                     root_dir, args.readonly, allow_exec=args.allow_exec)
+    finally:
+        _cleanup()
 
 
 if __name__ == "__main__":

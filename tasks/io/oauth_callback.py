@@ -106,7 +106,8 @@ class OAuthCallbackTask(BaseTask):
             return [self._error_response(flowfile, 400, "Missing authorization code")]
 
         # Validate CSRF state
-        if not service.validate_state(state):
+        state_meta = service.validate_state(state)
+        if state_meta is False:
             return [self._error_response(flowfile, 403, "Invalid or expired state token")]
 
         # Exchange code for access token
@@ -232,6 +233,11 @@ class OAuthCallbackTask(BaseTask):
         cookie_max_age = int(self.config.get("cookie_max_age", 28800))
         success_redirect = self.config.get("success_redirect", "/chat")
 
+        # Check if this auth was initiated by a relay
+        relay_callback = ""
+        if isinstance(state_meta, dict):
+            relay_callback = state_meta.get("relay_callback", "")
+
         cookie = (
             f"{cookie_name}={session.session_id}; "
             f"Path=/; Max-Age={cookie_max_age}; "
@@ -240,7 +246,17 @@ class OAuthCallbackTask(BaseTask):
 
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
-        flowfile.set_attribute("http.response.header.Location", success_redirect)
+        if relay_callback:
+            # Redirect to relay callback with token
+            cb_url = relay_callback + ("&" if "?" in relay_callback else "?")
+            cb_url += urllib.parse.urlencode({
+                "token": session.session_id,
+                "username": session.username,
+                "role": session.role.value,
+            })
+            flowfile.set_attribute("http.response.header.Location", cb_url)
+        else:
+            flowfile.set_attribute("http.response.header.Location", success_redirect)
         flowfile.set_attribute("http.response.header.Set-Cookie", cookie)
         flowfile.set_attribute("http.response.header.Cache-Control", "no-cache, no-store")
 

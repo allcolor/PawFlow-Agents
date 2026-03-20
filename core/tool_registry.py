@@ -5270,7 +5270,13 @@ class FilesystemToolHandler(ToolHandler):
         Search order: GlobalServiceRegistry → UserServiceRegistry.
         If service_name is given, resolve that specific service.
         If empty, find the first available filesystem service.
+        Fallback: if service_name not found but only one FS exists, use it.
         """
+        def _set_uid(svc):
+            if hasattr(svc, 'set_user_id') and self._user_id:
+                svc.set_user_id(self._user_id)
+            return svc
+
         # Search GlobalServiceRegistry
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
@@ -5278,9 +5284,7 @@ class FilesystemToolHandler(ToolHandler):
             if service_name:
                 svc = greg.get_live_instance(service_name)
                 if svc:
-                    if hasattr(svc, 'set_user_id') and self._user_id:
-                        svc.set_user_id(self._user_id)
-                    return svc
+                    return _set_uid(svc)
             else:
                 for sid, sdef in greg.get_all_definitions().items():
                     if not getattr(sdef, "enabled", True):
@@ -5288,11 +5292,10 @@ class FilesystemToolHandler(ToolHandler):
                     if getattr(sdef, "service_type", "") in self._FS_TYPES:
                         svc = greg.get_live_instance(sid)
                         if svc:
-                            if hasattr(svc, 'set_user_id') and self._user_id:
-                                svc.set_user_id(self._user_id)
-                            return svc
+                            return _set_uid(svc)
         except Exception:
             pass
+
         # Search UserServiceRegistry
         if self._user_id:
             try:
@@ -5301,9 +5304,7 @@ class FilesystemToolHandler(ToolHandler):
                 if service_name:
                     svc = ureg.get_live_instance(self._user_id, service_name)
                     if svc:
-                        if hasattr(svc, 'set_user_id') and self._user_id:
-                            svc.set_user_id(self._user_id)
-                        return svc
+                        return _set_uid(svc)
                 else:
                     for fs_type in self._FS_TYPES:
                         compatible = ureg.get_compatible(fs_type, self._user_id)
@@ -5311,11 +5312,17 @@ class FilesystemToolHandler(ToolHandler):
                             if sdef.enabled:
                                 svc = ureg.get_live_instance(self._user_id, sdef.service_id)
                                 if svc:
-                                    if hasattr(svc, 'set_user_id') and self._user_id:
-                                        svc.set_user_id(self._user_id)
-                                    return svc
+                                    return _set_uid(svc)
             except Exception:
                 pass
+
+        # Fallback: if a specific name was requested but not found,
+        # and there's exactly one FS service available, use it
+        if service_name:
+            only = self._find_service("")  # auto-detect (no name)
+            if only:
+                return only
+
         return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:

@@ -196,6 +196,22 @@ class PawCode:
                 """Alt+Enter (Escape then Enter): insert newline."""
                 event.current_buffer.insert_text('\n')
 
+            # Support Shift+Enter and Ctrl+Enter on modern terminals
+            # (Windows Terminal, iTerm2, Kitty send CSI u sequences)
+            try:
+                from prompt_toolkit.input import vt100_parser
+                # \x1b[13;2u = Shift+Enter, \x1b[13;5u = Ctrl+Enter
+                bindings.add(Keys.Vt100MouseEvent)  # dummy to test availability
+            except Exception:
+                pass
+            # Register raw escape sequences for Shift+Enter / Ctrl+Enter
+            @bindings.add('escape', '[', '1', '3', ';', '2', 'u')
+            def _shift_enter(event):
+                event.current_buffer.insert_text('\n')
+            @bindings.add('escape', '[', '1', '3', ';', '5', 'u')
+            def _ctrl_enter(event):
+                event.current_buffer.insert_text('\n')
+
             @bindings.add('c-v')
             def _ctrl_v(event):
                 """Ctrl+V: check clipboard for image first, then paste text."""

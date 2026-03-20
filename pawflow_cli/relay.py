@@ -127,12 +127,16 @@ class RelayThread:
             sys.path.insert(0, tools_dir)
 
         import pawflow_relay as _relay_mod
-        import os as _os
 
-        # Redirect fd 2 (stderr) to devnull — never restored (daemon thread)
-        _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
-        _os.dup2(_devnull_fd, 2)
-        _os.close(_devnull_fd)
+        # Filter [FSRelay] lines from stderr by wrapping the write method.
+        # We wrap once and it persists — survives patch_stdout because we
+        # patch the actual write callable, not replace sys.stderr.
+        _real_write = sys.stderr.write
+        def _filtered_write(s):
+            if isinstance(s, str) and "[FSRelay]" in s:
+                return len(s)  # pretend we wrote it
+            return _real_write(s)
+        sys.stderr.write = _filtered_write
 
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:
@@ -147,4 +151,3 @@ class RelayThread:
                                         self.directory, False, allow_exec=self.allow_exec)
             except Exception:
                 pass
-        # Don't restore stderr — keep it silenced until process exits (daemon thread)

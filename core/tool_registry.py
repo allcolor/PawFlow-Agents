@@ -377,7 +377,7 @@ class WebSearchHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Search the web using DuckDuckGo. Returns titles, URLs and snippets of search results."
+        return "Search the web. Returns titles, URLs and snippets. Parameters: query (required), max_results (int, default 5)."
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -5902,8 +5902,8 @@ class RunTestsHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Run pytest on test files. Provide specific test files or a pattern. "
-            "Returns pass/fail summary with first failure details."
+            "Run pytest on test files. Returns pass/fail summary with first failure details. "
+            "Parameters: test_files (list), test_pattern (string, e.g. 'test_foo'), timeout (int, default 60)."
         )
 
     @property

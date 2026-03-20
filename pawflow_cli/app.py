@@ -32,12 +32,13 @@ except ImportError:
 
 _COMMANDS = [
     "/new", "/conv", "/resume", "/history", "/delete", "/export",
-    "/agent", "/msg", "/btw", "/stop", "/interrupt",
+    "/agent", "/msg", "/message", "/btw", "/stop", "/interrupt",
     "/compact", "/rebuild", "/restart", "/summary", "/context",
     "/memory", "/skill", "/task", "/service",
     "/resources", "/activate", "/deactivate",
     "/tools", "/call", "/model", "/llm",
     "/files", "/upload", "/paste", "/view", "/prompt",
+    "/clear-files", "/detach",
     "/add-secret", "/secrets", "/add-variable", "/variables",
     "/schedules", "/cost", "/copy", "/clear", "/login", "/quit", "/exit",
     "/help", "/run", "/diff", "/watch", "/multi",
@@ -802,6 +803,7 @@ class PawCode:
                 "- `/upload <path>` — Upload file (or drag file onto terminal)\n"
                 "- `/paste` — Upload image from clipboard\n"
                 "- `/view <path|url>` — Open file in browser\n"
+                "- `/clear-files` — Clear pending attachments (`/detach` alias)\n"
                 "- `/prompt list` — List prompts\n"
                 "- `/prompt use <name>` — Show prompt\n"
                 "\n## Dev Tools\n"
@@ -810,12 +812,13 @@ class PawCode:
                 "- `/watch <file>` — Watch file for changes (poll 3s)\n"
                 "- `/watch stop` — Stop watching\n"
                 "- `/multi` — Multiline input mode\n"
-                "- `/view <path|url>` — Open in browser\n"
                 "- `/copy [N]` — Copy last response to clipboard\n"
                 "\n## Other\n"
                 "- `/cost` — Token usage/cost\n"
                 "- `/login` — Re-authenticate\n"
-                "- `/quit` — Exit\n"
+                "- `/quit` — Exit (`/exit` alias)\n"
+                "\n*Aliases: `/message` = `/msg`, `/interrupt` = `/stop`, "
+                "`/detach` = `/clear-files`*\n"
             )
             return
 

@@ -130,20 +130,21 @@ class TerminalRenderer:
         self._streams[agent] = ""
         self._stream_agent = agent
         self._stream_service = service
+        # Update status bar to show agent is writing
+        self._set_status(f"▶ {agent}  writing...")
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
-        # Print raw tokens to stdout (fast, no Rich overhead during streaming)
-        sys.stdout.write(text)
-        sys.stdout.flush()
+        # Don't print raw tokens — just accumulate and update status bar
+        # This avoids the "leftover chunks" problem entirely
+        word_count = len(self._streams[agent].split())
+        self._set_status(f"▶ {agent}  writing... ({word_count} words)")
 
     def end_stream(self, agent: str, final_text: str = ""):
         streamed = self._streams.pop(agent, "")
         text = final_text or streamed
-        # Newline after raw streamed text
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        # Render final as Rich Markdown Panel (below the raw stream)
+        self._set_status("")
+        # Render the complete response as a Rich Markdown Panel
         if text and self.console:
             color = _agent_color(agent)
             svc_info = f" via {self._stream_service}" if self._stream_service else ""

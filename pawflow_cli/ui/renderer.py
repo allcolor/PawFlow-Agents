@@ -230,28 +230,41 @@ class TerminalRenderer:
 
     def print_tool_result(self, tool: str, result: str, agent: str = ""):
         result = self._strip_tool_wrapper(result)
-        # Detect diff output
-        is_diff = any(result.lstrip().startswith(p) for p in ("---", "+++", "@@", "diff "))
-        # Truncate long results
-        if len(result) > 500:
+        # Detect diff output — both unified format and PawFlow custom format
+        lines = result.split("\n")
+        has_diff_lines = any(
+            line.lstrip().startswith("+ ") or line.lstrip().startswith("- ")
+            or line.startswith("@@")
+            for line in lines
+        )
+        is_diff = has_diff_lines and ("replacement" in result.lower() or "edited " in result.lower()
+                  or "diff " in result or "---" in result)
+
+        # Truncate non-diff results
+        if not is_diff and len(result) > 500:
             result = result[:500] + f"\n... ({len(result)} chars total)"
+
         if self.console:
             from rich.markup import escape
             if is_diff:
-                # Color diff lines
-                lines = []
+                # Render diff with colors
+                rendered_lines = []
                 for line in result.split("\n"):
-                    if line.startswith("+") and not line.startswith("+++"):
-                        lines.append(f"[green]{escape(line)}[/green]")
-                    elif line.startswith("-") and not line.startswith("---"):
-                        lines.append(f"[red]{escape(line)}[/red]")
-                    elif line.startswith("@@"):
-                        lines.append(f"[cyan]{escape(line)}[/cyan]")
+                    stripped = line.lstrip()
+                    # Check for line-number prefixed diffs: "  42 + new_code" or "  42 - old_code"
+                    if stripped.startswith("+ ") or (len(stripped) > 4 and stripped[0].isdigit() and " + " in stripped):
+                        rendered_lines.append(f"  [green]{escape(line)}[/green]")
+                    elif stripped.startswith("- ") or (len(stripped) > 4 and stripped[0].isdigit() and " - " in stripped):
+                        rendered_lines.append(f"  [red]{escape(line)}[/red]")
+                    elif stripped.startswith("@@"):
+                        rendered_lines.append(f"  [cyan]{escape(line)}[/cyan]")
+                    elif "replacement" in line.lower() or "edited " in line.lower():
+                        rendered_lines.append(f"  [bold]{escape(line)}[/bold]")
                     else:
-                        lines.append(f"[dim]{escape(line)}[/dim]")
-                self.console.print("  " + "\n  ".join(lines))
+                        rendered_lines.append(f"  [dim]{escape(line)}[/dim]")
+                self.console.print("\n".join(rendered_lines))
             else:
-                # Compact result — green checkmark
+                # Compact result — green checkmark, first line only
                 first_line = result.split("\n")[0][:200]
                 if len(result) > len(first_line):
                     self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}...[/dim]")

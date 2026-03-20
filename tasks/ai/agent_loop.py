@@ -6363,7 +6363,10 @@ class AgentLoopTask(BaseTask):
                             continuation_plan = tc.arguments.get("plan", "Continue working")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
-                        _result_preview = result_text if tc.name == "spawn_agents" else (result_text if isinstance(result_text, str) else str(result_text[0].get("text", "") if result_text else ""))[:2000]
+                        _result_preview = result_text if tc.name == "spawn_agents" else (result_text if isinstance(result_text, str) else str(result_text[0].get("text", "") if result_text else ""))
+                        # Keep more text for diffs (filesystem edit results)
+                        _preview_limit = 5000 if (tc.name == "filesystem" and isinstance(_result_preview, str) and any(p in _result_preview for p in ("replacement(s):", "Edited ", "Written "))) else 2000
+                        _result_preview = _result_preview[:_preview_limit]
                         # Strip TOOL OUTPUT wrapper for display
                         if isinstance(_result_preview, str) and _result_preview.startswith("[TOOL OUTPUT"):
                             _fnl = _result_preview.find("\n")
@@ -8792,10 +8795,13 @@ class AgentLoopTask(BaseTask):
                         display_content = display_content[first_nl + 1:]
                     if display_content.endswith("[/TOOL OUTPUT]"):
                         display_content = display_content[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                preview = display_content[:300]
+                # Use longer preview for diff results
+                _is_diff = any(p in display_content for p in ("replacement(s):", "Edited ", "hunks"))
+                _limit = 2000 if _is_diff else 300
+                preview = display_content[:_limit]
                 result.append({
                     "type": "tool_result", "role": "tool",
-                    "content": preview + ("..." if len(display_content) > 300 else ""),
+                    "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
                 })
             elif role in ("user", "assistant"):

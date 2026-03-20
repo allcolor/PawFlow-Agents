@@ -106,6 +106,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg.agent-result { align-self: flex-start; background: #1a1a2e; color: #a0a0c0; font-size: 12px; border-left: 2px solid #6c5ce7; padding: 6px 10px; }
 .msg.tool { align-self: flex-start; background: #0f1629; color: #808090; font-size: 12px;
             border-left: 2px solid #0f3460; padding: 4px 10px; max-width: 85%; }
+.diff-output { font-family: monospace; font-size: 12px; white-space: pre-wrap; padding: 4px 8px;
+               background: #0d1117; border-radius: 4px; border: 1px solid #21262d; margin: 4px 0; }
 .msg-meta { margin-top: 6px; padding-top: 4px; border-top: 1px solid rgba(255,255,255,0.06);
             font-size: 11px; color: #6c6c8a; cursor: pointer; user-select: none; line-height: 1.6; }
 .msg-meta:hover { color: #8888aa; }
@@ -1406,7 +1408,12 @@ function addMsg(role, text, extra) {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
     const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
-    el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
+    const diffHtml = _renderDiff(text);
+    if (diffHtml) {
+      el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 </span>' + diffHtml;
+    } else {
+      el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
+    }
   } else if (role === 'user') {
     el.innerHTML = actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'agent-result') {
@@ -1439,6 +1446,31 @@ function escapeHtml(t) {
   const d = document.createElement('div');
   d.textContent = t;
   return d.innerHTML;
+}
+
+function _renderDiff(text) {
+  // Detect if this looks like a diff (PawFlow custom format or unified)
+  const lines = text.split('\\n');
+  const hasDiffLines = lines.some(l => {
+    const s = l.trimStart();
+    return s.startsWith('+ ') || s.startsWith('- ') || s.startsWith('@@');
+  });
+  const hasDiffContext = /replacement|edited |written |hunks/i.test(text);
+  if (!hasDiffLines || !hasDiffContext) return null;
+
+  return '<pre class="diff-output">' + lines.map(line => {
+    const s = line.trimStart();
+    if (s.startsWith('+ ') || /^\\d+\\s+\\+ /.test(s)) {
+      return '<span style="color:#3fb950">' + escapeHtml(line) + '</span>';
+    } else if (s.startsWith('- ') || /^\\d+\\s+- /.test(s)) {
+      return '<span style="color:#f85149">' + escapeHtml(line) + '</span>';
+    } else if (s.startsWith('@@')) {
+      return '<span style="color:#58a6ff">' + escapeHtml(line) + '</span>';
+    } else if (/^(Edited |Written |replacement)/i.test(s)) {
+      return '<strong>' + escapeHtml(line) + '</strong>';
+    }
+    return '<span style="color:#8b949e">' + escapeHtml(line) + '</span>';
+  }).join('\\n') + '</pre>';
 }
 
 function isImageFile(name) {
@@ -2430,8 +2462,22 @@ function connectSSE(cid) {
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
     const resultAgent = displayAgentName(data.agent_name || 'assistant');
     const resultSvc = data.llm_service ? ' via ' + data.llm_service : '';
-    const preview = (data.result || '').substring(0, 200);
-    addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + preview + (data.result && data.result.length > 200 ? '...' : ''));
+    const fullResult = data.result || '';
+    // Check if result contains a diff — render it fully with colors
+    const diffRendered = _renderDiff(fullResult);
+    if (diffRendered) {
+      const el = document.createElement('div');
+      el.className = 'msg tool';
+      el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 [' + escapeHtml(resultAgent + resultSvc) + '] ' + escapeHtml(data.tool) + '</span>' + diffRendered;
+      const shouldScroll = isNearBottom();
+      const container = document.getElementById('messages');
+      const typingEl = document.getElementById('typing');
+      if (typingEl) { container.insertBefore(el, typingEl); } else { container.appendChild(el); }
+      scrollBottom(shouldScroll);
+    } else {
+      const preview = fullResult.substring(0, 200);
+      addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + preview + (fullResult.length > 200 ? '...' : ''));
+    }
     // User /call has no agent loop following — don't show typing
     if (data.agent_name === 'user') {
       hideTyping();

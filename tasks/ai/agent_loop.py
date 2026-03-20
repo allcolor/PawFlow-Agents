@@ -5944,6 +5944,21 @@ class AgentLoopTask(BaseTask):
         """
         from core.conversation_event_bus import ConversationEventBus
 
+        # For sub-conversations (task contexts), publish SSE events on the parent
+        # so the web UI and PawCode (which listen on the parent) see them
+        _sse_conv_id = conversation_id
+        if "::task::" in conversation_id:
+            _sse_conv_id = conversation_id.split("::task::")[0]
+        # Wrap the bus to auto-redirect SSE events to parent
+        _real_bus = bus
+
+        class _RedirectBus:
+            """Wrapper that publishes SSE events on the parent conversation."""
+            def publish_event(self, cid, event_type, data):
+                # Always publish on the parent conversation for SSE visibility
+                _real_bus.publish_event(_sse_conv_id, event_type, data)
+        bus = _RedirectBus()
+
         my_generation = ctx.get("_generation", 0)
         gen_key = ctx.get("_gen_key", conversation_id)
         start_time = time.time()
@@ -7665,6 +7680,7 @@ class AgentLoopTask(BaseTask):
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)
         elif _resilience_style == "aggressive":
             max_consecutive_tool_calls = max(max_consecutive_tool_calls, 50)
+        thinking_budget = int(self.config.get("thinking_budget", 0))
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 
         # Source tracking

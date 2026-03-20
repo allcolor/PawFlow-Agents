@@ -285,16 +285,16 @@ class SubAgentExecutor:
         )
 
         # Sub-conversation persistence
+        # "full" context mode = work directly in parent conv (no sub-context)
         sub_conv_id = ""
-        if task.parent_conversation_id:
-            sub_conv_id = f"{task.parent_conversation_id}:task:{task.id}"
+        if task.parent_conversation_id and task.context_mode != "full":
+            sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
             # Try to resume existing sub-conversation
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 existing = store.load(sub_conv_id)
                 if existing and len(existing) > 1:
-                    # Resume from persisted context
                     messages = self._deserialize_sub_messages(existing)
                     logger.info("Resuming sub-conv %s with %d messages",
                                 sub_conv_id, len(messages))

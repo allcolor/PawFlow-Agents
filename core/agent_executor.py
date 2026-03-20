@@ -437,6 +437,27 @@ class SubAgentExecutor:
             "provider": result.provider,
         })
 
+        # Persist final result in parent conversation before cleanup
+        if sub_conv_id and result.response and task.parent_conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                _parent_store = ConversationStore.instance()
+                _parent_msgs = _parent_store.load(task.parent_conversation_id) or []
+                _result_msg = {
+                    "role": "assistant",
+                    "content": result.response,
+                    "source": {
+                        "type": "agent",
+                        "name": task.agent_name,
+                        "llm_service": task.llm_service,
+                    },
+                }
+                _parent_msgs.append(_result_msg)
+                _parent_store.save(task.parent_conversation_id, _parent_msgs,
+                                    user_id=task.user_id)
+            except Exception as _pe:
+                logger.debug("Failed to persist task result to parent: %s", _pe)
+
         # Cleanup sub-conversation (unless agent scheduled continuation)
         if sub_conv_id and result.status in ("completed", "error", "timeout"):
             try:

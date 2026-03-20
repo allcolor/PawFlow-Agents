@@ -90,18 +90,16 @@ class TerminalRenderer:
         self._stream_agent = agent
         self._stream_service = service
         if self.console and not self._live:
-            # Use low refresh + transient to minimize flicker
-            self._live = Live("", console=self.console, refresh_per_second=4,
+            # auto_refresh=False — we refresh manually only when new tokens arrive
+            self._live = Live("", console=self.console, auto_refresh=False,
                               vertical_overflow="ellipsis")
             self._live.start()
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
         if self._live:
-            # Use plain Text during streaming (fast, no flicker)
-            # Markdown rendering happens only at end_stream
             combined = self._streams.get(agent, "")
-            self._live.update(Text(combined, style=""))
+            self._live.update(Text(combined, style=""), refresh=True)
 
     def end_stream(self, agent: str, final_text: str = ""):
         text = final_text or self._streams.pop(agent, "")

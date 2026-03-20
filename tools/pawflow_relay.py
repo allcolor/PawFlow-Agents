@@ -918,7 +918,17 @@ def main():
             sys.stderr.write(f"[FSRelay] Service deleted.\n")
 
     import atexit
+    import signal
     atexit.register(_cleanup)
+
+    def _signal_handler(sig, frame):
+        sys.stderr.write("\n[FSRelay] Shutting down (signal).\n")
+        _cleanup()
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, _signal_handler)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _signal_handler)
 
     try:
         _ws_connect(ws_url, token, token, args.relay_id,

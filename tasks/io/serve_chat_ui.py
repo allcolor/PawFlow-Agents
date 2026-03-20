@@ -190,16 +190,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .file-chip .file-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
 .file-chip .file-status.available { background: #4ecdc4; }
 .file-chip .file-status.expired { background: #e94560; }
-.flow-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
-             font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
-.flow-chip .flow-status { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
-.flow-chip .flow-status.running { background: #4ecdc4; }
-.flow-chip .flow-status.stopped { background: #e94560; }
-.flow-chip .flow-status.scheduled { background: #f9a825; }
 .sched-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px; border-radius: 4px;
               font-size: 12px; background: #1a1a2e; border: 1px solid #0f3460; color: #c0c0d0; }
 .sched-chip .sched-icon { color: #f9a825; }
-.flow-chip { cursor: context-menu; }
 .ctx-menu { position: fixed; z-index: 9999; background: #16213e; border: 1px solid #0f3460;
             border-radius: 6px; padding: 4px 0; min-width: 120px; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
 .ctx-menu-item { padding: 6px 14px; font-size: 13px; color: #c0c0d0; cursor: pointer; }
@@ -326,7 +319,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
-    <button class="btn" id="flowsBtn" onclick="toggleFlowsPanel()" title="My Flows">&#x26A1;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="explorerBtn" onclick="openExplorer()" title="File Explorer">&#128193;</button>
     <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
@@ -340,10 +332,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 <div class="files-panel" id="schedsPanel" style="display:none">
   <div class="files-header"><strong>Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>
   <div class="files-list" id="schedsList"></div>
-</div>
-<div class="files-panel" id="flowsPanel" style="display:none">
-  <div class="files-header"><strong>Flows</strong><button class="btn-close-panel" onclick="toggleFlowsPanel()">&times;</button></div>
-  <div class="files-list" id="flowsList"></div>
 </div>
 <div class="files-panel" id="filesPanel" style="display:none">
   <div class="files-header"><strong>Files</strong><button class="btn-close-panel" onclick="toggleFilesPanel()">&times;</button></div>
@@ -710,7 +698,6 @@ function newChat() {
   document.getElementById('memoryBtn').style.display = '';
   document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
-  document.getElementById('flowsPanel').style.display = 'none';
   document.getElementById('schedsBtn').style.display = 'none';
   document.getElementById('schedsPanel').style.display = 'none';
   highlightConv(null);
@@ -3693,7 +3680,7 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/flows') {
-    toggleFlowsPanel();
+    toggleResourcesSection();
     return true;
   }
 
@@ -5642,7 +5629,7 @@ async function flowAction(flowId, action) {
     } else {
       addMsg('system', '\\u2705 ' + (data.message || action + ' done'));
     }
-    await loadConvFlows();
+    await loadResources();
   } catch (e) {
     addMsg('error', 'Flow action failed: ' + e.message);
   }
@@ -5702,50 +5689,6 @@ function formatRelative(ms) {
   if (hrs < 24) return hrs + 'h ' + (mins % 60) + 'min';
   const days = Math.floor(hrs / 24);
   return days + 'd ' + (hrs % 24) + 'h';
-}
-
-// ── Flows panel ────────────────────────────────────────────────
-async function toggleFlowsPanel() {
-  const panel = document.getElementById('flowsPanel');
-  if (panel.style.display === 'none') {
-    panel.style.display = 'block';
-    await loadConvFlows();
-  } else {
-    panel.style.display = 'none';
-  }
-}
-
-async function loadConvFlows() {
-  const list = document.getElementById('flowsList');
-  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_conv_flows' }),
-    });
-    const data = await resp.json();
-    const flows = data.flows || [];
-    if (flows.length === 0) {
-      list.innerHTML = '<span style="color:#808090;font-size:12px">No flows deployed.</span>';
-      return;
-    }
-    list.innerHTML = flows.map(f => {
-      let statusCls = f.status || 'stopped';
-      const statusTip = escapeHtml(f.status || 'stopped');
-      const taskInfo = f.tasks_count ? f.tasks_count + ' task(s)' : '';
-      const templateInfo = f.template ? ' from ' + escapeHtml(f.template) : '';
-      const fid = escapeHtml(f.id);
-      const fstatus = escapeHtml(f.status || 'stopped');
-      return '<span class="flow-chip" data-flow-id="' + fid + '" data-flow-status="' + fstatus + '" ' +
-        'oncontextmenu="showFlowMenu(event, \'' + fid + '\', \'' + fstatus + '\')">' +
-        '<span class="flow-status ' + statusCls + '" title="' + statusTip + '"></span>' +
-        escapeHtml(f.name || f.id) +
-        (taskInfo ? ' <span style="color:#808090;font-size:11px">(' + taskInfo + templateInfo + ')</span>' : '') +
-        '</span>';
-    }).join('');
-  } catch (e) {
-    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load flows</span>';
-  }
 }
 
 // File upload handling

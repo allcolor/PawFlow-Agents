@@ -564,9 +564,15 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     timeout = min(req.get("timeout", 30), 120)
     if not command:
         raise ValueError("Missing 'command' parameter")
+    # Resolve fs:// URLs in the command to real local paths
+    root_abs = str(Path(root_dir).resolve())
+    _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
+    command = _fs_url_pattern.sub(
+        lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
     # Force UTF-8 output from child process (Windows defaults to cp850/cp1252)
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
+    env["PAWFLOW_FS_ROOT"] = root_abs
     if os.name == "nt":
         # chcp 65001 = UTF-8 codepage for cmd.exe
         command = f"chcp 65001 >nul 2>&1 & {command}"

@@ -853,6 +853,13 @@ class AgentLoopTask(BaseTask):
                 if isinstance(result, str) and result.startswith("__ASK_USER__:"):
                     # Strip the prefix — the question text becomes the tool result
                     result = result[len("__ASK_USER__:"):]
+                # Hint: prefer filesystem(write_file) over create_file when FS is available
+                if tc.name == "create_file":
+                    from core.tool_registry import FilesystemToolHandler
+                    for _h in registry.list_tools():
+                        if isinstance(_h, FilesystemToolHandler) and _h._find_service():
+                            result += "\n[Hint: a filesystem service is available — use filesystem(action=write_file) to write directly to the user's machine instead of create_file]"
+                            break
                 # Auto-suggest related tests after file modifications
                 if tc.name == "filesystem" and tc.arguments.get("action") in ("write_file", "edit"):
                     modified_path = tc.arguments.get("path", "")

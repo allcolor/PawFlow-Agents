@@ -227,7 +227,9 @@ class ExecuteScriptHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Execute Python code and return the result. "
+            "Execute Python code ON THE SERVER (sandboxed) and return the result. "
+            "This does NOT run on the user's machine. "
+            "To run commands on the user's filesystem, use filesystem(action=exec) instead. "
             "File I/O uses URL schemes: "
             "open('filestore://name.zip', 'wb') to create downloadable files, "
             "open('filestore://file_id_or_name', 'rb') to read from FileStore, "
@@ -910,9 +912,10 @@ class CreateFileHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Create a downloadable file and return its URL. "
-            "Use this when you need to generate a file (code, CSV, report, etc.) "
-            "for the user to download."
+            "Create a downloadable file on the SERVER and return its URL. "
+            "Use this for files the user should preview/download in the chat. "
+            "WARNING: if you want to write a file to the user's FILESYSTEM, "
+            "use filesystem(action=write_file) instead — it's direct and avoids an extra copy."
         )
 
     @property
@@ -5036,7 +5039,10 @@ class FilesystemToolHandler(ToolHandler):
             "Git: git_status, git_log, git_diff, git_commit (files, amend), git_pull, git_push, git_checkout, "
             "git_add, git_reset, git_stash, git_branch, git_merge, git_rebase, git_cherry_pick, git_tag, git_blame, "
             "git_worktree_list, git_worktree_add, git_worktree_remove. "
-            "Transfer: copy_to_store (filesystem→FileStore), copy_between (filesystem A→B), list_store, delete_from_store. "
+            "Transfer: copy_to_store (filesystem→FileStore), "
+            "copy_between (any combination: filesystem↔filesystem, FileStore↔filesystem — "
+            "use 'FileStore' as source_service or dest_service to read/write from the server file store), "
+            "list_store (list FileStore files), delete_from_store (delete from FileStore). "
             "Project: project_init (generate .pawflow.md). "
             "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root."
@@ -5115,7 +5121,7 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "command": {
                     "type": "string",
-                    "description": "Shell command to execute (for exec action)",
+                    "description": "Shell command to execute ON THE USER'S MACHINE (for exec action). cwd is the filesystem root. fs:// URLs are auto-resolved to real paths. $PAWFLOW_FS_ROOT env var points to the root.",
                 },
                 "max_pages": {
                     "type": "integer",
@@ -5233,7 +5239,7 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "source_service": {
                     "type": "string",
-                    "description": "Source filesystem service for copy_between",
+                    "description": "Source for copy_between: a filesystem service name OR 'FileStore' for server files",
                 },
                 "source_path": {
                     "type": "string",
@@ -5241,7 +5247,7 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "dest_service": {
                     "type": "string",
-                    "description": "Destination filesystem service for copy_between",
+                    "description": "Destination for copy_between: a filesystem service name OR 'FileStore' for server files",
                 },
                 "dest_path": {
                     "type": "string",
@@ -5713,16 +5719,38 @@ class FilesystemToolHandler(ToolHandler):
                     return "Error: copy_between requires 'source_service' and 'dest_service'"
                 if not dest_path:
                     return "Error: copy_between requires 'dest_path'"
-                src_svc = self._find_service(source_service)
-                if not src_svc:
-                    return f"Error: source service '{source_service}' not found"
-                dst_svc = self._find_service(dest_service)
-                if not dst_svc:
-                    return f"Error: destination service '{dest_service}' not found"
-                data = src_svc.read_file(source_path)
-                dst_svc.write_file(dest_path, data)
-                fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
-                return f"Copied '{fname}' ({len(data):,} bytes) from {source_service}:{source_path} to {dest_service}:{dest_path}"
+                from core.file_store import FileStore
+                import mimetypes as _mt_cb
+                _store = FileStore.instance()
+                # Read from source (FileStore or filesystem service)
+                _fs_aliases = ("filestore", "store", "server")
+                if source_service.lower() in _fs_aliases:
+                    # Source is FileStore — resolve file_id or filename
+                    entry = _store.get(source_path, user_id=self._user_id)
+                    if not entry:
+                        fid = _store.find_by_name(source_path, user_id=self._user_id)
+                        if fid:
+                            entry = _store.get(fid, user_id=self._user_id)
+                    if not entry:
+                        return f"Error: file '{source_path}' not found in FileStore"
+                    fname, data, _ct = entry
+                else:
+                    src_svc = self._find_service(source_service)
+                    if not src_svc:
+                        return f"Error: source service '{source_service}' not found"
+                    data = src_svc.read_file(source_path)
+                    fname = source_path.rsplit("/", 1)[-1] if "/" in source_path else source_path
+                # Write to dest (FileStore or filesystem service)
+                if dest_service.lower() in _fs_aliases:
+                    mime = _mt_cb.guess_type(fname)[0] or "application/octet-stream"
+                    fid = _store.store(fname, data, mime, user_id=self._user_id)
+                    return f"Copied '{fname}' ({len(data):,} bytes) from {source_service} to FileStore\nFile ID: {fid}\nURL: /files/{fid}/{fname}"
+                else:
+                    dst_svc = self._find_service(dest_service)
+                    if not dst_svc:
+                        return f"Error: destination service '{dest_service}' not found"
+                    dst_svc.write_file(dest_path, data)
+                    return f"Copied '{fname}' ({len(data):,} bytes) from {source_service}:{source_path} to {dest_service}:{dest_path}"
 
             elif action == "list_store":
                 from core.file_store import FileStore

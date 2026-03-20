@@ -194,7 +194,9 @@ class PawCode:
 
     def _send_message(self, text: str):
         """Send a message to the agent (non-blocking — events rendered by background thread)."""
-        # Echo the user's message visually
+        # Erase the raw prompt line, replace with styled Panel
+        sys.stdout.write("\033[A\033[2K")
+        sys.stdout.flush()
         self.renderer.print_user_message(text)
         try:
             resp = self.api.send_message(

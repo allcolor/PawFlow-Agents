@@ -90,44 +90,41 @@ class TerminalRenderer:
         self._stream_agent = agent
         self._stream_service = service
         if self.console and not self._live:
-            self._live = Live("", console=self.console, refresh_per_second=10)
+            # Use low refresh + transient to minimize flicker
+            self._live = Live("", console=self.console, refresh_per_second=4,
+                              vertical_overflow="ellipsis")
             self._live.start()
-
-    def _build_stream_panel(self, agent: str, content):
-        """Wrap streaming content in a colored Panel with agent badge."""
-        color = _agent_color(agent)
-        svc_info = f" via {self._stream_service}" if getattr(self, '_stream_service', '') else ""
-        return Panel(
-            content,
-            title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
-            title_align="left",
-            border_style=color,
-            padding=(0, 1),
-        )
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
         if self._live:
+            # Use plain Text during streaming (fast, no flicker)
+            # Markdown rendering happens only at end_stream
             combined = self._streams.get(agent, "")
-            try:
-                body = Markdown(combined)
-            except Exception:
-                body = Text(combined)
-            self._live.update(self._build_stream_panel(agent, body))
+            self._live.update(Text(combined, style=""))
 
     def end_stream(self, agent: str, final_text: str = ""):
         text = final_text or self._streams.pop(agent, "")
         if self._live:
-            if text:
-                try:
-                    body = Markdown(text)
-                except Exception:
-                    body = Text(text)
-                self._live.update(self._build_stream_panel(agent, body))
             self._live.stop()
             self._live = None
+        # Render final content as Markdown in a Panel (static, no flicker)
+        if text and self.console:
+            color = _agent_color(agent)
+            svc_info = f" via {self._stream_service}" if getattr(self, '_stream_service', '') else ""
+            try:
+                body = Markdown(text)
+            except Exception:
+                body = Text(text)
+            self.console.print(Panel(
+                body,
+                title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            ))
         elif text:
-            self.print_markdown(text)
+            print(text)
         self._stream_agent = ""
         self._stream_service = ""
 

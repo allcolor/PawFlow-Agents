@@ -160,6 +160,20 @@ class LLMClient:
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None  # callable(tokens_in, tokens_out, model)
 
+    @staticmethod
+    def _parse_retry_after(error_text: str) -> float:
+        """Parse retry delay from error message. Returns seconds to wait (default 2.0)."""
+        import re
+        # "Please try again in 1.427s"
+        m = re.search(r'try again in ([\d.]+)s', error_text, re.IGNORECASE)
+        if m:
+            return float(m.group(1)) + 0.1  # add small buffer
+        # "Retry-After: 2" header style
+        m = re.search(r'retry[- ]after:?\s*([\d.]+)', error_text, re.IGNORECASE)
+        if m:
+            return float(m.group(1)) + 0.1
+        return 2.0  # default wait
+
     def _report_tokens(self, response, messages):
         """Report token usage via callback if set. Estimates if not returned by provider."""
         if not self._on_tokens:
@@ -254,13 +268,23 @@ class LLMClient:
                     result.tokens_out = len(result.content) // 4
                 self._report_tokens(result, messages)
                 return result
-            except LLMClientError:
+            except LLMClientError as e:
+                # Auto-retry on rate limit (429)
+                if "429" in str(e) or "rate_limit" in str(e).lower():
+                    wait = self._parse_retry_after(str(e))
+                    if attempt < self.max_retries:
+                        logger.warning(f"Rate limited, retrying in {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                        time.sleep(wait)
+                        continue
                 raise
             except Exception as e:
                 last_error = e
+                # Check if transient/rate-limit
+                wait = self._parse_retry_after(str(e))
                 if attempt < self.max_retries:
-                    logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying...")
-                    time.sleep(attempt * 0.5)
+                    delay = max(wait, attempt * 0.5)
+                    logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying in {delay:.1f}s...")
+                    time.sleep(delay)
                 else:
                     # All retries exhausted — try fallback model if configured
                     if self.fallback_model and self.fallback_model != model:
@@ -341,7 +365,14 @@ class LLMClient:
                 result.tokens_out = len(result.content) // 4
             self._report_tokens(result, messages)
             return result
-        except LLMClientError:
+        except LLMClientError as e:
+            # Auto-retry on rate limit (429) for streaming too
+            if "429" in str(e) or "rate_limit" in str(e).lower():
+                wait = self._parse_retry_after(str(e))
+                logger.warning(f"Rate limited (stream), retrying in {wait:.1f}s")
+                time.sleep(wait)
+                return self.complete_stream(messages, model, temperature, max_tokens,
+                                            tools, callback, thinking_budget, thinking_callback)
             raise
         except Exception as primary_err:
             if self.fallback_model and self.fallback_model != model:

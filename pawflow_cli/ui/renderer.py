@@ -152,12 +152,13 @@ class TerminalRenderer:
                 body = Markdown(text)
             except Exception:
                 body = Text(text)
+            self.console.print()  # spacing
             self.console.print(Panel(
                 body,
                 title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
                 title_align="left",
                 border_style=color,
-                padding=(0, 1),
+                padding=(0, 2),
             ))
         elif text:
             print(text)
@@ -374,12 +375,14 @@ class TerminalRenderer:
             display = content if len(content) <= 500 else content[:500] + "..."
             if self.console:
                 from rich.markup import escape
+                self.console.print()  # spacing
                 self.console.print(Panel(
-                    escape(display),
-                    title=f"[bold green]You{channel_info}[/bold green]",
+                    f"[bold white]{escape(display)}[/bold white]",
+                    title=f"[bold green]❯ You{channel_info}[/bold green]",
                     title_align="left",
-                    border_style="green",
-                    padding=(0, 1),
+                    border_style="bright_green",
+                    padding=(0, 2),
+                    style="on #0a2a0a",
                 ))
             else:
                 print(f"\n── You{channel_info} ──")
@@ -395,12 +398,13 @@ class TerminalRenderer:
                     body = Markdown(display)
                 except Exception:
                     body = Text(display)
+                self.console.print()  # spacing
                 self.console.print(Panel(
                     body,
                     title=f"[bold {color}]{badge}{svc_info}[/bold {color}]",
                     title_align="left",
                     border_style=color,
-                    padding=(0, 1),
+                    padding=(0, 2),
                 ))
             else:
                 print(f"\n── {badge}{svc_info} ──")

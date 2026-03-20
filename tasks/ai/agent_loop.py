@@ -5968,11 +5968,15 @@ class AgentLoopTask(BaseTask):
         _real_bus = bus
 
         class _RedirectBus:
-            """Wrapper that publishes SSE events on the parent conversation."""
+            """Wrapper that redirects SSE events to the parent conversation."""
             def publish_event(self, cid, event_type, data):
-                # Always publish on the parent conversation for SSE visibility
                 _real_bus.publish_event(_sse_conv_id, event_type, data)
-        bus = _RedirectBus()
+            def subscriber_count(self, cid):
+                return _real_bus.subscriber_count(_sse_conv_id)
+            def __getattr__(self, name):
+                return getattr(_real_bus, name)
+        if _sse_conv_id != conversation_id:
+            bus = _RedirectBus()
 
         my_generation = ctx.get("_generation", 0)
         gen_key = ctx.get("_gen_key", conversation_id)

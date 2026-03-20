@@ -115,40 +115,33 @@ class TerminalRenderer:
         self._streams[agent] = ""
         self._stream_agent = agent
         self._stream_service = service
-        if self.console and not self._live:
-            # auto_refresh=False — we refresh manually only when new tokens arrive
-            self._live = Live("", console=self.console, auto_refresh=False,
-                              vertical_overflow="ellipsis")
-            self._live.start()
+        self._stream_last_len = 0
+        # Print the agent badge header
+        color = _agent_color(agent)
+        svc_info = f" via {service}" if service else ""
+        if self.console:
+            self.console.print(f"[bold {color}]{agent}{svc_info}[/bold {color}]")
+        else:
+            print(f"[{agent}{svc_info}]")
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
-        if self._live:
-            combined = self._streams.get(agent, "")
-            self._live.update(Text(combined, style=""), refresh=True)
+        # Print new tokens directly (appears above prompt via patch_stdout)
+        if self.console:
+            self.console.file.write(text)
+            self.console.file.flush()
+        else:
+            sys.stdout.write(text)
+            sys.stdout.flush()
 
     def end_stream(self, agent: str, final_text: str = ""):
         text = final_text or self._streams.pop(agent, "")
-        if self._live:
-            self._live.stop()
-            self._live = None
-        # Render final content as Markdown in a Panel (static, no flicker)
-        if text and self.console:
-            color = _agent_color(agent)
-            svc_info = f" via {self._stream_service}" if getattr(self, '_stream_service', '') else ""
-            try:
-                body = Markdown(text)
-            except Exception:
-                body = Text(text)
-            self.console.print(Panel(
-                body,
-                title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
-                title_align="left",
-                border_style=color,
-                padding=(0, 1),
-            ))
-        elif text:
-            print(text)
+        # End the streaming line
+        if self.console:
+            self.console.file.write("\n")
+            self.console.file.flush()
+        else:
+            print()
         self._stream_agent = ""
         self._stream_service = ""
 

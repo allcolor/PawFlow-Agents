@@ -5,6 +5,7 @@ import os
 import queue
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -95,37 +96,51 @@ class PawCode:
         self._main_loop()
 
     def _main_loop(self):
-        """Input → Send → Render loop."""
+        """Input loop — always available. SSE events render in background."""
         from pawflow_cli.config import HISTORY_FILE, ensure_config_dir
         ensure_config_dir()
 
+        # Start background event consumer
+        self._event_thread = threading.Thread(target=self._event_consumer,
+                                               daemon=True, name="pawcode-events")
+        self._event_thread.start()
+
         if HAS_PROMPT_TOOLKIT:
+            from prompt_toolkit.patch_stdout import patch_stdout
             session = PromptSession(
                 history=FileHistory(str(HISTORY_FILE)),
                 multiline=False,
                 enable_history_search=True,
             )
+            # patch_stdout ensures background prints appear above the prompt
+            with patch_stdout():
+                while self._running:
+                    try:
+                        text = session.prompt("❯ ")
+                    except (EOFError, KeyboardInterrupt):
+                        self._running = False
+                        break
+                    text = text.strip()
+                    if not text:
+                        continue
+                    try:
+                        self._handle_input(text)
+                    except Exception as e:
+                        self.renderer.print_error(f"Unexpected error: {e}")
         else:
-            session = None
-
-        while self._running:
-            try:
-                if session:
-                    text = session.prompt("❯ ")
-                else:
+            while self._running:
+                try:
                     text = input("❯ ")
-            except (EOFError, KeyboardInterrupt):
-                self._running = False
-                break
-
-            text = text.strip()
-            if not text:
-                continue
-
-            try:
-                self._handle_input(text)
-            except Exception as e:
-                self.renderer.print_error(f"Unexpected error: {e}")
+                except (EOFError, KeyboardInterrupt):
+                    self._running = False
+                    break
+                text = text.strip()
+                if not text:
+                    continue
+                try:
+                    self._handle_input(text)
+                except Exception as e:
+                    self.renderer.print_error(f"Unexpected error: {e}")
 
     def _handle_input(self, text: str):
         """Process a single input line."""
@@ -135,8 +150,7 @@ class PawCode:
             self._send_message(text)
 
     def _send_message(self, text: str):
-        """Send a message and stream the response."""
-        self._sending = True
+        """Send a message to the agent (non-blocking — events rendered by background thread)."""
         try:
             resp = self.api.send_message(
                 message=text,
@@ -153,46 +167,52 @@ class PawCode:
                 save_config({"last_conversation_id": cid})
 
             # Connect SSE if not connected
-            if not self.sse or not self.sse.connected:
-                self.sse = SSEClient(self.server_url, self.session_token)
-                self.sse.connect(self.conversation_id)
-
-            # Process SSE events until done
-            self._process_events()
+            self._ensure_sse()
 
         except PermissionError:
-            self._safe_stop_live()
             self.renderer.print_error("Session expired. Run /login to re-authenticate.")
         except Exception as e:
-            self._safe_stop_live()
-            import traceback
-            traceback.print_exc()
-            self.renderer.print_error(f"Error: {e}")
-        finally:
-            self._sending = False
+            self.renderer.print_error(f"Send error: {e}")
 
-    def _process_events(self):
-        """Process SSE events until a 'done' event arrives."""
+    def _ensure_sse(self):
+        """Ensure SSE client is connected for the current conversation."""
+        if self.conversation_id and (not self.sse or not self.sse.connected):
+            self.sse = SSEClient(self.server_url, self.session_token)
+            self.sse.connect(self.conversation_id)
+
+    def _event_consumer(self):
+        """Background thread: continuously consume SSE events and render them."""
         streaming_agent = ""
         thinking_agent = ""
-        waiting = True
 
-        while waiting and self._running:
+        while self._running:
+            # Wait for SSE client to be available
+            if not self.sse:
+                time.sleep(0.2)
+                continue
+
             try:
                 event = self.sse.events.get(timeout=0.5)
             except queue.Empty:
                 continue
+            except Exception:
+                time.sleep(0.5)
+                continue
 
             try:
-                waiting = self._dispatch_event(event, streaming_agent, thinking_agent)
-                # Update local state from dispatch
+                still_waiting = self._dispatch_event(event, streaming_agent, thinking_agent)
                 streaming_agent = self._ev_streaming_agent
                 thinking_agent = self._ev_thinking_agent
+                # On done/error/cancelled, reset streaming state
+                if not still_waiting:
+                    streaming_agent = ""
+                    thinking_agent = ""
             except Exception as e:
                 self._safe_stop_live()
-                import traceback
-                traceback.print_exc()
-                self.renderer.print_error(f"Event error: {e}")
+                try:
+                    self.renderer.print_error(f"Event error: {e}")
+                except Exception:
+                    pass
 
     def _dispatch_event(self, event, streaming_agent, thinking_agent):
         """Dispatch a single SSE event. Returns True to keep waiting, False when done."""

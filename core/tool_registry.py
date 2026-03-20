@@ -28,6 +28,20 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 
+def _append_task_log(conversation_id: str, task_id: str, entry: dict):
+    """Append an entry to the persistent task timeline log (standalone helper)."""
+    import time
+    from core.conversation_store import ConversationStore
+    store = ConversationStore.instance()
+    key = f"task_log:{task_id}"
+    log = store.get_extra(conversation_id, key) or []
+    entry["ts"] = time.time()
+    log.append(entry)
+    if len(log) > 500:
+        log = log[-500:]
+    store.set_extra(conversation_id, key, log)
+
+
 class ToolHandler(ABC):
     """Interface for an executable tool that an agent can call."""
 
@@ -3384,6 +3398,16 @@ class AssignTaskHandler(ToolHandler):
         except Exception:
             pass
 
+        try:
+            _append_task_log(self._conversation_id, task_id, {
+                "type": "assigned",
+                "agent": target,
+                "task": task_desc[:200],
+                "detail": f"Assigned by {self._agent_name or 'user'}, verifier={verifier or 'none'}",
+            })
+        except Exception:
+            pass
+
         v_info = f" (verifier: {verifier})" if verifier else ""
         iv_label = interval_data.get("spec", str(first_delay))
         return f"Task {task_id} assigned to '{target}'{v_info}. Interval: {iv_label}. First in {first_delay}s."
@@ -3489,6 +3513,17 @@ class CompleteTaskHandler(ToolHandler):
                     "iterations": task["iterations_done"],
                 },
             )
+        except Exception:
+            pass
+
+        try:
+            _log_type = "completed" if done else "progress"
+            _log_detail = result[:200] if done else progress[:200]
+            _append_task_log(self._conversation_id, task_id, {
+                "type": _log_type,
+                "agent": agent,
+                "detail": _log_detail,
+            })
         except Exception:
             pass
 
@@ -3602,6 +3637,17 @@ class VerifyTaskHandler(ToolHandler):
                     "stage": "verified",
                 },
             )
+        except Exception:
+            pass
+
+        try:
+            _append_task_log(self._conversation_id, task_id, {
+                "type": "verified",
+                "agent": target_agent,
+                "verifier": self._agent_name,
+                "approved": approved,
+                "detail": reason[:200] if reason else ("approved" if approved else "rejected"),
+            })
         except Exception:
             pass
 
@@ -5049,6 +5095,9 @@ class FilesystemToolHandler(ToolHandler):
             "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root. "
             "Aliases: 'workspace', 'ws', 'local' always resolve to the first available filesystem. "
+            "Git workflow: use git_tag to create checkpoints before major changes (e.g. 'v33-stable'). "
+            "Use git_branch to try alternatives. Use git_stash to save work-in-progress. "
+            "Use git_diff to review changes before committing. "
         )
         if len(self._available_services) > 1:
             svc_desc = ", ".join(

@@ -748,6 +748,7 @@ class PawCode:
                 "- `/task assign <agent> <task>` — Assign task\n"
                 "- `/task del <name>` — Delete task\n"
                 "- `/task pause|resume|cancel <id>` — Task control\n"
+                "- `/task log [name]` — Show task timeline log\n"
                 "\n## Services\n"
                 "- `/service list` — List services\n"
                 "- `/service install <type> <name> [config]` — Install\n"
@@ -1260,6 +1261,27 @@ class PawCode:
                         return
                     self.api.send_action("delete_task_def", name=parts[1])
                     self.renderer.print_system(f"Task '{parts[1]}' deleted")
+                elif subcmd == "log":
+                    task_name = parts[1] if len(parts) > 1 else ""
+                    data = self.api.send_action("task_log", name=task_name,
+                                                 conversation_id=self.conversation_id or "")
+                    if task_name:
+                        log = data.get("log", [])
+                        if not log:
+                            self.renderer.print_system(f"No log for task '{task_name}'")
+                        else:
+                            import datetime
+                            for entry in log[-30:]:  # last 30 entries
+                                ts = datetime.datetime.fromtimestamp(entry.get("ts", 0))
+                                t = entry.get("type", "?")
+                                agent = entry.get("agent", "")
+                                detail = entry.get("detail", "")
+                                badge = f"[{agent}] " if agent else ""
+                                self.renderer.print(f"  {ts.strftime('%H:%M:%S')} {badge}{t}: {detail[:100]}")
+                    else:
+                        logs = data.get("logs", {})
+                        for tname, entries in logs.items():
+                            self.renderer.print(f"  {tname}: {len(entries)} entries")
                 elif subcmd in ("pause", "resume", "cancel"):
                     if len(parts) < 2:
                         self.renderer.print_error(f"Usage: /task {subcmd} <task_id|agent>")

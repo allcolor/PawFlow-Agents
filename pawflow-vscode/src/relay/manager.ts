@@ -1,14 +1,39 @@
 import * as vscode from 'vscode';
-import * as cp from 'child_process';
 import * as crypto from 'crypto';
-import * as path from 'path';
+import * as net from 'net';
+import * as tls from 'tls';
 import { AgentAPIClient } from '../api/client';
+import { executeAction } from './actions';
+
+/**
+ * Generate relay ID matching PawCode CLI format:
+ * cli_{username}_{sha256(username:directory)[:8]}
+ */
+function generateRelayId(username: string, directory: string): string {
+  const h = crypto.createHash('sha256').update(`${username}:${directory}`).digest('hex').slice(0, 8);
+  return `cli_${username}_${h}`;
+}
+
+function findFreePort(): Promise<number> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 export class RelayManager implements vscode.Disposable {
-  private process: cp.ChildProcess | null = null;
+  private socket: net.Socket | tls.TLSSocket | null = null;
   private relayId: string = '';
   private port: number = 0;
   private wsToken: string = '';
+  private rootDir: string = '';
+  private allowExec: boolean = true;
+  private readonly: boolean = false;
+  private running = false;
+  private reconnectTimer: NodeJS.Timeout | null = null;
   private outputChannel: vscode.OutputChannel;
   private _onStatusChange = new vscode.EventEmitter<string>();
   readonly onDidChangeStatus = this._onStatusChange.event;
@@ -17,25 +42,17 @@ export class RelayManager implements vscode.Disposable {
     this.outputChannel = vscode.window.createOutputChannel('PawFlow Relay');
   }
 
-  get isRunning(): boolean { return this.process !== null; }
+  get isRunning(): boolean { return this.running; }
   getRelayId(): string { return this.relayId; }
 
   async start(api: AgentAPIClient, username: string, workspaceDir: string, allowExec: boolean): Promise<void> {
-    if (this.process) { await this.stop(api); }
+    if (this.running) { await this.stop(api); }
 
-    const hash = crypto.createHash('sha256').update(`${username}:${workspaceDir}`).digest('hex').slice(0, 8);
-    this.relayId = `vscode_${username}_${hash}`;
+    this.rootDir = workspaceDir;
+    this.allowExec = allowExec;
+    this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
-
-    // Find free port
-    const net = await import('net');
-    this.port = await new Promise<number>((resolve) => {
-      const srv = net.createServer();
-      srv.listen(0, () => {
-        const port = (srv.address() as any).port;
-        srv.close(() => resolve(port));
-      });
-    });
+    this.port = await findFreePort();
 
     // Cleanup old service
     try { await api.sendAction('service_uninstall', { service_id: this.relayId }); } catch {}
@@ -48,70 +65,218 @@ export class RelayManager implements vscode.Disposable {
       config_str: configStr,
     });
 
-    // Wait for WS listener
+    this.outputChannel.appendLine(`[Relay] Service created: ${this.relayId} on port ${this.port}`);
+
+    // Wait for WS listener to start
     await new Promise(r => setTimeout(r, 1500));
 
-    // Find relay script
-    const config = vscode.workspace.getConfiguration('pawflow');
-    const pythonPath = config.get<string>('pythonPath', 'python');
-    let relayScript = config.get<string>('relayScriptPath', '');
-    if (!relayScript) {
-      // Try to find it relative to the workspace
-      const candidates = [
-        path.join(workspaceDir, 'tools', 'pawflow_relay.py'),
-        path.join(workspaceDir, '..', 'PyFi2', 'tools', 'pawflow_relay.py'),
-      ];
-      for (const c of candidates) {
-        try {
-          await vscode.workspace.fs.stat(vscode.Uri.file(c));
-          relayScript = c;
-          break;
-        } catch {}
-      }
-    }
-    if (!relayScript) {
-      throw new Error('Cannot find pawflow_relay.py. Set pawflow.relayScriptPath in settings.');
-    }
-
-    const wsUrl = `wss://localhost:${this.port}/ws/relay`;
-    this.process = cp.spawn(pythonPath, [
-      relayScript,
-      '--server', wsUrl,
-      '--relay-id', this.relayId,
-      '--token', this.wsToken,
-      '--dir', workspaceDir,
-      ...(allowExec ? ['--allow-exec'] : []),
-    ], { stdio: ['ignore', 'pipe', 'pipe'] });
-
-    this.process.stdout?.on('data', (d) => this.outputChannel.append(d.toString()));
-    this.process.stderr?.on('data', (d) => this.outputChannel.append(d.toString()));
-
-    this.process.on('exit', (code) => {
-      this.outputChannel.appendLine(`[Relay] exited with code ${code}`);
-      this.process = null;
-      this._onStatusChange.fire('stopped');
-    });
-
+    this.running = true;
+    this._connect();
     this._onStatusChange.fire('running');
-    this.outputChannel.appendLine(`[Relay] Started: ${this.relayId} on port ${this.port}`);
   }
 
   async stop(api: AgentAPIClient): Promise<void> {
-    if (this.process) {
-      this.process.kill('SIGTERM');
-      this.process = null;
+    this.running = false;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.socket) {
+      this.socket.destroy();
+      this.socket = null;
     }
     if (this.relayId) {
       try { await api.sendAction('service_uninstall', { service_id: this.relayId }); } catch {}
+      this.outputChannel.appendLine('[Relay] Service deleted');
     }
     this._onStatusChange.fire('stopped');
   }
 
   dispose(): void {
-    if (this.process) {
-      this.process.kill('SIGTERM');
-    }
+    this.running = false;
+    if (this.socket) { this.socket.destroy(); }
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); }
     this._onStatusChange.dispose();
     this.outputChannel.dispose();
+  }
+
+  private _connect(): void {
+    if (!this.running) { return; }
+
+    const host = 'localhost';
+    const wsPath = '/ws/relay';
+
+    this.outputChannel.appendLine(`[Relay] Connecting to wss://${host}:${this.port}${wsPath}`);
+
+    // Connect with TLS (self-signed cert from FilesystemWSListener)
+    const socket = tls.connect({
+      host, port: this.port,
+      rejectUnauthorized: false, // accept self-signed
+    }, () => {
+      // WS handshake
+      const wsKey = crypto.randomBytes(16).toString('base64');
+      const handshake = `GET ${wsPath} HTTP/1.1\r\nHost: ${host}:${this.port}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: ${wsKey}\r\nSec-WebSocket-Version: 13\r\n\r\n`;
+      socket.write(handshake);
+    });
+
+    this.socket = socket;
+
+    let buffer = Buffer.alloc(0);
+    let handshakeDone = false;
+
+    socket.on('data', (chunk: Buffer) => {
+      buffer = Buffer.concat([buffer, chunk]);
+
+      if (!handshakeDone) {
+        const headerEnd = buffer.indexOf('\r\n\r\n');
+        if (headerEnd < 0) { return; }
+        const header = buffer.slice(0, headerEnd).toString();
+        if (!header.includes('101')) {
+          this.outputChannel.appendLine('[Relay] Handshake failed');
+          socket.destroy();
+          this._scheduleReconnect();
+          return;
+        }
+        handshakeDone = true;
+        buffer = buffer.slice(headerEnd + 4);
+
+        // Send registration
+        const regMsg = JSON.stringify({
+          type: 'register',
+          token: this.wsToken,
+          secret: this.wsToken,
+          relay_type: 'filesystem',
+          relay_id: this.relayId,
+          info: { platform: process.platform, root: this.rootDir, mode: 'readwrite' },
+        });
+        this._wsSend(socket, regMsg);
+        this.outputChannel.appendLine(`[Relay] Registered as ${this.relayId}`);
+      }
+
+      // Parse WS frames
+      while (buffer.length >= 2) {
+        const frame = this._wsReadFrame(buffer);
+        if (!frame) { break; }
+        buffer = buffer.slice(frame.totalLength);
+
+        if (frame.opcode === 0x08) { // close
+          socket.destroy();
+          this._scheduleReconnect();
+          return;
+        }
+        if (frame.opcode === 0x09) { // ping
+          this._wsSend(socket, frame.payload.toString(), 0x0A);
+          continue;
+        }
+        if (frame.opcode !== 0x01) { continue; } // only text frames
+
+        try {
+          const msg = JSON.parse(frame.payload.toString('utf-8'));
+          if (msg.type === 'registered') {
+            this.outputChannel.appendLine(`[Relay] Connected and registered`);
+            this._onStatusChange.fire('running');
+          } else if (msg.type === 'command') {
+            this._handleCommand(socket, msg);
+          } else if (msg.type === 'ping') {
+            this._wsSend(socket, JSON.stringify({ type: 'pong' }));
+          }
+        } catch {}
+      }
+    });
+
+    socket.on('error', (e) => {
+      this.outputChannel.appendLine(`[Relay] Error: ${e.message}`);
+      this._scheduleReconnect();
+    });
+
+    socket.on('close', () => {
+      this._scheduleReconnect();
+    });
+
+    socket.setTimeout(60000, () => {
+      this._wsSend(socket, JSON.stringify({ type: 'ping' }));
+    });
+  }
+
+  private _handleCommand(socket: net.Socket | tls.TLSSocket, msg: any): void {
+    const action = msg.action || '';
+    const relPath = msg.path || '.';
+    const requestId = msg.request_id || '';
+
+    const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec);
+
+    const response = JSON.stringify({
+      type: 'result',
+      request_id: requestId,
+      data: result.ok ? result.data : result,
+    });
+    this._wsSend(socket, response);
+  }
+
+  private _scheduleReconnect(): void {
+    if (!this.running) { return; }
+    this.reconnectTimer = setTimeout(() => {
+      if (this.running) { this._connect(); }
+    }, 2000);
+  }
+
+  // ── WebSocket frame helpers ──
+
+  private _wsSend(socket: net.Socket | tls.TLSSocket, data: string, opcode = 0x01): void {
+    const payload = Buffer.from(data, 'utf-8');
+    const maskKey = crypto.randomBytes(4);
+    const masked = Buffer.alloc(payload.length);
+    for (let i = 0; i < payload.length; i++) {
+      masked[i] = payload[i] ^ maskKey[i % 4];
+    }
+
+    let header: Buffer;
+    if (payload.length < 126) {
+      header = Buffer.from([0x80 | opcode, 0x80 | payload.length]);
+    } else if (payload.length < 65536) {
+      header = Buffer.alloc(4);
+      header[0] = 0x80 | opcode;
+      header[1] = 0x80 | 126;
+      header.writeUInt16BE(payload.length, 2);
+    } else {
+      header = Buffer.alloc(10);
+      header[0] = 0x80 | opcode;
+      header[1] = 0x80 | 127;
+      header.writeBigUInt64BE(BigInt(payload.length), 2);
+    }
+
+    socket.write(Buffer.concat([header, maskKey, masked]));
+  }
+
+  private _wsReadFrame(buf: Buffer): { opcode: number; payload: Buffer; totalLength: number } | null {
+    if (buf.length < 2) { return null; }
+    const opcode = buf[0] & 0x0F;
+    const masked = !!(buf[1] & 0x80);
+    let payloadLen = buf[1] & 0x7F;
+    let offset = 2;
+
+    if (payloadLen === 126) {
+      if (buf.length < 4) { return null; }
+      payloadLen = buf.readUInt16BE(2);
+      offset = 4;
+    } else if (payloadLen === 127) {
+      if (buf.length < 10) { return null; }
+      payloadLen = Number(buf.readBigUInt64BE(2));
+      offset = 10;
+    }
+
+    if (masked) {
+      if (buf.length < offset + 4 + payloadLen) { return null; }
+      const mask = buf.slice(offset, offset + 4);
+      offset += 4;
+      const data = Buffer.alloc(payloadLen);
+      for (let i = 0; i < payloadLen; i++) {
+        data[i] = buf[offset + i] ^ mask[i % 4];
+      }
+      return { opcode, payload: data, totalLength: offset + payloadLen };
+    }
+
+    if (buf.length < offset + payloadLen) { return null; }
+    return { opcode, payload: buf.slice(offset, offset + payloadLen), totalLength: offset + payloadLen };
   }
 }

@@ -74,6 +74,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         target_agent: this.selectedAgent || undefined,
         attachments: allAttachments.length ? allAttachments : undefined,
       });
+      console.log('[PawFlow] sendMessage response:', JSON.stringify(resp).slice(0, 500));
 
       if (resp.error) {
         this.postMessage({ type: 'error', message: resp.error });
@@ -145,11 +146,18 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
   private async loadConversations(): Promise<void> {
     const api = this.getApi();
-    if (!api) { return; }
+    if (!api) {
+      this.postMessage({ type: 'error', message: 'Not logged in' });
+      return;
+    }
     try {
       const data = await api.sendAction('list_conversations');
+      console.log('[PawFlow] list_conversations response:', JSON.stringify(data).slice(0, 500));
       this.postMessage({ type: 'conversationList', conversations: data.conversations || [] });
-    } catch {}
+    } catch (e: any) {
+      console.error('[PawFlow] list_conversations error:', e);
+      this.postMessage({ type: 'error', message: `Failed to load conversations: ${e.message}` });
+    }
   }
 
   private async resumeConversation(cid: string): Promise<void> {

@@ -41,6 +41,10 @@ export class AgentAPIClient {
         timeout: 30000,
       };
 
+      const payload = JSON.stringify(body);
+      (options.headers as Record<string, string>)['Content-Length'] = Buffer.byteLength(payload).toString();
+      console.log(`[PawFlow API] POST ${path} body=${payload.slice(0, 200)}`);
+
       const mod = isHttps ? https : http;
       const req = mod.request(options, (res) => {
         let data = '';
@@ -56,7 +60,7 @@ export class AgentAPIClient {
 
       req.on('error', (e) => reject(e));
       req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-      req.write(JSON.stringify(body));
+      req.write(payload);
       req.end();
     });
   }

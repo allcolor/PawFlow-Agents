@@ -64,7 +64,8 @@ class TerminalRenderer:
 
     def print_system(self, text: str):
         if self.console:
-            self.console.print(f"[dim]{text}[/dim]")
+            from rich.markup import escape
+            self.console.print(f"[dim]{escape(text)}[/dim]")
         else:
             print(f"[system] {text}")
 
@@ -159,10 +160,11 @@ class TerminalRenderer:
         args_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in arguments.items())
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
-        badge = f"[{agent} via {service}] " if agent and service else ""
         if self.console:
+            from rich.markup import escape
+            badge = f"\\[{escape(agent)} via {escape(service)}] " if agent and service else ""
             self.console.print(
-                f"[{color}]  {badge}{tool}[/{color}]([dim]{args_str}[/dim])"
+                f"  [yellow]⚡ {badge}{escape(tool)}[/yellow]([dim]{escape(args_str)}[/dim])"
             )
         else:
             print(f"  {badge}{tool}({args_str})")
@@ -172,7 +174,8 @@ class TerminalRenderer:
         if len(result) > 500:
             result = result[:500] + f"\n... ({len(result)} chars total)"
         if self.console:
-            self.console.print(f"[green]  {tool}:[/green] [dim]{result}[/dim]")
+            from rich.markup import escape
+            self.console.print(f"  [dim]  ↳ {escape(tool)}: {escape(result)}[/dim]")
         else:
             print(f"  {tool}: {result}")
 

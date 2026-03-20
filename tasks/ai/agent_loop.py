@@ -2972,6 +2972,25 @@ class AgentLoopTask(BaseTask):
             }).encode())
             return [flowfile]
 
+        if action == "delete_sub_context":
+            conv_id = body.get("conversation_id", "")
+            sub_name = body.get("agent_name", "")  # "task:t_xxx (AgentName)"
+            if not conv_id or not sub_name or not sub_name.startswith("task:"):
+                flowfile.set_content(json.dumps({"error": "Missing conversation_id or task agent_name"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            _sub_tid = sub_name.split("(")[0].replace("task:", "").strip()
+            _sub_cid = f"{conv_id}::task::{_sub_tid}"
+            try:
+                store.delete(_sub_cid)
+                # Also clean up sync counter and task log
+                store.set_extra(conv_id, f"_sub_sync:{_sub_cid}", None)
+                store.set_extra(conv_id, f"task_log:{_sub_tid}", None)
+                flowfile.set_content(json.dumps({"ok": True, "deleted": _sub_cid}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
         if action == "delete_context_message":
             conv_id = body.get("conversation_id", "")
             _ctx_agent = body.get("agent_name", "")

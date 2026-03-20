@@ -5270,6 +5270,22 @@ async function ctxAgentChanged() {
   _ctxFullData = null;
   await cmdShowContext(_ctxAgentFilter);
 }
+async function ctxDeleteSubConv() {
+  if (!_ctxAgentFilter || !_ctxAgentFilter.startsWith('task:')) return;
+  if (!confirm('Delete this task sub-context? This cannot be undone.')) return;
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'delete_sub_context', conversation_id: conversationId, agent_name: _ctxAgentFilter }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', 'Sub-context deleted.');
+    _ctxAgentFilter = '';
+    _ctxFullData = null;
+    await cmdShowContext('');
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
 
 function showContextOverlay(data) {
   let overlay = document.getElementById('contextOverlay');
@@ -5307,6 +5323,7 @@ function showContextOverlay(data) {
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
+    + (_ctxAgentFilter && _ctxAgentFilter.startsWith('task:') ? '<button onclick="ctxDeleteSubConv()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this sub-context">Delete</button>' : '')
     + '<button onclick="document.getElementById(\'contextOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'

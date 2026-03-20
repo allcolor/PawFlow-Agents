@@ -177,6 +177,24 @@ class PawCode:
             # Custom key bindings
             bindings = KeyBindings()
 
+            @bindings.add('enter')
+            def _enter(event):
+                """Enter: send message (unless empty or in middle of multiline with Shift)."""
+                buf = event.current_buffer
+                text = buf.text.strip()
+                if text:
+                    buf.validate_and_handle()
+                else:
+                    # Empty — just accept (no-op, prompt stays)
+                    buf.validate_and_handle()
+
+            @bindings.add('s-enter')
+            @bindings.add('c-enter')
+            @bindings.add('escape', 'enter')
+            def _newline(event):
+                """Shift+Enter, Ctrl+Enter, or Escape+Enter: insert newline."""
+                event.current_buffer.insert_text('\n')
+
             @bindings.add('c-v')
             def _ctrl_v(event):
                 """Ctrl+V: check clipboard for image first, then paste text."""
@@ -208,7 +226,8 @@ class PawCode:
 
             session = PromptSession(
                 history=FileHistory(str(HISTORY_FILE)),
-                multiline=False,
+                multiline=True,
+                prompt_continuation="  ",
                 enable_history_search=True,
                 bottom_toolbar=self._get_toolbar,
                 refresh_interval=0.5,

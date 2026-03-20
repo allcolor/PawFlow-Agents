@@ -152,63 +152,37 @@ class SSEClient:
         self.connected = True
         self.events.put({"event": "_sse_connected", "data": {}})
 
-        # Parse SSE stream (read in chunks, not byte-by-byte, for UTF-8 safety)
+        # Parse SSE stream line-by-line (low latency — each event delivered immediately)
         event_type = ""
         data_lines = []
-        buffer = b""
-        self._line_buf = ""
 
+        # Use the raw socket for line-by-line reading
+        # HTTPResponse supports iteration and readline
         while not self._stop.is_set():
             try:
-                chunk = resp.read(4096)
-                if not chunk:
+                raw_line = resp.readline()
+                if not raw_line:
                     break
-                buffer += chunk
-                # Decode only complete UTF-8 sequences
-                try:
-                    text = buffer.decode("utf-8")
-                    buffer = b""
-                except UnicodeDecodeError:
-                    # Partial multi-byte char at end — keep trailing bytes
-                    for i in range(1, 4):
+                line = raw_line.decode("utf-8", errors="replace").rstrip("\r\n")
+
+                if line.startswith("event:"):
+                    event_type = line[6:].strip()
+                elif line.startswith("data:"):
+                    data_lines.append(line[5:].strip())
+                elif line == "":
+                    # End of event — dispatch
+                    if event_type or data_lines:
+                        raw_data = "\n".join(data_lines)
                         try:
-                            text = buffer[:-i].decode("utf-8")
-                            buffer = buffer[-i:]
-                            break
-                        except UnicodeDecodeError:
-                            continue
-                    else:
-                        text = buffer.decode("utf-8", errors="replace")
-                        buffer = b""
-
-                # Add decoded text to line buffer and parse lines
-                if not hasattr(self, '_line_buf'):
-                    self._line_buf = ""
-                self._line_buf += text
-
-                while "\n" in self._line_buf:
-                    line, self._line_buf = self._line_buf.split("\n", 1)
-                    line = line.rstrip("\r")
-
-                    if line.startswith("event:"):
-                        event_type = line[6:].strip()
-                    elif line.startswith("data:"):
-                        data_lines.append(line[5:].strip())
-                    elif line == "":
-                        # End of event
-                        if event_type or data_lines:
-                            raw_data = "\n".join(data_lines)
-                            try:
-                                parsed = json.loads(raw_data) if raw_data else {}
-                            except json.JSONDecodeError:
-                                parsed = {"raw": raw_data}
-                            self.events.put({
-                                "event": event_type or "message",
-                                "data": parsed,
-                            })
-                        event_type = ""
-                        data_lines = []
-
+                            parsed = json.loads(raw_data) if raw_data else {}
+                        except json.JSONDecodeError:
+                            parsed = {"raw": raw_data}
+                        self.events.put({
+                            "event": event_type or "message",
+                            "data": parsed,
+                        })
+                    event_type = ""
+                    data_lines = []
             except Exception:
                 if self._stop.is_set():
                     return

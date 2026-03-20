@@ -21,6 +21,25 @@ _AGENT_COLORS = [
     "bright_cyan", "bright_green", "bright_yellow", "bright_magenta",
 ]
 
+_FUN_VERBS = [
+    "Refactoring", "Compiling", "Debugging", "Deploying", "Optimizing",
+    "Transpiling", "Dockerizing", "Rebasing", "Sautéing", "Flambéing",
+    "Caramelizing", "Fermenting", "Contemplating", "Ruminating",
+    "Philosophizing", "Cogitating", "Bamboozling", "Discombobulating",
+    "Recombobulating", "Confuzzling", "Lollygagging", "Skedaddling",
+    "Razzle-dazzling", "Hocus-pocusing", "Abracadabra-ing",
+    "Supercalifragilisting", "Rickrolling", "Jedi-mind-tricking",
+    "Pokémon-catching", "Hadouken-ing", "Falcon-punching",
+    "Portal-thinking", "Speedrunning", "Kerfuffling",
+    "Gobsmacking", "Wibble-wobbling", "Shenanigan-foiling",
+    "Defenestrating", "Brain-in-a-vat-ing", "Trolley-problem-solving",
+]
+
+
+def _random_verb() -> str:
+    import random
+    return random.choice(_FUN_VERBS)
+
 
 def _agent_color(name: str) -> str:
     h = sum(ord(c) for c in name)
@@ -32,7 +51,14 @@ class TerminalRenderer:
 
     def __init__(self):
         if HAS_RICH:
-            self.console = Console()
+            import sys, io
+            # Force UTF-8 on Windows to support Unicode glyphs (✶ ⚡ ↳ ▶ etc.)
+            if sys.platform == "win32":
+                import os
+                os.system("")  # Enable VT100 escape sequences on Windows
+                if hasattr(sys.stdout, "reconfigure"):
+                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            self.console = Console(force_terminal=True)
         else:
             self.console = None
         self._streams: Dict[str, str] = {}  # agent -> accumulated markdown
@@ -128,41 +154,40 @@ class TerminalRenderer:
 
     # ── Thinking ──
 
+    def _status_line(self, agent: str, text: str):
+        """Print a styled status line for an agent (thinking, iterating, etc.)."""
+        color = _agent_color(agent)
+        if self.console:
+            from rich.markup import escape
+            self.console.print(f"  [{color}]▶ {escape(agent)}[/{color}] [dim italic]{escape(text)}[/dim italic]")
+        else:
+            print(f"  ▶ {agent} {text}")
+
     def start_thinking(self, agent: str):
         self._thinking[agent] = ""
-        if self.console:
-            self.console.print(f"[dim italic]Thinking...[/dim italic]", end="")
+        self._status_line(agent, f"✶ {_random_verb()}...")
 
     def thinking_token(self, agent: str, text: str):
         self._thinking[agent] = self._thinking.get(agent, "") + text
 
     def end_thinking(self, agent: str):
         text = self._thinking.pop(agent, "")
-        if text and self.console:
-            # Show condensed thinking
+        if text:
             lines = text.strip().split("\n")
-            preview = lines[0][:100] + ("..." if len(lines) > 1 or len(lines[0]) > 100 else "")
-            self.console.print(f"\r[dim italic]Thought: {preview}[/dim italic]")
-        elif text:
-            print(f"\n[Thought: {text[:200]}...]")
+            preview = lines[0][:120] + ("..." if len(lines) > 1 or len(lines[0]) > 120 else "")
+            self._status_line(agent, f"Thought: {preview}")
 
     # ── Tool calls ──
 
     def print_tool_call(self, tool: str, arguments: dict, agent: str = "",
                         service: str = ""):
-        color = _agent_color(agent) if agent else "yellow"
         # Format arguments compactly
         args_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in arguments.items())
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
-        if self.console:
-            from rich.markup import escape
-            badge = f"\\[{escape(agent)} via {escape(service)}] " if agent and service else ""
-            self.console.print(
-                f"  [yellow]⚡ {badge}{escape(tool)}[/yellow]([dim]{escape(args_str)}[/dim])"
-            )
-        else:
-            print(f"  {badge}{tool}({args_str})")
+        svc_info = f" via {service}" if service else ""
+        display = f"⚡ {tool}({args_str})"
+        self._status_line(agent or "assistant", display)
 
     def print_tool_result(self, tool: str, result: str, agent: str = ""):
         # Truncate long results
@@ -224,10 +249,7 @@ class TerminalRenderer:
 
     def print_iteration(self, agent: str, iteration: int, round_n: int,
                         max_rounds: int, tools: int):
-        if self.console:
-            self.console.print(
-                f"[dim]  iter {iteration} · round {round_n}/{max_rounds} · {tools} tools[/dim]"
-            )
+        self._status_line(agent, f"✶ {_random_verb()}... · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
 
     def print_ask_user(self, question: str, options: list):
         if self.console:

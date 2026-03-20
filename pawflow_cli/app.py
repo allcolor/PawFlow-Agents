@@ -41,7 +41,7 @@ _COMMANDS = [
     "/clear-files", "/detach",
     "/add-secret", "/secrets", "/add-variable", "/variables",
     "/schedules", "/cost", "/copy", "/clear", "/login", "/quit", "/exit",
-    "/help", "/run", "/diff", "/watch", "/multi",
+    "/help", "/run", "/diff", "/watch", "/multi", "/plan",
 ]
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
@@ -300,6 +300,14 @@ class PawCode:
             self._approval_response.put(result)
             self.renderer.print_system(f"Approval: {result}")
             return
+        # Detect @filepath references and auto-upload
+        import re
+        at_files = re.findall(r'@((?:[A-Za-z]:\\|/|\.\.?/)\S+)', text)
+        for fpath in at_files:
+            clean_at = fpath.strip('"').strip("'")
+            if os.path.isfile(clean_at):
+                self._upload_file(clean_at)
+                text = text.replace(f"@{fpath}", f"[attached: {os.path.basename(clean_at)}]")
         # Detect dragged file path (file exists on disk)
         clean = text.strip().strip('"').strip("'")
         if not text.startswith("/") and os.path.isfile(clean):
@@ -822,6 +830,7 @@ class PawCode:
                 "- `/prompt list` — List prompts\n"
                 "- `/prompt use <name>` — Show prompt\n"
                 "\n## Dev Tools\n"
+                "- `/plan <description>` — Ask agent for a plan (read-only, no changes)\n"
                 "- `/run <command>` — Run shell command on relay directly\n"
                 "- `/diff [file|ref]` — Show git diff with colors\n"
                 "- `/watch <file>` — Watch file for changes (poll 3s)\n"
@@ -1723,6 +1732,19 @@ class PawCode:
             self._watch_thread = threading.Thread(target=_watch, daemon=True)
             self._watch_thread.start()
             self.renderer.print_system(f"Watching {filepath} (poll every 3s). /watch stop to cancel.")
+            return
+
+        if cmd == "/plan":
+            if not arg:
+                self.renderer.print_error("Usage: /plan <description of what to do>")
+                return
+            # Send as a message with plan-mode instruction prefix
+            plan_msg = (
+                "[PLAN MODE — Read-only strategy. Analyze the request, identify affected files, "
+                "outline the approach step by step. Do NOT make any changes yet. "
+                "Just present the plan and wait for approval.]\n\n" + arg
+            )
+            self._send_message(plan_msg)
             return
 
         # Unknown command — send as message (might be a skill like /review)

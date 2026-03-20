@@ -7861,6 +7861,7 @@ class AgentLoopTask(BaseTask):
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
+            GitHubHandler, SecurityScanHandler,
         )
 
         file_base_url = self.config.get("file_base_url", "")
@@ -8027,6 +8028,9 @@ class AgentLoopTask(BaseTask):
                 fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
                     h.set_available_services(fs_services)
+            elif isinstance(h, (GitHubHandler, SecurityScanHandler)):
+                if user_id:
+                    h.set_user_id(user_id)
 
     def _find_filesystem_service(self, user_id: str = ""):
         """Find the first available filesystem service.

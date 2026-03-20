@@ -1,0 +1,540 @@
+"""PawCode — Terminal frontend for PawFlow."""
+
+import atexit
+import os
+import queue
+import signal
+import sys
+import time
+from pathlib import Path
+
+from pawflow_cli.auth import authenticate
+from pawflow_cli.relay import RelayThread
+from pawflow_cli.api import AgentAPIClient, SSEClient
+from pawflow_cli.ui.renderer import TerminalRenderer
+from pawflow_cli.config import load_config, save_config
+
+try:
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.keys import Keys
+    HAS_PROMPT_TOOLKIT = True
+except ImportError:
+    HAS_PROMPT_TOOLKIT = False
+
+
+class PawCode:
+    """Main CLI application."""
+
+    def __init__(self, server_url: str, directory: str, allow_exec: bool = True):
+        self.server_url = server_url
+        self.directory = str(Path(directory).resolve())
+        self.allow_exec = allow_exec
+
+        self.renderer = TerminalRenderer()
+        self.api: AgentAPIClient = None
+        self.sse: SSEClient = None
+        self.relay: RelayThread = None
+
+        self.conversation_id = None
+        self.selected_agent = ""
+        self.username = ""
+        self.session_token = ""
+        self._sending = False
+        self._running = True
+
+    def start(self):
+        """Initialize auth, relay, and start the main loop."""
+        # Authenticate
+        self.renderer.print("\n  [bold cyan]PawCode[/bold cyan]", style="")
+        self.renderer.print(f"  Directory: {self.directory}")
+        self.renderer.print("")
+
+        auth = authenticate(self.server_url)
+        self.session_token = auth["token"]
+        self.username = auth["username"]
+
+        self.renderer.print_system(f"Authenticated as {self.username}")
+
+        # API client
+        self.api = AgentAPIClient(self.server_url, self.session_token)
+
+        # Start relay
+        self.renderer.print_system(f"Mounting {self.directory} as filesystem relay...")
+        self.relay = RelayThread(
+            self.server_url, self.session_token, self.username,
+            self.directory, self.allow_exec,
+        )
+        self.relay.start()
+        self.renderer.print_system(f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}")
+
+        # Cleanup on exit
+        atexit.register(self._cleanup)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
+        # Load last conversation
+        config = load_config()
+        last_cid = config.get("last_conversation_id")
+        if last_cid:
+            try:
+                data = self.api.send_action("load_history", conversation_id=last_cid)
+                if not data.get("error"):
+                    self.conversation_id = last_cid
+                    self.renderer.print_system(f"Resumed conversation {last_cid[:8]}")
+            except Exception:
+                pass
+
+        self.renderer.print_system("Ready. Type /help for commands, /quit to exit.\n")
+
+        # Main loop
+        self._main_loop()
+
+    def _main_loop(self):
+        """Input → Send → Render loop."""
+        from pawflow_cli.config import HISTORY_FILE, ensure_config_dir
+        ensure_config_dir()
+
+        if HAS_PROMPT_TOOLKIT:
+            session = PromptSession(
+                history=FileHistory(str(HISTORY_FILE)),
+                multiline=False,
+                enable_history_search=True,
+            )
+        else:
+            session = None
+
+        while self._running:
+            try:
+                if session:
+                    text = session.prompt("❯ ")
+                else:
+                    text = input("❯ ")
+            except (EOFError, KeyboardInterrupt):
+                self._running = False
+                break
+
+            text = text.strip()
+            if not text:
+                continue
+
+            # Slash commands
+            if text.startswith("/"):
+                self._handle_command(text)
+                continue
+
+            # Send message
+            self._send_message(text)
+
+    def _send_message(self, text: str):
+        """Send a message and stream the response."""
+        self._sending = True
+        try:
+            resp = self.api.send_message(
+                message=text,
+                conversation_id=self.conversation_id,
+                target_agent=self.selected_agent,
+            )
+            if resp.get("error"):
+                self.renderer.print_error(resp["error"])
+                return
+
+            cid = resp.get("conversation_id")
+            if cid:
+                self.conversation_id = cid
+                save_config({"last_conversation_id": cid})
+
+            # Connect SSE if not connected
+            if not self.sse or not self.sse.connected:
+                self.sse = SSEClient(self.server_url, self.session_token)
+                self.sse.connect(self.conversation_id)
+
+            # Process SSE events until done
+            self._process_events()
+
+        except PermissionError:
+            self.renderer.print_error("Session expired. Run /login to re-authenticate.")
+        except Exception as e:
+            self.renderer.print_error(f"Error: {e}")
+        finally:
+            self._sending = False
+
+    def _process_events(self):
+        """Process SSE events until a 'done' event arrives."""
+        streaming_agent = ""
+        thinking_agent = ""
+        waiting = True
+
+        while waiting and self._running:
+            try:
+                event = self.sse.events.get(timeout=0.5)
+            except queue.Empty:
+                continue
+
+            ev_type = event.get("event", "")
+            data = event.get("data", {})
+
+            if ev_type == "thinking" or ev_type == "thinking_content":
+                agent = data.get("agent_name", "assistant")
+                if ev_type == "thinking" and not thinking_agent:
+                    thinking_agent = agent
+                    self.renderer.start_thinking(agent)
+                elif ev_type == "thinking_content":
+                    self.renderer.thinking_token(agent, data.get("text", ""))
+
+            elif ev_type == "token":
+                agent = data.get("agent_name", "assistant")
+                if thinking_agent:
+                    self.renderer.end_thinking(thinking_agent)
+                    thinking_agent = ""
+                if agent != streaming_agent:
+                    if streaming_agent:
+                        self.renderer.end_stream(streaming_agent)
+                    streaming_agent = agent
+                    source = data.get("source", {})
+                    svc = source.get("llm_service", "") if isinstance(source, dict) else ""
+                    self.renderer.print_agent_badge(agent, svc)
+                    self.renderer.start_stream(agent)
+                self.renderer.stream_token(agent, data.get("text", ""))
+
+            elif ev_type == "tool_call":
+                if streaming_agent:
+                    self.renderer.end_stream(streaming_agent)
+                    streaming_agent = ""
+                agent = data.get("agent_name", "assistant")
+                svc = data.get("llm_service", "")
+                self.renderer.print_tool_call(
+                    data.get("tool", "?"),
+                    data.get("arguments", {}),
+                    agent, svc,
+                )
+
+            elif ev_type == "tool_result":
+                self.renderer.print_tool_result(
+                    data.get("tool", "?"),
+                    data.get("result", ""),
+                    data.get("agent_name", ""),
+                )
+
+            elif ev_type == "iteration_status":
+                self.renderer.print_iteration(
+                    data.get("agent_name", ""),
+                    data.get("iteration", 0),
+                    data.get("round", 0),
+                    data.get("max_rounds", 0),
+                    data.get("total_tools", 0),
+                )
+
+            elif ev_type == "exec_approval_request":
+                self._handle_exec_approval(data)
+
+            elif ev_type == "tool_approval_request":
+                self._handle_tool_approval(data)
+
+            elif ev_type == "ask_user":
+                self.renderer.print_ask_user(
+                    data.get("question", ""),
+                    data.get("options", []),
+                )
+
+            elif ev_type == "done":
+                if streaming_agent:
+                    self.renderer.end_stream(streaming_agent, data.get("response", ""))
+                    streaming_agent = ""
+                elif data.get("response"):
+                    agent = data.get("agent_name", "assistant")
+                    self.renderer.print_agent_badge(agent)
+                    self.renderer.print_markdown(data["response"])
+                self.renderer.print_done(
+                    data.get("agent_name", ""),
+                    data.get("tokens_in", 0),
+                    data.get("tokens_out", 0),
+                    data.get("duration_ms", 0),
+                    data.get("model", ""),
+                )
+                # Check if agent is continuing
+                if not data.get("continuing"):
+                    waiting = False
+
+            elif ev_type == "error_event":
+                self.renderer.print_error(data.get("message", "Unknown error"))
+                waiting = False
+
+            elif ev_type == "cancelled":
+                self.renderer.print_system(f"[{data.get('agent_name', '?')}] Cancelled")
+                waiting = False
+
+            elif ev_type == "_sse_error":
+                # SSE connection error — will auto-reconnect
+                pass
+
+    def _handle_exec_approval(self, data: dict):
+        """Handle exec approval request."""
+        self.renderer.print_exec_approval(
+            data.get("command", "?"),
+            data.get("risk_level", "normal"),
+            data.get("request_id", ""),
+        )
+        choice = input().strip().lower()
+        result_map = {"y": "approved", "n": "denied", "s": "session_allow", "a": "always_allow"}
+        result = result_map.get(choice, "denied")
+        try:
+            self.api.send_action("exec_result",
+                                 request_id=data.get("request_id", ""),
+                                 result=result,
+                                 conversation_id=self.conversation_id)
+        except Exception as e:
+            self.renderer.print_error(f"Approval error: {e}")
+
+    def _handle_tool_approval(self, data: dict):
+        """Handle tool approval request."""
+        self.renderer.print_approval_request(
+            data.get("tool_name", "?"),
+            data.get("action_summary", ""),
+            data.get("request_id", ""),
+        )
+        choice = input().strip().lower()
+        result_map = {"y": "allow_once", "n": "denied", "s": "session_allow", "a": "always_allow"}
+        result = result_map.get(choice, "denied")
+        try:
+            self.api.send_action("tool_approval_result",
+                                 request_id=data.get("request_id", ""),
+                                 result=result,
+                                 conversation_id=self.conversation_id)
+        except Exception as e:
+            self.renderer.print_error(f"Approval error: {e}")
+
+    def _handle_command(self, text: str):
+        """Handle slash commands."""
+        parts = text.split(None, 1)
+        cmd = parts[0].lower()
+        arg = parts[1] if len(parts) > 1 else ""
+
+        if cmd in ("/quit", "/exit"):
+            self._running = False
+            return
+
+        if cmd == "/help":
+            self.renderer.print_markdown(
+                "## Commands\n"
+                "- `/new` — New conversation\n"
+                "- `/conv` — List conversations\n"
+                "- `/resume <id>` — Resume conversation\n"
+                "- `/delete <id>` — Delete conversation\n"
+                "- `/export [json|md]` — Export conversation\n"
+                "- `/agent list|<name>` — List or select agent\n"
+                "- `/compact` — Compact context\n"
+                "- `/model <name>` — Switch model\n"
+                "- `/resources` — List resources\n"
+                "- `/tools` — List tools\n"
+                "- `/cost` — Show token usage/cost\n"
+                "- `/explore` — File explorer\n"
+                "- `/clear` — Clear screen\n"
+                "- `/login` — Re-authenticate\n"
+                "- `/quit` — Exit\n"
+            )
+            return
+
+        if cmd == "/clear":
+            if self.renderer.console:
+                self.renderer.console.clear()
+            else:
+                os.system("cls" if os.name == "nt" else "clear")
+            return
+
+        if cmd == "/new":
+            self.conversation_id = None
+            self.selected_agent = ""
+            if self.sse:
+                self.sse.disconnect()
+                self.sse = None
+            self.renderer.print_system("New conversation started.")
+            return
+
+        if cmd == "/login":
+            from pawflow_cli.auth import authenticate
+            auth = authenticate(self.server_url, force=True)
+            self.session_token = auth["token"]
+            self.username = auth["username"]
+            self.api.session_token = self.session_token
+            self.renderer.print_system(f"Re-authenticated as {self.username}")
+            return
+
+        if cmd in ("/conv", "/conversations"):
+            try:
+                data = self.api.send_action("list_conversations")
+                self.renderer.print_conversation_list(data.get("conversations", []))
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/resume":
+            if not arg:
+                self.renderer.print_error("Usage: /resume <conversation_id>")
+                return
+            try:
+                data = self.api.send_action("load_history", conversation_id=arg)
+                if data.get("error"):
+                    self.renderer.print_error(data["error"])
+                else:
+                    self.conversation_id = arg
+                    save_config({"last_conversation_id": arg})
+                    if self.sse:
+                        self.sse.disconnect()
+                    self.sse = SSEClient(self.server_url, self.session_token)
+                    self.sse.connect(arg)
+                    count = data.get("message_count", 0)
+                    self.renderer.print_system(f"Resumed {arg[:8]} ({count} messages)")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/compact":
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                data = self.api.send_action("compact", conversation_id=self.conversation_id,
+                                             agent_name=arg or "")
+                self.renderer.print_system(f"Compaction started")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/model":
+            if not arg:
+                self.renderer.print_error("Usage: /model <model_name> or /model reset")
+                return
+            try:
+                data = self.api.send_action("model", model=arg, agent=self.selected_agent or "assistant",
+                                             conversation_id=self.conversation_id or "")
+                self.renderer.print_system(data.get("message", "Model updated"))
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/agent":
+            if not arg or arg == "list":
+                try:
+                    data = self.api.send_action("list_agents",
+                                                 conversation_id=self.conversation_id or "")
+                    agents = data.get("agents", [])
+                    for a in agents:
+                        name = a.get("name", "?")
+                        active = " (active)" if a.get("active") else ""
+                        self.renderer.print(f"  {name}{active}")
+                except Exception as e:
+                    self.renderer.print_error(str(e))
+            else:
+                self.selected_agent = arg
+                self.renderer.print_system(f"Switched to agent: {arg}")
+            return
+
+        if cmd == "/resources":
+            try:
+                data = self.api.send_action("list_resources",
+                                             conversation_id=self.conversation_id or "")
+                for rtype, items in data.items():
+                    if isinstance(items, list) and items:
+                        self.renderer.print(f"\n  [bold]{rtype}[/bold]")
+                        for item in items:
+                            name = item.get("name", "?")
+                            active = " ✓" if item.get("active") else ""
+                            self.renderer.print(f"    {name}{active}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/tools":
+            try:
+                data = self.api.send_action("list_tools",
+                                             conversation_id=self.conversation_id or "")
+                tools = data.get("tools", [])
+                for t in tools:
+                    self.renderer.print(f"  {t.get('name', '?')}: {t.get('description', '')[:80]}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/cost":
+            try:
+                data = self.api.send_action("cost", agent=arg or "ALL")
+                self.renderer.print_markdown(f"```\n{data}\n```" if isinstance(data, str) else str(data))
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/export":
+            fmt = arg or "markdown"
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                data = self.api.send_action("export", conversation_id=self.conversation_id,
+                                             format=fmt)
+                url = data.get("url", "")
+                fname = data.get("filename", "")
+                self.renderer.print_system(f"Exported: {url} ({fname})")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/delete":
+            if not arg:
+                self.renderer.print_error("Usage: /delete <conversation_id>")
+                return
+            try:
+                data = self.api.send_action("delete_conversation", conversation_id=arg)
+                if data.get("deleted"):
+                    self.renderer.print_system(f"Deleted {arg[:8]}")
+                    if self.conversation_id == arg:
+                        self.conversation_id = None
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # Unknown command — send as message (might be a skill like /review)
+        self._send_message(text)
+
+    def _signal_handler(self, sig, frame):
+        self.renderer.print_system("\nShutting down...")
+        self._running = False
+        self._cleanup()
+        sys.exit(0)
+
+    def _cleanup(self):
+        if self.sse:
+            self.sse.disconnect()
+        if self.relay:
+            self.relay.stop()
+
+
+def main():
+    """Entry point for the CLI."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="PawCode — Terminal chat frontend")
+    default_server = os.environ.get("PAWFLOW_SERVER", "http://localhost:9090")
+    parser.add_argument("--server", default=default_server,
+                        help=f"PawFlow server URL (env: PAWFLOW_SERVER, default: {default_server})")
+    parser.add_argument("--dir", default=".",
+                        help="Directory to mount as filesystem (default: current directory)")
+    parser.add_argument("--no-exec", action="store_true",
+                        help="Disable shell execution on the mounted directory")
+    parser.add_argument("--no-relay", action="store_true",
+                        help="Don't mount filesystem relay (chat only)")
+    parser.add_argument("--login", action="store_true",
+                        help="Force re-authentication")
+    args = parser.parse_args()
+
+    cli = PawCode(
+        server_url=args.server,
+        directory=args.dir,
+        allow_exec=not args.no_exec,
+    )
+
+    if args.login:
+        from pawflow_cli.config import clear_session
+        clear_session()
+
+    cli.start()

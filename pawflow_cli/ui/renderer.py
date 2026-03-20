@@ -115,33 +115,39 @@ class TerminalRenderer:
         self._streams[agent] = ""
         self._stream_agent = agent
         self._stream_service = service
-        self._stream_last_len = 0
-        # Print the agent badge header
-        color = _agent_color(agent)
-        svc_info = f" via {service}" if service else ""
-        if self.console:
-            self.console.print(f"[bold {color}]{agent}{svc_info}[/bold {color}]")
-        else:
-            print(f"[{agent}{svc_info}]")
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
-        # Print new tokens directly (appears above prompt via patch_stdout)
-        if self.console:
-            self.console.file.write(text)
-            self.console.file.flush()
-        else:
-            sys.stdout.write(text)
-            sys.stdout.flush()
+        # Print raw tokens to stdout (fast, no Rich overhead during streaming)
+        sys.stdout.write(text)
+        sys.stdout.flush()
 
     def end_stream(self, agent: str, final_text: str = ""):
-        text = final_text or self._streams.pop(agent, "")
-        # End the streaming line
-        if self.console:
-            self.console.file.write("\n")
-            self.console.file.flush()
-        else:
-            print()
+        streamed = self._streams.pop(agent, "")
+        text = final_text or streamed
+        # Clear the raw streamed text with \r and overwrite with Rich Panel
+        if streamed:
+            # Move cursor up to overwrite raw text, then clear
+            line_count = streamed.count("\n") + 1
+            sys.stdout.write(f"\033[{line_count}F\033[J")
+            sys.stdout.flush()
+        # Render final content as a proper Rich Markdown Panel
+        if text and self.console:
+            color = _agent_color(agent)
+            svc_info = f" via {self._stream_service}" if self._stream_service else ""
+            try:
+                body = Markdown(text)
+            except Exception:
+                body = Text(text)
+            self.console.print(Panel(
+                body,
+                title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
+                title_align="left",
+                border_style=color,
+                padding=(0, 1),
+            ))
+        elif text:
+            print(text)
         self._stream_agent = ""
         self._stream_service = ""
 

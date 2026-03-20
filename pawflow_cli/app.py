@@ -106,41 +106,30 @@ class PawCode:
         self._event_thread.start()
 
         if HAS_PROMPT_TOOLKIT:
-            from prompt_toolkit.patch_stdout import patch_stdout
             session = PromptSession(
                 history=FileHistory(str(HISTORY_FILE)),
                 multiline=False,
                 enable_history_search=True,
             )
-            # patch_stdout ensures background prints appear above the prompt
-            with patch_stdout():
-                while self._running:
-                    try:
-                        text = session.prompt("❯ ")
-                    except (EOFError, KeyboardInterrupt):
-                        self._running = False
-                        break
-                    text = text.strip()
-                    if not text:
-                        continue
-                    try:
-                        self._handle_input(text)
-                    except Exception as e:
-                        self.renderer.print_error(f"Unexpected error: {e}")
         else:
-            while self._running:
-                try:
+            session = None
+
+        while self._running:
+            try:
+                if session:
+                    text = session.prompt("❯ ")
+                else:
                     text = input("❯ ")
-                except (EOFError, KeyboardInterrupt):
-                    self._running = False
-                    break
-                text = text.strip()
-                if not text:
-                    continue
-                try:
-                    self._handle_input(text)
-                except Exception as e:
-                    self.renderer.print_error(f"Unexpected error: {e}")
+            except (EOFError, KeyboardInterrupt):
+                self._running = False
+                break
+            text = text.strip()
+            if not text:
+                continue
+            try:
+                self._handle_input(text)
+            except Exception as e:
+                self.renderer.print_error(f"Unexpected error: {e}")
 
     def _handle_input(self, text: str):
         """Process a single input line."""

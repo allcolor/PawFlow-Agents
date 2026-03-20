@@ -52,6 +52,8 @@ class PawCode:
         self._last_history = []
         self._status_text = ""  # shown in bottom toolbar (thinking verb, etc.)
         self._status_tick = 0  # for fade animation
+        self._pending_attachments = []  # queued files/images to send with next message
+        self._last_responses = []  # last N agent responses for /copy
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
@@ -129,7 +131,9 @@ class PawCode:
                     self._status_text = f"{parts[0]}✶ {_random_verb()}...{after}"
             text = self._status_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             return HTML(f'<style bg="#16213e" fg="{color}"> {spinner} {text} </style>')
-        return HTML('<style bg="#0f1629" fg="#555"> PawCode </style>')
+        # Idle — show PawCode + pending attachment count
+        attach = f" | 📎 {len(self._pending_attachments)} file(s)" if self._pending_attachments else ""
+        return HTML(f'<style bg="#0f1629" fg="#555"> PawCode{attach} </style>')
 
     def _main_loop(self):
         """Input loop — always available. SSE events render in background."""
@@ -145,12 +149,45 @@ class PawCode:
             from prompt_toolkit.patch_stdout import patch_stdout
             from prompt_toolkit.formatted_text import HTML
 
+            # Custom key bindings
+            bindings = KeyBindings()
+
+            @bindings.add('c-v')
+            def _ctrl_v(event):
+                """Ctrl+V: check clipboard for image first, then paste text."""
+                try:
+                    from PIL import ImageGrab
+                    img = ImageGrab.grabclipboard()
+                    if img is not None:
+                        # Clipboard has an image — queue it
+                        import io, base64
+                        buf = io.BytesIO()
+                        img.save(buf, format="PNG")
+                        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+                        self._pending_attachments.append({
+                            "filename": "clipboard.png",
+                            "mime_type": "image/png",
+                            "data": b64,
+                        })
+                        n = len(self._pending_attachments)
+                        self.renderer.print_system(
+                            f"📎 clipboard image ({len(buf.getvalue()):,} bytes) — {n} file(s) queued")
+                        return
+                except ImportError:
+                    pass
+                except Exception:
+                    pass
+                # No image — do normal paste
+                event.current_buffer.paste_clipboard_data(
+                    event.app.clipboard.get_data())
+
             session = PromptSession(
                 history=FileHistory(str(HISTORY_FILE)),
                 multiline=False,
                 enable_history_search=True,
                 bottom_toolbar=self._get_toolbar,
-                refresh_interval=0.5,  # refresh toolbar every 0.5s
+                refresh_interval=0.5,
+                key_bindings=bindings,
             )
 
             # patch_stdout(raw=True) preserves ANSI codes from Rich
@@ -210,13 +247,18 @@ class PawCode:
         # Erase the raw prompt line, replace with styled Panel
         sys.stdout.write("\033[A\033[2K")
         sys.stdout.flush()
-        self.renderer.print_user_message(text)
+        # Show attachment count in user message if any
+        attach_info = f" [📎 {len(self._pending_attachments)} file(s)]" if self._pending_attachments else ""
+        self.renderer.print_user_message(text + attach_info)
         try:
+            attachments = self._pending_attachments if self._pending_attachments else None
             resp = self.api.send_message(
                 message=text,
                 conversation_id=self.conversation_id,
                 target_agent=self.selected_agent,
+                attachments=attachments,
             )
+            self._pending_attachments = []  # clear after send
             if resp.get("error"):
                 self.renderer.print_error(resp["error"])
                 return
@@ -235,7 +277,7 @@ class PawCode:
             self.renderer.print_error(f"Send error: {e}")
 
     def _upload_file(self, file_path: str):
-        """Upload a local file as attachment to the conversation."""
+        """Queue a local file as pending attachment (sent with next message)."""
         import base64
         import mimetypes
         path = Path(file_path)
@@ -248,27 +290,16 @@ class PawCode:
         mime = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
         data = path.read_bytes()
         b64 = base64.b64encode(data).decode("ascii")
-        try:
-            resp = self.api.send_message(
-                message=f"[Attached file: {path.name}]",
-                conversation_id=self.conversation_id,
-                target_agent=self.selected_agent,
-                attachments=[{
-                    "filename": path.name,
-                    "mime_type": mime,
-                    "data": b64,
-                }],
-            )
-            cid = resp.get("conversation_id")
-            if cid:
-                self.conversation_id = cid
-            self.renderer.print_system(f"Uploaded {path.name} ({len(data):,} bytes)")
-            self._ensure_sse()
-        except Exception as e:
-            self.renderer.print_error(f"Upload failed: {e}")
+        self._pending_attachments.append({
+            "filename": path.name,
+            "mime_type": mime,
+            "data": b64,
+        })
+        n = len(self._pending_attachments)
+        self.renderer.print_system(f"📎 {path.name} ({len(data):,} bytes) — {n} file(s) queued. Type message + Enter to send.")
 
     def _paste_clipboard_image(self):
-        """Paste image from clipboard and upload."""
+        """Queue clipboard image as pending attachment."""
         import base64
         try:
             from PIL import ImageGrab
@@ -280,25 +311,62 @@ class PawCode:
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-            resp = self.api.send_message(
-                message="[Pasted image from clipboard]",
-                conversation_id=self.conversation_id,
-                target_agent=self.selected_agent,
-                attachments=[{
-                    "filename": "clipboard.png",
-                    "mime_type": "image/png",
-                    "data": b64,
-                }],
-            )
-            cid = resp.get("conversation_id")
-            if cid:
-                self.conversation_id = cid
-            self.renderer.print_system(f"Clipboard image uploaded ({len(buf.getvalue()):,} bytes)")
-            self._ensure_sse()
+            self._pending_attachments.append({
+                "filename": "clipboard.png",
+                "mime_type": "image/png",
+                "data": b64,
+            })
+            n = len(self._pending_attachments)
+            self.renderer.print_system(f"📎 clipboard image ({len(buf.getvalue()):,} bytes) — {n} file(s) queued. Type message + Enter to send.")
         except ImportError:
             self.renderer.print_error("Install Pillow for clipboard support: pip install Pillow")
         except Exception as e:
             self.renderer.print_error(f"Clipboard paste failed: {e}")
+
+    def _clear_attachments(self):
+        """Clear pending attachments."""
+        self._pending_attachments.clear()
+        self.renderer.print_system("Attachments cleared.")
+
+    def _copy_last_message(self, arg: str = ""):
+        """Copy last agent response (or Nth) to clipboard."""
+        if not self._last_responses:
+            self.renderer.print_error("No responses to copy")
+            return
+        idx = -1
+        if arg and arg.isdigit():
+            idx = -int(arg) if int(arg) > 0 else -1
+        try:
+            text = self._last_responses[idx]
+        except IndexError:
+            self.renderer.print_error(f"Only {len(self._last_responses)} responses available")
+            return
+        try:
+            # Try pyperclip first (cross-platform)
+            import pyperclip
+            pyperclip.copy(text)
+            self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
+        except ImportError:
+            # Fallback: platform-specific
+            if sys.platform == "win32":
+                import subprocess
+                subprocess.run(["clip"], input=text.encode("utf-8"), check=True)
+                self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
+            elif sys.platform == "darwin":
+                import subprocess
+                subprocess.run(["pbcopy"], input=text.encode("utf-8"), check=True)
+                self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
+            else:
+                # Linux — try xclip
+                try:
+                    import subprocess
+                    subprocess.run(["xclip", "-selection", "clipboard"],
+                                   input=text.encode("utf-8"), check=True)
+                    self.renderer.print_system(f"Copied {len(text):,} chars to clipboard")
+                except Exception:
+                    self.renderer.print_error("Install pyperclip or xclip for clipboard support")
+        except Exception as e:
+            self.renderer.print_error(f"Copy failed: {e}")
 
     def _ensure_sse(self):
         """Ensure SSE client is connected for the current conversation."""
@@ -456,13 +524,19 @@ class PawCode:
                 self.renderer.print_system(msg)
 
         elif ev_type == "done":
+            response_text = data.get("response", "")
             if streaming_agent:
-                self.renderer.end_stream(streaming_agent, data.get("response", ""))
+                self.renderer.end_stream(streaming_agent, response_text)
                 self._ev_streaming_agent = ""
-            elif data.get("response"):
+            elif response_text:
                 agent = data.get("agent_name", "assistant")
                 self.renderer.print_agent_badge(agent)
-                self.renderer.print_markdown(data["response"])
+                self.renderer.print_markdown(response_text)
+            # Track for /copy
+            if response_text:
+                self._last_responses.append(response_text)
+                if len(self._last_responses) > 10:
+                    self._last_responses.pop(0)
             self.renderer.print_done(
                 data.get("agent_name", ""),
                 data.get("tokens_in", 0),
@@ -1365,6 +1439,15 @@ class PawCode:
 
         if cmd == "/paste":
             self._paste_clipboard_image()
+            return
+
+        if cmd in ("/clear-files", "/detach"):
+            self._pending_attachments.clear()
+            self.renderer.print_system("Pending attachments cleared.")
+            return
+
+        if cmd == "/copy":
+            self._copy_last_message(arg)
             return
 
         # Unknown command — send as message (might be a skill like /review)

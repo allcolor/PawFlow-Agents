@@ -6364,6 +6364,13 @@ class AgentLoopTask(BaseTask):
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
                         _append(LLMMessage(role="tool", content=result_text, tool_call_id=tc.id))
                         _result_preview = result_text if tc.name == "spawn_agents" else (result_text if isinstance(result_text, str) else str(result_text[0].get("text", "") if result_text else ""))[:2000]
+                        # Strip TOOL OUTPUT wrapper for display
+                        if isinstance(_result_preview, str) and _result_preview.startswith("[TOOL OUTPUT"):
+                            _fnl = _result_preview.find("\n")
+                            if _fnl >= 0:
+                                _result_preview = _result_preview[_fnl + 1:]
+                            if _result_preview.endswith("[/TOOL OUTPUT]"):
+                                _result_preview = _result_preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": _result_preview,
                             "agent_name": _agent_name or "assistant",
@@ -8776,11 +8783,19 @@ class AgentLoopTask(BaseTask):
                         "source": _tc_source,
                     })
             elif role == "tool" and tool_call_id:
-                # Tool result message
-                preview = content[:300]
+                # Tool result message — strip security wrapper for display
+                display_content = content
+                if display_content.startswith("[TOOL OUTPUT"):
+                    # Remove "[TOOL OUTPUT — ...]\n" prefix and "\n[/TOOL OUTPUT]" suffix
+                    first_nl = display_content.find("\n")
+                    if first_nl >= 0:
+                        display_content = display_content[first_nl + 1:]
+                    if display_content.endswith("[/TOOL OUTPUT]"):
+                        display_content = display_content[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                preview = display_content[:300]
                 result.append({
                     "type": "tool_result", "role": "tool",
-                    "content": preview + ("..." if len(content) > 300 else ""),
+                    "content": preview + ("..." if len(display_content) > 300 else ""),
                     "tool_call_id": tool_call_id,
                 })
             elif role in ("user", "assistant"):

@@ -192,26 +192,72 @@ class TerminalRenderer:
 
     # ── Tool calls ──
 
+    def _strip_tool_wrapper(self, text: str) -> str:
+        """Strip [TOOL OUTPUT...] wrapper from display text."""
+        if text.startswith("[TOOL OUTPUT"):
+            nl = text.find("\n")
+            if nl >= 0:
+                text = text[nl + 1:]
+            if text.endswith("[/TOOL OUTPUT]"):
+                text = text[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+        return text
+
     def print_tool_call(self, tool: str, arguments: dict, agent: str = "",
                         service: str = ""):
-        # Format arguments compactly
-        args_str = ", ".join(f"{k}={repr(v)[:50]}" for k, v in arguments.items())
+        # Format arguments compactly — Claude Code style
+        args_parts = []
+        for k, v in arguments.items():
+            vs = repr(v) if not isinstance(v, str) else v
+            if len(vs) > 60:
+                vs = vs[:60] + "..."
+            args_parts.append(f"{k}={vs}")
+        args_str = ", ".join(args_parts)
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
-        svc_info = f" via {service}" if service else ""
-        display = f"⚡ {tool}({args_str})"
-        self._set_status(f"▶ {agent or 'assistant'} {tool}...")
-        self._status_line(agent or "assistant", display)
+
+        self._set_status(f"▶ {agent or 'assistant'}  {tool}...")
+        if self.console:
+            from rich.markup import escape
+            color = _agent_color(agent) if agent else "yellow"
+            self.console.print(
+                f"  [{color}]● {escape(agent or 'assistant')}[/{color}] "
+                f"[yellow]{escape(tool)}[/yellow]"
+                f"[dim]({escape(args_str)})[/dim]"
+            )
+        else:
+            print(f"  ● {agent or 'assistant'} {tool}({args_str})")
 
     def print_tool_result(self, tool: str, result: str, agent: str = ""):
+        result = self._strip_tool_wrapper(result)
+        # Detect diff output
+        is_diff = any(result.lstrip().startswith(p) for p in ("---", "+++", "@@", "diff "))
         # Truncate long results
         if len(result) > 500:
             result = result[:500] + f"\n... ({len(result)} chars total)"
         if self.console:
             from rich.markup import escape
-            self.console.print(f"  [dim]  ↳ {escape(tool)}: {escape(result)}[/dim]")
+            if is_diff:
+                # Color diff lines
+                lines = []
+                for line in result.split("\n"):
+                    if line.startswith("+") and not line.startswith("+++"):
+                        lines.append(f"[green]{escape(line)}[/green]")
+                    elif line.startswith("-") and not line.startswith("---"):
+                        lines.append(f"[red]{escape(line)}[/red]")
+                    elif line.startswith("@@"):
+                        lines.append(f"[cyan]{escape(line)}[/cyan]")
+                    else:
+                        lines.append(f"[dim]{escape(line)}[/dim]")
+                self.console.print("  " + "\n  ".join(lines))
+            else:
+                # Compact result — green checkmark
+                first_line = result.split("\n")[0][:200]
+                if len(result) > len(first_line):
+                    self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}...[/dim]")
+                else:
+                    self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}[/dim]")
         else:
-            print(f"  {tool}: {result}")
+            print(f"  ✓ {result[:200]}")
 
     # ── Approval ──
 
@@ -363,11 +409,12 @@ class TerminalRenderer:
         elif mtype == "tool_call":
             if self.console:
                 from rich.markup import escape
-                self.console.print(f"  [yellow]⚡ {escape(content)}[/yellow]")
+                self.console.print(f"  [yellow]● {escape(content)}[/yellow]")
             else:
-                print(f"  ⚡ {content}")
+                print(f"  ● {content}")
 
         elif mtype == "tool_result":
+            content = self._strip_tool_wrapper(content)
             display = content if len(content) <= 200 else content[:200] + "..."
             if self.console:
                 from rich.markup import escape

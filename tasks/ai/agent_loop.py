@@ -4953,6 +4953,22 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
+        if action == "fs_exec":
+            from core.tool_registry import FilesystemToolHandler
+            _fsh = FilesystemToolHandler()
+            _fsh.set_user_id(user_id)
+            _fs_svc = _fsh._find_service(body.get("service", ""))
+            if not _fs_svc:
+                flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                result = _fs_svc.exec(".", body.get("command", ""), int(body.get("timeout", 30)))
+                flowfile.set_content(json.dumps(result).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
         if action == "theme":
             conv_id = body.get("conversation_id", "")
             operation = body.get("operation", "set")  # set, get, delete

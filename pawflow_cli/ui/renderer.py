@@ -338,6 +338,9 @@ class TerminalRenderer:
             self.console.print(info)
         else:
             print(f"  [{tokens_in}↑ {tokens_out}↓ {duration_ms/1000:.1f}s]")
+        # Terminal bell notification
+        sys.stdout.write("\a")
+        sys.stdout.flush()
 
     def print_iteration(self, agent: str, iteration: int, round_n: int,
                         max_rounds: int, tools: int):

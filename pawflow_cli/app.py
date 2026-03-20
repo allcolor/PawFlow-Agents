@@ -25,9 +25,24 @@ try:
     from prompt_toolkit.history import FileHistory
     from prompt_toolkit.key_binding import KeyBindings
     from prompt_toolkit.keys import Keys
+    from prompt_toolkit.completion import WordCompleter
     HAS_PROMPT_TOOLKIT = True
 except ImportError:
     HAS_PROMPT_TOOLKIT = False
+
+_COMMANDS = [
+    "/new", "/conv", "/resume", "/history", "/delete", "/export",
+    "/agent", "/msg", "/btw", "/stop", "/interrupt",
+    "/compact", "/rebuild", "/restart", "/summary", "/context",
+    "/memory", "/skill", "/task", "/service",
+    "/resources", "/activate", "/deactivate",
+    "/tools", "/call", "/model", "/llm",
+    "/files", "/upload", "/paste", "/view", "/prompt",
+    "/add-secret", "/secrets", "/add-variable", "/variables",
+    "/schedules", "/cost", "/copy", "/clear", "/login", "/quit", "/exit",
+    "/help", "/run", "/diff", "/watch", "/multi",
+]
+_completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
 
 class PawCode:
@@ -101,6 +116,15 @@ class PawCode:
                     self.renderer.print_system(
                         f"Resumed {last_cid[:8]} (showing {len(messages)} of {total}{more_hint})")
                     self._display_history(messages, len(messages))
+                    # Auto-summary for long conversations
+                    if total > 100 and messages:
+                        last_assistant = ""
+                        for m in reversed(messages):
+                            if m.get("type") in ("assistant", "agent_response"):
+                                last_assistant = m.get("content", "")[:200]
+                                break
+                        if last_assistant:
+                            self.renderer.print_system(f"Last response: {last_assistant}...")
                     self._ensure_sse()
             except Exception:
                 pass
@@ -188,6 +212,7 @@ class PawCode:
                 bottom_toolbar=self._get_toolbar,
                 refresh_interval=0.5,
                 key_bindings=bindings,
+                completer=_completer,
             )
 
             # patch_stdout(raw=True) preserves ANSI codes from Rich
@@ -736,6 +761,14 @@ class PawCode:
                 "- `/view <path|url>` — Open file in browser\n"
                 "- `/prompt list` — List prompts\n"
                 "- `/prompt use <name>` — Show prompt\n"
+                "\n## Dev Tools\n"
+                "- `/run <command>` — Run shell command on relay directly\n"
+                "- `/diff [file|ref]` — Show git diff with colors\n"
+                "- `/watch <file>` — Watch file for changes (poll 3s)\n"
+                "- `/watch stop` — Stop watching\n"
+                "- `/multi` — Multiline input mode\n"
+                "- `/view <path|url>` — Open in browser\n"
+                "- `/copy [N]` — Copy last response to clipboard\n"
                 "\n## Other\n"
                 "- `/cost` — Token usage/cost\n"
                 "- `/login` — Re-authenticate\n"
@@ -1482,6 +1515,100 @@ class PawCode:
                         self.renderer.print_error(data["error"])
                 except Exception as e:
                     self.renderer.print_error(f"Cannot open: {e}")
+            return
+
+        if cmd == "/run":
+            if not arg:
+                self.renderer.print_error("Usage: /run <command>")
+                return
+            try:
+                result = self.api.send_action("fs_exec",
+                    service=self.relay.relay_id if self.relay else "",
+                    command=arg, timeout=30)
+                if result.get("error"):
+                    self.renderer.print_error(result["error"])
+                else:
+                    stdout = result.get("stdout", "")
+                    stderr = result.get("stderr", "")
+                    rc = result.get("returncode", -1)
+                    self.renderer.print_exec_output(arg, rc, stdout, stderr)
+            except Exception as e:
+                self.renderer.print_error(f"Exec failed: {e}")
+            return
+
+        if cmd == "/diff":
+            if not arg:
+                arg = "."
+            try:
+                data = self.api.send_action("fs_exec",
+                    service=self.relay.relay_id if self.relay else "",
+                    command=f"git diff {arg}", timeout=15)
+                output = data.get("stdout", "")
+                if not output:
+                    self.renderer.print_system("No changes.")
+                else:
+                    self.renderer.print_tool_result("diff", output)
+            except Exception as e:
+                self.renderer.print_error(f"Diff failed: {e}")
+            return
+
+        if cmd == "/multi":
+            self.renderer.print_system("Multiline mode: type your message. Press Alt+Enter or Escape then Enter to send.")
+            try:
+                if HAS_PROMPT_TOOLKIT:
+                    from prompt_toolkit import prompt as pt_prompt
+                    text = pt_prompt("... ", multiline=True)
+                else:
+                    lines = []
+                    self.renderer.print_system("Type lines, empty line to send:")
+                    while True:
+                        line = input("... ")
+                        if line == "":
+                            break
+                        lines.append(line)
+                    text = "\n".join(lines)
+                if text.strip():
+                    self._send_message(text.strip())
+            except (EOFError, KeyboardInterrupt):
+                self.renderer.print_system("Cancelled.")
+            return
+
+        if cmd == "/watch":
+            if not arg:
+                self.renderer.print_error("Usage: /watch <file_path> | /watch stop")
+                return
+            if arg.strip() == "stop":
+                if hasattr(self, '_watch_thread') and self._watch_thread:
+                    self._watch_stop.set()
+                    self._watch_thread = None
+                    self.renderer.print_system("File watch stopped.")
+                else:
+                    self.renderer.print_system("No active watch.")
+                return
+            # Start watching in background
+            self._watch_stop = threading.Event()
+            filepath = arg.strip()
+            def _watch():
+                import hashlib
+                last_hash = ""
+                while not self._watch_stop.is_set():
+                    try:
+                        data = self.api.send_action("fs_read_file",
+                            service=self.relay.relay_id if self.relay else "",
+                            path=filepath)
+                        content = data.get("content", "")
+                        h = hashlib.md5(content.encode()).hexdigest()
+                        if last_hash and h != last_hash:
+                            self.renderer.print_system(f"File changed: {filepath}")
+                            sys.stdout.write("\a")
+                            sys.stdout.flush()
+                        last_hash = h
+                    except Exception:
+                        pass
+                    self._watch_stop.wait(3)
+            self._watch_thread = threading.Thread(target=_watch, daemon=True)
+            self._watch_thread.start()
+            self.renderer.print_system(f"Watching {filepath} (poll every 3s). /watch stop to cancel.")
             return
 
         # Unknown command — send as message (might be a skill like /review)

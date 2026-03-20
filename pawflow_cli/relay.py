@@ -126,26 +126,14 @@ class RelayThread:
         if tools_dir not in sys.path:
             sys.path.insert(0, tools_dir)
 
-        # Suppress [FSRelay] logs by replacing sys.stderr with a thread-local
-        # wrapper that silences writes from the relay thread only
-        import os as _os
-        _real_stderr = sys.stderr
-        _relay_thread_id = threading.get_ident()
-
-        class _QuietStderr:
-            """Stderr wrapper that silences writes from the relay thread."""
-            def write(self, s):
-                if threading.get_ident() == _relay_thread_id:
-                    return  # suppress relay thread output
-                _real_stderr.write(s)
-            def flush(self):
-                _real_stderr.flush()
-            def __getattr__(self, name):
-                return getattr(_real_stderr, name)
-
-        sys.stderr = _QuietStderr()
-
         import pawflow_relay as _relay_mod
+        import os as _os
+
+        # Redirect the relay's stderr writes to devnull by opening a real file
+        _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
+        _saved_stderr_fd = _os.dup(2)  # save original stderr fd
+        _os.dup2(_devnull_fd, 2)       # redirect fd 2 (stderr) to devnull
+        _os.close(_devnull_fd)
 
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:
@@ -159,4 +147,6 @@ class RelayThread:
             except Exception:
                 pass
         finally:
-            sys.stderr = _real_stderr
+            # Restore stderr fd
+            _os.dup2(_saved_stderr_fd, 2)
+            _os.close(_saved_stderr_fd)

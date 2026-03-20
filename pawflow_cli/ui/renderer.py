@@ -80,6 +80,23 @@ class TerminalRenderer:
         if self._status_callback:
             self._status_callback(text)
 
+    def print_user_message(self, text: str):
+        """Echo the user's message as a visible Panel."""
+        if self.console:
+            from rich.markup import escape
+            display = text if len(text) <= 500 else text[:500] + "..."
+            self.console.print()
+            self.console.print(Panel(
+                f"[bold white]{escape(display)}[/bold white]",
+                title="[bold green]❯ You[/bold green]",
+                title_align="left",
+                border_style="bright_green",
+                padding=(0, 2),
+                style="on #0a2a0a",
+            ))
+        else:
+            print(f"\n❯ {text}")
+
     def print_banner(self, directory: str):
         if self.console:
             self.console.print(Panel(

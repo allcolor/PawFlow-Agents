@@ -771,7 +771,8 @@ class PawCode:
                 "- `/rebuild` — Rebuild context\n"
                 "- `/restart [agent] [keep]` — Restart context\n"
                 "- `/summary [agent] [tokens]` — Summarize context\n"
-                "- `/context` — Show context info\n"
+                "- `/context [agent|task:id]` — Show context\n"
+                "- `/context delete task:id` — Delete task sub-context\n"
                 "\n## Memory\n"
                 "- `/memory list` — List memories\n"
                 "- `/memory add <text>` — Add memory\n"
@@ -1169,6 +1170,20 @@ class PawCode:
         if cmd == "/context":
             if not self.conversation_id:
                 self.renderer.print_error("No active conversation")
+                return
+            # /context delete task:t_xxx — delete a sub-context
+            if arg and arg.startswith("delete "):
+                sub_name = arg[7:].strip()
+                try:
+                    data = self.api.send_action("delete_sub_context",
+                                                 conversation_id=self.conversation_id,
+                                                 agent_name=sub_name)
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Sub-context '{sub_name}' deleted")
+                except Exception as e:
+                    self.renderer.print_error(str(e))
                 return
             try:
                 data = self.api.send_action("get_context", conversation_id=self.conversation_id, agent_name=arg or "")

@@ -7177,7 +7177,9 @@ class AgentLoopTask(BaseTask):
                         {"role": "user", "content": _task_prompt},
                     ]
                     # Save as the initial sub-conversation
-                    store.save(entry_key, messages_data, user_id=user_id)
+                    _meta_tmp = store.get_metadata(cid)
+                    _uid_tmp = _meta_tmp["user_id"] if _meta_tmp else ""
+                    store.save(entry_key, messages_data, user_id=_uid_tmp)
             else:
                 messages_data = store.load(cid)
             if not messages_data:

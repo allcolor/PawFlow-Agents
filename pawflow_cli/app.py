@@ -733,6 +733,7 @@ class PawCode:
                 "- `/files` — List conversation files\n"
                 "- `/upload <path>` — Upload file (or drag file onto terminal)\n"
                 "- `/paste` — Upload image from clipboard\n"
+                "- `/view <path|url>` — Open file in browser\n"
                 "- `/prompt list` — List prompts\n"
                 "- `/prompt use <name>` — Show prompt\n"
                 "\n## Other\n"
@@ -1448,6 +1449,39 @@ class PawCode:
 
         if cmd == "/copy":
             self._copy_last_message(arg)
+            return
+
+        if cmd == "/view":
+            if not arg:
+                self.renderer.print_error("Usage: /view <file_path_or_url>")
+                return
+            target = arg.strip().strip('"').strip("'")
+            import webbrowser
+            # If it's a URL, open directly
+            if target.startswith("http://") or target.startswith("https://") or target.startswith("/files/"):
+                if target.startswith("/files/"):
+                    target = f"{self.server_url}{target}"
+                webbrowser.open(target)
+                self.renderer.print_system(f"Opened: {target}")
+            # If it's a local file, open it
+            elif os.path.isfile(target):
+                webbrowser.open(f"file:///{os.path.abspath(target)}")
+                self.renderer.print_system(f"Opened: {target}")
+            # If it's a path on the relay filesystem
+            else:
+                # Try to get the file via the agent API and open from FileStore
+                try:
+                    data = self.api.send_action("fs_copy_to_store",
+                                                 service=self.relay.relay_id if self.relay else "",
+                                                 path=target)
+                    if data.get("url"):
+                        url = f"{self.server_url}{data['url']}"
+                        webbrowser.open(url)
+                        self.renderer.print_system(f"Opened: {url}")
+                    elif data.get("error"):
+                        self.renderer.print_error(data["error"])
+                except Exception as e:
+                    self.renderer.print_error(f"Cannot open: {e}")
             return
 
         # Unknown command — send as message (might be a skill like /review)

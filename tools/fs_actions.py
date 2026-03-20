@@ -380,7 +380,27 @@ def action_edit(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     text = p.read_text(encoding="utf-8")
     count = text.count(old_string)
     if count == 0:
-        raise ValueError(f"old_string not found in {p.name}")
+        # Fuzzy fallback: try to find the closest match (whitespace-tolerant)
+        import difflib
+        old_lines = old_string.splitlines()
+        text_lines = text.splitlines()
+        # Try to find the best matching block
+        matcher = difflib.SequenceMatcher(None,
+            [l.strip() for l in old_lines],
+            [l.strip() for l in text_lines])
+        best = matcher.find_longest_match(0, len(old_lines), 0, len(text_lines))
+        if best.size >= max(1, len(old_lines) * 0.6):
+            # Found a fuzzy match — use the actual text from the file
+            matched_lines = text_lines[best.b:best.b + best.size]
+            actual_old = "\n".join(matched_lines)
+            if actual_old in text:
+                # Replace with the actual matched text
+                count = 1
+                old_string = actual_old
+            else:
+                raise ValueError(f"old_string not found in {p.name} (fuzzy match also failed)")
+        else:
+            raise ValueError(f"old_string not found in {p.name}")
     if count > 1 and not replace_all:
         raise ValueError(f"old_string found {count} times (use replace_all=true)")
 

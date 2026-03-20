@@ -235,7 +235,9 @@ class ExecuteScriptHandler(ToolHandler):
             "open('filestore://file_id_or_name', 'rb') to read from FileStore, "
             "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
             "Plain open('file.csv', 'w') uses in-memory sandbox. "
-            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc."
+            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc. "
+            "For web dev: use filesystem(action=exec) to run local servers and build scripts, "
+            "and browser_action tool for screenshots and visual verification."
         )
 
     @property
@@ -5045,7 +5047,8 @@ class FilesystemToolHandler(ToolHandler):
             "list_store (list FileStore files), delete_from_store (delete from FileStore). "
             "Project: project_init (generate .pawflow.md). "
             "Paths support fs:// URLs: fs://service_id/path. "
-            "Paths are relative to the service root."
+            "Paths are relative to the service root. "
+            "Aliases: 'workspace', 'ws', 'local' always resolve to the first available filesystem. "
         )
         if len(self._available_services) > 1:
             svc_desc = ", ".join(
@@ -5272,6 +5275,10 @@ class FilesystemToolHandler(ToolHandler):
         If empty, find the first available filesystem service.
         Fallback: if service_name not found but only one FS exists, use it.
         """
+        # "workspace" alias — always resolves to the first available FS
+        if service_name.lower() in ("workspace", "ws", "local"):
+            return self._find_service("")  # auto-detect
+
         def _set_uid(svc):
             if hasattr(svc, 'set_user_id') and self._user_id:
                 svc.set_user_id(self._user_id)
@@ -5991,8 +5998,12 @@ class BrowserActionHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Interactive browser. Actions: navigate (go to URL), click (click element), "
-            "fill (fill input field), extract (get text content), screenshot (capture page), "
-            "scroll (scroll up/down), wait (wait for element), close (close browser)."
+            "fill (fill input field), extract (get text content), screenshot (capture page — "
+            "useful for visual debugging and verifying UI changes), "
+            "scroll (scroll up/down), wait (wait for element), close (close browser). "
+            "Tips: use screenshot to verify web pages visually; use extract with 'body' selector "
+            "to get full page text; combine with filesystem(action=exec) to run local dev servers "
+            "or build scripts before navigating."
         )
 
     @property

@@ -321,6 +321,7 @@ class UserServiceRegistry:
                     resolved_config[k] = resolve_expression(v, owner=user_id)
                 else:
                     resolved_config[k] = v
+            resolved_config["_service_id"] = service_id
             svc_instance = svc_class(resolved_config)
             svc_instance.connect()
             with self._data_lock:

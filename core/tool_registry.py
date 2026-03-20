@@ -5326,9 +5326,19 @@ class FilesystemToolHandler(ToolHandler):
         return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        result = self._execute_inner(arguments)
+        # Append service hint if a fallback was used
+        if hasattr(self, '_last_service_hint') and self._last_service_hint:
+            hint = self._last_service_hint
+            self._last_service_hint = ""
+            return result + hint
+        return result
+
+    def _execute_inner(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
         path = arguments.get("path", ".")
         service_name = arguments.get("service", "")
+        self._last_service_hint = ""
 
         # Parse fs:// URLs: fs://service_id/path/to/file
         if path.startswith("fs://"):
@@ -5340,6 +5350,11 @@ class FilesystemToolHandler(ToolHandler):
         svc = None
         if service_name:
             svc = self._find_service(service_name)
+            # Check if fallback was used (service found under different name)
+            if svc:
+                actual_id = getattr(svc, 'service_id', '') or getattr(svc, '_service_id', '')
+                if actual_id and actual_id != service_name:
+                    self._last_service_hint = f"\n[Note: '{service_name}' not found — using '{actual_id}'. Use service='{actual_id}' in future calls.]"
         if svc is None:
             svc = getattr(self, '_fs_service', None)
         if svc is None:

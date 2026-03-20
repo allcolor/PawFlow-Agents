@@ -176,20 +176,18 @@ class TerminalRenderer:
 
     def start_thinking(self, agent: str):
         self._thinking[agent] = ""
-        verb = f"✶ {_random_verb()}..."
-        self._set_status(f"▶ {agent} {verb}")
-        self._status_line(agent, verb)
+        # Only update bottom status bar — no print in chat
+        self._set_status(f"▶ {agent}  ✶ {_random_verb()}...")
 
     def thinking_token(self, agent: str, text: str):
         self._thinking[agent] = self._thinking.get(agent, "") + text
+        # Cycle verb every ~100 chars for "animation" effect
+        if len(self._thinking[agent]) % 100 < len(text):
+            self._set_status(f"▶ {agent}  ✶ {_random_verb()}...")
 
     def end_thinking(self, agent: str):
-        text = self._thinking.pop(agent, "")
-        self._set_status("")  # clear thinking status
-        if text:
-            lines = text.strip().split("\n")
-            preview = lines[0][:120] + ("..." if len(lines) > 1 or len(lines[0]) > 120 else "")
-            self._status_line(agent, f"Thought: {preview}")
+        self._thinking.pop(agent, "")
+        self._set_status("")
 
     # ── Tool calls ──
 
@@ -265,10 +263,8 @@ class TerminalRenderer:
 
     def print_iteration(self, agent: str, iteration: int, round_n: int,
                         max_rounds: int, tools: int):
-        verb = f"✶ {_random_verb()}..."
-        status = f"▶ {agent} {verb} · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools"
-        self._set_status(status)
-        self._status_line(agent, f"{verb} · iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
+        # Only status bar — no chat print
+        self._set_status(f"▶ {agent}  ✶ {_random_verb()}...  iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
 
     def print_ask_user(self, question: str, options: list):
         if self.console:

@@ -51,6 +51,7 @@ class PawCode:
         self._running = True
         self._last_history = []
         self._status_text = ""  # shown in bottom toolbar (thinking verb, etc.)
+        self._status_tick = 0  # for fade animation
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
@@ -99,11 +100,27 @@ class PawCode:
         # Main loop
         self._main_loop()
 
+    _SPINNERS = ["◐", "◓", "◑", "◒"]
+    _FADE_COLORS = ["#e94560", "#c73e54", "#a53848", "#c73e54"]
+
     def _get_toolbar(self):
-        """Bottom toolbar content — shows thinking status, agent activity."""
+        """Bottom toolbar content — animated spinner + fade for thinking status."""
         from prompt_toolkit.formatted_text import HTML
         if self._status_text:
-            return HTML(f'<style bg="#16213e" fg="#e94560"> {self._status_text} </style>')
+            self._status_tick += 1
+            spinner = self._SPINNERS[self._status_tick % len(self._SPINNERS)]
+            color = self._FADE_COLORS[self._status_tick % len(self._FADE_COLORS)]
+            # Cycle verb every 4 ticks (~2s) for variety
+            if self._status_tick % 4 == 0:
+                from pawflow_cli.ui.renderer import _random_verb
+                # Update the verb in status text if it contains ✶
+                parts = self._status_text.split("✶ ", 1)
+                if len(parts) == 2:
+                    rest = parts[1].split("...", 1)
+                    after = rest[1] if len(rest) > 1 else ""
+                    self._status_text = f"{parts[0]}✶ {_random_verb()}...{after}"
+            text = self._status_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            return HTML(f'<style bg="#16213e" fg="{color}"> {spinner} {text} </style>')
         return HTML('<style bg="#0f1629" fg="#555"> PawCode </style>')
 
     def _main_loop(self):

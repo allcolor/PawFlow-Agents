@@ -129,10 +129,9 @@ class RelayThread:
         import pawflow_relay as _relay_mod
         import os as _os
 
-        # Redirect the relay's stderr writes to devnull by opening a real file
+        # Redirect fd 2 (stderr) to devnull — never restored (daemon thread)
         _devnull_fd = _os.open(_os.devnull, _os.O_WRONLY)
-        _saved_stderr_fd = _os.dup(2)  # save original stderr fd
-        _os.dup2(_devnull_fd, 2)       # redirect fd 2 (stderr) to devnull
+        _os.dup2(_devnull_fd, 2)
         _os.close(_devnull_fd)
 
         ws_url = f"wss://localhost:{self.port}/ws/relay"
@@ -140,13 +139,12 @@ class RelayThread:
             _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
                                     self.directory, False, allow_exec=self.allow_exec)
         except Exception:
+            if self._stop_event.is_set():
+                return
             ws_url = f"ws://localhost:{self.port}/ws/relay"
             try:
                 _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
                                         self.directory, False, allow_exec=self.allow_exec)
             except Exception:
                 pass
-        finally:
-            # Restore stderr fd
-            _os.dup2(_saved_stderr_fd, 2)
-            _os.close(_saved_stderr_fd)
+        # Don't restore stderr — keep it silenced until process exits (daemon thread)

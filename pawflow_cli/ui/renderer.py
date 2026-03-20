@@ -84,35 +84,51 @@ class TerminalRenderer:
 
     # ── Streaming ──
 
-    def start_stream(self, agent: str):
+    def start_stream(self, agent: str, service: str = ""):
         self._streams[agent] = ""
+        self._stream_agent = agent
+        self._stream_service = service
         if self.console and not self._live:
             self._live = Live("", console=self.console, refresh_per_second=10)
             self._live.start()
+
+    def _build_stream_panel(self, agent: str, content):
+        """Wrap streaming content in a colored Panel with agent badge."""
+        color = _agent_color(agent)
+        svc_info = f" via {self._stream_service}" if getattr(self, '_stream_service', '') else ""
+        return Panel(
+            content,
+            title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
+            title_align="left",
+            border_style=color,
+            padding=(0, 1),
+        )
 
     def stream_token(self, agent: str, text: str):
         self._streams[agent] = self._streams.get(agent, "") + text
         if self._live:
             combined = self._streams.get(agent, "")
             try:
-                self._live.update(Markdown(combined))
+                body = Markdown(combined)
             except Exception:
-                self._live.update(Text(combined))
+                body = Text(combined)
+            self._live.update(self._build_stream_panel(agent, body))
 
     def end_stream(self, agent: str, final_text: str = ""):
         text = final_text or self._streams.pop(agent, "")
         if self._live:
-            # Update with final content, then stop (freezes in place — no re-print)
             if text:
                 try:
-                    self._live.update(Markdown(text))
+                    body = Markdown(text)
                 except Exception:
-                    self._live.update(Text(text))
+                    body = Text(text)
+                self._live.update(self._build_stream_panel(agent, body))
             self._live.stop()
             self._live = None
         elif text:
-            # No Live was active — print directly
             self.print_markdown(text)
+        self._stream_agent = ""
+        self._stream_service = ""
 
     # ── Thinking ──
 
@@ -260,7 +276,7 @@ class TerminalRenderer:
             print("─" * 40)
 
     def render_history_message(self, msg: dict):
-        """Render a classified history message."""
+        """Render a classified history message with clear visual separation."""
         mtype = msg.get("type", msg.get("role", ""))
         content = msg.get("content", "")
         source = msg.get("source", {})
@@ -272,48 +288,56 @@ class TerminalRenderer:
             return
 
         if mtype == "user":
-            # Separator before user messages
-            self.print_separator()
-            channel_badge = f" [dim]({channel})[/dim]" if channel and channel != "chat" else ""
+            channel_info = f" ({channel})" if channel and channel != "chat" else ""
+            display = content if len(content) <= 500 else content[:500] + "..."
             if self.console:
-                # Truncate long user messages
-                display = content if len(content) <= 300 else content[:300] + "..."
-                self.console.print(f"[bold green]>[/bold green]{channel_badge} {display}")
+                from rich.markup import escape
+                self.console.print(Panel(
+                    escape(display),
+                    title=f"[bold green]You{channel_info}[/bold green]",
+                    title_align="left",
+                    border_style="green",
+                    padding=(0, 1),
+                ))
             else:
-                print(f"> {content[:300]}")
+                print(f"\n── You{channel_info} ──")
+                print(display)
 
         elif mtype in ("assistant", "agent_response"):
-            # Separator before agent responses
-            self.print_separator()
             badge = agent or "assistant"
             svc_info = f" via {svc}" if svc else ""
             color = _agent_color(badge)
+            display = content if len(content) <= 2000 else content[:2000] + "\n..."
             if self.console:
-                self.console.print(f"[bold {color}][{badge}{svc_info}][/bold {color}]")
-                # Truncate very long responses in history
-                display = content if len(content) <= 2000 else content[:2000] + "\n..."
                 try:
-                    self.console.print(Markdown(display), style="")
+                    body = Markdown(display)
                 except Exception:
-                    self.console.print(display)
+                    body = Text(display)
+                self.console.print(Panel(
+                    body,
+                    title=f"[bold {color}]{badge}{svc_info}[/bold {color}]",
+                    title_align="left",
+                    border_style=color,
+                    padding=(0, 1),
+                ))
             else:
-                print(f"[{badge}{svc_info}]")
-                print(content[:2000])
+                print(f"\n── {badge}{svc_info} ──")
+                print(display)
 
         elif mtype == "tool_call":
-            # Tool call — yellow with tool name and args preview
             if self.console:
-                self.console.print(f"[yellow]  {content}[/yellow]")
+                from rich.markup import escape
+                self.console.print(f"  [yellow]⚡ {escape(content)}[/yellow]")
             else:
-                print(f"  {content}")
+                print(f"  ⚡ {content}")
 
         elif mtype == "tool_result":
-            # Tool result — dim green, truncated
+            display = content if len(content) <= 200 else content[:200] + "..."
             if self.console:
-                display = content if len(content) <= 200 else content[:200] + "..."
-                self.console.print(f"[dim green]  > {display}[/dim green]")
+                from rich.markup import escape
+                self.console.print(f"  [dim]  ↳ {escape(display)}[/dim]")
             else:
-                print(f"  > {content[:200]}")
+                print(f"    ↳ {display[:200]}")
 
     # ── Conversations ──
 

@@ -122,12 +122,16 @@ class PawCode:
             if not text:
                 continue
 
-            # Slash commands
-            if text.startswith("/"):
-                self._handle_command(text)
-                continue
+            try:
+                self._handle_input(text)
+            except Exception as e:
+                self.renderer.print_error(f"Unexpected error: {e}")
 
-            # Send message
+    def _handle_input(self, text: str):
+        """Process a single input line."""
+        if text.startswith("/"):
+            self._handle_command(text)
+        else:
             self._send_message(text)
 
     def _send_message(self, text: str):
@@ -197,8 +201,7 @@ class PawCode:
                     streaming_agent = agent
                     source = data.get("source", {})
                     svc = source.get("llm_service", "") if isinstance(source, dict) else ""
-                    self.renderer.print_agent_badge(agent, svc)
-                    self.renderer.start_stream(agent)
+                    self.renderer.start_stream(agent, svc)
                 self.renderer.stream_token(agent, data.get("text", ""))
 
             elif ev_type == "tool_call":
@@ -584,8 +587,13 @@ class PawCode:
         if len(displayable) > show_n:
             self.renderer.print_system(
                 f"... ({len(displayable) - show_n} earlier messages, use /history {len(displayable)} to see all)")
-        for m in recent:
-            self.renderer.render_history_message(m)
+        import traceback as _tb
+        for i, m in enumerate(recent):
+            try:
+                self.renderer.render_history_message(m)
+            except Exception as e:
+                sys.stderr.write(f"Render error msg {i}: {e}\n")
+                _tb.print_exc(file=sys.stderr)
 
     def _resolve_conversation_id(self, partial: str) -> str:
         """Resolve a partial conversation ID to full ID."""

@@ -2473,7 +2473,22 @@ class AgentLoopTask(BaseTask):
             if not conv_id:
                 flowfile.set_content(json.dumps({"files": []}).encode())
                 return [flowfile]
-            messages_data = store.load(conv_id, user_id=user_id)
+            messages_data = store.load(conv_id, user_id=user_id) or []
+            # Also include files from sub-conversations (task contexts)
+            all_convs = store.list_conversations(user_id=user_id) if user_id else []
+            # list_conversations filters ::task::, so search extras directly
+            try:
+                extras = store.get_extras(conv_id, user_id=user_id) or {}
+                for k in extras:
+                    if k.startswith("task_log:"):
+                        # There might be a sub-conv for this task
+                        tid = k[9:]
+                        sub_cid = f"{conv_id}::task::{tid}"
+                        sub_msgs = store.load(sub_cid, user_id=user_id)
+                        if sub_msgs:
+                            messages_data.extend(sub_msgs)
+            except Exception:
+                pass
             if not messages_data:
                 flowfile.set_content(json.dumps({"files": []}).encode())
                 return [flowfile]

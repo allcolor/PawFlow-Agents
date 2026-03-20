@@ -6108,6 +6108,11 @@ class AgentLoopTask(BaseTask):
             if ctx.get("_context_diverged"):
                 _flush_agent = ctx.get("active_agent_name") or "assistant"
                 store.append_to_agent_context(conversation_id, _flush_agent, serialized)
+            # For sub-conversations (tasks), also append to parent so messages persist
+            if "::task::" in conversation_id:
+                _parent_cid = conversation_id.split("::task::")[0]
+                store.append_messages(_parent_cid, serialized,
+                                       ttl=conv_ttl, user_id=user_id)
             new_messages = []
 
         # Persist the user message immediately so it's never lost

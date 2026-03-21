@@ -4570,7 +4570,7 @@ class ManageResourceHandler(ToolHandler):
                 if target_scope == "user":
                     store.create(rtype, name, user_id, promote_data)
                 elif target_scope == "global":
-                    store.create(rtype, name, GLOBAL_USER_ID, promote_data)
+                    return "Error: Cannot promote to global scope from chat. Use the admin GUI."
                 elif target_scope == "conversation" and self._conversation_id:
                     from core.conversation_store import ConversationStore
                     cs = ConversationStore.instance()

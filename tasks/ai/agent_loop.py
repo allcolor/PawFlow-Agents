@@ -3527,6 +3527,10 @@ class AgentLoopTask(BaseTask):
             rname = body.get("name", "").strip()
             data = body.get("data", {})
             scope = body.get("scope", "user")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot update global resources from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not rtype or not rname:
                 flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
                 return [flowfile]
@@ -3546,6 +3550,10 @@ class AgentLoopTask(BaseTask):
             rname = body.get("name", "").strip()
             data = body.get("data", {})
             scope = body.get("scope", "user")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot create global resources from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not rtype or not rname:
                 flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
                 return [flowfile]
@@ -3566,6 +3574,10 @@ class AgentLoopTask(BaseTask):
             rtype = body.get("resource_type", "")
             rname = body.get("name", "").strip()
             scope = body.get("scope", "user")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot delete global resources from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not rtype or not rname:
                 flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
                 return [flowfile]
@@ -3642,8 +3654,12 @@ class AgentLoopTask(BaseTask):
         if action == "set_param":
             key = body.get("key", "").strip()
             value = body.get("value", "")
-            scope = body.get("scope", "global")
+            scope = body.get("scope", "user")
             conv_id = body.get("conversation_id", "")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot write global parameters from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not key:
                 flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
                 return [flowfile]
@@ -3651,7 +3667,7 @@ class AgentLoopTask(BaseTask):
                 cp = store.get_extra(conv_id, "conv_parameters") or {}
                 cp[key] = value
                 store.set_extra(conv_id, "conv_parameters", cp)
-            elif scope == "user":
+            else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
                 path = Path(f"config/users/{uid}/parameters.json")
@@ -3659,18 +3675,17 @@ class AgentLoopTask(BaseTask):
                 data = ConfigStore.load_params(path)
                 data[key] = value
                 ConfigStore.save_params(path, data)
-            else:  # global
-                from core.config_store import ConfigStore
-                data = ConfigStore.load_params(Path("config/global_parameters.json"))
-                data[key] = value
-                ConfigStore.save_params(Path("config/global_parameters.json"), data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
             return [flowfile]
 
         if action == "delete_param":
             key = body.get("key", "").strip()
-            scope = body.get("scope", "global")
+            scope = body.get("scope", "user")
             conv_id = body.get("conversation_id", "")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot delete global parameters from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not key:
                 flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
                 return [flowfile]
@@ -3678,26 +3693,25 @@ class AgentLoopTask(BaseTask):
                 cp = store.get_extra(conv_id, "conv_parameters") or {}
                 cp.pop(key, None)
                 store.set_extra(conv_id, "conv_parameters", cp)
-            elif scope == "user":
+            else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
                 path = Path(f"config/users/{uid}/parameters.json")
                 data = ConfigStore.load_params(path)
                 data.pop(key, None)
                 ConfigStore.save_params(path, data)
-            else:
-                from core.config_store import ConfigStore
-                data = ConfigStore.load_params(Path("config/global_parameters.json"))
-                data.pop(key, None)
-                ConfigStore.save_params(Path("config/global_parameters.json"), data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
             return [flowfile]
 
         if action == "set_secret":
             key = body.get("key", "").strip()
             value = body.get("value", "")
-            scope = body.get("scope", "global")
+            scope = body.get("scope", "user")
             conv_id = body.get("conversation_id", "")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot write global secrets from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not key:
                 flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
                 return [flowfile]
@@ -3707,7 +3721,7 @@ class AgentLoopTask(BaseTask):
                 cs = store.get_extra(conv_id, "conv_secrets") or {}
                 cs[key] = sm.encrypt(value)
                 store.set_extra(conv_id, "conv_secrets", cs)
-            elif scope == "user":
+            else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
                 path = Path(f"config/users/{uid}/secrets.json")
@@ -3715,18 +3729,17 @@ class AgentLoopTask(BaseTask):
                 data = ConfigStore.load_secrets(path)
                 data[key] = value  # ConfigStore.save_secrets encrypts
                 ConfigStore.save_secrets(path, data)
-            else:
-                from core.config_store import ConfigStore
-                data = ConfigStore.load_secrets(Path("config/global_secrets.json"))
-                data[key] = value
-                ConfigStore.save_secrets(Path("config/global_secrets.json"), data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
             return [flowfile]
 
         if action == "delete_secret":
             key = body.get("key", "").strip()
-            scope = body.get("scope", "global")
+            scope = body.get("scope", "user")
             conv_id = body.get("conversation_id", "")
+            if scope == "global":
+                flowfile.set_content(json.dumps({"error": "Cannot delete global secrets from chat. Use the admin GUI."}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
             if not key:
                 flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
                 return [flowfile]
@@ -3734,18 +3747,13 @@ class AgentLoopTask(BaseTask):
                 cs = store.get_extra(conv_id, "conv_secrets") or {}
                 cs.pop(key, None)
                 store.set_extra(conv_id, "conv_secrets", cs)
-            elif scope == "user":
+            else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
                 path = Path(f"config/users/{uid}/secrets.json")
                 data = ConfigStore.load_secrets(path)
                 data.pop(key, None)
                 ConfigStore.save_secrets(path, data)
-            else:
-                from core.config_store import ConfigStore
-                data = ConfigStore.load_secrets(Path("config/global_secrets.json"))
-                data.pop(key, None)
-                ConfigStore.save_secrets(Path("config/global_secrets.json"), data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
             return [flowfile]
 

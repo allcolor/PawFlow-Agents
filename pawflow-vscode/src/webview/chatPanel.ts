@@ -919,6 +919,111 @@ function submitAssignForm(taskName) {
   closePanel();
 }
 
+var _cfInputStyle = 'width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px';
+var _cfTextareaStyle = 'width:100%;min-height:60px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px;font-family:var(--vscode-editor-font-family);resize:vertical';
+var _cfLabelStyle = 'font-size:11px;color:var(--vscode-descriptionForeground)';
+
+function showCreateForm(rtype) {
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  var title = {agents:'Create Agent',skills:'Create Skill',task_defs:'Create Task',prompts:'Create Prompt'}[rtype] || 'Create';
+
+  var fields = '';
+  if (rtype === 'agents') {
+    fields = '<label style="' + _cfLabelStyle + '">Name</label>'
+      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_agent">'
+      + '<label style="' + _cfLabelStyle + '">System prompt</label>'
+      + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="You are a helpful assistant..."></textarea>'
+      + '<label style="' + _cfLabelStyle + '">Model (optional)</label>'
+      + '<input id="cf-model" style="' + _cfInputStyle + '" placeholder="gpt-4o">'
+      + '<label style="' + _cfLabelStyle + '">LLM Service (optional)</label>'
+      + '<input id="cf-llm" style="' + _cfInputStyle + '" placeholder="default">'
+      + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
+      + '<input id="cf-desc" style="' + _cfInputStyle + '">';
+  } else if (rtype === 'skills') {
+    fields = '<label style="' + _cfLabelStyle + '">Name</label>'
+      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_skill">'
+      + '<label style="' + _cfLabelStyle + '">Prompt</label>'
+      + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="Skill instructions..."></textarea>'
+      + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
+      + '<input id="cf-desc" style="' + _cfInputStyle + '">';
+  } else if (rtype === 'task_defs') {
+    fields = '<label style="' + _cfLabelStyle + '">Name</label>'
+      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_task">'
+      + '<label style="' + _cfLabelStyle + '">Task prompt</label>'
+      + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="What the task should do..."></textarea>'
+      + '<label style="' + _cfLabelStyle + '">Criteria (optional)</label>'
+      + '<input id="cf-criteria" style="' + _cfInputStyle + '">'
+      + '<label style="' + _cfLabelStyle + '">Interval (optional)</label>'
+      + '<input id="cf-interval" style="' + _cfInputStyle + '" placeholder="6/1m">'
+      + '<label style="' + _cfLabelStyle + '">Verifier agent (optional)</label>'
+      + '<input id="cf-verifier" style="' + _cfInputStyle + '">';
+  } else if (rtype === 'prompts') {
+    fields = '<label style="' + _cfLabelStyle + '">Name</label>'
+      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_prompt">'
+      + '<label style="' + _cfLabelStyle + '">Content</label>'
+      + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="Prompt content..."></textarea>'
+      + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
+      + '<input id="cf-desc" style="' + _cfInputStyle + '">';
+  }
+
+  overlay.innerHTML = '<div class="panel-header"><h4>' + title + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
+    + '<div style="padding:4px">' + fields
+    + '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'
+    + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<button onclick="submitCreateForm(\\'' + rtype + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Create</button>'
+    + '</div></div>';
+  var nameEl = document.getElementById('cf-name');
+  if (nameEl) nameEl.focus();
+}
+
+function submitCreateForm(rtype) {
+  var name = (document.getElementById('cf-name')?.value || '').trim();
+  var prompt = (document.getElementById('cf-prompt')?.value || '').trim();
+  if (!name) return;
+
+  var cmd = '';
+  var params = {};
+
+  if (rtype === 'agents') {
+    cmd = 'create_agent';
+    params = { name: name, prompt: prompt };
+    var model = (document.getElementById('cf-model')?.value || '').trim();
+    var llm = (document.getElementById('cf-llm')?.value || '').trim();
+    var desc = (document.getElementById('cf-desc')?.value || '').trim();
+    if (model) params.model = model;
+    if (llm) params.llm_service = llm;
+    if (desc) params.description = desc;
+  } else if (rtype === 'skills') {
+    cmd = 'create_resource';
+    params = { resource_type: 'skill', name: name, prompt: prompt };
+    var desc = (document.getElementById('cf-desc')?.value || '').trim();
+    if (desc) params.description = desc;
+  } else if (rtype === 'task_defs') {
+    cmd = 'create_task_def';
+    params = { name: name, prompt: prompt };
+    var criteria = (document.getElementById('cf-criteria')?.value || '').trim();
+    var interval = (document.getElementById('cf-interval')?.value || '').trim();
+    var verifier = (document.getElementById('cf-verifier')?.value || '').trim();
+    if (criteria) params.criteria = criteria;
+    if (interval) params.interval = interval;
+    if (verifier) params.verifier = verifier;
+  } else if (rtype === 'prompts') {
+    cmd = 'create_resource';
+    params = { resource_type: 'prompt', name: name, content: prompt };
+    var desc = (document.getElementById('cf-desc')?.value || '').trim();
+    if (desc) params.description = desc;
+  }
+
+  if (cmd) {
+    vscode.postMessage({ type: 'command', command: cmd, arg: JSON.stringify(params) });
+  }
+  closePanel();
+  statusEl.textContent = rtype.replace(/s$/, '') + ' "' + name + '" created';
+  setTimeout(function() { statusEl.textContent = ''; }, 3000);
+  setTimeout(function() { loadResourcesPanel(); }, 500);
+}
+
 function closePanel() {
   document.getElementById('panelOverlay').className = 'panel-overlay';
 }
@@ -975,12 +1080,16 @@ function renderPanelResult(action, data) {
       if (!items.length) continue;
 
       var label = sectionLabels[rtype] || rtype;
+      var canCreate = ['agents','skills','task_defs','prompts'].indexOf(rtype) >= 0;
+      var addBtn = canCreate ? ' <button style="background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px" onclick="event.stopPropagation();showCreateForm(\\'' + rtype + '\\')">[+]</button>' : '';
       html += '<div class="res-section" onclick="this.classList.toggle(\\'collapsed\\')">'
-        + '<span class="res-arrow">\\u25BC</span> <strong>' + esc(label) + '</strong> <span style="color:var(--vscode-descriptionForeground)">(' + items.length + ')</span></div>';
+        + '<span class="res-arrow">\\u25BC</span> <strong>' + esc(label) + '</strong> ' + addBtn + ' <span style="color:var(--vscode-descriptionForeground)">(' + items.length + ')</span></div>';
       html += '<div class="res-items">';
       for (var ii = 0; ii < items.length; ii++) {
         var item = items[ii];
         var name = item.name || item.id || item.service_id || '?';
+        var scope = item.scope || item._scope || 'user';
+        var scopeBadge = scope === 'global' ? ' <span style="color:var(--vscode-descriptionForeground);font-size:9px">[global]</span>' : '';
         var active = item.active ? ' <span style="color:#3fb950">\\u2713</span>' : '';
         var enabled = item.enabled === false ? ' <span style="color:#f85149">(disabled)</span>' : '';
         var connected = item.connected ? ' <span style="color:#3fb950">(connected)</span>' : '';
@@ -988,8 +1097,9 @@ function renderPanelResult(action, data) {
         if (desc.length > 60) desc = desc.slice(0, 60) + '...';
         var statusBadge = active || enabled || connected;
 
-        html += '<div class="panel-item" oncontextmenu="showResMenu(event,\\'' + esc(rtype) + '\\',\\'' + esc(name).replace(/'/g, "\\\\\\'") + '\\')">'
-          + '<span style="font-weight:500">' + esc(name) + '</span>' + statusBadge
+        var ctxAttr = scope !== 'global' ? 'oncontextmenu="showResMenu(event,\\'' + esc(rtype) + '\\',\\'' + esc(name).replace(/'/g, "\\\\\\'") + '\\')"' : '';
+        html += '<div class="panel-item" ' + ctxAttr + '>'
+          + '<span style="font-weight:500">' + esc(name) + '</span>' + scopeBadge + statusBadge
           + (desc ? '<br><span style="color:var(--vscode-descriptionForeground);font-size:10px">' + esc(desc) + '</span>' : '')
           + '</div>';
       }

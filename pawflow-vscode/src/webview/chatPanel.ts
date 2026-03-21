@@ -118,10 +118,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const api = this.getApi();
     if (!api) { return; }
     try {
-      const resp = await api.sendAction(command, {
-        conversation_id: this.conversationId || '',
-        agent_name: arg || '',
-      });
+      // arg can be a JSON string with extra params
+      let params: Record<string, any> = { conversation_id: this.conversationId || '' };
+      if (arg) {
+        try {
+          const parsed = JSON.parse(arg);
+          params = { ...params, ...parsed };
+        } catch {
+          params.agent_name = arg;
+        }
+      }
+      const resp = await api.sendAction(command, params);
       this.postMessage({ type: 'actionResult', action: command, data: resp });
     } catch (e: any) {
       this.postMessage({ type: 'error', message: e.message });
@@ -311,8 +318,18 @@ code { font-family: var(--vscode-editor-font-family); }
 .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
 .panel-header h4 { margin: 0; font-size: 13px; }
 .panel-close { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 16px; }
-.panel-item { padding: 4px 6px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); cursor: pointer; }
+.panel-item { padding: 4px 6px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); cursor: context-menu; }
 .panel-item:hover { background: var(--vscode-list-hoverBackground); }
+.res-section { padding: 6px; cursor: pointer; font-size: 12px; user-select: none; border-bottom: 1px solid var(--vscode-panel-border); }
+.res-section:hover { background: var(--vscode-list-hoverBackground); }
+.res-arrow { font-size: 10px; transition: transform 0.2s; display: inline-block; }
+.res-section.collapsed .res-arrow { transform: rotate(-90deg); }
+.res-section.collapsed + .res-items { display: none; }
+.res-items { }
+.res-ctx { position: fixed; z-index: 100; background: var(--vscode-menu-background); border: 1px solid var(--vscode-menu-border); border-radius: 4px; padding: 2px 0; min-width: 140px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.res-ctx div { padding: 4px 12px; font-size: 11px; cursor: pointer; color: var(--vscode-menu-foreground); }
+.res-ctx div:hover { background: var(--vscode-menu-selectionBackground); color: var(--vscode-menu-selectionForeground); }
+.res-ctx hr { border: none; border-top: 1px solid var(--vscode-menu-separatorBackground); margin: 2px 0; }
 </style>
 </head>
 <body>
@@ -683,6 +700,81 @@ function showPanel(name) {
   else if (name === 'tools') loadToolsPanel();
 }
 
+function showResMenu(e, rtype, name) {
+  e.preventDefault();
+  e.stopPropagation();
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  var menu = document.createElement('div');
+  menu.className = 'res-ctx';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+
+  var isActive = e.target.closest('.panel-item')?.innerHTML?.includes('\\u2713');
+
+  if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts') {
+    if (isActive) {
+      menu.innerHTML += '<div onclick="resAction(\\'deactivate_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Deactivate</div>';
+    } else {
+      menu.innerHTML += '<div onclick="resAction(\\'activate_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Activate</div>';
+    }
+    menu.innerHTML += '<div onclick="resAction(\\'delete_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Delete</div>';
+  }
+  if (rtype === 'services') {
+    menu.innerHTML += '<div onclick="resAction(\\'service_enable\\',\\'\\',\\'' + name + '\\')">Enable</div>';
+    menu.innerHTML += '<div onclick="resAction(\\'service_disable\\',\\'\\',\\'' + name + '\\')">Disable</div>';
+    menu.innerHTML += '<hr>';
+    menu.innerHTML += '<div onclick="resAction(\\'service_uninstall\\',\\'\\',\\'' + name + '\\')">Uninstall</div>';
+  }
+  if (rtype === 'task_defs') {
+    menu.innerHTML += '<div onclick="resAssignTask(\\'' + name + '\\')">Assign to agent...</div>';
+    menu.innerHTML += '<div onclick="resAction(\\'delete_task_def\\',\\'\\',\\'' + name + '\\')">Delete</div>';
+  }
+  if (rtype === 'agents') {
+    menu.innerHTML += '<hr>';
+    menu.innerHTML += '<div onclick="resAction(\\'agent_enable\\',\\'\\',\\'' + name + '\\')">Enable</div>';
+    menu.innerHTML += '<div onclick="resAction(\\'agent_disable\\',\\'\\',\\'' + name + '\\')">Disable</div>';
+  }
+
+  document.body.appendChild(menu);
+  setTimeout(function() {
+    document.addEventListener('click', function rmMenu() {
+      menu.remove();
+      document.removeEventListener('click', rmMenu);
+    });
+  }, 0);
+}
+
+function resAction(action, rtype, name) {
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  var params = {};
+  if (action === 'activate_resource' || action === 'deactivate_resource') {
+    params = { resource_type: rtype, name: name };
+  } else if (action === 'delete_resource') {
+    params = { resource_type: rtype, name: name };
+  } else if (action === 'service_enable' || action === 'service_disable' || action === 'service_uninstall') {
+    params = { service_id: name };
+  } else if (action === 'agent_enable' || action === 'agent_disable') {
+    params = { agent_name: name };
+  } else if (action === 'delete_task_def') {
+    params = { name: name };
+  }
+  vscode.postMessage({ type: 'command', command: action, arg: JSON.stringify(params) });
+  // Refresh after action
+  setTimeout(function() { loadResourcesPanel(); }, 500);
+}
+
+function resAssignTask(taskName) {
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  var agent = prompt('Assign to which agent?', 'assistant');
+  if (agent) {
+    vscode.postMessage({ type: 'command', command: 'assign_task',
+      arg: JSON.stringify({ agent_name: agent, task_name: taskName, context: 'isolated' }) });
+  }
+}
+
 function closePanel() {
   document.getElementById('panelOverlay').className = 'panel-overlay';
 }
@@ -715,19 +807,51 @@ function renderPanelResult(action, data) {
   if (!overlay || overlay.className !== 'panel-overlay visible') return false;
 
   if (action === 'list_resources' && _pendingPanel === 'resources') {
+    var _resData = data;
     let html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
-    for (const [rtype, items] of Object.entries(data || {})) {
-      if (!Array.isArray(items) || !items.length) continue;
-      html += '<div style="font-size:11px;font-weight:600;color:var(--vscode-textLink-foreground);margin:8px 0 4px">' + esc(rtype) + '</div>';
-      for (const item of items) {
-        const name = item.name || '?';
-        const active = item.active ? ' \\u2713' : '';
-        const desc = item.description || item.prompt || '';
-        html += '<div class="panel-item" onclick="sendCmd(\\'activate_resource\\', \\'' + rtype + ' ' + name + '\\')">'
-          + esc(name) + active + (desc ? ' <span style="color:var(--vscode-descriptionForeground)">\\u2014 ' + esc(desc.slice(0,50)) + '</span>' : '')
+
+    var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services'];
+    var sectionLabels = {agents:'Agents',skills:'Skills',mcp:'MCP Servers',prompts:'Prompts',task_defs:'Tasks',flows:'Flows',services:'Services'};
+
+    for (var si = 0; si < sectionOrder.length; si++) {
+      var rtype = sectionOrder[si];
+      var items = data[rtype];
+      if (!items) continue;
+      if (!Array.isArray(items)) {
+        // services/flows may be objects
+        if (typeof items === 'object') {
+          items = Object.entries(items).map(function(e) {
+            var v = typeof e[1] === 'object' ? e[1] : {};
+            v.id = v.id || e[0];
+            v.name = v.name || v.id || e[0];
+            return v;
+          });
+        } else continue;
+      }
+      if (!items.length) continue;
+
+      var label = sectionLabels[rtype] || rtype;
+      html += '<div class="res-section" onclick="this.classList.toggle(\\'collapsed\\')">'
+        + '<span class="res-arrow">\\u25BC</span> <strong>' + esc(label) + '</strong> <span style="color:var(--vscode-descriptionForeground)">(' + items.length + ')</span></div>';
+      html += '<div class="res-items">';
+      for (var ii = 0; ii < items.length; ii++) {
+        var item = items[ii];
+        var name = item.name || item.id || item.service_id || '?';
+        var active = item.active ? ' <span style="color:#3fb950">\\u2713</span>' : '';
+        var enabled = item.enabled === false ? ' <span style="color:#f85149">(disabled)</span>' : '';
+        var connected = item.connected ? ' <span style="color:#3fb950">(connected)</span>' : '';
+        var desc = item.description || item.prompt || item.type || item.service_type || '';
+        if (desc.length > 60) desc = desc.slice(0, 60) + '...';
+        var statusBadge = active || enabled || connected;
+
+        html += '<div class="panel-item" oncontextmenu="showResMenu(event,\\'' + esc(rtype) + '\\',\\'' + esc(name).replace(/'/g, "\\\\\\'") + '\\')">'
+          + '<span style="font-weight:500">' + esc(name) + '</span>' + statusBadge
+          + (desc ? '<br><span style="color:var(--vscode-descriptionForeground);font-size:10px">' + esc(desc) + '</span>' : '')
           + '</div>';
       }
+      html += '</div>';
     }
+
     overlay.innerHTML = html;
     _pendingPanel = '';
     return true;

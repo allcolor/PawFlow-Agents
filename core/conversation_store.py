@@ -63,12 +63,34 @@ class ConversationStore:
         with cls._lock:
             cls._instance = None
 
+    _last_cleanup: float = 0.0
+
     def _ensure_loaded(self):
         """Load conversations from disk on first access."""
         if self._loaded:
+            # Periodic lightweight cleanup (at most once per hour)
+            now = time.time()
+            if now - self.__class__._last_cleanup > 3600:
+                self.__class__._last_cleanup = now
+                self._cleanup_expired()
             return
         self._loaded = True
         self._load_from_disk()
+        self.__class__._last_cleanup = time.time()
+
+    def _cleanup_expired(self):
+        """Lightweight removal of expired entries from memory (no disk I/O).
+
+        Called periodically from _ensure_loaded under _store_lock.
+        """
+        now = time.time()
+        expired = [cid for cid, e in self._conversations.items()
+                   if e["expires_at"] > 0 and e["expires_at"] < now]
+        for cid in expired:
+            self._conversations.pop(cid, None)
+        if expired:
+            logger.info("ConversationStore: cleaned up %d expired conversations "
+                        "(memory)", len(expired))
 
     def generate_id(self) -> str:
         return uuid.uuid4().hex[:16]
@@ -481,7 +503,10 @@ class ConversationStore:
         """Delete a conversation. Returns True if deleted.
 
         If *user_id* is given, only deletes if it matches the owner.
+        Also cascade-deletes sub-conversations (task contexts) that start
+        with ``{conversation_id}::task::``.
         """
+        sub_ids: list = []
         with self._store_lock:
             self._ensure_loaded()
             entry = self._conversations.get(conversation_id)
@@ -491,7 +516,16 @@ class ConversationStore:
                 return False
             del self._conversations[conversation_id]
             self._deleted.add(conversation_id)
+            # Cascade delete sub-conversations (task contexts)
+            prefix = f"{conversation_id}::task::"
+            sub_ids = [cid for cid in self._conversations
+                       if cid.startswith(prefix)]
+            for sub_id in sub_ids:
+                self._conversations.pop(sub_id, None)
+                self._deleted.add(sub_id)
         self._delete_from_disk(conversation_id)
+        for sub_id in sub_ids:
+            self._delete_from_disk(sub_id)
         return True
 
     def list_conversations(self, user_id: str = "") -> List[Dict[str, Any]]:
@@ -620,6 +654,15 @@ class ConversationStore:
                 tmp = path.with_suffix(".tmp")
                 tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
                 tmp.replace(path)
+            except OSError as e:
+                logger.error("ConversationStore: failed to save %s to disk: %s",
+                             conversation_id, e)
+                # Try to free space by cleaning up expired conversations
+                try:
+                    with self._store_lock:
+                        self._cleanup_expired()
+                except Exception:
+                    pass
             except Exception as e:
                 logger.error(f"ConversationStore: failed to save {conversation_id}: {e}")
 

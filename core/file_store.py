@@ -42,13 +42,21 @@ class FileStore:
         return cls._instance
 
 
+    _last_cleanup: float = 0.0
+
     def _ensure_loaded(self):
         """Load index from disk on first access."""
         if self._loaded:
+            # Periodic cleanup (at most once per hour)
+            now = time.time()
+            if now - self.__class__._last_cleanup > 3600:
+                self.__class__._last_cleanup = now
+                self.cleanup_expired()
             return
         self._loaded = True
         self._migrate_from_temp()
         self._load_index()
+        self.__class__._last_cleanup = time.time()
 
     def _migrate_from_temp(self):
         """One-time migration from old tempdir-based storage."""
@@ -288,6 +296,24 @@ class FileStore:
         with self._store_lock:
             self._ensure_loaded()
             return len(self._entries)
+
+    def cleanup_expired(self, max_age_hours: int = 24):
+        """Remove files older than *max_age_hours*.
+
+        Files without a ``created_at`` timestamp are skipped (never auto-deleted).
+        """
+        cutoff = time.time() - (max_age_hours * 3600)
+        to_delete: list = []
+        with self._store_lock:
+            for fid, entry in list(self._entries.items()):
+                created = entry.get("created_at", 0)
+                if created > 0 and created < cutoff:
+                    to_delete.append(fid)
+        for fid in to_delete:
+            self.delete(fid)
+        if to_delete:
+            logger.info("FileStore: cleaned up %d expired files (>%dh)",
+                        len(to_delete), max_age_hours)
 
     # -- Disk persistence (index file) --
 

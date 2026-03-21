@@ -836,6 +836,11 @@ function showResMenu(e, rtype, name) {
     addItem('Enable agent', 'agent_enable');
     addItem('Disable agent', 'agent_disable');
   }
+  if (rtype === 'parameters' || rtype === 'secrets') {
+    addItem('Edit', 'edit_param');
+    addSep();
+    addItem('Delete', 'del_param');
+  }
 
   document.body.appendChild(menu);
   setTimeout(function() {
@@ -859,6 +864,19 @@ function doResAction(action) {
   else if (action === 'agent_enable') { cmd = 'agent_enable'; params = { agent_name: name }; }
   else if (action === 'agent_disable') { cmd = 'agent_disable'; params = { agent_name: name }; }
   else if (action === 'del_task') { cmd = 'delete_task_def'; params = { name: name }; }
+  else if (action === 'edit_param') {
+    showCreateForm(rtype === 'secrets' ? 'secrets' : 'variables');
+    // Pre-fill the key field after the form is rendered
+    setTimeout(function() {
+      var keyEl = document.getElementById('cf-key');
+      if (keyEl) keyEl.value = name;
+    }, 0);
+    return;
+  }
+  else if (action === 'del_param') {
+    cmd = rtype === 'secrets' ? 'delete_secret' : 'delete_param';
+    params = { key: name, scope: 'user' };
+  }
   else if (action === 'assign_task') {
     showAssignForm(name);
     return;
@@ -926,7 +944,7 @@ var _cfLabelStyle = 'font-size:11px;color:var(--vscode-descriptionForeground)';
 function showCreateForm(rtype) {
   var overlay = document.getElementById('panelOverlay');
   overlay.className = 'panel-overlay visible';
-  var title = {agents:'Create Agent',skills:'Create Skill',task_defs:'Create Task',prompts:'Create Prompt'}[rtype] || 'Create';
+  var title = {agents:'Create Agent',skills:'Create Skill',task_defs:'Create Task',prompts:'Create Prompt',variables:'Create Variable',secrets:'Create Secret',services:'Install Service'}[rtype] || 'Create';
 
   var fields = '';
   if (rtype === 'agents') {
@@ -965,6 +983,27 @@ function showCreateForm(rtype) {
       + '<textarea id="cf-prompt" style="' + _cfTextareaStyle + '" placeholder="Prompt content..."></textarea>'
       + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
       + '<input id="cf-desc" style="' + _cfInputStyle + '">';
+  } else if (rtype === 'variables') {
+    fields = '<label style="' + _cfLabelStyle + '">Key</label>'
+      + '<input id="cf-key" style="' + _cfInputStyle + '" placeholder="my_variable">'
+      + '<label style="' + _cfLabelStyle + '">Value</label>'
+      + '<input id="cf-value" style="' + _cfInputStyle + '">'
+      + '<label style="' + _cfLabelStyle + '">Scope</label>'
+      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>';
+  } else if (rtype === 'secrets') {
+    fields = '<label style="' + _cfLabelStyle + '">Key</label>'
+      + '<input id="cf-key" style="' + _cfInputStyle + '" placeholder="my_secret">'
+      + '<label style="' + _cfLabelStyle + '">Value</label>'
+      + '<input id="cf-value" type="password" style="' + _cfInputStyle + '">'
+      + '<label style="' + _cfLabelStyle + '">Scope</label>'
+      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>';
+  } else if (rtype === 'services') {
+    fields = '<label style="' + _cfLabelStyle + '">Service type</label>'
+      + '<input id="cf-svctype" style="' + _cfInputStyle + '" placeholder="filesystem">'
+      + '<label style="' + _cfLabelStyle + '">Service name</label>'
+      + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_service">'
+      + '<label style="' + _cfLabelStyle + '">Config (key=value, one per line)</label>'
+      + '<textarea id="cf-config" style="' + _cfTextareaStyle + '" placeholder="port=9091\\ntoken=abc123\\nmode=readwrite"></textarea>';
   }
 
   overlay.innerHTML = '<div class="panel-header"><h4>' + title + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
@@ -973,14 +1012,14 @@ function showCreateForm(rtype) {
     + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
     + '<button onclick="submitCreateForm(\\'' + rtype + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Create</button>'
     + '</div></div>';
-  var nameEl = document.getElementById('cf-name');
+  var nameEl = document.getElementById('cf-name') || document.getElementById('cf-key') || document.getElementById('cf-svctype');
   if (nameEl) nameEl.focus();
 }
 
 function submitCreateForm(rtype) {
   var name = (document.getElementById('cf-name')?.value || '').trim();
   var prompt = (document.getElementById('cf-prompt')?.value || '').trim();
-  if (!name) return;
+  if (!name && rtype !== 'variables' && rtype !== 'secrets') return;
 
   var cmd = '';
   var params = {};
@@ -1013,6 +1052,27 @@ function submitCreateForm(rtype) {
     params = { resource_type: 'prompt', name: name, content: prompt };
     var desc = (document.getElementById('cf-desc')?.value || '').trim();
     if (desc) params.description = desc;
+  } else if (rtype === 'variables') {
+    var vkey = (document.getElementById('cf-key')?.value || '').trim();
+    var vvalue = (document.getElementById('cf-value')?.value || '');
+    var vscope = (document.getElementById('cf-scope')?.value || 'user');
+    if (!vkey) return;
+    cmd = 'set_param';
+    params = { key: vkey, value: vvalue, scope: vscope };
+  } else if (rtype === 'secrets') {
+    var skey = (document.getElementById('cf-key')?.value || '').trim();
+    var svalue = (document.getElementById('cf-value')?.value || '');
+    var sscope = (document.getElementById('cf-scope')?.value || 'user');
+    if (!skey) return;
+    cmd = 'set_secret';
+    params = { key: skey, value: svalue, scope: sscope };
+  } else if (rtype === 'services') {
+    var svcType = (document.getElementById('cf-svctype')?.value || '').trim();
+    var svcName = (document.getElementById('cf-name')?.value || '').trim();
+    var config = (document.getElementById('cf-config')?.value || '').trim();
+    if (!svcType || !svcName) return;
+    cmd = 'service_install';
+    params = { service_type: svcType, service_name: svcName, config_str: config.split('\\n').join(',') };
   }
 
   if (cmd) {
@@ -1059,8 +1119,8 @@ function renderPanelResult(action, data) {
     var _resData = data;
     let html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
 
-    var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services'];
-    var sectionLabels = {agents:'Agents',skills:'Skills',mcp:'MCP Servers',prompts:'Prompts',task_defs:'Tasks',flows:'Flows',services:'Services'};
+    var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services','parameters','secrets'];
+    var sectionLabels = {agents:'Agents',skills:'Skills',mcp:'MCP Servers',prompts:'Prompts',task_defs:'Tasks',flows:'Flows',services:'Services',parameters:'Variables',secrets:'Secrets'};
 
     for (var si = 0; si < sectionOrder.length; si++) {
       var rtype = sectionOrder[si];
@@ -1080,20 +1140,27 @@ function renderPanelResult(action, data) {
       if (!items.length) continue;
 
       var label = sectionLabels[rtype] || rtype;
-      var canCreate = ['agents','skills','task_defs','prompts'].indexOf(rtype) >= 0;
-      var addBtn = canCreate ? ' <button style="background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px" onclick="event.stopPropagation();showCreateForm(\\'' + rtype + '\\')">[+]</button>' : '';
+      var canCreate = ['agents','skills','task_defs','prompts','services','parameters','secrets'].indexOf(rtype) >= 0;
+      var createType = rtype === 'parameters' ? 'variables' : rtype;
+      var addBtn = canCreate ? ' <button style="background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px" onclick="event.stopPropagation();showCreateForm(\\'' + createType + '\\')">[+]</button>' : '';
       html += '<div class="res-section" onclick="this.classList.toggle(\\'collapsed\\')">'
         + '<span class="res-arrow">\\u25BC</span> <strong>' + esc(label) + '</strong> ' + addBtn + ' <span style="color:var(--vscode-descriptionForeground)">(' + items.length + ')</span></div>';
       html += '<div class="res-items">';
       for (var ii = 0; ii < items.length; ii++) {
         var item = items[ii];
-        var name = item.name || item.id || item.service_id || '?';
+        var name = item.name || item.id || item.service_id || item.key || '?';
         var scope = item.scope || item._scope || 'user';
         var scopeBadge = scope === 'global' ? ' <span style="color:var(--vscode-descriptionForeground);font-size:9px">[global]</span>' : '';
         var active = item.active ? ' <span style="color:#3fb950">\\u2713</span>' : '';
         var enabled = item.enabled === false ? ' <span style="color:#f85149">(disabled)</span>' : '';
         var connected = item.connected ? ' <span style="color:#3fb950">(connected)</span>' : '';
         var desc = item.description || item.prompt || item.type || item.service_type || '';
+        if (rtype === 'parameters' && item.value != null) {
+          desc = '= ' + String(item.value).slice(0, 40);
+        }
+        if (rtype === 'secrets') {
+          desc = '(encrypted)';
+        }
         if (desc.length > 60) desc = desc.slice(0, 60) + '...';
         var statusBadge = active || enabled || connected;
 

@@ -257,11 +257,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); display: flex; flex-direction: column; height: 100vh; }
+html, body { height: 100%; overflow: hidden; }
+body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); display: flex; flex-direction: column; }
 .toolbar { display: flex; gap: 4px; padding: 4px; border-bottom: 1px solid var(--vscode-panel-border); }
 .toolbar button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
 .toolbar button:hover { background: var(--vscode-button-secondaryHoverBackground); }
-.messages { flex: 1; overflow-y: auto; padding: 8px; }
+.messages { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
 .msg { margin-bottom: 8px; padding: 6px 8px; border-radius: 6px; font-size: 13px; line-height: 1.5; }
 .msg.user { background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
 .msg.assistant { background: var(--vscode-textBlockQuote-background); border-left: 3px solid var(--vscode-textLink-foreground); }
@@ -319,7 +320,7 @@ code { font-family: var(--vscode-editor-font-family); }
   <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
   <span class="relay-badge"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
 </div>
-<div style="position:relative;flex:1;overflow:hidden">
+<div style="position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
   <div class="messages" id="messages">
     <div class="msg system">PawFlow — Type a message to start</div>
   </div>

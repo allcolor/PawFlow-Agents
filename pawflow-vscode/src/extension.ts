@@ -147,6 +147,16 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Disposables
+  // Forward relay status to chat panel
+  relay.onDidChangeStatus((status) => {
+    chatProvider.postRelayStatus(status);
+    if (status === 'running') {
+      statusBar.setConnected(auth.getUsername() + ' [relay ✓]');
+    } else {
+      statusBar.setConnected(auth.getUsername());
+    }
+  });
+
   context.subscriptions.push(statusBar, relay);
 
   // Show login prompt if not authenticated

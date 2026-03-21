@@ -57,6 +57,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.setupSSE();
   }
 
+  postRelayStatus(status: string): void {
+    this.postMessage({ type: 'relayStatus', status });
+  }
+
   async sendMessage(text: string, attachments?: Attachment[]): Promise<void> {
     const api = this.getApi();
     if (!api) {
@@ -285,6 +289,21 @@ code { font-family: var(--vscode-editor-font-family); }
 .load-more { text-align: center; padding: 8px; color: var(--vscode-textLink-foreground); cursor: pointer; font-size: 12px; }
 .load-more:hover { text-decoration: underline; }
 .token-footer { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 4px; }
+.toolbar-row2 { display: flex; gap: 3px; padding: 2px 4px; border-bottom: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
+.toolbar-row2 button { background: none; color: var(--vscode-descriptionForeground); border: none; padding: 2px 6px; cursor: pointer; font-size: 10px; border-radius: 3px; }
+.toolbar-row2 button:hover { background: var(--vscode-button-secondaryHoverBackground); color: var(--vscode-editor-foreground); }
+.toolbar-row2 .active { color: var(--vscode-textLink-foreground); }
+.relay-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; margin-left: auto; }
+.relay-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+.relay-dot.on { background: #3fb950; }
+.relay-dot.off { background: #f85149; }
+.panel-overlay { display: none; position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: var(--vscode-editor-background); z-index: 10; overflow-y: auto; padding: 8px; }
+.panel-overlay.visible { display: block; }
+.panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.panel-header h4 { margin: 0; font-size: 13px; }
+.panel-close { background: none; border: none; color: var(--vscode-descriptionForeground); cursor: pointer; font-size: 16px; }
+.panel-item { padding: 4px 6px; font-size: 11px; border-bottom: 1px solid var(--vscode-panel-border); cursor: pointer; }
+.panel-item:hover { background: var(--vscode-list-hoverBackground); }
 </style>
 </head>
 <body>
@@ -293,8 +312,18 @@ code { font-family: var(--vscode-editor-font-family); }
   <button onclick="loadConvs()">Conversations</button>
   <button onclick="sendCmd('compact')">Compact</button>
 </div>
-<div class="messages" id="messages">
-  <div class="msg system">PawFlow — Type a message to start</div>
+<div class="toolbar-row2">
+  <button onclick="showPanel('resources')" title="Resources">&#128218; Resources</button>
+  <button onclick="showPanel('context')" title="LLM Context">&#128065; Context</button>
+  <button onclick="showPanel('files')" title="Files">&#128196; Files</button>
+  <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
+  <span class="relay-badge"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
+</div>
+<div style="position:relative;flex:1;overflow:hidden">
+  <div class="messages" id="messages">
+    <div class="msg system">PawFlow — Type a message to start</div>
+  </div>
+  <div class="panel-overlay" id="panelOverlay"></div>
 </div>
 <div id="status" class="status"></div>
 <div class="input-area">
@@ -441,8 +470,12 @@ window.addEventListener('message', function(e) {
       statusEl.textContent = 'Agent: ' + msg.agent;
       break;
     case 'actionResult':
+      if (renderPanelResult(msg.action, msg.data)) break;
       if (msg.action === 'model') statusEl.textContent = 'Model: ' + (msg.data?.model || '?');
       else if (msg.action === 'select_agent') statusEl.textContent = 'Agent: ' + (msg.data?.agent || '?');
+      break;
+    case 'relayStatus':
+      updateRelayStatus(msg.status);
       break;
   }
 });
@@ -620,6 +653,126 @@ function replayHistory(data) {
     addMsg(m.type || m.role, m.content || '', m);
   }
   statusEl.textContent = (data.messages || []).length + ' of ' + (data.message_count || '?') + ' messages';
+}
+
+// ── Panels (Resources, Context, Files, Tools) ──
+function showPanel(name) {
+  const overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  overlay.innerHTML = '<div class="panel-header"><h4>' + name.charAt(0).toUpperCase() + name.slice(1) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div><div class="msg system">Loading...</div>';
+
+  if (name === 'resources') loadResourcesPanel();
+  else if (name === 'context') loadContextPanel();
+  else if (name === 'files') loadFilesPanel();
+  else if (name === 'tools') loadToolsPanel();
+}
+
+function closePanel() {
+  document.getElementById('panelOverlay').className = 'panel-overlay';
+}
+
+function loadResourcesPanel() {
+  vscode.postMessage({ type: 'command', command: 'list_resources' });
+  // Result handled in actionResult handler below
+  _pendingPanel = 'resources';
+}
+
+function loadContextPanel() {
+  vscode.postMessage({ type: 'command', command: 'get_context' });
+  _pendingPanel = 'context';
+}
+
+function loadFilesPanel() {
+  vscode.postMessage({ type: 'command', command: 'list_conv_files' });
+  _pendingPanel = 'files';
+}
+
+function loadToolsPanel() {
+  vscode.postMessage({ type: 'command', command: 'list_tools' });
+  _pendingPanel = 'tools';
+}
+
+var _pendingPanel = '';
+
+function renderPanelResult(action, data) {
+  const overlay = document.getElementById('panelOverlay');
+  if (!overlay || overlay.className !== 'panel-overlay visible') return false;
+
+  if (action === 'list_resources' && _pendingPanel === 'resources') {
+    let html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    for (const [rtype, items] of Object.entries(data || {})) {
+      if (!Array.isArray(items) || !items.length) continue;
+      html += '<div style="font-size:11px;font-weight:600;color:var(--vscode-textLink-foreground);margin:8px 0 4px">' + esc(rtype) + '</div>';
+      for (const item of items) {
+        const name = item.name || '?';
+        const active = item.active ? ' \\u2713' : '';
+        const desc = item.description || item.prompt || '';
+        html += '<div class="panel-item" onclick="sendCmd(\\'activate_resource\\', \\'' + rtype + ' ' + name + '\\')">'
+          + esc(name) + active + (desc ? ' <span style="color:var(--vscode-descriptionForeground)">\\u2014 ' + esc(desc.slice(0,50)) + '</span>' : '')
+          + '</div>';
+      }
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
+  if (action === 'get_context' && _pendingPanel === 'context') {
+    const msgs = data.context || data.messages || [];
+    const tokens = data.token_estimate || 0;
+    const ctxs = data.agent_contexts || {};
+    let html = '<div class="panel-header"><h4>LLM Context (' + msgs.length + ' msgs, ~' + tokens + ' tokens)</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    if (Object.keys(ctxs).length) {
+      html += '<div style="font-size:10px;color:var(--vscode-descriptionForeground);margin-bottom:6px">Contexts: '
+        + Object.entries(ctxs).filter(function(e){return e[0]!=="*"}).map(function(e){return e[0]+" ("+e[1]+")"}).join(", ") + '</div>';
+    }
+    for (const m of msgs.slice(-30)) {
+      const role = m.role || '?';
+      const content = (m.content || '').slice(0, 150);
+      html += '<div class="panel-item"><span style="color:' + ({system:"#6c6c8a",user:"#4fc3f7",assistant:"#4ecdc4",tool:"#f4a261"}[role]||"#808090") + '">' + role + '</span> ' + esc(content) + '</div>';
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
+  if (action === 'list_conv_files' && _pendingPanel === 'files') {
+    const files = data.files || [];
+    let html = '<div class="panel-header"><h4>Files (' + files.length + ')</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    if (!files.length) html += '<div class="msg system">No files</div>';
+    for (const f of files) {
+      html += '<div class="panel-item">' + esc(f.file_id?.slice(0,8) || '?') + ' ' + esc(f.filename || '?') + ' (' + (f.size||0).toLocaleString() + ' bytes)</div>';
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
+  if (action === 'list_tools' && _pendingPanel === 'tools') {
+    const tools = data.tools || [];
+    let html = '<div class="panel-header"><h4>Tools (' + tools.length + ')</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    for (const t of tools) {
+      html += '<div class="panel-item"><strong>' + esc(t.name || '?') + '</strong> <span style="color:var(--vscode-descriptionForeground)">' + esc((t.description||'').slice(0,80)) + '</span></div>';
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
+  return false;
+}
+
+// Update relay status
+function updateRelayStatus(status) {
+  const dot = document.getElementById('relayDot');
+  const label = document.getElementById('relayLabel');
+  if (status === 'running') {
+    dot.className = 'relay-dot on';
+    label.textContent = 'Relay \\u2713';
+  } else {
+    dot.className = 'relay-dot off';
+    label.textContent = 'Relay \\u2717';
+  }
 }
 
 // Auto-resize textarea

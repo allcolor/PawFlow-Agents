@@ -12,8 +12,12 @@ import { executeAction } from './actions';
  */
 function generateRelayId(username: string, directory: string): string {
   // Normalize path to match Python's Path(directory).resolve() output
-  // Python on Windows: C:\Projets\fssandbox (backslashes, resolved)
-  const normalized = path.resolve(directory);
+  // Python on Windows: C:\Projets\fssandbox (uppercase drive, backslashes)
+  let normalized = path.resolve(directory);
+  // Uppercase drive letter on Windows (Python's Path.resolve() does this)
+  if (/^[a-z]:/.test(normalized)) {
+    normalized = normalized[0].toUpperCase() + normalized.slice(1);
+  }
   const h = crypto.createHash('sha256').update(`${username}:${normalized}`).digest('hex').slice(0, 8);
   return `cli_${username}_${h}`;
 }

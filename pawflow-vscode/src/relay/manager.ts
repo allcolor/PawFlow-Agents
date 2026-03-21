@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as crypto from 'crypto';
 import * as net from 'net';
+import * as path from 'path';
 import * as tls from 'tls';
 import { AgentAPIClient } from '../api/client';
 import { executeAction } from './actions';

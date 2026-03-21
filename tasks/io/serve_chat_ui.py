@@ -6554,7 +6554,10 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     menu.appendChild(s);
   };
 
-  item('\u270F Edit...', () => showResourceEditor(rtype, name));
+  // Global resources: readonly — only view, no edit/delete
+  if (scope !== 'global') {
+    item('\u270F Edit...', () => showResourceEditor(rtype, name));
+  }
   if (rtype === 'agent') {
     item('\u25B6 Select', () => cmdAgentSelect(name));
     if (autoconv) {
@@ -6583,10 +6586,13 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
   }
   sep();
-  if (scope !== 'global') item('\u2191 Copy to Global', () => _copyResource(rtype, name, 'global'));
+  // Copy to Global is admin-only (GUI Runtime tab), not from chat
   if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource(rtype, name, 'user'));
-  sep();
-  item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
+  if (scope !== 'conversation') item('\u2191 Copy to Conversation', () => _copyResource(rtype, name, 'conversation'));
+  if (scope !== 'global') {
+    sep();
+    item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
+  }
 
   setTimeout(() => document.addEventListener('click', function _close() {
     menu.remove(); document.removeEventListener('click', _close);
@@ -6618,10 +6624,10 @@ function _deleteResource(rtype, name, scope) {
 
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
-  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['max_depth','number'],['timeout','number']],
+  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
   skill:    [['prompt','textarea'],['description','text']],
-  mcp:      [['url','text'],['description','text']],
-  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['description','text']],
+  mcp:      [['url','text'],['auth','text'],['description','text']],
+  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['description','text']],
   prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
 };
 
@@ -6857,7 +6863,9 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u270F Edit...', () => _showServiceEditor(serviceId, scope));
+  if (scope !== 'global') {
+    item('\u270F Edit...', () => _showServiceEditor(serviceId, scope));
+  }
   item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
     fetch(API, { method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'toggle_service', service_id: serviceId, enabled: !enabled }),
@@ -6866,18 +6874,20 @@ function showServiceMenu(e, serviceId, scope, enabled) {
       else loadResources();
     }).catch(e => addMsg('error', e.message));
   });
-  const sep = document.createElement('div');
-  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
-  menu.appendChild(sep);
-  item('\u{1F5D1} Delete', () => {
-    if (!confirm(`Delete service '${serviceId}'?`)) return;
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_service', service_id: serviceId, scope }),
+  if (scope !== 'global') {
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    menu.appendChild(sep);
+    item('\u{1F5D1} Delete', () => {
+      if (!confirm(`Delete service '${serviceId}'?`)) return;
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'delete_service', service_id: serviceId, scope }),
     }).then(r => r.json()).then(d => {
       if (d.error) addMsg('error', d.error);
       else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
     }).catch(e => addMsg('error', e.message));
-  }, true);
+    }, true);
+  }
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -6992,13 +7002,15 @@ function showParamMenu(e, key, scope, isSecret) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
-  item('\u{1F5D1} Delete', () => {
-    if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: isSecret ? 'delete_secret' : 'delete_param', key, scope, conversation_id: conversationId }),
-    }).then(() => loadResources()).catch(e => addMsg('error', e.message));
-  }, true);
+  if (scope !== 'global') {
+    item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
+    item('\u{1F5D1} Delete', () => {
+      if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: isSecret ? 'delete_secret' : 'delete_param', key, scope, conversation_id: conversationId }),
+      }).then(() => loadResources()).catch(e => addMsg('error', e.message));
+    }, true);
+  }
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
@@ -7012,7 +7024,7 @@ function _showParamEditor(key, scope, isSecret, isNew) {
   let formHtml = '';
   if (isNew) {
     formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Key</label><input id="pv-key" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="pv-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="conversation">Conversation</option><option value="user">User</option><option value="global">Global</option></select></div>';
+    formHtml += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="pv-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="conversation">Conversation</option><option value="user">User</option></select></div>';
   }
   const inputType = isSecret ? 'password' : 'text';
   formHtml += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Value</label><input id="pv-value" type="${inputType}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>`;

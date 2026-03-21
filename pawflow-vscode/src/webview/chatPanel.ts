@@ -50,6 +50,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'command':
           await this.sendCommand(msg.command, msg.arg);
           break;
+        case 'assignTaskDialog':
+          await this.showAssignTaskDialog(msg.taskName);
+          break;
       }
     });
 
@@ -238,6 +241,57 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     });
     sse.connect(this.conversationId);
+  }
+
+  private async showAssignTaskDialog(taskName: string): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+
+    // Step 1: Pick agent
+    let agentNames = ['assistant'];
+    try {
+      const data = await api.sendAction('list_agents', { conversation_id: this.conversationId || '' });
+      agentNames = (data.agents || []).map((a: any) => a.name || a);
+    } catch {}
+
+    const agent = await vscode.window.showQuickPick(agentNames, {
+      title: `Assign "${taskName}" to agent`,
+      placeHolder: 'Select agent',
+    });
+    if (!agent) { return; }
+
+    // Step 2: Pick context mode
+    const contextModes = [
+      { label: 'isolated', description: 'Only task prompt (default)' },
+      { label: 'last:10', description: 'Last 10 messages from conversation' },
+      { label: 'last:20', description: 'Last 20 messages' },
+      { label: 'last:50', description: 'Last 50 messages' },
+      { label: 'summary:2000', description: 'Summary ~2000 tokens' },
+      { label: 'summary:4000', description: 'Summary ~4000 tokens' },
+      { label: 'full', description: 'Entire conversation context' },
+    ];
+    const contextPick = await vscode.window.showQuickPick(contextModes, {
+      title: 'Context mode',
+      placeHolder: 'What context should the agent receive?',
+    });
+    if (!contextPick) { return; }
+
+    // Step 3: Assign
+    try {
+      const resp = await api.sendAction('assign_task', {
+        conversation_id: this.conversationId || '',
+        agent_name: agent,
+        task_name: taskName,
+        context: contextPick.label,
+      });
+      if (resp.error) {
+        vscode.window.showErrorMessage(`Assign failed: ${resp.error}`);
+      } else {
+        vscode.window.showInformationMessage(`Task "${taskName}" assigned to ${agent} (${contextPick.label})`);
+      }
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Assign failed: ${e.message}`);
+    }
   }
 
   private async showApprovalNotification(event: SSEEvent): Promise<void> {
@@ -777,10 +831,8 @@ function doResAction(action) {
   else if (action === 'agent_disable') { cmd = 'agent_disable'; params = { agent_name: name }; }
   else if (action === 'del_task') { cmd = 'delete_task_def'; params = { name: name }; }
   else if (action === 'assign_task') {
-    var agent = prompt('Assign to which agent?', 'assistant');
-    if (!agent) return;
-    cmd = 'assign_task';
-    params = { agent_name: agent, task_name: name, context: 'isolated' };
+    vscode.postMessage({ type: 'assignTaskDialog', taskName: name });
+    return;
   }
 
   if (cmd) {

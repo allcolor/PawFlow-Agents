@@ -340,6 +340,8 @@ const statusEl = document.getElementById('status');
 let streaming = {};
 let currentHistoryConvId = null;
 let currentHistoryOffset = 0;
+var _hadToolCalls = false;
+var _lastToolCall = '';
 
 const FUN_VERBS = ['Refactoring','Compiling','Debugging','Contemplating','Bamboozling',
   'Rickrolling','Skedaddling','Philosophizing','Defenestrating','Hocus-pocusing'];
@@ -497,8 +499,10 @@ function handleSSE(event) {
       break;
 
     case 'tool_call':
-      addMsg('tool_call', agent + ' ' + (data.tool || '') + '(' +
-        JSON.stringify(data.arguments || {}).slice(0, 100) + ')', data);
+      _lastToolCall = agent + ' ' + (data.tool || '') + '(' +
+        JSON.stringify(data.arguments || {}).slice(0, 100) + ')';
+      addMsg('tool_call', _lastToolCall, data);
+      _hadToolCalls = true;
       break;
 
     case 'tool_result':
@@ -507,8 +511,18 @@ function handleSSE(event) {
 
     case 'done': {
       const text = data.response || streaming[agent] || '';
-      if (text) addMsg('assistant', text, data);
+      // Only show response if it's not just a repeat of tool output
+      if (text && !_hadToolCalls) {
+        addMsg('assistant', text, data);
+      } else if (text && _hadToolCalls) {
+        // Show only if agent added text beyond tool calls
+        const stripped = text.replace(/\*\*Plan:.*$/s, '').trim();
+        if (stripped && stripped.length > 20) {
+          addMsg('assistant', text, data);
+        }
+      }
       streaming[agent] = '';
+      _hadToolCalls = false;
       const tin = data.tokens_in || 0;
       const tout = data.tokens_out || 0;
       const model = data.model || '';

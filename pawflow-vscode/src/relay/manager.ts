@@ -67,8 +67,8 @@ export class RelayManager implements vscode.Disposable {
 
     this.outputChannel.appendLine(`[Relay] Service created: ${this.relayId} on port ${this.port}`);
 
-    // Wait for WS listener to start
-    await new Promise(r => setTimeout(r, 1500));
+    // Wait for WS listener to start (may need more time on first start)
+    await new Promise(r => setTimeout(r, 3000));
 
     this.running = true;
     this._connect();
@@ -150,7 +150,7 @@ export class RelayManager implements vscode.Disposable {
           info: { platform: process.platform, root: this.rootDir, mode: 'readwrite' },
         });
         this._wsSend(socket, regMsg);
-        this.outputChannel.appendLine(`[Relay] Registered as ${this.relayId}`);
+        this.outputChannel.appendLine(`[Relay] Sent registration for ${this.relayId} (token=${this.wsToken.slice(0,8)}...)`);
       }
 
       // Parse WS frames
@@ -173,8 +173,10 @@ export class RelayManager implements vscode.Disposable {
         try {
           const msg = JSON.parse(frame.payload.toString('utf-8'));
           if (msg.type === 'registered') {
-            this.outputChannel.appendLine(`[Relay] Connected and registered`);
+            this.outputChannel.appendLine(`[Relay] ✓ Server confirmed registration: ${msg.relay_id || this.relayId}`);
             this._onStatusChange.fire('running');
+          } else if (msg.type === 'error') {
+            this.outputChannel.appendLine(`[Relay] ✗ Server error: ${msg.message || JSON.stringify(msg)}`);
           } else if (msg.type === 'command') {
             this._handleCommand(socket, msg);
           } else if (msg.type === 'ping') {

@@ -10,7 +10,10 @@ import { executeAction } from './actions';
  * cli_{username}_{sha256(username:directory)[:8]}
  */
 function generateRelayId(username: string, directory: string): string {
-  const h = crypto.createHash('sha256').update(`${username}:${directory}`).digest('hex').slice(0, 8);
+  // Normalize path to match Python's Path(directory).resolve() output
+  // Python on Windows: C:\Projets\fssandbox (backslashes, resolved)
+  const normalized = path.resolve(directory);
+  const h = crypto.createHash('sha256').update(`${username}:${normalized}`).digest('hex').slice(0, 8);
   return `cli_${username}_${h}`;
 }
 
@@ -55,17 +58,27 @@ export class RelayManager implements vscode.Disposable {
     this.port = await findFreePort();
 
     // Cleanup old service
-    try { await api.sendAction('service_uninstall', { service_id: this.relayId }); } catch {}
+    try {
+      const uninstResult = await api.sendAction('service_uninstall', { service_id: this.relayId });
+      this.outputChannel.appendLine(`[Relay] Uninstall result: ${JSON.stringify(uninstResult).slice(0, 200)}`);
+    } catch (e: any) {
+      this.outputChannel.appendLine(`[Relay] Uninstall error (ok): ${e.message}`);
+    }
 
     // Create service
     const configStr = `port=${this.port},path=/ws/relay,token=${this.wsToken},mode=readwrite`;
-    await api.sendAction('service_install', {
+    const installResult = await api.sendAction('service_install', {
       service_type: 'filesystem',
       service_name: this.relayId,
       config_str: configStr,
     });
+    this.outputChannel.appendLine(`[Relay] Install result: ${JSON.stringify(installResult).slice(0, 300)}`);
 
-    this.outputChannel.appendLine(`[Relay] Service created: ${this.relayId} on port ${this.port}`);
+    if (installResult.error) {
+      throw new Error(`Service install failed: ${installResult.error}`);
+    }
+
+    this.outputChannel.appendLine(`[Relay] Service created: ${this.relayId} on port ${this.port} (token=${this.wsToken.slice(0,8)}...)`);
 
     // Wait for WS listener to start (may need more time on first start)
     await new Promise(r => setTimeout(r, 3000));

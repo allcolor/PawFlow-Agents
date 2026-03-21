@@ -448,11 +448,13 @@ function addToolResult(tool, result) {
 // Handle messages from extension
 window.addEventListener('message', function(e) {
   const msg = e.data;
+  console.log('[PawFlow webview] received:', msg.type, msg);
   switch (msg.type) {
     case 'sseEvent':
       handleSSE(msg.event);
       break;
     case 'conversationList':
+      console.log('[PawFlow webview] convs:', msg.conversations?.length);
       showConvList(msg.conversations);
       break;
     case 'history':
@@ -511,16 +513,7 @@ function handleSSE(event) {
 
     case 'done': {
       const text = data.response || streaming[agent] || '';
-      // Only show response if it's not just a repeat of tool output
-      if (text && !_hadToolCalls) {
-        addMsg('assistant', text, data);
-      } else if (text && _hadToolCalls) {
-        // Show only if agent added text beyond tool calls
-        const stripped = text.replace(/\*\*Plan:.*$/s, '').trim();
-        if (stripped && stripped.length > 20) {
-          addMsg('assistant', text, data);
-        }
-      }
+      if (text) addMsg('assistant', text, data);
       streaming[agent] = '';
       _hadToolCalls = false;
       const tin = data.tokens_in || 0;

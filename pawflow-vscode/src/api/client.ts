@@ -50,6 +50,10 @@ export class AgentAPIClient {
         let data = '';
         res.on('data', (chunk) => { data += chunk; });
         res.on('end', () => {
+          if (res.statusCode === 401 || res.statusCode === 403) {
+            resolve({ error: 'Session expired — please re-login', _auth_expired: true });
+            return;
+          }
           try {
             resolve(JSON.parse(data));
           } catch {

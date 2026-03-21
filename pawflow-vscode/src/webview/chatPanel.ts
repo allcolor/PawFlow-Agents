@@ -81,6 +81,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       });
       console.log('[PawFlow] sendMessage response:', JSON.stringify(resp).slice(0, 500));
 
+      if ((resp as any)._auth_expired) {
+        this.postMessage({ type: 'error', message: 'Session expired. Use PawFlow: Login command to re-authenticate.' });
+        return;
+      }
       if (resp.error) {
         this.postMessage({ type: 'error', message: resp.error });
         return;
@@ -130,6 +134,10 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         }
       }
       const resp = await api.sendAction(command, params);
+      if ((resp as any)._auth_expired) {
+        this.postMessage({ type: 'error', message: 'Session expired. Use PawFlow: Login command to re-authenticate.' });
+        return;
+      }
       this.postMessage({ type: 'actionResult', action: command, data: resp });
     } catch (e: any) {
       this.postMessage({ type: 'error', message: e.message });
@@ -429,6 +437,7 @@ code { font-family: var(--vscode-editor-font-family); }
   <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
   <span class="relay-badge"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
 </div>
+<div id="activeAgents" style="display:none;padding:2px 8px;border-bottom:1px solid var(--vscode-panel-border);font-size:10px;color:var(--vscode-descriptionForeground)"></div>
 <div style="position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">
   <div class="messages" id="messages">
     <div class="msg system">PawFlow — Type a message to start</div>
@@ -451,6 +460,33 @@ let currentHistoryConvId = null;
 let currentHistoryOffset = 0;
 var _hadToolCalls = false;
 var _lastToolCall = '';
+var activeAgents = {};
+
+function updateActiveAgents(agent, status) {
+  if (status === 'done' || status === 'cancelled') {
+    delete activeAgents[agent];
+  } else {
+    activeAgents[agent] = status;
+  }
+  var el = document.getElementById('activeAgents');
+  var keys = Object.keys(activeAgents);
+  if (keys.length === 0) {
+    el.style.display = 'none';
+  } else {
+    el.style.display = 'block';
+    el.innerHTML = keys.map(function(a) {
+      var color = agentColor(a);
+      return '<span style="margin-right:8px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + color + ';margin-right:3px"></span>' + esc(a) + ': ' + esc(activeAgents[a]) + '</span>';
+    }).join('');
+  }
+}
+
+function deleteMsg(btn) {
+  var msgEl = btn.closest('.msg');
+  var index = Array.from(messagesEl.children).indexOf(msgEl);
+  vscode.postMessage({ type: 'command', command: 'delete_message', arg: JSON.stringify({ index: index }) });
+  msgEl.remove();
+}
 
 const FUN_VERBS = ['Refactoring','Compiling','Debugging','Contemplating','Bamboozling',
   'Rickrolling','Skedaddling','Philosophizing','Defenestrating','Hocus-pocusing'];
@@ -505,6 +541,8 @@ function renderMd(text) {
     .replace(/\\*([^*]+)\\*/g, '<em>$1</em>')
     .replace(/^- (.+)$/gm, '\\u2022 $1')
     .replace(/^#{1,3} (.+)$/gm, '<strong>$1</strong>')
+    // Detect image URLs and render inline
+    .replace(/(https?:\\/\\/[^\\s]+\\/files\\/[^\\s]+\\.(png|jpg|jpeg|gif|webp|svg))/gi, '<img src="$1" style="max-width:100%;max-height:300px;border-radius:4px;margin:4px 0" />')
     .replace(/\\n/g, '<br>');
 }
 
@@ -529,13 +567,14 @@ function renderToolResult(content) {
 function addMsg(type, content, meta) {
   const div = document.createElement('div');
   div.className = 'msg ' + type;
+  var delBtn = (type === 'user' || type === 'assistant') ? '<span style="float:right;cursor:pointer;color:var(--vscode-descriptionForeground);font-size:10px" onclick="deleteMsg(this)" title="Delete">&times;</span>' : '';
   if (type === 'user') {
-    div.textContent = content;
+    div.innerHTML = delBtn + esc(content);
   } else if (type === 'assistant') {
     const agent = meta?.agent_name || meta?.source?.name || 'assistant';
     const svc = meta?.source?.llm_service || '';
     const color = agentColor(agent);
-    div.innerHTML = '<span class="agent-badge" style="background:' + color + '">'
+    div.innerHTML = delBtn + '<span class="agent-badge" style="background:' + color + '">'
       + esc(agent) + (svc ? ' via ' + esc(svc) : '') + '</span>' + renderMd(content);
   } else if (type === 'tool_call') {
     div.innerHTML = '&#9889; ' + esc(content);
@@ -604,11 +643,13 @@ function handleSSE(event) {
     case 'thinking':
     case 'thinking_content':
       statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
+      updateActiveAgents(agent, 'thinking');
       break;
 
     case 'token':
       streaming[agent] = (streaming[agent] || '') + (data.text || '');
       statusEl.textContent = agent + ' writing... (' + streaming[agent].split(' ').length + 'w)';
+      updateActiveAgents(agent, 'writing');
       break;
 
     case 'tool_call':
@@ -616,6 +657,7 @@ function handleSSE(event) {
         JSON.stringify(data.arguments || {}).slice(0, 100) + ')';
       addMsg('tool_call', _lastToolCall, data);
       _hadToolCalls = true;
+      updateActiveAgents(agent, data.tool || 'tool');
       break;
 
     case 'tool_result':
@@ -627,6 +669,7 @@ function handleSSE(event) {
       if (text) addMsg('assistant', text, data);
       streaming[agent] = '';
       _hadToolCalls = false;
+      updateActiveAgents(agent, 'done');
       const tin = data.tokens_in || 0;
       const tout = data.tokens_out || 0;
       const model = data.model || '';
@@ -641,6 +684,7 @@ function handleSSE(event) {
 
     case 'cancelled':
       statusEl.textContent = agent + ' cancelled';
+      updateActiveAgents(agent, 'cancelled');
       break;
 
     case 'iteration_status':

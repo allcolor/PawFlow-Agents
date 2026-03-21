@@ -42,6 +42,7 @@ _COMMANDS = [
     "/add-secret", "/secrets", "/add-variable", "/variables",
     "/schedules", "/cost", "/copy", "/clear", "/login", "/quit", "/exit",
     "/help", "/run", "/diff", "/watch", "/multi", "/plan",
+    "/rename", "/delete-msg", "/search",
 ]
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
@@ -829,6 +830,10 @@ class PawCode:
                 "- `/clear-files` — Clear pending attachments (`/detach` alias)\n"
                 "- `/prompt list` — List prompts\n"
                 "- `/prompt use <name>` — Show prompt\n"
+                "\n## Conversation Management\n"
+                "- `/rename <title>` — Rename current conversation\n"
+                "- `/delete-msg <index>` — Delete message by index\n"
+                "- `/search <query>` — Search messages in current conversation\n"
                 "\n## Dev Tools\n"
                 "- `/plan <description>` — Ask agent for a plan (read-only, no changes)\n"
                 "- `/run <command>` — Run shell command on relay directly\n"
@@ -1732,6 +1737,63 @@ class PawCode:
             self._watch_thread = threading.Thread(target=_watch, daemon=True)
             self._watch_thread.start()
             self.renderer.print_system(f"Watching {filepath} (poll every 3s). /watch stop to cancel.")
+            return
+
+        if cmd == "/rename":
+            if not arg:
+                self.renderer.print_error("Usage: /rename <new title>")
+                return
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                self.api.send_action("set_conv_title", conversation_id=self.conversation_id, title=arg)
+                self.renderer.print_system(f"Conversation renamed to: {arg}")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/delete-msg":
+            if not arg or not arg.strip().isdigit():
+                self.renderer.print_error("Usage: /delete-msg <index>")
+                return
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                self.api.send_action("delete_message", conversation_id=self.conversation_id, index=int(arg.strip()))
+                self.renderer.print_system(f"Message {arg.strip()} deleted")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        if cmd == "/search":
+            if not arg:
+                self.renderer.print_error("Usage: /search <query>")
+                return
+            if not self.conversation_id:
+                self.renderer.print_error("No active conversation")
+                return
+            try:
+                data = self.api.send_action("load_history", conversation_id=self.conversation_id, limit=500, offset=0)
+                messages = data.get("messages", [])
+                query = arg.lower()
+                found = []
+                for i, m in enumerate(messages):
+                    content = m.get("content", "")
+                    if isinstance(content, str) and query in content.lower():
+                        preview = content[:100].replace("\n", " ")
+                        found.append(f"  [{i}] {m.get('type', m.get('role', '?'))}: {preview}")
+                if found:
+                    self.renderer.print_system(f"Found {len(found)} matches:")
+                    for f in found[:20]:
+                        self.renderer.print(f)
+                    if len(found) > 20:
+                        self.renderer.print_system(f"... and {len(found) - 20} more")
+                else:
+                    self.renderer.print_system("No matches found")
+            except Exception as e:
+                self.renderer.print_error(str(e))
             return
 
         if cmd == "/plan":

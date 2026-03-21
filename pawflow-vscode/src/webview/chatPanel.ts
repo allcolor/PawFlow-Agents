@@ -50,9 +50,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'command':
           await this.sendCommand(msg.command, msg.arg);
           break;
-        case 'assignTaskDialog':
-          await this.showAssignTaskDialog(msg.taskName);
-          break;
+        // assignTaskDialog handled in webview JS now (showAssignForm)
       }
     });
 
@@ -862,7 +860,7 @@ function doResAction(action) {
   else if (action === 'agent_disable') { cmd = 'agent_disable'; params = { agent_name: name }; }
   else if (action === 'del_task') { cmd = 'delete_task_def'; params = { name: name }; }
   else if (action === 'assign_task') {
-    vscode.postMessage({ type: 'assignTaskDialog', taskName: name });
+    showAssignForm(name);
     return;
   }
 
@@ -870,6 +868,55 @@ function doResAction(action) {
     vscode.postMessage({ type: 'command', command: cmd, arg: JSON.stringify(params) });
     setTimeout(function() { loadResourcesPanel(); }, 500);
   }
+}
+
+function showAssignForm(taskName) {
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  overlay.innerHTML = '<div class="panel-header"><h4>Assign: ' + esc(taskName) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
+    + '<div style="padding:4px">'
+    + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Agent</label>'
+    + '<input id="af-agent" value="assistant" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
+    + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Context mode</label>'
+    + '<select id="af-context" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
+    + '<option value="isolated">isolated (default)</option>'
+    + '<option value="last:10">last:10</option>'
+    + '<option value="last:20">last:20</option>'
+    + '<option value="last:50">last:50</option>'
+    + '<option value="summary:2000">summary:2000</option>'
+    + '<option value="summary:4000">summary:4000</option>'
+    + '<option value="full">full (entire context)</option>'
+    + '</select>'
+    + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Interval (optional)</label>'
+    + '<input id="af-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
+    + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Variables (key=value, one per line)</label>'
+    + '<textarea id="af-vars" placeholder="nbr_images=20\\nstyle=cyberpunk" style="width:100%;min-height:50px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px;font-family:var(--vscode-editor-font-family);resize:vertical"></textarea>'
+    + '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px">'
+    + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<button onclick="submitAssignForm(\\'' + esc(taskName).replace(/'/g, "\\\\\\'") + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Assign</button>'
+    + '</div></div>';
+  document.getElementById('af-agent').focus();
+}
+
+function submitAssignForm(taskName) {
+  var agent = document.getElementById('af-agent').value.trim();
+  var context = document.getElementById('af-context').value;
+  var interval = document.getElementById('af-interval').value.trim();
+  var varsText = document.getElementById('af-vars').value.trim();
+  if (!agent) { return; }
+
+  var params = { agent_name: agent, task_name: taskName, context: context };
+  if (interval) params.interval = interval;
+  if (varsText) {
+    var variables = {};
+    varsText.split('\\n').forEach(function(line) {
+      var eq = line.indexOf('=');
+      if (eq > 0) variables[line.slice(0,eq).trim()] = line.slice(eq+1).trim();
+    });
+    if (Object.keys(variables).length) params.variables = variables;
+  }
+  vscode.postMessage({ type: 'command', command: 'assign_task', arg: JSON.stringify(params) });
+  closePanel();
 }
 
 function closePanel() {

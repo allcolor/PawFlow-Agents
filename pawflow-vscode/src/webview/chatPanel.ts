@@ -190,12 +190,20 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  private _sseConversationId: string | null = null;
+
   private setupSSE(): void {
     if (!this.conversationId) { return; }
     const sse = this.getSse();
     if (!sse) { return; }
 
+    // Skip if already connected to this conversation
+    if (this._sseConversationId === this.conversationId && sse.isConnected()) { return; }
+
+    // Disconnect old connection first
+    sse.disconnect();
     sse.removeAllListeners();
+    this._sseConversationId = this.conversationId;
     sse.on('event', (event: SSEEvent) => {
       this.postMessage({ type: 'sseEvent', event });
 

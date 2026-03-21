@@ -42,7 +42,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           await this.loadConversations();
           break;
         case 'resumeConversation':
-          await this.resumeConversation(msg.conversationId);
+          await this.resumeConversation(msg.conversationId, msg.offset);
           break;
         case 'approval':
           await this.handleApproval(msg.requestId, msg.result, msg.approvalType);
@@ -160,12 +160,12 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private async resumeConversation(cid: string): Promise<void> {
+  private async resumeConversation(cid: string, offset?: number): Promise<void> {
     const api = this.getApi();
     if (!api) { return; }
     try {
       const data = await api.sendAction('load_history', {
-        conversation_id: cid, limit: 50, offset: 0,
+        conversation_id: cid, limit: 50, offset: offset || 0,
       });
       if (!data.error) {
         this.conversationId = cid;
@@ -198,6 +198,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       // Show approval as VSCode notification (visible even if chat is hidden)
       if (event.event === 'exec_approval_request' || event.event === 'tool_approval_request') {
         this.showApprovalNotification(event);
+      }
+
+      // Detect file edits and show inline diff / refresh open editors
+      if (event.event === 'tool_result' && event.data.tool === 'filesystem') {
+        const result = (event.data.result || '') as string;
+        if (result.includes('replacement') || result.includes('Edited ') || result.includes('Written ')) {
+          const pathMatch = result.match(/(?:to |in |path=)(\S+)/);
+          if (pathMatch) {
+            const filePath = pathMatch[1];
+            const uri = vscode.Uri.file(filePath);
+            // Refresh the file in editor if it's open
+            vscode.workspace.textDocuments.forEach(doc => {
+              if (doc.uri.fsPath === uri.fsPath) {
+                vscode.commands.executeCommand('workbench.action.files.revert');
+              }
+            });
+          }
+        }
       }
     });
     sse.connect(this.conversationId);
@@ -244,9 +262,11 @@ body { font-family: var(--vscode-font-family); background: var(--vscode-editor-b
 .msg.user { background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
 .msg.assistant { background: var(--vscode-textBlockQuote-background); border-left: 3px solid var(--vscode-textLink-foreground); }
 .msg.tool { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 3px 8px; }
+.msg.tool_call { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 3px 8px; border-left: 2px solid #f4a261; }
+.msg.tool_result { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 3px 8px; border-left: 2px solid #3fb950; }
 .msg.system { font-size: 11px; color: var(--vscode-descriptionForeground); text-align: center; }
 .msg.error { color: var(--vscode-errorForeground); }
-.badge { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; margin-right: 4px; }
+.agent-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600; margin-right: 4px; color: white; }
 .status { font-size: 11px; color: var(--vscode-descriptionForeground); padding: 4px 8px; text-align: center; }
 .input-area { display: flex; gap: 4px; padding: 4px; border-top: 1px solid var(--vscode-panel-border); }
 .input-area textarea { flex: 1; background: var(--vscode-input-background); color: var(--vscode-input-foreground); border: 1px solid var(--vscode-input-border); border-radius: 4px; padding: 6px; font-family: var(--vscode-font-family); font-size: 13px; resize: none; min-height: 36px; max-height: 120px; }
@@ -255,6 +275,16 @@ body { font-family: var(--vscode-font-family); background: var(--vscode-editor-b
 .approval button { margin: 2px; padding: 3px 10px; border: none; border-radius: 3px; cursor: pointer; font-size: 11px; }
 pre { background: var(--vscode-textCodeBlock-background); padding: 8px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
 code { font-family: var(--vscode-editor-font-family); }
+.diff { font-size: 11px; background: var(--vscode-textCodeBlock-background); padding: 6px; border-radius: 4px; overflow-x: auto; }
+.diff-add { color: #3fb950; }
+.diff-del { color: #f85149; }
+.diff-hunk { color: #58a6ff; }
+.diff-ctx { color: var(--vscode-descriptionForeground); }
+.thinking { color: var(--vscode-descriptionForeground); font-style: italic; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.load-more { text-align: center; padding: 8px; color: var(--vscode-textLink-foreground); cursor: pointer; font-size: 12px; }
+.load-more:hover { text-decoration: underline; }
+.token-footer { font-size: 10px; color: var(--vscode-descriptionForeground); margin-top: 4px; }
 </style>
 </head>
 <body>
@@ -278,42 +308,51 @@ const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('input');
 const statusEl = document.getElementById('status');
 let streaming = {};
+let currentHistoryConvId = null;
+let currentHistoryOffset = 0;
+
+const FUN_VERBS = ['Refactoring','Compiling','Debugging','Contemplating','Bamboozling',
+  'Rickrolling','Skedaddling','Philosophizing','Defenestrating','Hocus-pocusing'];
+function randomVerb() { return FUN_VERBS[Math.floor(Math.random() * FUN_VERBS.length)]; }
+
+const AGENT_COLORS = ['#4ecdc4','#4fc3f7','#ab47bc','#f4a261','#e94560','#3fb950','#58a6ff','#d4a373'];
+function agentColor(name) {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h += name.charCodeAt(i);
+  return AGENT_COLORS[h % AGENT_COLORS.length];
+}
 
 function send() {
   const text = inputEl.value.trim();
   if (!text) return;
+
+  // Handle slash commands locally
+  if (text.startsWith('/')) {
+    if (text === '/new') { newChat(); inputEl.value = ''; return; }
+    if (text === '/conv') { loadConvs(); inputEl.value = ''; return; }
+    if (text === '/compact') { sendCmd('compact'); inputEl.value = ''; return; }
+    if (text.startsWith('/model ')) { sendCmd('model', text.slice(7)); inputEl.value = ''; return; }
+    if (text.startsWith('/agent ')) { sendCmd('select_agent', text.slice(7)); inputEl.value = ''; return; }
+    // Other slash commands: send as message (the server handles /review, /plan, etc.)
+  }
+
   addMsg('user', text);
   vscode.postMessage({ type: 'sendMessage', text });
   inputEl.value = '';
   inputEl.style.height = '36px';
 }
 
-function newChat() { vscode.postMessage({ type: 'newConversation' }); messagesEl.innerHTML = '<div class="msg system">New conversation</div>'; }
+function newChat() {
+  vscode.postMessage({ type: 'newConversation' });
+  messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
+  currentHistoryConvId = null;
+  currentHistoryOffset = 0;
+}
 function loadConvs() { vscode.postMessage({ type: 'loadConversations' }); }
 function sendCmd(cmd, arg) { vscode.postMessage({ type: 'command', command: cmd, arg }); }
 
-function addMsg(type, content, meta) {
-  const div = document.createElement('div');
-  div.className = 'msg ' + type;
-  if (type === 'user') {
-    div.textContent = content;
-  } else if (type === 'assistant') {
-    const agent = meta?.agent_name || meta?.source?.name || 'assistant';
-    const svc = meta?.source?.llm_service || '';
-    div.innerHTML = '<span class="badge" style="background:var(--vscode-textLink-foreground);color:white">' + esc(agent) + (svc ? ' via ' + esc(svc) : '') + '</span>' + renderMd(content);
-  } else if (type === 'tool_call') {
-    div.innerHTML = '&#9889; ' + esc(content);
-  } else if (type === 'tool_result') {
-    const clean = content.replace(/\\[TOOL OUTPUT[^\\]]*\\]\\n?/g, '').replace(/\\n\\[\\/TOOL OUTPUT\\]/g, '');
-    div.innerHTML = '&#10003; ' + esc(clean.slice(0, 200));
-  } else {
-    div.textContent = content;
-  }
-  messagesEl.appendChild(div);
-  messagesEl.scrollTop = messagesEl.scrollHeight;
-}
-
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
 function renderMd(text) {
   // Basic markdown: **bold**, *italic*, \`code\`, \`\`\`blocks\`\`\`
   return text
@@ -326,8 +365,56 @@ function renderMd(text) {
     .replace(/\\n/g, '<br>');
 }
 
+function renderToolResult(content) {
+  // Strip TOOL OUTPUT wrapper
+  let text = content.replace(/\\[TOOL OUTPUT[^\\]]*\\]\\n?/g, '').replace(/\\n\\[\\/TOOL OUTPUT\\]/g, '');
+  // Detect diffs
+  const lines = text.split('\\n');
+  const hasDiff = lines.some(function(l) { return l.trimStart().startsWith('+ ') || l.trimStart().startsWith('- '); });
+  if (hasDiff && (text.includes('replacement') || text.includes('Edited ') || text.includes('Written '))) {
+    return '<pre class="diff">' + lines.map(function(l) {
+      const s = l.trimStart();
+      if (s.startsWith('+ ') || s.match(/^\\d+\\s+\\+ /)) return '<span class="diff-add">' + esc(l) + '</span>';
+      if (s.startsWith('- ') || s.match(/^\\d+\\s+- /)) return '<span class="diff-del">' + esc(l) + '</span>';
+      if (s.startsWith('@@')) return '<span class="diff-hunk">' + esc(l) + '</span>';
+      return '<span class="diff-ctx">' + esc(l) + '</span>';
+    }).join('\\n') + '</pre>';
+  }
+  return esc(text.slice(0, 300));
+}
+
+function addMsg(type, content, meta) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + type;
+  if (type === 'user') {
+    div.textContent = content;
+  } else if (type === 'assistant') {
+    const agent = meta?.agent_name || meta?.source?.name || 'assistant';
+    const svc = meta?.source?.llm_service || '';
+    const color = agentColor(agent);
+    div.innerHTML = '<span class="agent-badge" style="background:' + color + '">'
+      + esc(agent) + (svc ? ' via ' + esc(svc) : '') + '</span>' + renderMd(content);
+  } else if (type === 'tool_call') {
+    div.innerHTML = '&#9889; ' + esc(content);
+  } else if (type === 'tool_result') {
+    div.innerHTML = '&#10003; ' + renderToolResult(content);
+  } else {
+    div.textContent = content;
+  }
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function addToolResult(tool, result) {
+  const div = document.createElement('div');
+  div.className = 'msg tool_result';
+  div.innerHTML = renderToolResult(result);
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
 // Handle messages from extension
-window.addEventListener('message', (e) => {
+window.addEventListener('message', function(e) {
   const msg = e.data;
   switch (msg.type) {
     case 'sseEvent':
@@ -341,6 +428,8 @@ window.addEventListener('message', (e) => {
       break;
     case 'newConversation':
       messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
+      currentHistoryConvId = null;
+      currentHistoryOffset = 0;
       break;
     case 'error':
       addMsg('error', msg.message);
@@ -351,6 +440,10 @@ window.addEventListener('message', (e) => {
     case 'agentSelected':
       statusEl.textContent = 'Agent: ' + msg.agent;
       break;
+    case 'actionResult':
+      if (msg.action === 'model') statusEl.textContent = 'Model: ' + (msg.data?.model || '?');
+      else if (msg.action === 'select_agent') statusEl.textContent = 'Agent: ' + (msg.data?.agent || '?');
+      break;
   }
 });
 
@@ -358,34 +451,99 @@ function handleSSE(event) {
   const { event: evType, data } = event;
   const agent = data.agent_name || 'assistant';
 
-  if (evType === 'thinking' || evType === 'thinking_content') {
-    statusEl.textContent = agent + ' thinking...';
-  } else if (evType === 'token') {
-    streaming[agent] = (streaming[agent] || '') + (data.text || '');
-    statusEl.textContent = agent + ' writing... (' + streaming[agent].split(' ').length + 'w)';
-  } else if (evType === 'tool_call') {
-    const args = JSON.stringify(data.arguments || {}).slice(0, 100);
-    addMsg('tool_call', agent + ' ' + (data.tool || '?') + '(' + args + ')');
-  } else if (evType === 'tool_result') {
-    addMsg('tool_result', data.result || '');
-  } else if (evType === 'done') {
-    const text = data.response || streaming[agent] || '';
-    if (text) addMsg('assistant', text, data);
-    streaming[agent] = '';
-    const tin = data.tokens_in || 0;
-    const tout = data.tokens_out || 0;
-    statusEl.textContent = tin + ' in ' + tout + ' out' + (data.model ? ' | ' + data.model : '');
-  } else if (evType === 'error_event') {
-    addMsg('error', data.message || 'Error');
-    statusEl.textContent = '';
-  } else if (evType === 'cancelled') {
-    statusEl.textContent = agent + ' cancelled';
-  } else if (evType === 'iteration_status') {
-    statusEl.textContent = agent + ' iter ' + data.iteration + ' | ' + data.total_tools + ' tools';
-  } else if (evType === 'exec_approval_request') {
-    showApproval('exec', data);
-  } else if (evType === 'tool_approval_request') {
-    showApproval('tool', data);
+  switch (evType) {
+    case 'thinking':
+    case 'thinking_content':
+      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
+      break;
+
+    case 'token':
+      streaming[agent] = (streaming[agent] || '') + (data.text || '');
+      statusEl.textContent = agent + ' writing... (' + streaming[agent].split(' ').length + 'w)';
+      break;
+
+    case 'tool_call':
+      addMsg('tool_call', agent + ' ' + (data.tool || '') + '(' +
+        JSON.stringify(data.arguments || {}).slice(0, 100) + ')', data);
+      break;
+
+    case 'tool_result':
+      addToolResult(data.tool || '', data.result || '');
+      break;
+
+    case 'done': {
+      const text = data.response || streaming[agent] || '';
+      if (text) addMsg('assistant', text, data);
+      streaming[agent] = '';
+      const tin = data.tokens_in || 0;
+      const tout = data.tokens_out || 0;
+      const model = data.model || '';
+      statusEl.innerHTML = '<span class="token-footer">' + tin + '\\u2191 ' + tout + '\\u2193' + (model ? ' \\u00b7 ' + model : '') + '</span>';
+      break;
+    }
+
+    case 'error_event':
+      addMsg('error', data.message || 'Error');
+      statusEl.textContent = '';
+      break;
+
+    case 'cancelled':
+      statusEl.textContent = agent + ' cancelled';
+      break;
+
+    case 'iteration_status':
+      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... iter ' +
+        data.iteration + ' \\u00b7 ' + data.total_tools + ' tools</span>';
+      break;
+
+    case 'exec_approval_request':
+      showApproval('exec', data);
+      break;
+
+    case 'tool_approval_request':
+      showApproval('tool', data);
+      break;
+
+    case 'ask_user':
+      showAskUser(data);
+      break;
+
+    case 'sub_agent_start':
+      addMsg('system', 'Sub-agent [' + agent + '] started');
+      break;
+
+    case 'sub_agent_done': {
+      const resp = data.response || '';
+      if (resp) addMsg('assistant', resp, data);
+      break;
+    }
+
+    case 'compact_progress':
+      if (data.stage === 'done') {
+        statusEl.textContent = 'Compacted: ' + (data.before || 0) + ' \\u2192 ' + (data.after || 0) + ' messages';
+      } else {
+        statusEl.textContent = 'Compacting... ' + (data.stage || '');
+      }
+      break;
+
+    case 'notification':
+      addMsg('system', data.message || '');
+      break;
+
+    case 'btw_token':
+      streaming['btw:' + agent] = (streaming['btw:' + agent] || '') + (data.text || '');
+      break;
+
+    case 'btw_done': {
+      const btwText = data.response || streaming['btw:' + agent] || '';
+      if (btwText) addMsg('assistant', '[btw] ' + btwText, data);
+      streaming['btw:' + agent] = '';
+      break;
+    }
+
+    default:
+      // Silently ignore unknown events
+      break;
   }
 }
 
@@ -407,6 +565,26 @@ function approve(btn, reqId, type, result) {
   btn.parentElement.remove();
 }
 
+function showAskUser(data) {
+  const div = document.createElement('div');
+  div.className = 'approval';
+  let html = '<strong>Agent question:</strong> ' + esc(data.question || '');
+  if (data.options && data.options.length) {
+    html += '<br>';
+    for (const opt of data.options) {
+      html += '<button onclick="answerAgent(this, \\'' + esc(opt).replace(/'/g, "\\\\'") + '\\')" style="margin:2px;padding:3px 10px;border:none;border-radius:3px;cursor:pointer">' + esc(opt) + '</button>';
+    }
+  }
+  div.innerHTML = html;
+  messagesEl.appendChild(div);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+function answerAgent(btn, answer) {
+  vscode.postMessage({ type: 'sendMessage', text: answer });
+  btn.parentElement.remove();
+}
+
 function showConvList(convs) {
   messagesEl.innerHTML = '<div class="msg system">Conversations:</div>';
   for (const c of convs) {
@@ -414,22 +592,38 @@ function showConvList(convs) {
     div.className = 'msg system';
     div.style.cursor = 'pointer';
     div.style.textAlign = 'left';
-    div.textContent = c.conversation_id.slice(0, 8) + ' — ' + (c.preview || '(empty)').slice(0, 60);
-    div.onclick = () => { vscode.postMessage({ type: 'resumeConversation', conversationId: c.conversation_id }); };
+    div.textContent = c.conversation_id.slice(0, 8) + ' \\u2014 ' + (c.preview || '(empty)').slice(0, 60);
+    div.onclick = function() { vscode.postMessage({ type: 'resumeConversation', conversationId: c.conversation_id }); };
     messagesEl.appendChild(div);
   }
 }
 
 function replayHistory(data) {
   messagesEl.innerHTML = '';
+  currentHistoryConvId = data.conversation_id || currentHistoryConvId;
+  currentHistoryOffset = (data.messages || []).length;
+
+  if (data.has_more) {
+    const more = document.createElement('div');
+    more.className = 'load-more';
+    more.textContent = '\\u25b2 Load more messages (' + (data.message_count || '?') + ' total)';
+    more.onclick = function() {
+      vscode.postMessage({
+        type: 'resumeConversation',
+        conversationId: currentHistoryConvId,
+        offset: currentHistoryOffset,
+      });
+    };
+    messagesEl.appendChild(more);
+  }
   for (const m of (data.messages || [])) {
     addMsg(m.type || m.role, m.content || '', m);
   }
-  statusEl.textContent = data.message_count + ' messages' + (data.has_more ? ' (more available)' : '');
+  statusEl.textContent = (data.messages || []).length + ' of ' + (data.message_count || '?') + ' messages';
 }
 
 // Auto-resize textarea
-inputEl.addEventListener('input', () => {
+inputEl.addEventListener('input', function() {
   inputEl.style.height = '36px';
   inputEl.style.height = Math.min(inputEl.scrollHeight, 120) + 'px';
 });

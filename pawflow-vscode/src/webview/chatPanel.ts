@@ -814,32 +814,38 @@ function showResMenu(e, rtype, name) {
     menu.appendChild(hr);
   }
 
+  if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts' || rtype === 'task_defs') {
+    addItem('Edit...', 'edit_resource');
+    addSep();
+  }
   if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts') {
     addItem('Activate', 'activate');
     addItem('Deactivate', 'deactivate');
-    addSep();
-    addItem('Delete', 'delete_res');
-  }
-  if (rtype === 'services') {
-    addItem('Enable', 'svc_enable');
-    addItem('Disable', 'svc_disable');
-    addSep();
-    addItem('Uninstall', 'svc_uninstall');
-  }
-  if (rtype === 'task_defs') {
-    addItem('Assign to agent...', 'assign_task');
-    addSep();
-    addItem('Delete', 'del_task');
   }
   if (rtype === 'agents') {
     addSep();
     addItem('Enable agent', 'agent_enable');
     addItem('Disable agent', 'agent_disable');
   }
-  if (rtype === 'parameters' || rtype === 'secrets') {
-    addItem('Edit', 'edit_param');
+  if (rtype === 'task_defs') {
+    addItem('Assign to agent...', 'assign_task');
+  }
+  if (rtype === 'services') {
+    addItem('Edit...', 'edit_service');
     addSep();
-    addItem('Delete', 'del_param');
+    addItem('Enable', 'svc_enable');
+    addItem('Disable', 'svc_disable');
+  }
+  if (rtype === 'parameters' || rtype === 'secrets') {
+    addItem('Edit...', 'edit_param');
+  }
+  // Delete for all user-scoped
+  if (rtype !== 'flows') {
+    addSep();
+    if (rtype === 'services') addItem('Uninstall', 'svc_uninstall');
+    else if (rtype === 'parameters' || rtype === 'secrets') addItem('Delete', 'del_param');
+    else if (rtype === 'task_defs') addItem('Delete', 'del_task');
+    else addItem('Delete', 'delete_res');
   }
 
   document.body.appendChild(menu);
@@ -881,11 +887,123 @@ function doResAction(action) {
     showAssignForm(name);
     return;
   }
+  else if (action === 'edit_resource') {
+    showEditResourceForm(singularType, name);
+    return;
+  }
+  else if (action === 'edit_service') {
+    showEditServiceForm(name);
+    return;
+  }
 
   if (cmd) {
     vscode.postMessage({ type: 'command', command: cmd, arg: JSON.stringify(params) });
     setTimeout(function() { loadResourcesPanel(); }, 500);
   }
+}
+
+// ── Resource Edit Form ──
+var _resFieldDefs = {
+  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
+  skill:    [['prompt','textarea'],['description','text']],
+  mcp:      [['url','text'],['auth','text'],['description','text']],
+  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['description','text']],
+  prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
+};
+
+function showEditResourceForm(rtype, name) {
+  // Fetch current data then show form
+  vscode.postMessage({ type: 'command', command: 'get_resource_detail', arg: JSON.stringify({ resource_type: rtype, name: name }) });
+  _pendingEdit = { rtype: rtype, name: name };
+}
+
+var _pendingEdit = null;
+
+function _renderEditForm(rtype, name, data) {
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  var fields = _resFieldDefs[rtype] || [];
+  var scope = data._scope || data.scope || 'user';
+
+  var html = '<div class="panel-header"><h4>Edit ' + rtype + ': ' + esc(name) + ' [' + scope + ']</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+  html += '<div style="padding:4px">';
+  for (var i = 0; i < fields.length; i++) {
+    var key = fields[i][0];
+    var type = fields[i][1];
+    var val = (data[key] != null) ? String(data[key]) : '';
+    html += '<label style="' + _cfLabelStyle + '">' + esc(key) + '</label>';
+    if (type === 'textarea') {
+      html += '<textarea id="ef-' + key + '" style="' + _cfTextareaStyle + '">' + esc(val) + '</textarea>';
+    } else if (type === 'number') {
+      html += '<input id="ef-' + key + '" type="number" value="' + esc(val) + '" style="' + _cfInputStyle + '">';
+    } else {
+      html += '<input id="ef-' + key + '" value="' + esc(val) + '" style="' + _cfInputStyle + '">';
+    }
+  }
+  html += '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'
+    + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<button onclick="submitEditForm(\\'' + esc(rtype) + '\\',\\'' + esc(name) + '\\',\\'' + scope + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Save</button>'
+    + '</div></div>';
+  overlay.innerHTML = html;
+}
+
+function submitEditForm(rtype, name, scope) {
+  var fields = _resFieldDefs[rtype] || [];
+  var data = {};
+  for (var i = 0; i < fields.length; i++) {
+    var key = fields[i][0];
+    var type = fields[i][1];
+    var el = document.getElementById('ef-' + key);
+    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+  vscode.postMessage({ type: 'command', command: 'update_resource',
+    arg: JSON.stringify({ resource_type: rtype, name: name, scope: scope, data: data }) });
+  closePanel();
+  statusEl.textContent = rtype + ' "' + name + '" updated';
+  setTimeout(function() { statusEl.textContent = ''; }, 3000);
+  setTimeout(function() { loadResourcesPanel(); }, 500);
+}
+
+// ── Service Edit Form ──
+function showEditServiceForm(serviceId) {
+  vscode.postMessage({ type: 'command', command: 'get_service_detail', arg: JSON.stringify({ service_id: serviceId }) });
+  _pendingEdit = { rtype: '_service', name: serviceId };
+}
+
+function _renderServiceEditForm(serviceId, config) {
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+
+  var html = '<div class="panel-header"><h4>Edit Service: ' + esc(serviceId) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+  html += '<div style="padding:4px">';
+  var keys = Object.keys(config || {});
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    if (k.startsWith('_')) continue;
+    var v = String(config[k]);
+    var isSecret = /key|secret|token|password/i.test(k);
+    html += '<label style="' + _cfLabelStyle + '">' + esc(k) + '</label>';
+    html += '<input id="se-' + k + '" type="' + (isSecret ? 'password' : 'text') + '" value="' + esc(v) + '" style="' + _cfInputStyle + '">';
+  }
+  html += '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'
+    + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<button onclick="submitServiceEdit(\\'' + esc(serviceId) + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Save</button>'
+    + '</div></div>';
+  overlay.innerHTML = html;
+}
+
+function submitServiceEdit(serviceId) {
+  var inputs = document.querySelectorAll('[id^="se-"]');
+  var config = {};
+  inputs.forEach(function(el) {
+    config[el.id.slice(3)] = el.value;
+  });
+  vscode.postMessage({ type: 'command', command: 'update_service',
+    arg: JSON.stringify({ service_id: serviceId, config: config }) });
+  closePanel();
+  statusEl.textContent = 'Service "' + serviceId + '" updated';
+  setTimeout(function() { statusEl.textContent = ''; }, 3000);
+  setTimeout(function() { loadResourcesPanel(); }, 500);
 }
 
 function showAssignForm(taskName) {
@@ -1112,6 +1230,18 @@ function loadToolsPanel() {
 var _pendingPanel = '';
 
 function renderPanelResult(action, data) {
+  // Handle edit form data responses
+  if (_pendingEdit && action === 'get_resource_detail') {
+    _renderEditForm(_pendingEdit.rtype, _pendingEdit.name, data);
+    _pendingEdit = null;
+    return true;
+  }
+  if (_pendingEdit && _pendingEdit.rtype === '_service' && action === 'get_service_detail') {
+    _renderServiceEditForm(_pendingEdit.name, data.config || data);
+    _pendingEdit = null;
+    return true;
+  }
+
   const overlay = document.getElementById('panelOverlay');
   if (!overlay || overlay.className !== 'panel-overlay visible') return false;
 

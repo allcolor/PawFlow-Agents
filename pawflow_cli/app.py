@@ -34,7 +34,7 @@ _COMMANDS = [
     "/new", "/conv", "/resume", "/history", "/delete", "/export",
     "/agent", "/msg", "/message", "/btw", "/stop", "/interrupt",
     "/compact", "/rebuild", "/restart", "/summary", "/context",
-    "/memory", "/skill", "/task", "/service",
+    "/memory", "/skill", "/task", "/service", "/flow",
     "/resources", "/activate", "/deactivate",
     "/tools", "/call", "/model", "/llm",
     "/files", "/upload", "/paste", "/view", "/prompt",
@@ -125,7 +125,7 @@ class PawCode:
                         for m in reversed(messages):
                             if m.get("type") in ("assistant", "agent_response"):
                                 source = m.get("source", {})
-                                agent = source.get("name", "assistant") if isinstance(source, dict) else "assistant"
+                                agent = source.get("name", "") if isinstance(source, dict) else ""
                                 preview = m.get("content", "")[:200]
                                 if preview:
                                     self.renderer.print_system(f"Last ({agent}): {preview}...")
@@ -494,7 +494,7 @@ class PawCode:
         data = event.get("data", {})
 
         if ev_type == "thinking" or ev_type == "thinking_content":
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             if ev_type == "thinking" and not thinking_agent:
                 self._ev_thinking_agent = agent
                 self.renderer.start_thinking(agent)
@@ -502,7 +502,7 @@ class PawCode:
                 self.renderer.thinking_token(agent, data.get("text", ""))
 
         elif ev_type == "token":
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             if thinking_agent:
                 self.renderer.end_thinking(thinking_agent)
                 self._ev_thinking_agent = ""
@@ -515,7 +515,7 @@ class PawCode:
 
         elif ev_type == "tool_call":
             # Don't end other agents' streams — they continue independently
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             svc = data.get("llm_service", "")
             self.renderer.print_tool_call(
                 data.get("tool", "?"),
@@ -552,11 +552,11 @@ class PawCode:
             )
 
         elif ev_type == "btw_thinking":
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             self.renderer.print_system(f"[{agent} btw] thinking...")
 
         elif ev_type == "btw_token":
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             btw_key = f"btw:{agent}"
             if btw_key != streaming_agent:
                 if streaming_agent:
@@ -567,7 +567,7 @@ class PawCode:
             self.renderer.stream_token(btw_key, data.get("text", ""))
 
         elif ev_type == "btw_done":
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             btw_key = f"btw:{agent}"
             if streaming_agent == btw_key:
                 self.renderer.end_stream(btw_key, data.get("response", ""))
@@ -599,12 +599,12 @@ class PawCode:
 
         elif ev_type == "done":
             response_text = data.get("response", "")
-            agent = data.get("agent_name", "assistant")
+            agent = data.get("agent_name", "")
             # End this specific agent's stream (multi-agent safe)
             if agent in self.renderer._streams:
                 self.renderer.end_stream(agent, response_text)
             elif response_text:
-                agent = data.get("agent_name", "assistant")
+                agent = data.get("agent_name", "")
                 self.renderer.print_agent_badge(agent)
                 self.renderer.print_markdown(response_text)
             # Track for /copy
@@ -679,7 +679,7 @@ class PawCode:
             pass  # silently discard
 
         elif ev_type == "agent_response":
-            agent = data.get("agent_name", data.get("source", {}).get("name", "assistant") if isinstance(data.get("source"), dict) else "assistant")
+            agent = data.get("agent_name", data.get("source", {}).get("name", "") if isinstance(data.get("source"), dict) else "")
             response = data.get("response", "")
             if response:
                 self.renderer.print_system("")  # spacing
@@ -804,6 +804,15 @@ class PawCode:
                 "- `/service install <type> <name> [config]` — Install\n"
                 "- `/service uninstall <name>` — Remove\n"
                 "- `/service enable|disable <name>` — Toggle\n"
+                "\n## Flows\n"
+                "- `/flow list` — List deployed flows\n"
+                "- `/flow templates` — List available flow templates\n"
+                "- `/flow deploy <template_id> [scope]` — Deploy (scope: user|conversation)\n"
+                "- `/flow start <id> [key=val ...]` — Start (with optional param overrides)\n"
+                "- `/flow stop <instance_id>` — Stop flow\n"
+                "- `/flow params <instance_id>` — View flow parameters\n"
+                "- `/flow promote <instance_id>` — Promote conv flow to user scope\n"
+                "- `/flow undeploy <instance_id>` — Remove flow\n"
                 "\n## Resources\n"
                 "- `/resources` — List all resources\n"
                 "- `/activate <type> <name>` — Activate resource\n"
@@ -961,7 +970,7 @@ class PawCode:
                 self.renderer.print_error("Usage: /model <model_name> or /model reset")
                 return
             try:
-                data = self.api.send_action("model", model=arg, agent=self.selected_agent or "assistant",
+                data = self.api.send_action("model", model=arg, agent=self.selected_agent or "",
                                              conversation_id=self.conversation_id or "")
                 self.renderer.print_system(data.get("message", "Model updated"))
             except Exception as e:
@@ -1416,6 +1425,112 @@ class PawCode:
                         return
                     self.api.send_action(f"service_{subcmd}", service_id=parts[1])
                     self.renderer.print_system(f"Service '{parts[1]}' {subcmd}d")
+            except Exception as e:
+                self.renderer.print_error(str(e))
+            return
+
+        # --- Flows ---
+
+        if cmd == "/flow":
+            parts = arg.split(None, 2) if arg else ["list"]
+            subcmd = parts[0].lower()
+            try:
+                if subcmd == "list":
+                    data = self.api.send_action("list_conv_flows")
+                    flows = data.get("flows", [])
+                    for f in flows:
+                        status = "\u25b6" if f.get("status") == "running" else "\u23f9"
+                        self.renderer.print(f"  {status} {f.get('id', '?')} — {f.get('name', '?')} [{f.get('status', '?')}]")
+                    if not flows:
+                        self.renderer.print_system("No deployed flows.")
+                elif subcmd == "templates":
+                    data = self.api.send_action("list_available_flows")
+                    templates = data.get("templates", [])
+                    for t in templates:
+                        ver = f" v{t['version']}" if t.get("version") else ""
+                        self.renderer.print(f"  {t['id']}{ver} — {t['name']} ({t['tasks_count']} tasks, {t['services_count']} services)")
+                        if t.get("description"):
+                            self.renderer.print(f"    {t['description'][:80]}")
+                    if not templates:
+                        self.renderer.print_system("No templates in flows/")
+                elif subcmd == "deploy":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow deploy <template_id> [user|conversation]")
+                        return
+                    template_id = parts[1]
+                    scope = parts[2] if len(parts) > 2 else "user"
+                    data = self.api.send_action("deploy_flow",
+                        template_id=template_id, scope=scope,
+                        conversation_id=self.conversation_id or "")
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Deployed: {data.get('instance_id', '?')} ({scope})")
+                elif subcmd == "start":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow start <instance_id> [key=val ...]")
+                        return
+                    iid = parts[1]
+                    # Parse optional param overrides: /flow start myflow key1=val1 key2=val2
+                    overrides = {}
+                    if len(parts) > 2:
+                        for kv in parts[2].split():
+                            if "=" in kv:
+                                k, v = kv.split("=", 1)
+                                overrides[k.strip()] = v.strip()
+                    if overrides:
+                        upd = self.api.send_action("update_flow_params", instance_id=iid, parameters=overrides)
+                        if upd.get("error"):
+                            self.renderer.print_error(f"Param update: {upd['error']}")
+                            return
+                        self.renderer.print_system(f"Updated {len(overrides)} param(s)")
+                    data = self.api.send_action("start_flow", instance_id=iid)
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Flow '{iid}' started")
+                elif subcmd == "params":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow params <instance_id>")
+                        return
+                    data = self.api.send_action("get_flow_instance", instance_id=parts[1])
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print(f"  Flow: {data.get('flow_name', '?')} [{data.get('status', '?')}]")
+                        params = {**data.get("template_parameters", {}), **data.get("parameters", {})}
+                        for k, v in params.items():
+                            self.renderer.print(f"    {k} = {v}")
+                elif subcmd == "stop":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow stop <instance_id>")
+                        return
+                    data = self.api.send_action("stop_flow", instance_id=parts[1])
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Flow '{parts[1]}' stopped")
+                elif subcmd == "undeploy":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow undeploy <instance_id>")
+                        return
+                    data = self.api.send_action("undeploy_flow", instance_id=parts[1])
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Flow '{parts[1]}' undeployed")
+                elif subcmd == "promote":
+                    if len(parts) < 2:
+                        self.renderer.print_error("Usage: /flow promote <instance_id>")
+                        return
+                    data = self.api.send_action("promote_flow",
+                        instance_id=parts[1], target_scope="user")
+                    if data.get("error"):
+                        self.renderer.print_error(data["error"])
+                    else:
+                        self.renderer.print_system(f"Flow '{parts[1]}' promoted to user scope")
+                else:
+                    self.renderer.print_error(f"Unknown /flow subcommand: {subcmd}")
             except Exception as e:
                 self.renderer.print_error(str(e))
             return

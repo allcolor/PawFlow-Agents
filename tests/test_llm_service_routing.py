@@ -342,7 +342,7 @@ class TestClassifyMessagesSource(unittest.TestCase):
         self.assertEqual(len(classified), 2)
         self.assertNotIn("source", classified[0])  # user messages without source stay without
         # Assistant messages now always get a default source for badge display
-        self.assertEqual(classified[1]["source"], {"type": "agent", "name": "assistant"})
+        self.assertEqual(classified[1]["source"], {"type": "agent", "name": ""})
 
 
 class TestAgentLoopSchema(unittest.TestCase):
@@ -381,8 +381,8 @@ class TestFlowMigration(unittest.TestCase):
         with open(path, encoding="utf-8") as f:
             return json.load(f)
 
-    def test_agent_example_no_inline_llm(self):
-        flow = self._load_flow("agent_example.json")
+    def test_pawflow_agent_no_inline_llm(self):
+        flow = self._load_flow("pawflow_agent.json")
         params = flow.get("parameters", {})
         self.assertNotIn("provider", params)
         self.assertNotIn("api_key", params)

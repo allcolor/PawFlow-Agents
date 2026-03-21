@@ -123,10 +123,27 @@ class TestCascadeResolution(unittest.TestCase):
         result = resolve_expression("${user.shared_key}")
         self.assertEqual(result, "from_global")
 
-    def test_global_direct(self):
-        """${global.X} resolves from global params."""
+    def test_global_cascades(self):
+        """${global.X} cascades: flow → conv → user → global."""
+        # No user/flow context → resolves from global
         result = resolve_expression("${global.only_global}")
         self.assertEqual(result, "global_value")
+        # With user context → user wins over global
+        result = resolve_expression("${global.shared_key}", owner="testuser")
+        self.assertEqual(result, "from_user")
+
+    def test_global_important(self):
+        """${global.X:!important} resolves from global ONLY."""
+        result = resolve_expression("${global.shared_key:!important}", owner="testuser")
+        self.assertEqual(result, "from_global")
+
+    def test_user_important(self):
+        """${user.X:!important} resolves from user ONLY."""
+        result = resolve_expression("${user.shared_key:!important}", owner="testuser")
+        self.assertEqual(result, "from_user")
+        # Key only in global → unresolved with !important on user
+        result = resolve_expression("${user.only_global:!important}", owner="testuser")
+        self.assertEqual(result, "${user.only_global:!important}")
 
     def test_flow_params_cascade_to_user(self):
         """${flow.parameters.X} cascades to user when not in flow params."""
@@ -154,6 +171,52 @@ class TestCascadeResolution(unittest.TestCase):
             owner="testuser",
         )
         self.assertEqual(result, "from_flow")
+
+    def test_flow_shorthand(self):
+        """${flow.X} works as alias for ${flow.parameters.X}."""
+        result = resolve_expression(
+            "${flow.shared_key}",
+            parameters={"shared_key": "from_flow"},
+            owner="testuser",
+        )
+        self.assertEqual(result, "from_flow")
+
+    def test_flow_shorthand_cascades(self):
+        """${flow.X} cascades to user/global when not in flow params."""
+        result = resolve_expression(
+            "${flow.only_global}",
+            parameters={},
+            owner="testuser",
+        )
+        self.assertEqual(result, "global_value")
+
+    def test_all_prefixes_cascade_same(self):
+        """All prefixes cascade identically: flow → conv → user → global."""
+        # With flow param set, all prefixes find it
+        for prefix in ["flow.", "flow.parameters.", "conv.", "user.", "global."]:
+            result = resolve_expression(
+                f"${{{prefix}shared_key}}",
+                parameters={"shared_key": "from_flow"},
+                owner="testuser",
+            )
+            self.assertEqual(result, "from_flow",
+                             f"${{{prefix}shared_key}} should find flow param")
+
+    def test_flow_important(self):
+        """${flow.X:!important} resolves from flow params ONLY."""
+        result = resolve_expression(
+            "${flow.shared_key:!important}",
+            parameters={"shared_key": "from_flow"},
+            owner="testuser",
+        )
+        self.assertEqual(result, "from_flow")
+        # Key only in user → unresolved with !important on flow
+        result = resolve_expression(
+            "${flow.user_only:!important}",
+            parameters={},
+            owner="testuser",
+        )
+        self.assertEqual(result, "${flow.user_only:!important}")
 
     def test_recursive_resolution(self):
         """Resolved value containing ${...} gets resolved again."""

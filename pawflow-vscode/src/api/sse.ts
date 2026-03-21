@@ -12,6 +12,8 @@ export class SSEClient extends EventEmitter {
   private connected = false;
   private shouldReconnect = true;
   private retryDelay = 1000;
+  private retryCount = 0;
+  private static readonly MAX_RETRIES = 30;
 
   constructor(serverUrl: string, sessionToken: string) {
     super();
@@ -56,6 +58,13 @@ export class SSEClient extends EventEmitter {
       timeout: 0, // no timeout for SSE
     };
 
+    // Destroy previous request before creating a new one — prevents socket leak
+    if (this.request) {
+      this.request.removeAllListeners();
+      this.request.destroy();
+      this.request = null;
+    }
+
     this.request = mod.request(options, (res) => {
       if (res.statusCode !== 200) {
         this.emit('error', new Error(`SSE connection failed: ${res.statusCode}`));
@@ -65,6 +74,7 @@ export class SSEClient extends EventEmitter {
 
       this.connected = true;
       this.retryDelay = 1000;
+      this.retryCount = 0;
       this.emit('connected');
 
       let eventType = '';
@@ -120,11 +130,13 @@ export class SSEClient extends EventEmitter {
 
   private _scheduleReconnect(conversationId: string): void {
     if (!this.shouldReconnect) { return; }
+    this.retryCount++;
     setTimeout(() => {
       if (this.shouldReconnect) {
         this._connect(conversationId);
       }
     }, this.retryDelay);
-    this.retryDelay = Math.min(this.retryDelay * 2, 15000);
+    // Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s → 60s
+    this.retryDelay = Math.min(this.retryDelay * 2, 60000);
   }
 }

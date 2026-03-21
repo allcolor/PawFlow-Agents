@@ -240,8 +240,15 @@ class WebhookTrigger(BaseTrigger):
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 if self.path != trigger._path:
+                    # Drain request body before responding — prevents
+                    # ConnectionAbortedError on Windows (RST before client read)
+                    cl = int(self.headers.get('Content-Length', 0))
+                    if cl:
+                        self.rfile.read(cl)
                     self.send_response(404)
+                    self.send_header("Content-Type", "application/json")
                     self.end_headers()
+                    self.wfile.write(b'{"error": "Not found"}')
                     return
 
                 # Read body

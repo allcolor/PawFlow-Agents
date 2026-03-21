@@ -445,26 +445,30 @@ class TestAskAgentHandler(unittest.TestCase):
         self.assertIn("Error", result)
 
     def test_ask_agent_no_llm_client(self):
-        # Define an agent but don't set LLM client
-        self.store.set_extra("conv1", "agents", {
-            "helper": {"prompt": "You are helpful."},
-        })
+        # Define an agent in ResourceStore but don't set LLM client
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        rs.create("agent", "helper", "testuser", {"prompt": "You are helpful.", "name": "helper"})
         h = AskAgentHandler()
         h.set_conversation_id("conv1")
+        h.set_user_id("testuser")
         result = h.execute({"agent_name": "helper", "question": "Hi"})
         self.assertIn("Error", result)
         self.assertIn("LLM client", result)
+        rs.delete("agent", "helper", "testuser")
 
     def test_ask_agent_success(self):
-        self.store.set_extra("conv1", "agents", {
-            "coder": {"prompt": "You are a Python expert."},
-        })
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        rs.create("agent", "coder", "testuser", {"prompt": "You are a Python expert.", "name": "coder"})
         h = AskAgentHandler()
         h.set_conversation_id("conv1")
+        h.set_user_id("testuser")
         h.set_llm_client(_FakeLLMClient(), "test-model")
         result = h.execute({"agent_name": "coder", "question": "How do I sort a list?"})
         self.assertIn("[coder]", result)
         self.assertIn("agent's response", result)
+        rs.delete("agent", "coder", "testuser")
 
 
 # ══════════════════════════════════════════════════════════════════

@@ -238,17 +238,17 @@ class TerminalRenderer:
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
 
-        self._set_status(f"▶ {agent or 'assistant'}  {tool}...")
+        self._set_status(f"▶ {agent or ''}  {tool}...")
         if self.console:
             from rich.markup import escape
             color = _agent_color(agent) if agent else "yellow"
             self.console.print(
-                f"  [{color}]● {escape(agent or 'assistant')}[/{color}] "
+                f"  [{color}]● {escape(agent or '')}[/{color}] "
                 f"[yellow]{escape(tool)}[/yellow]"
                 f"[dim]({escape(args_str)})[/dim]"
             )
         else:
-            print(f"  ● {agent or 'assistant'} {tool}({args_str})")
+            print(f"  ● {agent or ''} {tool}({args_str})")
 
     def print_tool_result(self, tool: str, result: str, agent: str = ""):
         result = self._strip_tool_wrapper(result)
@@ -427,7 +427,7 @@ class TerminalRenderer:
                 print(display)
 
         elif mtype in ("assistant", "agent_response"):
-            badge = agent or "assistant"
+            badge = agent or ""
             svc_info = f" via {svc}" if svc else ""
             color = _agent_color(badge)
             display = content if len(content) <= 2000 else content[:2000] + "\n..."

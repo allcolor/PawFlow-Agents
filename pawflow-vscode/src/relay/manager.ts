@@ -7,8 +7,8 @@ import { AgentAPIClient } from '../api/client';
 import { executeAction } from './actions';
 
 /**
- * Generate relay ID matching PawCode CLI format:
- * cli_{username}_{sha256(username:directory)[:8]}
+ * Generate relay ID — consistent across PawCode CLI, VSCode, and Python relay.
+ * Format: fs_{username}_{sha256(username:normalized_dir)[:8]}
  */
 function generateRelayId(username: string, directory: string): string {
   // Normalize path to match Python's Path(directory).resolve() output
@@ -19,7 +19,7 @@ function generateRelayId(username: string, directory: string): string {
     normalized = normalized[0].toUpperCase() + normalized.slice(1);
   }
   const h = crypto.createHash('sha256').update(`${username}:${normalized}`).digest('hex').slice(0, 8);
-  return `cli_${username}_${h}`;
+  return `fs_${username}_${h}`;
 }
 
 function findFreePort(): Promise<number> {
@@ -42,6 +42,9 @@ export class RelayManager implements vscode.Disposable {
   private readonly: boolean = false;
   private running = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
+  private reconnectDelay = 1000;
+  private reconnectAttempts = 0;
+  private static readonly MAX_RECONNECT_ATTEMPTS = 30;
   private outputChannel: vscode.OutputChannel;
   private _onStatusChange = new vscode.EventEmitter<string>();
   readonly onDidChangeStatus = this._onStatusChange.event;
@@ -121,6 +124,13 @@ export class RelayManager implements vscode.Disposable {
   private _connect(): void {
     if (!this.running) { return; }
 
+    // Destroy previous socket before creating a new one — prevents socket leak
+    if (this.socket) {
+      this.socket.removeAllListeners();
+      this.socket.destroy();
+      this.socket = null;
+    }
+
     const host = 'localhost';
     const wsPath = '/ws/relay';
 
@@ -168,6 +178,8 @@ export class RelayManager implements vscode.Disposable {
           info: { platform: process.platform, root: this.rootDir, mode: 'readwrite' },
         });
         this._wsSend(socket, regMsg);
+        this.reconnectDelay = 1000;
+        this.reconnectAttempts = 0;
         this.outputChannel.appendLine(`[Relay] Sent registration for ${this.relayId} (token=${this.wsToken.slice(0,8)}...)`);
       }
 
@@ -235,9 +247,12 @@ export class RelayManager implements vscode.Disposable {
 
   private _scheduleReconnect(): void {
     if (!this.running) { return; }
+    this.reconnectAttempts++;
     this.reconnectTimer = setTimeout(() => {
       if (this.running) { this._connect(); }
-    }, 2000);
+    }, this.reconnectDelay);
+    // Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s → 60s
+    this.reconnectDelay = Math.min(this.reconnectDelay * 2, 60000);
   }
 
   // ── WebSocket frame helpers ──

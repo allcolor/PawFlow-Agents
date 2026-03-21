@@ -187,12 +187,17 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       const data = await api.sendAction('load_history', {
         conversation_id: cid, limit: 50, offset: offset || 0,
       });
-      if (!data.error) {
+      if (data.error) {
+        console.error('[PawFlow] load_history error:', data.error);
+        this.postMessage({ type: 'error', message: data.error });
+      } else {
         this.conversationId = cid;
         this.setupSSE();
         this.postMessage({ type: 'history', data });
       }
-    } catch {}
+    } catch (e) {
+      console.error('[PawFlow] resumeConversation failed:', e);
+    }
   }
 
   private async handleApproval(requestId: string, result: string, type: string): Promise<void> {
@@ -254,7 +259,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     if (!api) { return; }
 
     // Step 1: Pick agent
-    let agentNames = ['assistant'];
+    let agentNames: string[] = [];
     try {
       const data = await api.sendAction('list_agents', { conversation_id: this.conversationId || '' });
       agentNames = (data.agents || []).map((a: any) => a.name || a);
@@ -461,6 +466,7 @@ let currentHistoryOffset = 0;
 var _hadToolCalls = false;
 var _lastToolCall = '';
 var activeAgents = {};
+var _resData = null;
 
 function updateActiveAgents(agent, status) {
   if (status === 'done' || status === 'cancelled') {
@@ -571,7 +577,7 @@ function addMsg(type, content, meta) {
   if (type === 'user') {
     div.innerHTML = delBtn + esc(content);
   } else if (type === 'assistant') {
-    const agent = meta?.agent_name || meta?.source?.name || 'assistant';
+    const agent = meta?.agent_name || meta?.source?.name || '';
     const svc = meta?.source?.llm_service || '';
     const color = agentColor(agent);
     div.innerHTML = delBtn + '<span class="agent-badge" style="background:' + color + '">'
@@ -637,7 +643,7 @@ window.addEventListener('message', function(e) {
 
 function handleSSE(event) {
   const { event: evType, data } = event;
-  const agent = data.agent_name || 'assistant';
+  const agent = data.agent_name || '';
 
   switch (evType) {
     case 'thinking':
@@ -883,6 +889,27 @@ function showResMenu(e, rtype, name) {
   if (rtype === 'parameters' || rtype === 'secrets') {
     addItem('Edit...', 'edit_param');
   }
+  if (rtype === 'flows') {
+    // Flow-specific actions — find the item data to know status
+    var flowItem = null;
+    try {
+      var allFlows = _resData && _resData.flows ? _resData.flows : [];
+      for (var fi = 0; fi < allFlows.length; fi++) {
+        if ((allFlows[fi].instance_id || allFlows[fi].id || allFlows[fi].name) === name) { flowItem = allFlows[fi]; break; }
+      }
+    } catch(e) {}
+    if (flowItem && flowItem.status === 'running') {
+      addItem('\u23f9 Stop', 'flow_stop');
+    } else {
+      addItem('\u25b6 Start...', 'flow_start');
+    }
+    addItem('\u270f Edit params...', 'flow_edit_params');
+    if (flowItem && flowItem.scope === 'conversation') {
+      addItem('\u2b06 Promote to user', 'flow_promote');
+    }
+    addSep();
+    addItem('\ud83d\uddd1 Undeploy', 'flow_undeploy');
+  }
   // Delete for all user-scoped
   if (rtype !== 'flows') {
     addSep();
@@ -930,6 +957,14 @@ function doResAction(action) {
   else if (action === 'assign_task') {
     showAssignForm(name);
     return;
+  }
+  else if (action === 'flow_start') { showFlowStartForm(name); return; }
+  else if (action === 'flow_edit_params') { showFlowStartForm(name, true); return; }
+  else if (action === 'flow_promote') { cmd = 'promote_flow'; params = { instance_id: name, target_scope: 'user' }; }
+  else if (action === 'flow_stop') { cmd = 'stop_flow'; params = { instance_id: name }; }
+  else if (action === 'flow_undeploy') {
+    if (!confirm('Undeploy flow \\'' + name + '\\'?')) return;
+    cmd = 'undeploy_flow'; params = { instance_id: name };
   }
   else if (action === 'edit_resource') {
     showEditResourceForm(singularType, name);
@@ -1056,7 +1091,7 @@ function showAssignForm(taskName) {
   overlay.innerHTML = '<div class="panel-header"><h4>Assign: ' + esc(taskName) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
     + '<div style="padding:4px">'
     + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Agent</label>'
-    + '<input id="af-agent" value="assistant" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
+    + '<input id="af-agent" value="" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
     + '<label style="font-size:11px;color:var(--vscode-descriptionForeground)">Context mode</label>'
     + '<select id="af-context" style="width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px">'
     + '<option value="isolated">isolated (default)</option>'
@@ -1097,6 +1132,58 @@ function submitAssignForm(taskName) {
   }
   vscode.postMessage({ type: 'command', command: 'assign_task', arg: JSON.stringify(params) });
   closePanel();
+}
+
+var _flowStartInstanceId = '';
+var _flowStartEditOnly = false;
+function showFlowStartForm(instanceId, editOnly) {
+  _flowStartInstanceId = instanceId;
+  _flowStartEditOnly = !!editOnly;
+  var overlay = document.getElementById('panelOverlay');
+  overlay.className = 'panel-overlay visible';
+  overlay.innerHTML = '<div class="panel-header"><h4>' + (editOnly ? 'Edit Flow Params' : 'Start Flow') + ': ' + esc(instanceId) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
+    + '<div id="flowParamsContent" style="padding:4px;color:var(--vscode-descriptionForeground)">Loading parameters...</div>';
+  vscode.postMessage({ type: 'command', command: 'get_flow_instance', arg: JSON.stringify({ instance_id: instanceId }) });
+}
+function _renderFlowStartParams(data) {
+  var el = document.getElementById('flowParamsContent');
+  if (!el) return;
+  if (data.error) { el.innerHTML = '<span style="color:#f85149">' + esc(data.error) + '</span>'; return; }
+  var tplParams = data.template_parameters || {};
+  var instParams = data.parameters || {};
+  var merged = Object.assign({}, tplParams, instParams);
+  var keys = Object.keys(merged);
+  var html = '';
+  for (var i = 0; i < keys.length; i++) {
+    var k = keys[i];
+    var v = typeof merged[k] === 'object' ? JSON.stringify(merged[k]) : String(merged[k]);
+    html += '<label style="' + _cfLabelStyle + '">' + esc(k) + '</label>'
+      + '<input class="fp-input" data-key="' + esc(k) + '" value="' + esc(v) + '" style="' + _cfInputStyle + '">';
+  }
+  if (!html) html = '<div style="color:var(--vscode-descriptionForeground)">No parameters</div>';
+  var btnLabel = _flowStartEditOnly ? 'Save' : 'Start';
+  html += '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'
+    + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '<button onclick="submitFlowStart()" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">' + btnLabel + '</button>'
+    + '</div>';
+  el.innerHTML = html;
+}
+function submitFlowStart() {
+  var params = {};
+  document.querySelectorAll('.fp-input').forEach(function(el) {
+    params[el.dataset.key] = el.value;
+  });
+  // Save params first
+  vscode.postMessage({ type: 'command', command: 'update_flow_params', arg: JSON.stringify({ instance_id: _flowStartInstanceId, parameters: params }) });
+  if (!_flowStartEditOnly) {
+    // Then start
+    setTimeout(function() {
+      vscode.postMessage({ type: 'command', command: 'start_flow', arg: JSON.stringify({ instance_id: _flowStartInstanceId }) });
+    }, 300);
+  }
+  closePanel();
+  statusEl.textContent = _flowStartEditOnly ? 'Parameters saved' : 'Flow starting...';
+  setTimeout(function() { statusEl.textContent = ''; loadResourcesPanel(); }, 2000);
 }
 
 var _cfInputStyle = 'width:100%;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px';
@@ -1166,6 +1253,18 @@ function showCreateForm(rtype) {
       + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_service">'
       + '<label style="' + _cfLabelStyle + '">Config (key=value, one per line)</label>'
       + '<textarea id="cf-config" style="' + _cfTextareaStyle + '" placeholder="port=9091\\ntoken=abc123\\nmode=readwrite"></textarea>';
+  } else if (rtype === 'flows') {
+    title = 'Deploy Flow';
+    fields = '<label style="' + _cfLabelStyle + '">Template (loading...)</label>'
+      + '<select id="cf-template" style="' + _cfInputStyle + '"><option>Loading...</option></select>'
+      + '<label style="' + _cfLabelStyle + '">Scope</label>'
+      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>'
+      + '<label style="' + _cfLabelStyle + '">Parameters (JSON, optional)</label>'
+      + '<textarea id="cf-params" style="' + _cfTextareaStyle + '" placeholder="&#123;&quot;key&quot;: &quot;value&quot;&#125;"></textarea>';
+    // Load templates async after render
+    setTimeout(function() {
+      vscode.postMessage({ type: 'command', command: 'list_available_flows' });
+    }, 50);
   }
 
   overlay.innerHTML = '<div class="panel-header"><h4>' + title + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>'
@@ -1235,6 +1334,16 @@ function submitCreateForm(rtype) {
     if (!svcType || !svcName) return;
     cmd = 'service_install';
     params = { service_type: svcType, service_name: svcName, config_str: config.split('\\n').join(',') };
+  } else if (rtype === 'flows') {
+    var templateId = (document.getElementById('cf-template')?.value || '').trim();
+    var flowScope = (document.getElementById('cf-scope')?.value || 'user');
+    var flowParams = (document.getElementById('cf-params')?.value || '').trim();
+    if (!templateId) return;
+    cmd = 'deploy_flow';
+    params = { template_id: templateId, scope: flowScope };
+    if (flowParams) {
+      try { params.parameters = JSON.parse(flowParams); } catch(e) { statusEl.textContent = 'Invalid JSON'; return; }
+    }
   }
 
   if (cmd) {
@@ -1286,11 +1395,31 @@ function renderPanelResult(action, data) {
     return true;
   }
 
+  // Populate flow start params form
+  if (action === 'get_flow_instance') {
+    _renderFlowStartParams(data);
+    return true;
+  }
+
+  // Populate deploy flow template dropdown
+  if (action === 'list_available_flows') {
+    var sel = document.getElementById('cf-template');
+    if (sel) {
+      var templates = data.templates || [];
+      sel.innerHTML = templates.map(function(t) {
+        return '<option value="' + esc(t.id) + '">' + esc(t.name) + ' (' + t.tasks_count + ' tasks)' + (t.version ? ' v' + t.version : '') + '</option>';
+      }).join('') || '<option>(no templates)</option>';
+      var lbl = sel.previousElementSibling;
+      if (lbl) lbl.textContent = 'Template';
+    }
+    return true;
+  }
+
   const overlay = document.getElementById('panelOverlay');
   if (!overlay || overlay.className !== 'panel-overlay visible') return false;
 
   if (action === 'list_resources' && _pendingPanel === 'resources') {
-    var _resData = data;
+    _resData = data;
     let html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
 
     var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services','parameters','secrets'];
@@ -1314,7 +1443,7 @@ function renderPanelResult(action, data) {
       if (!items.length) continue;
 
       var label = sectionLabels[rtype] || rtype;
-      var canCreate = ['agents','skills','task_defs','prompts','services','parameters','secrets'].indexOf(rtype) >= 0;
+      var canCreate = ['agents','skills','task_defs','prompts','services','parameters','secrets','flows'].indexOf(rtype) >= 0;
       var createType = rtype === 'parameters' ? 'variables' : rtype;
       var addBtn = canCreate ? ' <button style="background:none;border:none;color:var(--vscode-textLink-foreground);cursor:pointer;font-size:11px" onclick="event.stopPropagation();showCreateForm(\\'' + createType + '\\')">[+]</button>' : '';
       html += '<div class="res-section" onclick="this.classList.toggle(\\'collapsed\\')">'
@@ -1322,13 +1451,21 @@ function renderPanelResult(action, data) {
       html += '<div class="res-items">';
       for (var ii = 0; ii < items.length; ii++) {
         var item = items[ii];
-        var name = item.name || item.id || item.service_id || item.key || '?';
+        var name = item.name || item.id || item.service_id || item.instance_id || item.flow_name || item.key || '?';
         var scope = item.scope || item._scope || 'user';
-        var scopeBadge = scope === 'global' ? ' <span style="color:var(--vscode-descriptionForeground);font-size:9px">[global]</span>' : '';
+        var scopeBadge = scope === 'global' ? ' <span style="color:var(--vscode-descriptionForeground);font-size:9px">[global]</span>' : (scope === 'conversation' ? ' <span style="color:var(--vscode-descriptionForeground);font-size:9px">[conv]</span>' : '');
         var active = item.active ? ' <span style="color:#3fb950">\\u2713</span>' : '';
         var enabled = item.enabled === false ? ' <span style="color:#f85149">(disabled)</span>' : '';
         var connected = item.connected ? ' <span style="color:#3fb950">(connected)</span>' : '';
         var desc = item.description || item.prompt || item.type || item.service_type || '';
+        if (rtype === 'flows') {
+          name = item.flow_name || item.instance_id || item.name || '?';
+          var flowStatus = item.status || 'stopped';
+          desc = flowStatus === 'running' ? '\\u25b6 running' : flowStatus === 'error' ? '\\u26a0 error' : '\\u23f9 stopped';
+          if (item.template) desc += ' (' + item.template + ')';
+          // Use instance_id for context menu
+          name = item.instance_id || name;
+        }
         if (rtype === 'parameters' && item.value != null) {
           desc = '= ' + String(item.value).slice(0, 40);
         }

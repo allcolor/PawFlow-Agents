@@ -5,13 +5,16 @@ Runs on the user's machine and connects TO the server (reverse WebSocket).
 Works behind firewalls/NAT. Zero external dependencies (stdlib only).
 
 Usage (auto — default, opens browser for OAuth login):
-    python pawflow_relay.py --relay-id myfs --dir /path/to/share
-    python pawflow_relay.py --relay-id myfs --dir /path/to/share --allow-exec --port 9091
-    python pawflow_relay.py --relay-id myfs --dir /path/to/share --login-url http://host:9090
+    python pawflow_relay.py --dir /path/to/share
+    python pawflow_relay.py --dir /path/to/share --allow-exec --port 9091
+    python pawflow_relay.py --dir /path/to/share --login-url http://host:9090
 
 Usage (manual — legacy):
     python pawflow_relay.py --server ws://host:port/ws/relay \\
         --relay-id localFS --token abc123 --dir /path/to/share
+
+The relay ID is auto-generated as fs_{username}_{hash8} from username + directory,
+consistent with PawCode CLI and VSCode extension.
 
 Security:
 - OAuth browser login — no plaintext passwords
@@ -24,6 +27,7 @@ Security:
 
 import argparse
 import base64
+import hashlib
 import hmac
 import json
 import os
@@ -37,6 +41,17 @@ import time
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
+
+
+def generate_relay_id(username: str, directory: str) -> str:
+    """Generate a stable relay ID from username + directory.
+
+    Format: fs_{username}_{sha256(username:normalized_dir)[:8]}
+    Consistent across PawCode CLI, VSCode extension, and this standalone relay.
+    """
+    normalized = str(Path(directory).resolve())
+    h = hashlib.sha256(f"{username}:{normalized}".encode()).hexdigest()[:8]
+    return f"fs_{username}_{h}"
 
 
 # ── Actions that require write access ─────────────────────────────
@@ -668,6 +683,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return
         except Exception as e:
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
+        finally:
+            # Always close socket before reconnecting — prevents socket leak
             try:
                 sock.close()
             except Exception:
@@ -675,7 +692,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         sys.stderr.write(f"[FSRelay] Reconnecting in {reconnect_delay}s ...\n")
         time.sleep(reconnect_delay)
-        reconnect_delay = min(reconnect_delay * 2, 30)
+        # Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s → 60s
+        reconnect_delay = min(reconnect_delay * 2, 60)
 
 
 def _find_free_port():
@@ -821,6 +839,12 @@ def _auto_register(args):
 
     sys.stderr.write(f"[FSRelay] Authenticated as '{username}'.\n")
 
+    # Auto-generate relay_id if not provided
+    root_dir = str(Path(args.dir).resolve())
+    if not args.relay_id:
+        args.relay_id = generate_relay_id(username, root_dir)
+        sys.stderr.write(f"[FSRelay] Auto-generated relay ID: {args.relay_id}\n")
+
     # Find port for WS listener
     port = args.port or _find_free_port()
     relay_path = args.relay_path
@@ -851,8 +875,8 @@ def main():
     )
     parser.add_argument("--server",
                         help="PawFlow server WS URL (manual mode)")
-    parser.add_argument("--relay-id", required=True,
-                        help="Service ID for this relay")
+    parser.add_argument("--relay-id", default="",
+                        help="Service ID (auto-generated from username+dir if omitted)")
     parser.add_argument("--token",
                         help="Token for manual WS auth")
     parser.add_argument("--dir", required=True,
@@ -885,7 +909,10 @@ def main():
     _cleaned_up = False
 
     if args.server and args.token:
-        # Manual mode (legacy)
+        # Manual mode (legacy) — relay_id required
+        if not args.relay_id:
+            sys.stderr.write("[Relay] Error: --relay-id is required in manual mode\n")
+            sys.exit(1)
         ws_url = args.server
         token = args.token
         masked = token[:2] + "*" * max(0, len(token) - 2)

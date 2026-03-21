@@ -588,7 +588,7 @@ let sending = false;
 let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
 let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
-let selectedAgent = '';   // currently active agent ('' or 'assistant' = default)
+let selectedAgent = '';   // currently active agent ('' = default)
 let sseRetryCount = 0;     // for exponential backoff on reconnect
 let sseReconnectTimer = null;
 // Per-agent streaming state — prevents cross-agent clobbering when multiple
@@ -601,12 +601,12 @@ let streamingChunks = [];
 let streamingAgent = '';
 
 function getStream(agent) {
-  const key = (agent || 'assistant').toLowerCase();
+  const key = (agent || '').toLowerCase();
   if (!streams[key]) streams[key] = { el: null, text: '', chunks: [] };
   return streams[key];
 }
 function clearStream(agent) {
-  const key = (agent || 'assistant').toLowerCase();
+  const key = (agent || '').toLowerCase();
   delete streams[key];
   // Sync legacy globals if this was the active stream
   if (!streamingAgent || streamingAgent.toLowerCase() === key) {
@@ -1146,7 +1146,7 @@ function buildExportHtml(messages, nicknames, fileUrls) {
         const hue = Math.abs(h) % 360;
         badge = '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;font-weight:600;background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(srcName) + '</span>';
       }
-      if (type === 'assistant' && src.type === 'agent' && src.name && src.name !== 'assistant') {
+      if (type === 'assistant' && src.type === 'agent' && src.name) {
         cssClass = 'subagent';
       }
       // Strip identity prefix
@@ -1381,8 +1381,8 @@ function addMsg(role, text, extra) {
   let cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
   // Differentiate sub-agent responses from main assistant visually
   if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
-    const srcName = (extra.source.name || 'assistant').toLowerCase();
-    if (srcName !== 'assistant') cssClass = 'subagent';
+    const srcName = (extra.source.name || '').toLowerCase();
+    if (srcName) cssClass = 'subagent';
   }
   el.className = 'msg ' + cssClass;
   el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
@@ -1682,7 +1682,7 @@ document.getElementById('messages').addEventListener('scroll', function() {
 let activeInteractions = {};  // agentKey (lowercase) → { name, startedAt, lastTool, activeTools, status, msgPreview }
 let activeTimer = null;
 
-function agentKey(name) { return (name || 'assistant').toLowerCase(); }
+function agentKey(name) { return (name || '').toLowerCase(); }
 
 let _agentDoneAt = {};  // agentKey → timestamp of last done (prevents ghost re-register)
 function trackAgentStart(agentName, msgPreview) {
@@ -1699,7 +1699,7 @@ function trackAgentStart(agentName, msgPreview) {
     activeInteractions[key].activeTools = [];
   } else {
     activeInteractions[key] = {
-      name: agentName || 'assistant',
+      name: agentName || '',
       startedAt: Date.now(), lastTool: '', activeTools: [], status: 'thinking', msgPreview: msgPreview || '',
       updatedAt: Date.now(),
     };
@@ -1712,7 +1712,7 @@ function _ensureInteraction(agentName) {
   const key = agentKey(agentName);
   if (!activeInteractions[key]) {
     activeInteractions[key] = {
-      name: agentName || 'assistant',
+      name: agentName || '',
       startedAt: Date.now(), lastTool: '', activeTools: [], status: 'thinking', msgPreview: '',
       updatedAt: Date.now(),
     };
@@ -2206,7 +2206,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
-    const agentName = data.agent_name || 'assistant';
+    const agentName = data.agent_name || '';
     trackAgentStart(agentName);
     const wait = data.waiting_seconds || 0;
     const verb = randomVerb();
@@ -2219,7 +2219,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('thinking_content', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || 'assistant';
+    const agent = data.agent_name || '';
     const aKey = agentKey(agent);
     if (!thinkingElements[aKey]) {
       // Create collapsible details element
@@ -2246,7 +2246,7 @@ function connectSSE(cid) {
 
   // Finalize thinking block when tokens start arriving (thinking is done)
   function finalizeThinking(agentName) {
-    const aKey = agentKey(agentName || 'assistant');
+    const aKey = agentKey(agentName || '');
     const te = thinkingElements[aKey];
     if (te) {
       const elapsed = ((Date.now() - te.startTime) / 1000).toFixed(1);
@@ -2260,7 +2260,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || streamingAgent || 'assistant';
+    const agent = data.agent_name || streamingAgent || '';
     // Finalize thinking block when first text token arrives
     finalizeThinking(agent);
     streamingAgent = agent;  // legacy global
@@ -2272,8 +2272,8 @@ function connectSSE(cid) {
     if (!s.el) {
       s.el = addMsg('assistant', '', {source: src});
       // Apply subagent class if not main assistant
-      const srcName = (src.name || 'assistant').toLowerCase();
-      if (srcName !== 'assistant') {
+      const srcName = (src.name || '').toLowerCase();
+      if (srcName) {
         s.el.className = 'msg subagent';
       }
       s.chunks.push(s.el);
@@ -2292,7 +2292,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('iteration_status', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agentName = data.agent_name || 'assistant';
+    const agentName = data.agent_name || '';
     const aKey = agentKey(agentName);
     if (activeInteractions[aKey]) {
       activeInteractions[aKey].iteration = data.iteration;
@@ -2396,10 +2396,10 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     // Finalize thinking block before showing tool call
-    finalizeThinking(data.agent_name || 'assistant');
+    finalizeThinking(data.agent_name || '');
     console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
-    const tcAgent = data.agent_name || 'assistant';
+    const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
       // Detach the current streaming element so new tokens create a fresh one,
@@ -2442,7 +2442,7 @@ function connectSSE(cid) {
     // spawn_agents: responses are shown via sub_agent_done events in real-time
     // tool_result just shows a compact summary (don't duplicate responses)
     if (data.tool === 'spawn_agents' && data.result) {
-      const srcAgent = displayAgentName(data.agent_name || 'assistant');
+      const srcAgent = displayAgentName(data.agent_name || '');
       const srcSvc = data.llm_service ? ' via ' + data.llm_service : '';
       try {
         const agents = JSON.parse(data.result);
@@ -2460,7 +2460,7 @@ function connectSSE(cid) {
       return;
     }
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
-    const resultAgent = displayAgentName(data.agent_name || 'assistant');
+    const resultAgent = displayAgentName(data.agent_name || '');
     const resultSvc = data.llm_service ? ' via ' + data.llm_service : '';
     const fullResult = data.result || '';
     // Check if result contains a diff — render it fully with colors
@@ -2557,7 +2557,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
-    const agentName = data.agent_name || 'assistant';
+    const agentName = data.agent_name || '';
     trackAgentDone(agentName);
     // Remove any streamed tokens for this agent
     const ds = streams[agentName.toLowerCase()];
@@ -2575,7 +2575,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     hideTyping();
     const data = JSON.parse(e.data);
-    const doneAgent = data.agent_name || data.source?.name || 'assistant';
+    const doneAgent = data.agent_name || data.source?.name || '';
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
     trackAgentDone(doneAgent);
@@ -2670,7 +2670,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('btw_thinking', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || 'assistant';
+    const agent = data.agent_name || '';
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
     const el = addMsg('btw', '');
@@ -2683,7 +2683,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('btw_token', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || 'assistant';
+    const agent = data.agent_name || '';
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
     btwTexts[bKey] = (btwTexts[bKey] || '') + data.text;
@@ -2697,7 +2697,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('btw_done', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const agent = data.agent_name || 'assistant';
+    const agent = data.agent_name || '';
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
     if (data.error) {
@@ -2759,7 +2759,7 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     addMsg('error', data.message || t('unknownError'));
     // Error could be from any agent — clear the agent's stream if specified
-    const errAgent = data.agent_name || 'assistant';
+    const errAgent = data.agent_name || '';
     clearStream(errAgent);
     sending = false;
     document.getElementById('sendBtn').disabled = false;
@@ -2805,7 +2805,7 @@ function connectSSE(cid) {
   eventSource.addEventListener('thought_firing', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    trackAgentStart(data.agent || 'assistant');
+    trackAgentStart(data.agent || '');
     addMsg('system', t('thoughtFiring', { agent: displayAgentName(data.agent) }));
     showTyping();
   });
@@ -2854,8 +2854,8 @@ function connectSSE(cid) {
 
 function _scheduleSSEReconnect(cid) {
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);
-  // Exponential backoff: 1s, 2s, 4s, 8s, max 15s
-  const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 15000);
+  // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 60s
+  const delay = Math.min(1000 * Math.pow(2, sseRetryCount), 60000);
   sseRetryCount++;
   console.log('[SSE] reconnecting in', delay, 'ms (attempt', sseRetryCount, ')');
   sseReconnectTimer = setTimeout(() => {
@@ -3605,7 +3605,7 @@ function displayAgentName(realName) {
   for (const k of Object.keys(nicknameMap)) {
     if (k.toLowerCase() === key) return nicknameMap[k];
   }
-  return realName || 'assistant';
+  return realName || '';
 }
 
 function parseQuotedArgs(text) {
@@ -4797,7 +4797,7 @@ async function _submitResourceCreate(rtype) {
 
 function updateActiveAgentBadge() {
   const badge = document.getElementById('activeAgentBadge');
-  const agent = selectedAgent || 'assistant';
+  const agent = selectedAgent || '';
   // Color from agent name hash (same algo as source badges)
   let h = 0;
   for (let i = 0; i < agent.length; i++) h = ((h << 5) - h + agent.charCodeAt(i)) | 0;
@@ -4805,12 +4805,12 @@ function updateActiveAgentBadge() {
   badge.style.background = 'hsl(' + hue + ',60%,25%)';
   badge.style.color = 'hsl(' + hue + ',80%,80%)';
   badge.textContent = '\u2192 ' + displayAgentName(agent);
-  badge.title = agent === 'assistant' ? 'Default agent (assistant)' : 'Active: ' + agent + ' — click to switch back to assistant';
+  badge.title = !agent ? 'Default agent' : 'Active: ' + agent + ' — click to switch back';
   badge.style.display = '';
 }
 
 async function cmdAgentSelect(name) {
-  const isDefault = !name || name.toLowerCase() === 'assistant';
+  const isDefault = !name;
   if (!conversationId) {
     // No conversation yet — store pending selection, will be applied on first message
     pendingAgent = isDefault ? null : name;
@@ -4948,7 +4948,7 @@ function cmdAgentMsgAll(text) {
 function cmdAgentInterrupt(target) {
   if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
   const isAll = target.toUpperCase() === 'ALL';
-  addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'assistant') + '...'));
+  addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'agent') + '...'));
   if (isAll) {
     // Interrupt default + all agents
     fetch(API, { method: 'POST', headers: getAuthHeaders(),
@@ -6108,7 +6108,7 @@ async function send() {
   input.style.height = 'auto';
 
   // Show user message with target badge (all messages explicitly show who they go to)
-  const targetAgent = selectedAgent || 'assistant';
+  const targetAgent = selectedAgent || '';
   const userSource = { type: 'user', name: '', target_agent: targetAgent };
   const msgEl = addMsg('user', text || '', { source: userSource });
   if (attachmentsForDisplay.length > 0) {
@@ -6185,6 +6185,14 @@ async function send() {
       document.getElementById('status').textContent = t('thinking');
       document.getElementById('stopBtn').style.display = '';
       // SSE will handle the rest
+      return;
+    }
+
+    // Message queued — agent is busy, message will be picked up at next checkpoint
+    if (data.status === 'queued') {
+      if (data.message_count) serverMsgCount = data.message_count;
+      sending = false;
+      // Agent is already working — the message is persisted and will be injected
       return;
     }
 
@@ -6466,19 +6474,21 @@ async function loadResources() {
       });
       html += _sectionFooter();
     }
-    // Deployed flows
+    // Deployed flows (always show section for [+] deploy button)
+    html += _sectionHeader('Flows', '_flow');
     if (data.flows && data.flows.length) {
-      html += _sectionHeader('Flows', '_flow');
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
-        const flowCtx = f.scope !== 'global' ? ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}');return false;"` : '';
+        const flowCtx = f.scope !== 'global' ? ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"` : '';
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
         </div>`;
       });
-      html += _sectionFooter();
+    } else {
+      html += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
     }
+    html += _sectionFooter();
     // Variables & Secrets (separate fetch)
     try {
       const psResp = await fetch(API, {
@@ -6622,6 +6632,67 @@ function _deleteResource(rtype, name, scope) {
   }).catch(e => addMsg('error', e.message));
 }
 
+// ── Deploy flow dialog ───────────────────────────────────────────
+async function showDeployFlowDialog() {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Deploy Flow</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div><div style="color:#888;font-size:12px;">Loading templates...</div>`;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_available_flows' }) });
+    const data = await resp.json();
+    const templates = data.templates || [];
+    if (!templates.length) {
+      panel.querySelector('div:last-child').innerHTML = '<div style="color:#888;font-size:12px;">No flow templates found in flows/ directory.</div>';
+      return;
+    }
+    let optionsHtml = templates.map(t =>
+      `<option value="${t.id}">${t.name} (${t.tasks_count} tasks, ${t.services_count} services)${t.version ? ' v' + t.version : ''}</option>`
+    ).join('');
+    panel.querySelector('div:last-child').innerHTML = `
+      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Template</label>
+        <select id="deploy-template" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
+      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label>
+        <select id="deploy-scope" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
+          <option value="user">User</option>
+          <option value="conversation">Conversation</option>
+        </select></div>
+      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Parameters (JSON, optional)</label>
+        <textarea id="deploy-params" placeholder='{"key": "value"}' style="width:100%;min-height:60px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+        <button onclick="_submitDeployFlow()" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Deploy</button>
+      </div>`;
+  } catch (e) {
+    panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error loading templates: ' + e.message + '</div>';
+  }
+}
+function _submitDeployFlow() {
+  const templateId = document.getElementById('deploy-template').value;
+  const scope = document.getElementById('deploy-scope').value;
+  let params = {};
+  const paramsText = (document.getElementById('deploy-params').value || '').trim();
+  if (paramsText) {
+    try { params = JSON.parse(paramsText); } catch { alert('Invalid JSON in parameters'); return; }
+  }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, parameters: params, conversation_id: conversationId }),
+  }).then(r => r.json()).then(d => {
+    if (d.error) addMsg('error', d.error);
+    else { addMsg('system', `Flow deployed: ${d.instance_id} (${scope})`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  }).catch(e => addMsg('error', e.message));
+}
+
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
@@ -6701,6 +6772,7 @@ function _saveResourceEdit(rtype, name, scope) {
 }
 
 function showResourceCreator(rtype) {
+  if (rtype === '_flow') { showDeployFlowDialog(); return; }
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -6756,7 +6828,7 @@ function _showAssignDialog(taskDefName) {
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
   </div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Agent</label>
-    <input id="assign-agent" value="assistant" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
+    <input id="assign-agent" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Context mode</label>
     <select id="assign-context" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
       <option value="isolated">isolated (default — only task prompt)</option>
@@ -6944,7 +7016,7 @@ function _saveServiceEdit(serviceId, scope) {
 }
 
 // ── Flow instance context menu ───────────────────────────────────
-function showFlowInstanceMenu(e, instanceId, status) {
+function showFlowInstanceMenu(e, instanceId, status, scope) {
   e.preventDefault();
   const old = document.querySelector('.ctx-menu');
   if (old) old.remove();
@@ -6964,7 +7036,18 @@ function showFlowInstanceMenu(e, instanceId, status) {
   if (status === 'running') {
     item('\u23F9 Stop', () => _flowAction(instanceId, 'stop_flow'));
   } else {
-    item('\u25B6 Start', () => _flowAction(instanceId, 'start_flow'));
+    item('\u25B6 Start...', () => _showFlowStartDialog(instanceId));
+  }
+  item('\u270F Edit params...', () => _showFlowStartDialog(instanceId, true));
+  if (scope === 'conversation') {
+    item('\u2B06 Promote to user', () => {
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'promote_flow', instance_id: instanceId, target_scope: 'user' }),
+      }).then(r => r.json()).then(d => {
+        if (d.error) addMsg('error', d.error);
+        else { addMsg('system', `Flow '${instanceId}' promoted to user scope`); loadResources(); }
+      }).catch(e => addMsg('error', e.message));
+    });
   }
   const sep = document.createElement('div');
   sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
@@ -6974,6 +7057,67 @@ function showFlowInstanceMenu(e, instanceId, status) {
     _flowAction(instanceId, 'undeploy_flow');
   }, true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+async function _showFlowStartDialog(instanceId, editOnly) {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${editOnly ? 'Edit Flow Parameters' : 'Start Flow'}: ${instanceId}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div><div style="color:#888;font-size:12px;">Loading parameters...</div>`;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_flow_instance', instance_id: instanceId }) });
+    const data = await resp.json();
+    if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${data.error}</div>`; return; }
+    // Merge template defaults with instance overrides
+    const tplParams = data.template_parameters || {};
+    const instParams = data.parameters || {};
+    const merged = { ...tplParams, ...instParams };
+    let fieldsHtml = '';
+    for (const [k, v] of Object.entries(merged)) {
+      const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+      fieldsHtml += `<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(k)}</label>
+        <input class="flow-param-input" data-key="${escapeHtml(k)}" value="${escapeHtml(val)}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+    }
+    if (!fieldsHtml) fieldsHtml = '<div style="color:#555;font-size:12px;">No parameters</div>';
+    const btnLabel = editOnly ? 'Save' : 'Start';
+    panel.querySelector('div:last-child').innerHTML = fieldsHtml
+      + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+        <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${btnLabel}</button>
+      </div>`;
+    document.getElementById('flowStartBtn').onclick = () => {
+      const params = {};
+      document.querySelectorAll('.flow-param-input').forEach(el => {
+        params[el.dataset.key] = el.value;
+      });
+      // Save params first, then optionally start
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'update_flow_params', instance_id: instanceId, parameters: params }) })
+      .then(r => r.json()).then(d => {
+        if (d.error) { addMsg('error', d.error); return; }
+        if (editOnly) {
+          addMsg('system', 'Parameters updated for ' + instanceId);
+          document.getElementById('resourceEditorOverlay').remove();
+          loadResources();
+        } else {
+          _flowAction(instanceId, 'start_flow');
+          document.getElementById('resourceEditorOverlay').remove();
+        }
+      }).catch(e => addMsg('error', e.message));
+    };
+  } catch (e) {
+    panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + e.message + '</div>';
+  }
 }
 
 function _flowAction(instanceId, action) {

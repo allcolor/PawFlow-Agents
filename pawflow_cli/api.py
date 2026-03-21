@@ -122,10 +122,19 @@ class SSEClient:
                     return
                 self.events.put({"event": "_sse_error", "data": {"error": str(e)}})
                 self._stop.wait(retry_delay)
-                retry_delay = min(retry_delay * 2, 15)
+                # Exponential backoff: 1s → 2s → 4s → 8s → 16s → 30s → 60s
+                retry_delay = min(retry_delay * 2, 60)
 
     def _stream(self, conversation_id: str):
         """Open SSE connection and parse events."""
+        # Close previous connection before opening a new one — prevents socket leak
+        if self._conn:
+            try:
+                self._conn.close()
+            except Exception:
+                pass
+            self._conn = None
+
         path = f"/api/agent/events?conversation_id={conversation_id}"
         if self.session_token:
             path += f"&token={self.session_token}"

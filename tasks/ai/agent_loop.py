@@ -107,7 +107,7 @@ class AgentLoopTask(BaseTask):
         Always returns the real (canonical) agent name.
         """
         if not name or not conv_id:
-            return name or "assistant"
+            return name or ""
         from core.conversation_store import ConversationStore
         nicknames = ConversationStore.instance().get_extra(
             conv_id, "agent_nicknames") or {}
@@ -123,6 +123,28 @@ class AgentLoopTask(BaseTask):
             if real.lower() == name_lower:
                 return real
         return name
+
+    @staticmethod
+    def _ensure_active_agent(conv_id: str, active_res: dict, uid: str) -> dict:
+        """Ensure an agent is selected in active_resources.
+
+        If no agent is selected, auto-selects 'assistant' (or first available).
+        Persists the change and returns the (possibly updated) active_res dict.
+        """
+        if active_res.get("agent"):
+            return active_res
+        from core.resource_store import ResourceStore
+        from core.conversation_store import ConversationStore
+        rs = ResourceStore.instance()
+        default = rs.get_any("agent", "assistant", uid)
+        if not default:
+            all_agents = rs.list_all("agent", uid)
+            default = all_agents[0] if all_agents else None
+        if default:
+            active_res["agent"] = default["name"]
+            ConversationStore.instance().set_extra(
+                conv_id, "active_resources", active_res)
+        return active_res
 
     def initialize(self):
         """Start the poller at flow startup (not just on first request).
@@ -253,12 +275,12 @@ class AgentLoopTask(BaseTask):
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
             },
             "summarizer_service": {
-                "type": "string", "required": False, "default": "${global.summarizer_service}",
-                "description": "Dedicated LLM service for context compaction/summary. If empty, uses the default client.",
+                "type": "string", "required": False, "default": "${conv.summarizer_service}",
+                "description": "Dedicated LLM service for context compaction/summary. Cascades: conv → user → global params.",
             },
             "llm_service": {
-                "type": "string", "required": False, "default": "${global.llm_default_service}",
-                "description": "LLM service ID (from global/user services). Defaults to ${global.llm_default_service}.",
+                "type": "string", "required": False, "default": "${conv.llm_default_service}",
+                "description": "LLM service ID (from global/user services). Cascades: conv → user → global params.",
             },
             "resilience_style": {
                 "type": "string", "required": False, "default": "balanced",
@@ -462,7 +484,7 @@ class AgentLoopTask(BaseTask):
                 prefs = ConversationStore.instance().get_extra(
                     conversation_id, extra_key,
                 ) or {}
-                preferred = prefs.get(agent_name or "assistant") or prefs.get("*")
+                preferred = prefs.get(agent_name or "agent") or prefs.get("*")
                 if preferred:
                     svc = _self._resolve_media_service_by_id(preferred, user_id)
                     if svc:
@@ -513,7 +535,7 @@ class AgentLoopTask(BaseTask):
                               model: str = "",
                               provider: str = "") -> str:
         """Build the [IDENTITY] prefix for a system prompt."""
-        real_name = agent_name or "assistant"
+        real_name = agent_name or "agent"
         if conversation_id and nicknames is None:
             from core.conversation_store import ConversationStore
             nicknames = ConversationStore.instance().get_extra(
@@ -563,7 +585,7 @@ class AgentLoopTask(BaseTask):
         event = {
             "response": response_content,
             "conversation_id": conversation_id,
-            "agent_name": agent_name or "assistant",
+            "agent_name": agent_name or "",
             "model": model,
             "provider": provider,
             "base_url": (source or {}).get("base_url", ""),
@@ -633,7 +655,7 @@ class AgentLoopTask(BaseTask):
 
     @staticmethod
     def _track_tokens(user_id: str, tokens_in: int, tokens_out: int,
-                      model: str, agent_name: str = "assistant",
+                      model: str, agent_name: str = "",
                       llm_service: str = ""):
         """Track token usage via TokenTracker (best-effort)."""
         try:
@@ -824,7 +846,7 @@ class AgentLoopTask(BaseTask):
 
     def _execute_tool_calls(self, tool_calls, registry, consecutive_tracker: dict,
                             max_consecutive: int, *, parallel: bool = True,
-                            agent_name: str = "assistant", agent_svc: str = "",
+                            agent_name: str = "", agent_svc: str = "",
                             conversation_id: str = "", user_id: str = ""):
         """Execute tool calls with consecutive-call limiting + approval gate.
 
@@ -1033,7 +1055,7 @@ class AgentLoopTask(BaseTask):
         try:
             from core.resource_store import ResourceStore
             _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
-            _agent_names = ["assistant"] + [a["name"] for a in _all_agents]
+            _agent_names = [a["name"] for a in _all_agents]
         except Exception:
             _agent_names = []
 
@@ -1274,6 +1296,7 @@ class AgentLoopTask(BaseTask):
                 rs = ResourceStore.instance()
                 active_res = cstore.get_extra(conversation_id, "active_resources") or {}
                 _uid = flowfile.get_attribute("http.auth.principal") or "anonymous"
+                active_res = self._ensure_active_agent(conversation_id, active_res, _uid)
 
                 # Active agent overrides system prompt (target_agent takes priority)
                 selected = _target_agent or active_res.get("agent", "")
@@ -1281,44 +1304,23 @@ class AgentLoopTask(BaseTask):
                     agent_def = rs.get_any("agent", selected, _uid,
                                            conversation_id=conversation_id)
                     if not agent_def and _target_agent:
-                        # "assistant" is the default persona, not a ResourceStore agent
-                        if _target_agent != "assistant":
-                            # /agent msg <name> with unknown agent — reject early
-                            raise ValueError(f"Agent '{_target_agent}' not found")
+                        # /agent msg <name> with unknown agent — reject early
+                        raise ValueError(f"Agent '{_target_agent}' not found")
                     if agent_def:
                         _selected_agent_def = agent_def
                         system_prompt = agent_def["prompt"]
                         # Identity is injected later (with nickname awareness)
 
                         system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-                        # List other available agents (user + global + assistant)
+                        # List other available agents
                         all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
                         others = [a["name"] for a in all_agents if a["name"] != selected]
-                        if selected != "assistant" and "assistant" not in others:
-                            others.insert(0, "assistant")
                         if others:
                             system_prompt += (
                                 f"\n\nOther agents available: "
                                 f"{', '.join(others)}. Use spawn_agents or "
                                 f"manage_resource to work with them."
                             )
-                else:
-                    # No agent selected — still list available agents so default can use spawn_agents
-                    all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
-                    if all_agents:
-                        agent_lines = []
-                        for a in all_agents:
-                            desc = a.get("description") or a.get("prompt", "")[:80]
-                            agent_lines.append(f"  - {a['name']}: {desc}")
-                        system_prompt += (
-                            f"\n\n## Available agents\n"
-                            f"You have access to the following agents via the spawn_agents tool:\n"
-                            + "\n".join(agent_lines) + "\n\n"
-                            f"When the user asks you to talk to or contact an agent, "
-                            f"you MUST use the spawn_agents tool to send them a message. "
-                            f"Example: spawn_agents(tasks=[{{\"agent\": \"grok\", \"message\": \"Hello from the default agent!\"}}])\n"
-                            f"The user can also switch to an agent directly with /agent select <name>."
-                        )
 
                 # Inject active skills into system prompt
                 active_skills = active_res.get("skills", [])
@@ -1361,7 +1363,7 @@ class AgentLoopTask(BaseTask):
             messages.append(LLMMessage(role="user", content=user_content, source=user_source))
 
         # Determine active agent name and llm_service for source tracking
-        _active_agent_name = "assistant"
+        _active_agent_name = ""
         _active_llm_service = task_llm_service
         if use_conv_store and conversation_id:
             try:
@@ -1369,13 +1371,17 @@ class AgentLoopTask(BaseTask):
                 _ares = ConversationStore.instance().get_extra(
                     conversation_id, "active_resources",
                 ) or {}
-                _active_agent_name = _target_agent or _ares.get("agent", "") or "assistant"
+                _ares = self._ensure_active_agent(
+                    conversation_id, _ares,
+                    flowfile.get_attribute("http.auth.principal") or "anonymous",
+                )
+                _active_agent_name = _target_agent or _ares.get("agent", "")
                 if _active_agent_name:
                     # Check per-conversation LLM service override first
                     _llm_overrides = ConversationStore.instance().get_extra(
                         conversation_id, "agent_llm_overrides",
                     ) or {}
-                    _override_svc = _llm_overrides.get(_active_agent_name or "assistant")
+                    _override_svc = _llm_overrides.get(_active_agent_name or "")
                     if _override_svc:
                         _active_llm_service = _override_svc
                     from core.resource_store import ResourceStore
@@ -1420,6 +1426,21 @@ class AgentLoopTask(BaseTask):
                                 _active_agent_name, task_llm_service)
             except Exception as e:
                 logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
+
+        # Agent name must ALWAYS be set at this point
+        if not _active_agent_name and use_conv_store and conversation_id:
+            logger.error("BUG: _active_agent_name is empty! conv=%s, target=%s — "
+                         "this means _ensure_active_agent failed or was bypassed",
+                         conversation_id, _target_agent)
+            # Force resolution as a fallback
+            try:
+                from core.resource_store import ResourceStore
+                _uid_fb = flowfile.get_attribute("http.auth.principal") or "anonymous"
+                _fb = ResourceStore.instance().list_all("agent", _uid_fb)
+                _active_agent_name = _fb[0]["name"] if _fb else "assistant"
+                logger.warning("Recovered _active_agent_name to '%s'", _active_agent_name)
+            except Exception:
+                _active_agent_name = "assistant"
 
         # Resolve max_tokens for LLM output (0 = unlimited)
         # This is NOT the context size — it's the max output the LLM can generate
@@ -1506,7 +1527,7 @@ class AgentLoopTask(BaseTask):
             registry, conversation_id=conversation_id or "",
             user_id=user_id or "",
             llm_client=client, llm_model=model_name,
-            agent_name=_active_agent_name or "assistant",
+            agent_name=_active_agent_name or "",
             agent_svc=_active_llm_service or "",
         )
 
@@ -1584,7 +1605,7 @@ class AgentLoopTask(BaseTask):
                 or self.config.get("chars_per_token", 0)
             ),
             "channel": channel,
-            "active_agent_name": _active_agent_name,
+            "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
@@ -1924,6 +1945,7 @@ class AgentLoopTask(BaseTask):
             history = self._classify_messages_for_display(page["messages"])
             nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
             active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
+            active_res = self._ensure_active_agent(conv_id, active_res, user_id or "anonymous")
             custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
 
             result = json.dumps({
@@ -2013,7 +2035,7 @@ class AgentLoopTask(BaseTask):
 
             stats = []
             for key, agent_stats in agents_data.items():
-                agent_name = agent_stats.get("agent", "assistant")
+                agent_name = agent_stats.get("agent", "")
                 svc_id = agent_stats.get("llm_service", "default")
                 # Filter by agent
                 if req_agent.upper() != "ALL" and agent_name.lower() != req_agent.lower():
@@ -2060,7 +2082,7 @@ class AgentLoopTask(BaseTask):
                         self._active_interactions.pop(key, None)
                         continue
                     active.append({
-                        "agent_name": info.get("agent_name", "assistant"),
+                        "agent_name": info.get("agent_name", ""),
                         "message_preview": info.get("message_preview", ""),
                         "duration_s": round(now - info.get("started_at", now), 1),
                         "iteration": info.get("iteration", 0),
@@ -2082,7 +2104,7 @@ class AgentLoopTask(BaseTask):
             self.interrupt_agent(conv_id, agent_name)
             flowfile.set_content(json.dumps({
                 "interrupted": True, "conversation_id": conv_id,
-                "agent_name": agent_name or "assistant",
+                "agent_name": agent_name or "",
             }).encode())
             return [flowfile]
 
@@ -2102,7 +2124,7 @@ class AgentLoopTask(BaseTask):
                 from core.resource_store import ResourceStore
                 rs = ResourceStore.instance()
                 all_agents = rs.list_all("agent", user_id)
-                targets = ["assistant"] + [a["name"] for a in all_agents]
+                targets = [a["name"] for a in all_agents]
                 for t in targets:
                     thread = threading.Thread(
                         target=self._btw_query,
@@ -2116,7 +2138,7 @@ class AgentLoopTask(BaseTask):
                     target=self._btw_query,
                     args=(conv_id, agent_name, question, user_id),
                     daemon=True,
-                    name=f"btw-{agent_name or 'assistant'}-{conv_id[:8]}",
+                    name=f"btw-{agent_name or 'agent'}-{conv_id[:8]}",
                 )
                 thread.start()
             flowfile.set_content(json.dumps({
@@ -3219,7 +3241,7 @@ class AgentLoopTask(BaseTask):
 
         if action == "set_llm_service":
             conv_id = body.get("conversation_id", "")
-            agent = body.get("agent_name", "assistant")
+            agent = body.get("agent_name", "")
             svc_value = body.get("llm_service", "")
             if not conv_id:
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
@@ -3249,25 +3271,23 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-            # "assistant" is the built-in default — treat as deselect
-            is_default = not agent_name or agent_name.lower() == "assistant"
-            if not is_default:
-                from core.resource_store import ResourceStore
-                uid = user_id or "anonymous"
-                if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
-                    flowfile.set_content(json.dumps({
-                        "error": f"Agent '{agent_name}' not found",
-                    }).encode())
-                    flowfile.set_attribute("http.response.status", "404")
-                    return [flowfile]
+            if not agent_name:
+                flowfile.set_content(json.dumps({"error": "Missing agent name"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            from core.resource_store import ResourceStore
+            uid = user_id or "anonymous"
+            if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
+                flowfile.set_content(json.dumps({
+                    "error": f"Agent '{agent_name}' not found",
+                }).encode())
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
             active = store.get_extra(conv_id, "active_resources") or {}
-            if is_default:
-                active.pop("agent", None)
-            else:
-                active["agent"] = agent_name
+            active["agent"] = agent_name
             store.set_extra(conv_id, "active_resources", active)
             flowfile.set_content(json.dumps({
-                "selected": agent_name if not is_default else "assistant (default)",
+                "selected": agent_name,
             }).encode())
             return [flowfile]
 
@@ -3285,11 +3305,11 @@ class AgentLoopTask(BaseTask):
             from core.resource_store import ResourceStore
             uid = user_id or "anonymous"
             deleted = ResourceStore.instance().delete("agent", agent_name, uid)
-            # Deactivate if it was active
+            # Fall back to "assistant" if deleted agent was active
             if conv_id:
                 active = store.get_extra(conv_id, "active_resources") or {}
                 if active.get("agent") == agent_name:
-                    active.pop("agent", None)
+                    active["agent"] = "assistant"
                     store.set_extra(conv_id, "active_resources", active)
             flowfile.set_content(json.dumps({
                 "deleted": deleted, "name": agent_name,
@@ -3394,6 +3414,7 @@ class AgentLoopTask(BaseTask):
             active = {}
             if conv_id:
                 active = store.get_extra(conv_id, "active_resources") or {}
+                active = self._ensure_active_agent(conv_id, active, uid)
             # Build agents list with autoconv status
             agents_out = []
             for a in rs.list_all("agent", uid, conversation_id=conv_id):
@@ -3409,18 +3430,6 @@ class AgentLoopTask(BaseTask):
                     if ac_cfg.get("enabled"):
                         entry["autoconv"] = ac_cfg.get("frequency", "on")
                 agents_out.append(entry)
-            # Always include assistant as built-in agent (first in list)
-            asst_entry = {
-                "name": "assistant",
-                "description": "Default assistant (built-in)",
-                "scope": "built-in",
-                "active": not active.get("agent"),  # active when no other agent selected
-            }
-            if conv_id:
-                ac_asst = store.get_extra(conv_id, "random_thought::assistant") or {}
-                if ac_asst.get("enabled"):
-                    asst_entry["autoconv"] = ac_asst.get("frequency", "on")
-            agents_out.insert(0, asst_entry)
             result = {
                 "agents": agents_out,
                 "skills": [{
@@ -3486,18 +3495,34 @@ class AgentLoopTask(BaseTask):
                 result["services"] = svcs
             except Exception:
                 result["services"] = []
-            # Deployed flows
+            # Deployed flows (global=readonly, user+conv visible)
             try:
                 from gui.services.deployment_registry import DeploymentRegistry
                 flows = []
                 dr = DeploymentRegistry.get_instance()
+                dr.sync_with_executors()
+                uid = user_id or "anonymous"
                 for iid, inst in dr.get_all().items():
+                    # Determine scope
+                    if not inst.owner or inst.owner == "__global__":
+                        fscope = "global"
+                    elif inst.conversation_id:
+                        fscope = "conversation"
+                        # Only show conv-scoped flows in their conversation
+                        if inst.conversation_id != conv_id:
+                            continue
+                    else:
+                        fscope = "user"
+                    # Skip other users' flows
+                    if fscope != "global" and inst.owner != uid:
+                        continue
                     flows.append({
                         "instance_id": iid,
                         "flow_name": inst.flow_name,
                         "status": inst.status,
                         "owner": inst.owner or "global",
-                        "scope": "user" if inst.owner and inst.owner != "global" else "global",
+                        "scope": fscope,
+                        "template": inst.flow_id,
                     })
                 result["flows"] = flows
             except Exception:
@@ -3831,7 +3856,7 @@ class AgentLoopTask(BaseTask):
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
                 uid = user_id or "anonymous"
-                UserServiceRegistry.get_instance().delete(uid, sid)
+                UserServiceRegistry.get_instance().uninstall(uid, sid)
                 flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -3847,6 +3872,10 @@ class AgentLoopTask(BaseTask):
                 from gui.services.deployment_registry import DeploymentRegistry
                 reg = ExecutorRegistry.get_instance()
                 dr = DeploymentRegistry.get_instance()
+                inst = dr.get(iid)
+                if inst and user_id and inst.owner and inst.owner != user_id:
+                    flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
+                    return [flowfile]
                 if action == "stop_flow":
                     ex = reg.get(iid)
                     if ex and ex.is_running:
@@ -3869,6 +3898,166 @@ class AgentLoopTask(BaseTask):
                     reg.unregister(iid)
                     dr.undeploy(iid)
                     flowfile.set_content(json.dumps({"ok": True, "status": "undeployed"}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "list_available_flows":
+            try:
+                from pathlib import Path as _Path
+                flows_dir = _Path("flows")
+                templates = []
+                if flows_dir.is_dir():
+                    for fp in sorted(flows_dir.glob("*.json")):
+                        try:
+                            raw = json.loads(fp.read_text(encoding="utf-8"))
+                            templates.append({
+                                "id": raw.get("id", fp.stem),
+                                "name": raw.get("name", fp.stem),
+                                "version": raw.get("version", ""),
+                                "description": raw.get("description", ""),
+                                "tasks_count": len(raw.get("tasks", {})),
+                                "services_count": len(raw.get("services", {})),
+                                "file_path": str(fp),
+                            })
+                        except Exception:
+                            pass
+                flowfile.set_content(json.dumps({"templates": templates}, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "deploy_flow":
+            template_id = body.get("template_id", "")
+            scope = body.get("scope", "user")
+            params = body.get("parameters", {})
+            conv_id = body.get("conversation_id", "")
+            if scope == "global":
+                flowfile.set_content(json.dumps(
+                    {"error": "Cannot deploy global flows from chat — use admin GUI"}).encode())
+                return [flowfile]
+            if not template_id:
+                flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
+                return [flowfile]
+            try:
+                from pathlib import Path as _Path
+                from gui.services.deployment_registry import DeploymentRegistry
+                flows_dir = _Path("flows")
+                tpath = None
+                for fp in flows_dir.glob("*.json"):
+                    try:
+                        raw = json.loads(fp.read_text(encoding="utf-8"))
+                        if raw.get("id", fp.stem) == template_id:
+                            tpath = fp
+                            break
+                    except Exception:
+                        pass
+                if not tpath:
+                    candidate = flows_dir / f"{template_id}.json"
+                    if candidate.exists():
+                        tpath = candidate
+                if not tpath:
+                    flowfile.set_content(json.dumps(
+                        {"error": f"Template '{template_id}' not found in flows/"}).encode())
+                    return [flowfile]
+                dr = DeploymentRegistry.get_instance()
+                uid = user_id or "anonymous"
+                iid = dr.deploy(
+                    template_path=str(tpath),
+                    owner=uid,
+                    parameters=params,
+                    source="agent",
+                    conversation_id=conv_id if scope == "conversation" else None,
+                )
+                flowfile.set_content(json.dumps(
+                    {"ok": True, "instance_id": iid, "scope": scope}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "promote_flow":
+            iid = body.get("instance_id", "")
+            target_scope = body.get("target_scope", "user")
+            if not iid:
+                flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+                return [flowfile]
+            if target_scope == "global":
+                flowfile.set_content(json.dumps(
+                    {"error": "Cannot promote to global from chat — use admin GUI"}).encode())
+                return [flowfile]
+            try:
+                from gui.services.deployment_registry import DeploymentRegistry
+                dr = DeploymentRegistry.get_instance()
+                inst = dr.get(iid)
+                if not inst:
+                    flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
+                    return [flowfile]
+                if user_id and inst.owner and inst.owner != user_id:
+                    flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
+                    return [flowfile]
+                if not inst.conversation_id:
+                    flowfile.set_content(json.dumps({"error": "Flow is already user-scoped"}).encode())
+                    return [flowfile]
+                inst.conversation_id = None
+                dr._save_instance(inst)
+                flowfile.set_content(json.dumps({"ok": True, "scope": "user"}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "get_flow_instance":
+            iid = body.get("instance_id", "")
+            if not iid:
+                flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+                return [flowfile]
+            try:
+                from gui.services.deployment_registry import DeploymentRegistry
+                dr = DeploymentRegistry.get_instance()
+                inst = dr.get(iid)
+                if not inst:
+                    flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
+                    return [flowfile]
+                # Load template parameters schema for reference
+                template_params = {}
+                try:
+                    from pathlib import Path as _Path
+                    raw = json.loads(_Path(inst.flow_path).read_text(encoding="utf-8"))
+                    template_params = raw.get("parameters", {})
+                except Exception:
+                    pass
+                flowfile.set_content(json.dumps({
+                    "instance_id": inst.instance_id,
+                    "flow_name": inst.flow_name,
+                    "flow_id": inst.flow_id,
+                    "status": inst.status,
+                    "parameters": inst.parameters,
+                    "template_parameters": template_params,
+                    "owner": inst.owner,
+                    "scope": "conversation" if inst.conversation_id else "user" if inst.owner else "global",
+                }, ensure_ascii=False).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
+
+        if action == "update_flow_params":
+            iid = body.get("instance_id", "")
+            params = body.get("parameters", {})
+            if not iid:
+                flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+                return [flowfile]
+            try:
+                from gui.services.deployment_registry import DeploymentRegistry
+                dr = DeploymentRegistry.get_instance()
+                inst = dr.get(iid)
+                if not inst:
+                    flowfile.set_content(json.dumps({"error": "Instance not found"}).encode())
+                    return [flowfile]
+                if user_id and inst.owner and inst.owner != user_id:
+                    flowfile.set_content(json.dumps({"error": "Permission denied"}).encode())
+                    return [flowfile]
+                inst.parameters.update(params)
+                dr._save_instance(inst)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
@@ -4786,7 +4975,7 @@ class AgentLoopTask(BaseTask):
 
         if action == "model":
             model_value = body.get("model", "").strip()
-            agent_name = body.get("agent", "assistant").strip() or "assistant"
+            agent_name = body.get("agent", "").strip()
             conv_id = body.get("conversation_id", "")
             override_key = f"model_override:{agent_name}"
             if not model_value or model_value == "reset":
@@ -5265,7 +5454,7 @@ class AgentLoopTask(BaseTask):
             agent_name = active_res.get("agent", "") or "assistant"
         agent_name = agent_name or "assistant"
         # Resolve nickname → real name (case-insensitive)
-        if agent_name not in ("", "assistant"):
+        if agent_name:
             agent_name = self._resolve_agent_name(agent_name, conv_id)
         # Normalize agent name for key consistency (case-insensitive)
         _agent_key = agent_name.lower()
@@ -5282,7 +5471,7 @@ class AgentLoopTask(BaseTask):
         if agent_name.upper() == "ALL":
             from core.resource_store import ResourceStore
             all_agents = ResourceStore.instance().list_all("agent", user_id)
-            target_agents = ["assistant"] + [a["name"] for a in all_agents]
+            target_agents = [a["name"] for a in all_agents]
         else:
             target_agents = [agent_name]
 
@@ -5408,7 +5597,7 @@ class AgentLoopTask(BaseTask):
         # Apply per-agent model override
         if use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
-            _agent_n = ctx.get("active_agent_name") or "assistant"
+            _agent_n = ctx.get("active_agent_name") or ""
             _mo = ConversationStore.instance().get_extra(conversation_id, f"model_override:{_agent_n}")
             if _mo:
                 model = _mo
@@ -5436,7 +5625,7 @@ class AgentLoopTask(BaseTask):
                 ctx.get("context_compact_threshold", 0.8),
                 ctx.get("context_keep_recent", 6),
                 conversation_id=ctx.get("conversation_id", ""),
-                agent_name=ctx.get("active_agent_name") or "assistant",
+                agent_name=ctx.get("active_agent_name") or "",
                 tool_defs=tool_defs,
                 chars_per_token=ctx.get("chars_per_token", 0),
             )
@@ -5474,7 +5663,7 @@ class AgentLoopTask(BaseTask):
                     _svc_id, ctx.get("chars_per_token", 0))
 
             if not response.tool_calls:
-                _source_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
+                _source_ns = {"type": "agent", "name": ctx.get("active_agent_name") or ""}
                 action, msgs, final, _need_more_retried_ns = self._handle_response_no_tools(
                     response.content or "", _client_provider_ns, tool_defs,
                     _need_more_retried_ns, source=_source_ns,
@@ -5486,7 +5675,7 @@ class AgentLoopTask(BaseTask):
                 continue
 
             _need_more_retried_ns = False  # reset on successful tool_call
-            _source_tc_ns = {"type": "agent", "name": ctx.get("active_agent_name") or "assistant"}
+            _source_tc_ns = {"type": "agent", "name": ctx.get("active_agent_name") or ""}
             messages.append(LLMMessage(
                 role="assistant", content=response.content,
                 tool_calls=response.tool_calls,
@@ -5496,7 +5685,7 @@ class AgentLoopTask(BaseTask):
             results = self._execute_tool_calls(
                 response.tool_calls, registry, _consecutive_tool, _max_consec,
                 parallel=False,
-                agent_name=ctx.get("active_agent_name") or "assistant",
+                agent_name=ctx.get("active_agent_name") or "",
                 agent_svc=ctx.get("active_llm_service", ""),
                 conversation_id=ctx.get("conversation_id", ""),
                 user_id=ctx.get("user_id", ""),
@@ -5558,7 +5747,7 @@ class AgentLoopTask(BaseTask):
             ctx.get("user_id", "anonymous"),
             total_tokens_in, total_tokens_out,
             model=final_model or _client_model,
-            agent_name=ctx.get("active_agent_name", "") or "assistant",
+            agent_name=ctx.get("active_agent_name", "") or "",
             llm_service=ctx.get("active_llm_service", ""),
         )
 
@@ -5587,7 +5776,7 @@ class AgentLoopTask(BaseTask):
             _client_burl = getattr(client, "base_url", "") if client else ""
             if not isinstance(_client_burl, str):
                 _client_burl = ""
-            _source = {"type": "agent", "name": _agent_name or "assistant"}
+            _source = {"type": "agent", "name": _agent_name or ""}
             if _llm_svc:
                 _source["llm_service"] = _llm_svc
             if _client_prov:
@@ -5639,35 +5828,48 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_attribute("http.response.status", "409")
                 return [flowfile]
 
-        # Bump generation counter — any older thread (e.g. poller) for this
-        # conversation will see the mismatch and skip its save.
-        # When target_agent is set, use a per-agent generation key so that
-        # concurrent /agent msg to different agents don't cancel each other.
         _target = ctx.get("_target_agent", "")
 
         # Publish "thinking" immediately
         bus.publish_event(conversation_id, "thinking", {
             "conversation_id": conversation_id,
-            "agent_name": _target or "assistant",
+            "agent_name": _target or "",
         })
+        # Generation key — used for cancel/interrupt detection (NOT bumped here).
+        # Only cancel_agent() and interrupt_agent() bump the generation counter.
         _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
         with self._conv_gen_lock:
-            gen = self._conv_generation.get(_gen_key, 0) + 1
-            self._conv_generation[_gen_key] = gen
-            # Also bump the base conversation key for non-targeted messages
-            # so a regular message still cancels all agent threads
-            if not _target:
-                # Cancel all per-agent keys for this conversation
-                # but NOT task/thought threads (they have their own lifecycle)
-                for k in list(self._conv_generation):
-                    if k.startswith(conversation_id + ":") and \
-                       "::thought::" not in k and "::task::" not in k:
-                        self._conv_generation[k] += 1
+            gen = self._conv_generation.get(_gen_key, 0)
         ctx["_generation"] = gen
         ctx["_gen_key"] = _gen_key
 
+        # If an agent thread is physically running for this conversation,
+        # don't spawn another one — just append the message and return ACK.
+        # Check by scanning live threads — no stale flags, no ghosts.
+        _already_active = any(
+            t.is_alive() and t.name == f"agent-stream-{conversation_id}"
+            for t in threading.enumerate()
+        )
+        if _already_active:
+            logger.info(f"[agent:{conversation_id[:8]}] agent already active — "
+                        f"queueing message instead of spawning new thread")
+            # Messages are already persisted in ConversationStore (done in execute())
+            # Publish event so the running thread knows to check for new messages
+            bus.publish_event(conversation_id, "message_queued", {
+                "conversation_id": conversation_id,
+            })
+            from core.conversation_store import ConversationStore as _CSq
+            msg_count = _CSq.instance().message_count(conversation_id)
+            ack = json.dumps({
+                "status": "queued",
+                "conversation_id": conversation_id,
+                "message_count": msg_count,
+            }, ensure_ascii=False)
+            flowfile.set_content(ack.encode("utf-8"))
+            flowfile.set_attribute("agent.conversation_id", conversation_id)
+            return [flowfile]
+
         # Mark conversation as active (prevents poller from picking it up)
-        # Also clear cooldown so poller can check again after this interaction
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
@@ -5684,7 +5886,7 @@ class AgentLoopTask(BaseTask):
             _msg_preview = _last[:80]
         with self._interactions_lock:
             self._active_interactions[_gen_key] = {
-                "agent_name": _target or "assistant",
+                "agent_name": _target or ctx.get("active_agent_name", ""),
                 "message_preview": _msg_preview,
                 "started_at": time.time(),
                 "iteration": 0,
@@ -5743,8 +5945,7 @@ class AgentLoopTask(BaseTask):
                      silent: bool = False):
         """Cancel a running agent for this conversation.
 
-        If agent_name is a named sub-agent (not "assistant"/""),
-        only cancel that specific agent's thread.
+        If agent_name is specified, only cancel that specific agent's thread.
         Otherwise cancel ALL agents for this conversation.
 
         Increments the generation counter so the running thread detects
@@ -5753,9 +5954,9 @@ class AgentLoopTask(BaseTask):
         If silent=True, no SSE event is published (used by context ops
         that cancel as a precaution, not as user-visible action).
         """
-        # "assistant" refers to the main (unnamed) agent
+        # Empty agent_name = cancel all agents
         # whose gen_key is just conversation_id, not conversation_id:assistant
-        _is_named = agent_name and agent_name not in ("", "assistant")
+        _is_named = agent_name and agent_name != ""
         with self._conv_gen_lock:
             if _is_named:
                 # Cancel this agent — it may be running under either:
@@ -5834,7 +6035,7 @@ class AgentLoopTask(BaseTask):
         that the loop checks and triggers a forced synthesis response.
         """
         with self._interrupt_lock:
-            if agent_name and agent_name not in ("", "assistant"):
+            if agent_name and agent_name != "":
                 self._conv_interrupt[f"{conversation_id}:{agent_name}"] = True
             else:
                 # Interrupt default assistant + all per-agent threads
@@ -5845,10 +6046,10 @@ class AgentLoopTask(BaseTask):
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(
             conversation_id, "interrupting",
-            {"agent": agent_name or "assistant"},
+            {"agent": agent_name},
         )
         logger.info(f"[agent:{conversation_id[:8]}] interrupt requested for "
-                    f"'{agent_name or 'assistant'}'")
+                    f"'{agent_name or 'agent'}'")
 
     def _check_interrupt(self, gen_key: str) -> bool:
         """Check and consume the interrupt flag for a gen_key."""
@@ -5872,33 +6073,29 @@ class AgentLoopTask(BaseTask):
 
         try:
             # 1. Resolve agent's system prompt + LLM client
-            if agent_name and agent_name not in ("", "assistant"):
-                rs = ResourceStore.instance()
-                adef = rs.get_any("agent", agent_name, user_id)
-                if not adef:
-                    bus.publish_event(conversation_id, "btw_done", {
-                        "agent_name": agent_name,
-                        "error": f"Agent '{agent_name}' not found",
-                    })
-                    return
-                sys_prompt = adef["prompt"]
-                llm_svc = adef.get("llm_service", "")
-                if llm_svc and "${" in llm_svc:
-                    from core.expression import resolve_expression
-                    llm_svc = resolve_expression(llm_svc, owner=user_id)
-                    if "${" in llm_svc:
-                        llm_svc = ""
-                client = None
-                if llm_svc:
-                    client, _ = self._resolve_llm_service(llm_svc, user_id)
-                if not client:
-                    task_svc = self.config.get("llm_service", "default")
-                    if "${" in task_svc:
-                        task_svc = "default"
-                    client, _ = self._resolve_llm_service(task_svc, user_id)
-            else:
-                agent_name = "assistant"
-                sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
+            if not agent_name:
+                # Fall back to active agent for this conversation
+                active_res = store.get_extra(conversation_id, "active_resources") or {}
+                agent_name = active_res.get("agent", "") or "assistant"
+            rs = ResourceStore.instance()
+            adef = rs.get_any("agent", agent_name, user_id)
+            if not adef:
+                bus.publish_event(conversation_id, "btw_done", {
+                    "agent_name": agent_name,
+                    "error": f"Agent '{agent_name}' not found",
+                })
+                return
+            sys_prompt = adef["prompt"]
+            llm_svc = adef.get("llm_service", "")
+            if llm_svc and "${" in llm_svc:
+                from core.expression import resolve_expression
+                llm_svc = resolve_expression(llm_svc, owner=user_id)
+                if "${" in llm_svc:
+                    llm_svc = ""
+            client = None
+            if llm_svc:
+                client, _ = self._resolve_llm_service(llm_svc, user_id)
+            if not client:
                 task_svc = self.config.get("llm_service", "default")
                 if "${" in task_svc:
                     task_svc = "default"
@@ -5925,7 +6122,7 @@ class AgentLoopTask(BaseTask):
 
             # Inject identity into btw system prompt
             _btw_nicknames = store.get_extra(conversation_id, "agent_nicknames") or {}
-            _btw_nick_key = (agent_name or "assistant").lower()
+            _btw_nick_key = agent_name.lower()
             _btw_nick = next((v for k, v in _btw_nicknames.items() if k.lower() == _btw_nick_key), None)
             if _btw_nick:
                 _id_block = (
@@ -6008,6 +6205,26 @@ class AgentLoopTask(BaseTask):
         the requested delay, then start a new round with the
         continuation plan injected as a system message.
         """
+        try:
+            self._streaming_agent_loop_inner(ctx, conversation_id, bus)
+        except Exception as e:
+            logger.error(f"[agent:{conversation_id[:8]}] streaming loop crashed: {e}",
+                         exc_info=True)
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    conversation_id, "error_event",
+                    {"message": f"Agent loop crashed: {e}"},
+                )
+            except Exception:
+                pass
+        finally:
+            # ALWAYS clean up — even if setup crashed before the inner try/finally
+            self._decrement_active(conversation_id, ctx)
+
+    def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str,
+                                     bus) -> None:
+        """Inner streaming loop — wrapped by _streaming_agent_loop for guaranteed cleanup."""
         from core.conversation_event_bus import ConversationEventBus
 
         # For sub-conversations (task contexts), publish SSE events on the parent
@@ -6034,7 +6251,6 @@ class AgentLoopTask(BaseTask):
         start_time = time.time()
         total_tokens_in = 0
         total_tokens_out = 0
-
         def _update_interaction(**kwargs):
             """Update the active interaction tracker."""
             with self._interactions_lock:
@@ -6072,10 +6288,18 @@ class AgentLoopTask(BaseTask):
         conv_ttl = ctx["conv_ttl"]
         channel = ctx.get("channel", "")
 
+        # Track message count for new-message checkpoint
+        if use_conv_store and conversation_id:
+            try:
+                ctx["_last_known_msg_count"] = ConversationStore.instance().message_count(
+                    conversation_id)
+            except Exception:
+                ctx["_last_known_msg_count"] = 0
+
         # Apply per-agent model override
         if use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
-            _agent_n = ctx.get("active_agent_name") or "assistant"
+            _agent_n = ctx.get("active_agent_name") or ""
             _mo = ConversationStore.instance().get_extra(conversation_id, f"model_override:{_agent_n}")
             if _mo:
                 model = _mo
@@ -6107,7 +6331,7 @@ class AgentLoopTask(BaseTask):
         from core.tool_registry import SpawnAgentsHandler as _SAH_stream
         for _h in registry.list_tools():
             if isinstance(_h, _SAH_stream):
-                _h.set_source_agent(_agent_name or "assistant", _agent_svc)
+                _h.set_source_agent(_agent_name or "", _agent_svc)
                 break
         # LLM client metadata for traceability
         _client_provider = getattr(client, "provider", "")
@@ -6120,7 +6344,7 @@ class AgentLoopTask(BaseTask):
             import re as _re
             return {
                 "type": "agent",
-                "name": _agent_name or "assistant",
+                "name": _agent_name or "",
                 "llm_service": _agent_svc or "",
                 "provider": _client_provider or "",
                 "model": _client_model,
@@ -6135,34 +6359,49 @@ class AgentLoopTask(BaseTask):
             new_messages.append(msg)
 
         def _flush_new():
-            """Persist new messages to the canonical conversation history (and context if diverged).
+            """Persist new messages: transcript (clean) + agent context (full).
 
-            Always persists — even when generation is stale. Messages shown
-            to the user via SSE must be in the store.  ``append_messages``
-            only appends (never overwrites), so concurrent appends are safe.
-            The generation check now only gates the final ``save()`` in the
-            done path (which sets status/metadata), not message persistence.
+            Conversation transcript: only user messages + assistant text responses.
+            Agent context: everything including tool calls and tool results.
+            Binary/base64 data is never persisted — images are deflated first.
             """
             nonlocal new_messages
             if not (use_conv_store and conversation_id and new_messages):
                 return
-            if not self._is_current_generation(gen_key, my_generation):
-                logger.info(f"[agent:{conversation_id[:8]}] generation {my_generation} "
-                            f"is stale — flushing messages anyway (append-only)")
             from core.conversation_store import ConversationStore
-            serialized = self._serialize_messages(new_messages, channel=channel)
+            # Deflate images before any persistence
+            self._deflate_image_messages(new_messages)
+
+            # Full serialization for agent context (all messages)
+            all_serialized = self._serialize_messages(new_messages, channel=channel)
+
+            # Transcript: only conversation messages (user + assistant text, no tool plumbing)
+            transcript_msgs = [
+                m for m in new_messages
+                if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
+                and m.role != "tool"
+            ]
+            transcript_serialized = self._serialize_messages(transcript_msgs, channel=channel) if transcript_msgs else []
+
             store = ConversationStore.instance()
-            store.append_messages(
-                conversation_id, serialized,
-                ttl=conv_ttl, user_id=user_id,
-            )
-            if ctx.get("_context_diverged"):
-                _flush_agent = ctx.get("active_agent_name") or "assistant"
-                store.append_to_agent_context(conversation_id, _flush_agent, serialized)
-            # For sub-conversations (tasks), also append to parent so messages persist
-            if "::task::" in conversation_id:
+
+            # 1. Conversation transcript — clean, lightweight
+            if transcript_serialized:
+                store.append_messages(
+                    conversation_id, transcript_serialized,
+                    ttl=conv_ttl, user_id=user_id,
+                )
+
+            # 2. Agent context — full working context (always, not just when diverged)
+            _flush_agent = ctx.get("active_agent_name") or ""
+            store.append_to_agent_context(conversation_id, _flush_agent, all_serialized)
+            # Mark context as diverged since transcript and context now differ
+            ctx["_context_diverged"] = True
+
+            # For sub-conversations (tasks), append transcript to parent
+            if "::task::" in conversation_id and transcript_serialized:
                 _parent_cid = conversation_id.split("::task::")[0]
-                store.append_messages(_parent_cid, serialized,
+                store.append_messages(_parent_cid, transcript_serialized,
                                        ttl=conv_ttl, user_id=user_id)
             new_messages = []
 
@@ -6173,6 +6412,7 @@ class AgentLoopTask(BaseTask):
         _consecutive_tool_s: Dict[str, int] = {}
         _max_consec_s = ctx.get("max_consecutive_tool_calls", 25)
 
+        _fatal_error = False
         try:
             for current_round in range(1, max_rounds + 1):
                 # Track continuation requests for this round
@@ -6183,6 +6423,39 @@ class AgentLoopTask(BaseTask):
                     # Check cancellation at the very start of each iteration
                     if not self._is_current_generation(gen_key, my_generation):
                         raise AgentCancelled()
+
+                    # Checkpoint: pick up new user messages appended while we were working
+                    if use_conv_store and conversation_id and iteration > 1:
+                        try:
+                            _cs_check = ConversationStore.instance()
+                            _current_count = _cs_check.message_count(conversation_id)
+                            _known_count = ctx.get("_last_known_msg_count", 0)
+                            if _current_count > _known_count:
+                                _page = _cs_check.load_page(
+                                    conversation_id,
+                                    limit=_current_count - _known_count,
+                                    offset=_known_count,
+                                )
+                                _tail = _page["messages"] if _page else []
+                                _new_user = [
+                                    m for m in (_tail or [])
+                                    if isinstance(m, dict) and m.get("role") == "user"
+                                    and not (isinstance(m.get("content"), str)
+                                             and m["content"].startswith("[System:"))
+                                ]
+                                if _new_user:
+                                    for _nu in _new_user:
+                                        messages.append(LLMMessage(
+                                            role="user",
+                                            content=_nu.get("content", ""),
+                                            source=_nu.get("source"),
+                                        ))
+                                    logger.info(
+                                        f"[agent:{conversation_id[:8]}] injected "
+                                        f"{len(_new_user)} queued user message(s)")
+                                ctx["_last_known_msg_count"] = _current_count
+                        except Exception as _chk_err:
+                            logger.debug(f"Message checkpoint failed: {_chk_err}")
 
                     iteration += 1
 
@@ -6197,7 +6470,7 @@ class AgentLoopTask(BaseTask):
                                 f"messages={len(messages)}, tools_called={len(tools_called)}")
                     # Always publish iteration_status (even during poll_silent)
                     bus.publish_event(conversation_id, "iteration_status", {
-                        "agent_name": _agent_name or "assistant",
+                        "agent_name": _agent_name or "",
                         "iteration": iteration,
                         "max_iterations": ctx["max_iterations"],
                         "round": current_round,
@@ -6225,7 +6498,7 @@ class AgentLoopTask(BaseTask):
                         if not poll_silent:
                             bus.publish_event(conversation_id, "token", {
                                 "text": text,
-                                "agent_name": _agent_name or "assistant",
+                                "agent_name": _agent_name or "",
                                 "source": _agent_source(),
                             })
 
@@ -6235,7 +6508,7 @@ class AgentLoopTask(BaseTask):
                         if not poll_silent:
                             bus.publish_event(conversation_id, "thinking_content", {
                                 "text": text,
-                                "agent_name": _agent_name or "assistant",
+                                "agent_name": _agent_name or "",
                             })
 
                     # Heartbeat thread (suppressed during silent poll)
@@ -6271,7 +6544,7 @@ class AgentLoopTask(BaseTask):
                         ctx.get("context_compact_threshold", 0.8),
                         ctx.get("context_keep_recent", 6),
                         conversation_id=conversation_id,
-                        agent_name=_agent_name or "assistant",
+                        agent_name=_agent_name or "",
                         tool_defs=ctx.get("tool_defs"),
                         chars_per_token=ctx.get("chars_per_token", 0),
                     )
@@ -6411,6 +6684,7 @@ class AgentLoopTask(BaseTask):
                                     "message": f"LLM call failed after compaction: {retry_err}",
                                 })
                                 response_content = f"Error: {retry_err}"
+                                _fatal_error = True
                                 break
                             finally:
                                 heartbeat_stop.set()
@@ -6421,6 +6695,7 @@ class AgentLoopTask(BaseTask):
                                 "message": f"LLM call failed: {llm_err}",
                             })
                             response_content = f"Error: {llm_err}"
+                            _fatal_error = True
                             break
                     finally:
                         heartbeat_stop.set()
@@ -6491,7 +6766,7 @@ class AgentLoopTask(BaseTask):
                                     f"tool={tc.name}, subscribers={_sub_count}")
                         bus.publish_event(conversation_id, "tool_call", {
                             "tool": tc.name, "arguments": tc.arguments,
-                            "agent_name": _agent_name or "assistant",
+                            "agent_name": _agent_name or "",
                             "llm_service": _agent_svc or "",
                         })
                     _update_interaction(
@@ -6503,7 +6778,7 @@ class AgentLoopTask(BaseTask):
                     results_ordered = self._execute_tool_calls(
                         response.tool_calls, registry, _consecutive_tool_s,
                         _max_consec_s, parallel=True,
-                        agent_name=_agent_name or "assistant",
+                        agent_name=_agent_name or "",
                         agent_svc=_agent_svc or "",
                         conversation_id=conversation_id,
                         user_id=ctx.get("user_id", ""),
@@ -6528,12 +6803,12 @@ class AgentLoopTask(BaseTask):
                                 _result_preview = _result_preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
                         bus.publish_event(conversation_id, "tool_result", {
                             "tool": tc.name, "result": _result_preview,
-                            "agent_name": _agent_name or "assistant",
+                            "agent_name": _agent_name or "",
                             "llm_service": _agent_svc or "",
                         })
 
                     bus.publish_event(conversation_id, "iteration_status", {
-                        "agent_name": _agent_name or "assistant",
+                        "agent_name": _agent_name or "",
                         "iteration": iteration,
                         "max_iterations": ctx["max_iterations"],
                         "round": current_round,
@@ -6570,7 +6845,7 @@ class AgentLoopTask(BaseTask):
                         token_callback=lambda text: bus.publish_event(
                             conversation_id, "token", {
                                 "text": text,
-                                "agent_name": _agent_name or "assistant",
+                                "agent_name": _agent_name or "",
                                 "source": _agent_source(),
                             }),
                         tools_called=tools_called, compact_threshold=1.0,
@@ -6585,6 +6860,10 @@ class AgentLoopTask(BaseTask):
 
                 # Flush any remaining new messages to the canonical history
                 _flush_new()
+
+                # Fatal LLM error — exit all rounds
+                if _fatal_error:
+                    break
 
                 # Check if continuation was requested
                 if continuation_plan and current_round < max_rounds:
@@ -6642,7 +6921,7 @@ class AgentLoopTask(BaseTask):
                     token_callback=lambda text: bus.publish_event(
                         conversation_id, "token", {
                             "text": text,
-                            "agent_name": _agent_name or "assistant",
+                            "agent_name": _agent_name or "",
                             "source": _agent_source(),
                         }),
                     tools_called=tools_called,
@@ -6672,7 +6951,7 @@ class AgentLoopTask(BaseTask):
                         logger.info(f"[agent:{conversation_id[:8]}] random thought returned "
                                     f"NO_PENDING_WORK — discarding (next thought will fire)")
                         bus.publish_event(conversation_id, "discard", {
-                            "agent_name": _agent_name or "assistant",
+                            "agent_name": _agent_name or "",
                         })
                         new_messages.clear()
                         return
@@ -6691,7 +6970,7 @@ class AgentLoopTask(BaseTask):
 
                     # Set cooldown (in-memory) AND persistent schedule
                     from core.poll_scheduler import PollScheduler
-                    _recheck_agent = ctx.get("active_agent_name") or "assistant"
+                    _recheck_agent = ctx.get("active_agent_name") or ""
                     user_id = ctx.get("user_id", "")
                     PollScheduler.instance().schedule_delay(
                         conversation_id, recheck_delay, user_id=user_id,
@@ -6704,7 +6983,7 @@ class AgentLoopTask(BaseTask):
                         logger.info(f"[agent:{conversation_id[:8]}] poll check-in: no pending work, "
                                     f"recheck in {recheck_delay}s (discarded)")
                         bus.publish_event(conversation_id, "discard", {
-                            "agent_name": _agent_name or "assistant",
+                            "agent_name": _agent_name or "",
                         })
                         new_messages.clear()
                         # Mark conversation idle — agent has no pending work
@@ -6741,13 +7020,13 @@ class AgentLoopTask(BaseTask):
                 ctx.get("user_id", "anonymous"),
                 total_tokens_in, total_tokens_out,
                 model=final_model or _client_model,
-                agent_name=_agent_name or "assistant",
+                agent_name=_agent_name or "",
                 llm_service=_agent_svc or "",
             )
 
             # Always set idle — follow-ups are handled by PollScheduler
             from core.conversation_store import ConversationStore as _CS
-            _agent_name = ctx.get("active_agent_name") or "assistant"
+            _agent_name = ctx.get("active_agent_name") or ""
             _CS.instance().set_status(conversation_id, "idle")
 
         except _InterruptComplete:
@@ -6775,7 +7054,42 @@ class AgentLoopTask(BaseTask):
                 "conversation_id": conversation_id,
             })
         finally:
-            self._decrement_active(conversation_id, ctx)
+            # Note: _decrement_active is called by the outer wrapper
+            # (_streaming_agent_loop) to guarantee cleanup even on setup crash.
+
+            # Check if new USER messages arrived while we were finishing up.
+            # Only schedule wake-up if there are actual user messages to process.
+            if use_conv_store and conversation_id and not ctx.get("is_poll"):
+                try:
+                    _cs_final = ConversationStore.instance()
+                    _final_count = _cs_final.message_count(conversation_id)
+                    _known_final = ctx.get("_last_known_msg_count", 0)
+                    if _final_count > _known_final:
+                        # Check if any of the new messages are actually from users
+                        _page = _cs_final.load_page(
+                            conversation_id,
+                            limit=_final_count - _known_final,
+                            offset=_known_final,
+                        )
+                        _pending_user = [
+                            m for m in (_page["messages"] if _page else [])
+                            if isinstance(m, dict) and m.get("role") == "user"
+                            and not (isinstance(m.get("content"), str)
+                                     and m["content"].startswith("[System:"))
+                        ]
+                        if _pending_user:
+                            from core.poll_scheduler import PollScheduler
+                            _agent_n = ctx.get("active_agent_name") or ""
+                            PollScheduler.instance().schedule_delay(
+                                conversation_id, 3,
+                                key=f"{conversation_id}::pending_msg",
+                                reason=f"[pending_message] {len(_pending_user)} user message(s) ({_agent_n})",
+                                user_id=ctx.get("user_id", ""),
+                            )
+                            logger.info(f"[agent:{conversation_id[:8]}] {len(_pending_user)} "
+                                        f"pending user message(s) — scheduled wake-up")
+                except Exception:
+                    pass
 
             # Auto-reschedule random thought if still enabled
             # BUT NOT if the agent was cancelled (generation is stale)
@@ -6792,7 +7106,7 @@ class AgentLoopTask(BaseTask):
                         if "[random_thought]" in _rr and "(" in _rr:
                             _rt_agents.add(_rr.rsplit("(", 1)[-1].rstrip(")"))
                     if not _rt_agents:
-                        _rt_agents = {"assistant"}
+                        _rt_agents = {ctx.get("active_agent_name") or "assistant"}
                     from core.conversation_event_bus import ConversationEventBus as _EBrt
                     _rt_bus = _EBrt.instance()
                     _rt_store = _CSrt.instance()
@@ -6828,7 +7142,7 @@ class AgentLoopTask(BaseTask):
                     _at_store = _CSat.instance()
                     _at_sched = _PSat.instance()
                     _at_all = _at_store.get_extra(conversation_id, "agent_tasks") or {}
-                    _at_agent = ctx.get("active_agent_name") or "assistant"
+                    _at_agent = ctx.get("active_agent_name") or ""
                     for _at_tid, _at_task in _at_all.items():
                         if not isinstance(_at_task, dict):
                             continue
@@ -6887,7 +7201,7 @@ class AgentLoopTask(BaseTask):
                 return
 
             agent_names = [a["name"] for a in all_agents]
-            all_targets = ["assistant"] + agent_names
+            all_targets = agent_names
             bus.publish_event(conversation_id, "thinking", {
                 "detail": f"Broadcasting to {len(all_targets)} targets: {', '.join(all_targets)}",
             })
@@ -6925,19 +7239,7 @@ class AgentLoopTask(BaseTask):
             )
 
             tasks = []
-            # Include the default assistant as a pseudo-agent
-            from core.agent_executor import AgentTask
-            import uuid
-            default_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
-            tasks.append(AgentTask(
-                id=uuid.uuid4().hex[:12],
-                agent_name="assistant",
-                message=message,
-                system_prompt=default_prompt,
-                llm_service=task_llm_service if task_llm_service != "default" else "",
-                user_id=user_id,
-            ))
-            for name in agent_names:
+            for name in all_targets:
                 try:
                     task = resolve_agent_task(name, message, user_id)
                     tasks.append(task)
@@ -7017,7 +7319,7 @@ class AgentLoopTask(BaseTask):
                     continue
                 if task.get("status") not in ("active", "verifying"):
                     continue
-                agent = task.get("agent", "assistant")
+                agent = task.get("agent", "")
                 sched_key = f"{cid}::task::{task_id}"
                 existing = scheduler.get(sched_key)
                 if existing:
@@ -7183,7 +7485,7 @@ class AgentLoopTask(BaseTask):
                 ctx["_gen_key"] = conversation_id
 
                 # Register in active interactions
-                _poll_agent = ctx.get("active_agent_name", "") or "assistant"
+                _poll_agent = ctx.get("active_agent_name", "") or ""
                 with self._interactions_lock:
                     self._active_interactions[conversation_id] = {
                         "agent_name": _poll_agent,
@@ -7250,12 +7552,12 @@ class AgentLoopTask(BaseTask):
                 _task_id = entry_key.rsplit("::", 1)[-1]
                 _all_tasks = store.get_extra(cid, "agent_tasks") or {}
                 _task_entry = _all_tasks.get(_task_id, {})
-                _thought_agent = _task_entry.get("agent", "assistant")
+                _thought_agent = _task_entry.get("agent", "")
             elif "::" in entry_key:
                 # Thought key: conv::thought::agent_name
                 _thought_agent = entry_key.rsplit("::", 1)[-1]
             else:
-                _thought_agent = "assistant"
+                _thought_agent = ""
 
             # Skip if this agent already has a thought running
             with self._active_lock:
@@ -7318,7 +7620,7 @@ class AgentLoopTask(BaseTask):
                 bus.publish_event(cid, "thinking", {
                     "iteration": 0,
                     "poll": True,
-                    "agent_name": _thought_agent if _thought_agent != "assistant" else "",
+                    "agent_name": _thought_agent,
                 })
 
                 # For task entries, use the sub-conversation ID so messages
@@ -7506,7 +7808,7 @@ class AgentLoopTask(BaseTask):
                 if _sched_match:
                     _active_agent = _sched_match.group(1)
                     break
-            if _active_agent and _active_agent != "assistant":
+            if _active_agent:
                 try:
                     from core.resource_store import ResourceStore
                     rs = ResourceStore.instance()
@@ -7560,7 +7862,7 @@ class AgentLoopTask(BaseTask):
         )
         # Set spawn dependencies on SpawnAgentsHandler and UseSkillHandler
         from core.tool_registry import SpawnAgentsHandler as _SAH, UseSkillHandler as _USH
-        _poll_source = _active_agent or "assistant"
+        _poll_source = _active_agent or ""
         _poll_svc = svc_id or ""
         for h in registry.list_tools():
             if isinstance(h, _SAH):
@@ -7578,8 +7880,8 @@ class AgentLoopTask(BaseTask):
 
         # Load context (diverged) or fall back to messages
         system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
-        # Use agent-specific prompt for non-default thought agents
-        if _active_agent and _active_agent != "assistant":
+        # Use agent-specific prompt for thought agents
+        if _active_agent:
             try:
                 from core.resource_store import ResourceStore as _RSp
                 _agent_def = _RSp.instance().get_any("agent", _active_agent, _poll_uid or "anonymous")
@@ -7613,7 +7915,7 @@ class AgentLoopTask(BaseTask):
         elif resilience == "aggressive":
             system_prompt += "\n\nYou are in AGGRESSIVE mode. Retry failed operations up to 3 times with variations. If a tool fails, try an alternative approach before stopping. Continue working even if minor issues occur — only stop for critical failures."
 
-        _poll_agent_key = _active_agent or "assistant"
+        _poll_agent_key = _active_agent or ""
         _context_data = None
         if not skip_agent_context:
             _context_data = _CS3.instance().load_agent_context(conversation_id, _poll_agent_key)
@@ -7644,7 +7946,7 @@ class AgentLoopTask(BaseTask):
 
         if _is_task:
             # Load ALL active tasks for this agent from agent_tasks dict
-            _task_agent = _active_agent or "assistant"
+            _task_agent = _active_agent or ""
             _all_tasks = _CS3.instance().get_extra(conversation_id, "agent_tasks") or {}
             _my_tasks = [t for t in _all_tasks.values()
                          if isinstance(t, dict) and t.get("agent") == _task_agent
@@ -7790,8 +8092,14 @@ class AgentLoopTask(BaseTask):
         thinking_budget = int(self.config.get("thinking_budget", 0))
         conv_ttl = int(self.config.get("conversation_ttl", 0))
 
-        # Source tracking
-        _agent_name = _active_agent if _active_agent and _active_agent != "assistant" else ""
+        # Source tracking — resolve agent name from active_resources if not from scheduler
+        if not _active_agent:
+            try:
+                _ar = _CS2.instance().get_extra(conversation_id, "active_resources") or {}
+                _active_agent = _ar.get("agent", "")
+            except Exception:
+                pass
+        _agent_name = _active_agent or ""
         _agent_svc = svc_id if svc_id != "default" else ""
 
         # Context window from service config
@@ -7994,8 +8302,12 @@ class AgentLoopTask(BaseTask):
             elif isinstance(h, AskAgentHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
                 if llm_client:
                     h.set_llm_client(llm_client, llm_model)
+                h.set_client_resolver(
+                    lambda svc, uid: self._resolve_llm_service(svc, uid))
             elif isinstance(h, ManageResourceHandler):
                 h.set_user_id(user_id)
                 h.set_conversation_id(conversation_id)
@@ -8391,6 +8703,25 @@ class AgentLoopTask(BaseTask):
         """
         # Always deflate any leftover image base64 before estimating
         self._deflate_image_messages(messages)
+        # Strip base64 blobs from ALL messages — images, tool results, user attachments
+        import re as _re_b64
+        for m in messages:
+            if not isinstance(m.content, str) or len(m.content) < 5000:
+                continue
+            if not self._detect_base64_blob(m.content):
+                continue
+            # Strip data URIs (data:image/png;base64,...)
+            m.content = _re_b64.sub(
+                r'data:[^;]*;base64,[A-Za-z0-9+/=]+',
+                '[base64 image removed — use show_file to view]',
+                m.content,
+            )
+            # Strip raw base64 blobs (>1000 chars of base64 alphabet)
+            m.content = _re_b64.sub(
+                r'[A-Za-z0-9+/=]{1000,}',
+                '[binary data removed]',
+                m.content,
+            )
 
         estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
                                           chars_per_token=chars_per_token)
@@ -8451,19 +8782,93 @@ class AgentLoopTask(BaseTask):
             return messages
 
         # Split: system prompt | old messages | recent messages
+        # Guarantee: keep at least 3 complete assistant responses AND all
+        # trailing tool-call chains (assistant+tool_results) intact.
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
-        split_point = len(messages) - keep_recent
-        if split_point <= start_idx:
+
+        # Walk backwards to find the split point:
+        # 1. Count "conversation messages" = user messages + assistant TEXT responses
+        #    (assistant with tool_calls and tool results are plumbing, don't count)
+        # 2. Keep at least `keep_recent` conversation messages (default 6)
+        # 3. All tool-call plumbing between kept messages is kept too
+        _msg_count = 0
+        _split = len(messages)
+
+        while _split > start_idx and _msg_count < keep_recent:
+            _split -= 1
+            m = messages[_split]
+            # Count user messages and assistant text responses (not tool_calls)
+            if m.role == "user" and not (
+                    isinstance(m.content, str) and m.content.startswith("[System:")):
+                _msg_count += 1
+            elif m.role == "assistant" and not getattr(m, "tool_calls", None):
+                _msg_count += 1
+
+        # Never split inside a tool-call chain: if messages[_split] is a tool
+        # result, walk back to include the preceding assistant + all its tool results
+        while _split > start_idx and messages[_split].role == "tool":
+            _split -= 1
+        # If we landed on an assistant with tool_calls, include it
+        if (_split > start_idx and messages[_split].role == "assistant"
+                and getattr(messages[_split], "tool_calls", None)):
+            pass  # include this assistant message in recent
+        # Ensure we don't include the system prompt in old_messages
+        if _split <= start_idx:
             return messages
 
+        split_point = _split
         old_messages = messages[start_idx:split_point]
         recent_messages = messages[split_point:]
 
-        # Summarize old messages — target = 1/4 of context max
+        # Filter old_messages for summarizer: only conversation messages
+        # (user + assistant text). Tool calls/results are noise — they cost
+        # tokens and the summarizer can't do anything useful with JSON args
+        # or raw tool output. The relevant tool state is in recent_messages.
+        old_conversation = [
+            m for m in old_messages
+            if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
+            and not (m.role == "user" and isinstance(m.content, str)
+                     and m.content.startswith("[System:"))
+        ]
+        if not old_conversation:
+            # Only tool plumbing in old zone — nothing to summarize
+            old_conversation = old_messages[-2:] if len(old_messages) > 1 else old_messages
+
+        # Check if dropping tool plumbing alone is enough — skip summarizer if so
+        _slim_messages = ([system_msg] if system_msg else []) + old_conversation + recent_messages
+        _slim_est = self._estimate_tokens(_slim_messages, tool_defs=tool_defs,
+                                           chars_per_token=chars_per_token)
+        if _slim_est <= limit:
+            logger.info(f"[compact] Dropping tool plumbing sufficient: "
+                        f"{estimated} → {_slim_est} tokens (limit={limit}), no summary needed")
+            # Rebuild: system + old conversation messages + recent
+            compacted = []
+            if system_msg:
+                compacted.append(system_msg)
+            compacted.extend(old_conversation)
+            compacted.extend(recent_messages)
+            # Truncate large tool results in recent zone
+            _tool_trunc_limit = 800
+            for m in compacted:
+                if m.role == "tool" and isinstance(m.content, str) and len(m.content) > _tool_trunc_limit:
+                    m.content = m.content[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..."
+            # Persist stripped context so we don't re-compact next iteration
+            if conversation_id:
+                try:
+                    from core.conversation_store import ConversationStore
+                    serialized = self._serialize_messages(compacted)
+                    ConversationStore.instance().save_agent_context(
+                        conversation_id, agent_name, serialized,
+                    )
+                except Exception as e:
+                    logger.warning(f"[compact] Failed to persist stripped context: {e}")
+            return compacted
+
+        # Summarize old conversation — target = 1/4 of context max
         _summary_target = max(500, int(max_tokens / 4))
         try:
-            summary = self._summarize_messages(old_messages, client, max_tokens,
+            summary = self._summarize_messages(old_conversation, client, max_tokens,
                                                target_tokens=_summary_target,
                                                conversation_id=conversation_id)
         except Exception as e:
@@ -8482,13 +8887,37 @@ class AgentLoopTask(BaseTask):
             compacted.append(system_msg)
         compacted.append(LLMMessage(
             role="user",
-            content=f"[Conversation summary — earlier messages compacted]\n\n{summary}",
+            content=(
+                f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
+                f"IMPORTANT: The above is a summary of our earlier conversation. "
+                f"The recent messages below contain the CURRENT state of our work. "
+                f"Do NOT restart or re-propose work that is already done. "
+                f"Continue from where you left off based on the recent messages. "
+                f"Some tool outputs may have been compacted — if you need data "
+                f"from a compacted tool output, re-call the tool to get fresh results."
+            ),
         ))
         compacted.append(LLMMessage(
             role="assistant",
-            content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
+            content=(
+                "Understood. I've read the summary of our earlier conversation. "
+                "I'll continue from the current state shown in the recent messages below, "
+                "without restarting or re-proposing completed work. "
+                "If I need data from a compacted tool output, I'll re-call the tool."
+            ),
         ))
         compacted.extend(recent_messages)
+
+        # Truncate large tool results in the recent zone — they can blow up
+        # the context budget on their own (e.g. scrape_url, read_file).
+        _tool_trunc_limit = 800  # chars kept per tool result
+        for m in compacted:
+            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > _tool_trunc_limit:
+                m.content = m.content[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..."
+            elif m.role == "tool" and isinstance(m.content, list):
+                text_parts = [p for p in m.content if p.get("type") == "text"]
+                text = " ".join(p.get("text", "") for p in text_parts)
+                m.content = text[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..." if len(text) > _tool_trunc_limit else text
 
         new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
                                               chars_per_token=chars_per_token)
@@ -8651,10 +9080,17 @@ class AgentLoopTask(BaseTask):
             response = client.complete(
                 messages=[
                     LLMMessage(role="system", content=(
-                        "You are a conversation summarizer. Summarize the following conversation "
-                        "exchange concisely, preserving all key facts, decisions, research findings, "
-                        "URLs discovered, tool results, and any important context. "
-                        "Do NOT lose any factual information. Be concise but complete. "
+                        "You are a conversation summarizer for an AI agent work session. "
+                        "Summarize the following exchange. You MUST preserve:\n"
+                        "1. CURRENT STATE: What project/task is being worked on, what version/stage\n"
+                        "2. FILES & ARTIFACTS: All files created, modified, or referenced (with paths)\n"
+                        "3. DECISIONS: Key decisions made, architecture choices, user preferences\n"
+                        "4. LAST ACTION: What the agent was doing right before this point\n"
+                        "5. PENDING WORK: What still needs to be done (user requests not yet fulfilled)\n"
+                        "6. KEY FACTS: URLs, credentials, config values, variable names, tool names\n\n"
+                        "Tool call details (arguments, raw outputs) can be summarized briefly — "
+                        "the agent can re-call tools if it needs fresh data. "
+                        "But NEVER lose the project state, file paths, or what was being worked on.\n\n"
                         + target_instruction
                     )),
                     LLMMessage(role="user", content=clean_text),
@@ -8948,7 +9384,7 @@ class AgentLoopTask(BaseTask):
                     _tc_args = tc.get("arguments", {})
                     _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
                     # Format source label
-                    _src_agent = (_tc_source or {}).get("name", "assistant") if _tc_source else "assistant"
+                    _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
                     _src_svc = (_tc_source or {}).get("llm_service", "") if _tc_source else ""
                     _src_label = _src_agent
                     if _src_svc:
@@ -9023,7 +9459,7 @@ class AgentLoopTask(BaseTask):
                     if _prefix_match:
                         entry["source"] = {"type": "agent", "name": _prefix_match.group(1)}
                     else:
-                        entry["source"] = {"type": "agent", "name": "assistant"}
+                        entry["source"] = {"type": "agent", "name": ""}
                 result.append(entry)
         return result
 
@@ -9063,7 +9499,7 @@ class AgentLoopTask(BaseTask):
         agents_seen: set = set()
         for m in messages:
             if m.source and m.source.get("type") == "agent":
-                agents_seen.add(m.source.get("name", "assistant"))
+                agents_seen.add(m.source.get("name", ""))
         multi_agent = len(agents_seen) > 1
         if not multi_agent and len(agents_seen) <= 1:
             return messages  # Single agent conversation — no prefixing needed
@@ -9083,9 +9519,9 @@ class AgentLoopTask(BaseTask):
                 continue
             _skip_next_assistant = False
             if m.role == "assistant" and isinstance(m.content, str) and m.content:
-                name = "assistant"
+                name = ""
                 if m.source:
-                    name = m.source.get("name", "assistant")
+                    name = m.source.get("name", "")
                 display = nicks.get(name, name)
                 prefix = f"[{display}]: "
                 if not m.content.startswith("[") and not m.content.startswith(prefix):

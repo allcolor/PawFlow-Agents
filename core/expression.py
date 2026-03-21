@@ -80,12 +80,25 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     """
     Résoudre toutes les expressions ${...} dans un template.
 
-    Cascade implicite par scope :
-    - ${flow.parameters.X} → flow params → user params → global params
-    - ${user.X} → user params → global params
-    - ${global.X} → global params only
-    - ${secrets.user.X} → user secrets → global secrets
-    - ${secrets.X} → per-user secrets (legacy)
+    Uniform cascade — ALL prefixes resolve in the same order:
+        flow params → conv params → user params → global params
+
+    The prefix (flow., conv., user., global.) is just the variable name
+    extraction point — it does NOT restrict the lookup scope.
+
+    Examples:
+        ${global.X}  → looks in flow, then conv, then user, then global
+        ${user.X}    → same cascade: flow → conv → user → global
+        ${conv.X}    → same cascade: flow → conv → user → global
+        ${flow.parameters.X} → same cascade: flow → conv → user → global
+
+    Force exact scope with :!important suffix:
+        ${global.X:!important}  → global params ONLY
+        ${user.X:!important}    → user params ONLY
+        ${conv.X:!important}    → conv params ONLY
+        ${flow.X:!important}    → flow params ONLY
+
+    Secrets cascade: conv → user → global (no flow-level secrets).
 
     Résolution récursive : si la valeur résolue contient des ${...},
     elles sont résolues à leur tour (max 10 niveaux).
@@ -95,6 +108,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         attributes: Attributs du FlowFile
         parameters: Paramètres du flow
         owner: Owner username for user-level resolution (None = skip user-level)
+        conversation_id: Conversation ID for conv-level resolution
 
     Returns:
         Chaîne avec expressions résolues
@@ -181,8 +195,37 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 conv_secrets = {}
         return conv_secrets or {}
 
-    def _cascade_param(key):
-        """Cascade lookup: conv → user params → global params. Returns (value, found)."""
+    def _cascade_param(key, exact_scope=None):
+        """Full cascade: flow → conv → user → global params. Returns (value, found).
+
+        If exact_scope is set (via :!important), only look in that specific scope.
+        """
+        if exact_scope:
+            if exact_scope == "flow":
+                if key in params:
+                    return str(params[key]), True
+            elif exact_scope == "conv":
+                cp = _get_conv_params()
+                if key in cp:
+                    return str(cp[key]), True
+            elif exact_scope == "user":
+                if owner:
+                    up = _get_user_params()
+                    if key in up:
+                        resolved = _resolve_value(up[key])
+                        if resolved is not None:
+                            return resolved, True
+            elif exact_scope == "global":
+                gp = _get_global_params()
+                if key in gp:
+                    resolved = _resolve_value(gp[key])
+                    if resolved is not None:
+                        return resolved, True
+            return None, False
+
+        # Full cascade: flow → conv → user → global
+        if key in params:
+            return str(params[key]), True
         cp = _get_conv_params()
         if key in cp:
             return str(cp[key]), True
@@ -199,8 +242,33 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 return resolved, True
         return None, False
 
-    def _cascade_secret(key):
-        """Cascade lookup: conv → user secrets → global secrets. Returns (value, found)."""
+    def _cascade_secret(key, exact_scope=None):
+        """Full cascade: conv → user → global secrets. Returns (value, found).
+
+        If exact_scope is set (via :!important), only look in that specific scope.
+        No flow-level secrets exist.
+        """
+        if exact_scope:
+            if exact_scope == "conv":
+                cs = _get_conv_secrets()
+                if key in cs:
+                    return str(cs[key]), True
+            elif exact_scope == "user":
+                if owner:
+                    us = _get_user_secrets()
+                    if key in us:
+                        resolved = _resolve_value(us[key])
+                        if resolved is not None:
+                            return resolved, True
+            elif exact_scope == "global":
+                gs = _get_global_secrets()
+                if key in gs:
+                    resolved = _resolve_value(gs[key])
+                    if resolved is not None:
+                        return resolved, True
+            return None, False
+
+        # Full cascade: conv → user → global
         cs = _get_conv_secrets()
         if key in cs:
             return str(cs[key]), True
@@ -217,28 +285,51 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 return resolved, True
         return None, False
 
+    def _parse_important(expr):
+        """Parse :!important suffix. Returns (clean_expr, exact_scope_or_None).
+
+        Examples:
+            "global.mavar"           → ("global.mavar", None)
+            "global.mavar:!important" → ("global.mavar", "global")
+            "user.x:!important"      → ("user.x", "user")
+            "conv.x:!important"      → ("conv.x", "conv")
+            "flow.parameters.x:!important" → ("flow.parameters.x", "flow")
+        """
+        if not expr.endswith(':!important'):
+            return expr, None
+        clean = expr[:-len(':!important')]
+        # Determine which scope the prefix refers to
+        for prefix in ('flow.parameters.', 'flow.', 'conv.', 'user.', 'global.',
+                       'secrets.conv.', 'secrets.user.', 'secrets.global.', 'secrets.'):
+            if clean.startswith(prefix):
+                scope = prefix.rstrip('.')
+                if scope.startswith('secrets.'):
+                    scope = scope[len('secrets.'):]
+                if scope in ('flow.parameters', 'flow'):
+                    scope = 'flow'
+                return clean, scope
+        return clean, None
+
     def replacer(match):
         nonlocal secrets, variables
         expr = match.group(1)
 
-        # secrets.global.key_name → global secrets only
-        if expr.startswith('secrets.global.'):
-            key = expr[len('secrets.global.'):]
-            gs = _get_global_secrets()
-            if key in gs:
-                resolved = _resolve_value(gs[key])
-                return match.group(0) if resolved is None else resolved
-            return match.group(0)
+        # Parse :!important modifier
+        expr, exact_scope = _parse_important(expr)
 
-        # secrets.user.key_name → user secrets → global secrets (cascade)
-        if expr.startswith('secrets.user.'):
-            key = expr[len('secrets.user.'):]
-            val, found = _cascade_secret(key)
-            if found:
-                return val
-            return match.group(0)
+        # ── Secrets ─────────────────────────────────────────────────────
+        # secrets.conv.X / secrets.user.X / secrets.global.X → full cascade (or exact with !important)
+        for sec_prefix, _sec_scope in [
+            ('secrets.conv.', 'conv'),
+            ('secrets.user.', 'user'),
+            ('secrets.global.', 'global'),
+        ]:
+            if expr.startswith(sec_prefix):
+                key = expr[len(sec_prefix):]
+                val, found = _cascade_secret(key, exact_scope=exact_scope)
+                return val if found else match.group(0)
 
-        # secrets.key_name → per-user secrets (legacy agent_secrets)
+        # secrets.key_name → per-user secrets (legacy agent_secrets, no cascade)
         if expr.startswith('secrets.'):
             key = expr[len('secrets.'):]
             if secrets is None:
@@ -248,57 +339,27 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 return match.group(0) if resolved is None else resolved
             return match.group(0)
 
-        # secrets.conv.key_name → conv secrets → user secrets → global secrets (cascade)
-        if expr.startswith('secrets.conv.'):
-            key = expr[len('secrets.conv.'):]
-            val, found = _cascade_secret(key)
-            if found:
-                return val
-            return match.group(0)
+        # ── Parameters ──────────────────────────────────────────────────
+        # All prefixes cascade: flow → conv → user → global (unless !important)
+        for param_prefix, _param_scope in [
+            ('flow.parameters.', 'flow'),
+            ('flow.', 'flow'),
+            ('conv.', 'conv'),
+            ('user.', 'user'),
+            ('global.', 'global'),
+        ]:
+            if expr.startswith(param_prefix):
+                key = expr[len(param_prefix):]
+                val, found = _cascade_param(key, exact_scope=exact_scope)
+                return val if found else match.group(0)
 
-        # conv.key_name → conv params → user params → global params (cascade)
-        if expr.startswith('conv.'):
-            key = expr[len('conv.'):]
-            val, found = _cascade_param(key)
-            if found:
-                return val
-            return match.group(0)
-
-        # global.key_name → global parameters only
-        if expr.startswith('global.'):
-            key = expr[len('global.'):]
-            gp = _get_global_params()
-            if key in gp:
-                resolved = _resolve_value(gp[key])
-                return match.group(0) if resolved is None else resolved
-            return match.group(0)
-
-        # user.key_name → user params → global params (cascade)
-        if expr.startswith('user.'):
-            key = expr[len('user.'):]
-            val, found = _cascade_param(key)
-            if found:
-                return val
-            return match.group(0)
-
-        # var.key_name (plaintext variables)
+        # var.key_name (plaintext variables, no cascade)
         if expr.startswith('var.'):
             key = expr[len('var.'):]
             if variables is None:
                 variables = _load_variables()
             if key in variables:
                 return variables[key]
-            return match.group(0)
-
-        # flow.parameters.key → flow params → user params → global params (cascade)
-        if expr.startswith('flow.parameters.'):
-            key = expr[len('flow.parameters.'):]
-            if key in params:
-                return str(params[key])
-            # Cascade: try user → global
-            val, found = _cascade_param(key)
-            if found:
-                return val
             return match.group(0)
 
         # env.VAR
@@ -317,6 +378,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     # Recursive resolution: if result still has ${...}, resolve again
     if '${' in result and result != template:
         result = resolve_expression(result, attributes, parameters, owner,
+                                    conversation_id=conversation_id,
                                     _depth=_depth + 1)
 
     return result

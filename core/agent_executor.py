@@ -765,14 +765,6 @@ def resolve_agent_task(
         except Exception:
             pass
 
-    # "assistant" is the default persona, not a ResourceStore agent
-    if agent_def is None and agent_name.lower() == "assistant":
-        agent_def = {
-            "name": "assistant",
-            "prompt": "You are a helpful assistant.",
-            "llm_service": "",
-        }
-
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
 

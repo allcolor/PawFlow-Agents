@@ -405,7 +405,8 @@ class LLMClient:
                     return result
                 except Exception as fallback_err:
                     logger.error("Fallback model '%s' streaming also failed: %s", self.fallback_model, fallback_err)
-            raise LLMClientError(f"LLM streaming request failed: {primary_err}")
+            raise LLMClientError(
+                f"LLM streaming request failed: {type(primary_err).__name__}: {primary_err or 'no details'}")
 
     def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback) -> LLMResponse:
         """OpenAI streaming: reads SSE chunks from the API."""

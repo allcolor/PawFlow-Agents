@@ -533,10 +533,10 @@ class TestAgentLoopConversationStore(unittest.TestCase):
 class TestAgentFlowStructure(unittest.TestCase):
 
     def test_flow_json_valid(self):
-        path = Path("flows/agent_example.json")
+        path = Path("flows/pawflow_agent.json")
         data = json.loads(path.read_text(encoding="utf-8"))
 
-        assert data["id"] == "agent-example"
+        assert data["id"] == "pawflow-agent"
         assert "agent_tools" in data
         assert "create_file" in data["agent_tools"]
 
@@ -552,7 +552,7 @@ class TestAgentFlowStructure(unittest.TestCase):
         assert froms.count("http_in") == 7  # 7 relations from http_in (3 to validate_auth + files, login, callback, logout)
 
     def test_flow_has_conversation_store(self):
-        path = Path("flows/agent_example.json")
+        path = Path("flows/pawflow_agent.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         agent_params = data["tasks"]["agent"]["parameters"]
         assert agent_params["conversation_store"] is True

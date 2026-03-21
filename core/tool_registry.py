@@ -2592,7 +2592,9 @@ class AskAgentHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
+        self._user_id = ""
         self._llm_client = None
+        self._client_resolver = None
         self._model = ""
 
     @property
@@ -2627,9 +2629,15 @@ class AskAgentHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_user_id(self, uid: str):
+        self._user_id = uid
+
     def set_llm_client(self, client, model: str):
         self._llm_client = client
         self._model = model
+
+    def set_client_resolver(self, resolver):
+        self._client_resolver = resolver
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         agent_name = arguments.get("agent_name", "")
@@ -2641,15 +2649,46 @@ class AskAgentHandler(ToolHandler):
             return "Error: no conversation context"
 
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            agents = store.get_extra(self._conversation_id, "agents") or {}
-            agent_def = agents.get(agent_name)
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            uid = self._user_id or "anonymous"
+            agent_def = rs.get_any("agent", agent_name, uid,
+                                   conversation_id=self._conversation_id)
             if not agent_def:
-                available = ", ".join(agents.keys()) if agents else "none"
+                # Case-insensitive fallback
+                for a in rs.list_all("agent", uid,
+                                     conversation_id=self._conversation_id):
+                    if a["name"].lower() == agent_name.lower():
+                        agent_def = a
+                        agent_name = a["name"]
+                        break
+            if not agent_def:
+                all_agents = rs.list_all("agent", uid,
+                                         conversation_id=self._conversation_id)
+                available = ", ".join(a["name"] for a in all_agents) or "none"
                 return f"Error: agent '{agent_name}' not found. Available: {available}"
 
-            if not self._llm_client:
+            # Resolve LLM client for this agent
+            client = self._llm_client
+            model = self._model
+            llm_svc = agent_def.get("llm_service", "")
+            if llm_svc and "${" in llm_svc:
+                from core.expression import resolve_expression
+                llm_svc = resolve_expression(llm_svc, owner=uid)
+                if "${" in llm_svc:
+                    llm_svc = ""
+            if llm_svc and self._client_resolver:
+                try:
+                    resolved_client, _ = self._client_resolver(llm_svc, uid)
+                    if resolved_client:
+                        client = resolved_client
+                except Exception:
+                    pass
+            agent_model = agent_def.get("model", "")
+            if agent_model:
+                model = agent_model
+
+            if not client:
                 return "Error: LLM client not configured"
 
             # Single-turn call to the target agent
@@ -2658,10 +2697,10 @@ class AskAgentHandler(ToolHandler):
                 LLMMessage(role="system", content=agent_def["prompt"]),
                 LLMMessage(role="user", content=question),
             ]
-            response = self._llm_client.complete(
+            response = client.complete(
                 messages=messages,
-                model=self._model,
-                max_tokens=2048,
+                model=model or None,
+                max_tokens=0,
             )
             return f"[{agent_name}]: {response.content}"
         except Exception as e:

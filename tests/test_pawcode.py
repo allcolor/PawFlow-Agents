@@ -56,14 +56,14 @@ class TestRelayId:
     def test_relay_id_format(self):
         from pawflow_cli.relay import generate_relay_id
         rid = generate_relay_id("testuser", "/some/path")
-        assert rid.startswith("cli_testuser_")
-        assert len(rid) > len("cli_testuser_")
+        assert rid.startswith("fs_testuser_")
+        assert len(rid) > len("fs_testuser_")
 
     def test_relay_id_hash_length(self):
         """Relay ID should contain an 8-char hex hash suffix."""
         from pawflow_cli.relay import generate_relay_id
         rid = generate_relay_id("u", "/p")
-        suffix = rid.split("_", 2)[-1]  # cli_u_<hash>
+        suffix = rid.split("_", 2)[-1]  # fs_u_<hash>
         assert len(suffix) == 8
         # Verify it's hex
         int(suffix, 16)

@@ -1,4 +1,17 @@
 {
+  "__global__:assistant": {
+    "model": "",
+    "tools": [],
+    "max_depth": 1,
+    "timeout": 120,
+    "description": "Default general-purpose assistant",
+    "llm_service": "${conv.llm_default_service}",
+    "prompt": "You are a helpful assistant.",
+    "name": "assistant",
+    "created_at": 1710400000.0,
+    "updated_at": 1710400000.0,
+    "_scope": "global"
+  },
   "__global__:grok": {
     "model": "",
     "tools": [],
@@ -51,18 +64,6 @@
     "updated_at": 1773866718.8048706,
     "_scope": "user"
   },
-  "bob:basic": {
-    "model": "",
-    "tools": [],
-    "max_depth": 1,
-    "timeout": 120,
-    "description": "",
-    "llm_service": "",
-    "prompt": "Basic assistant",
-    "name": "basic",
-    "created_at": 1773932711.217095,
-    "updated_at": 1773932711.2170954
-  },
   "quentin.anciaux:PonyverseMod": {
     "model": "grok-4-1-fast-reasoning",
     "tools": [
@@ -79,5 +80,17 @@
     "created_at": 1773935827.4033265,
     "updated_at": 1773936208.3361795,
     "_scope": "user"
+  },
+  "bob:basic": {
+    "model": "",
+    "tools": [],
+    "max_depth": 1,
+    "timeout": 120,
+    "description": "",
+    "llm_service": "",
+    "prompt": "Basic assistant",
+    "name": "basic",
+    "created_at": 1774110726.9715493,
+    "updated_at": 1774110726.9715495
   }
 }

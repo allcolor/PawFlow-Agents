@@ -255,13 +255,13 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     } catch {}
 
     const agent = await vscode.window.showQuickPick(agentNames, {
-      title: `Assign "${taskName}" to agent`,
+      title: `Assign "${taskName}" — Step 1/4: Agent`,
       placeHolder: 'Select agent',
     });
     if (!agent) { return; }
 
     // Step 2: Pick context mode
-    const contextModes = [
+    const contextPick = await vscode.window.showQuickPick([
       { label: 'isolated', description: 'Only task prompt (default)' },
       { label: 'last:10', description: 'Last 10 messages from conversation' },
       { label: 'last:20', description: 'Last 20 messages' },
@@ -269,25 +269,56 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       { label: 'summary:2000', description: 'Summary ~2000 tokens' },
       { label: 'summary:4000', description: 'Summary ~4000 tokens' },
       { label: 'full', description: 'Entire conversation context' },
-    ];
-    const contextPick = await vscode.window.showQuickPick(contextModes, {
-      title: 'Context mode',
+    ], {
+      title: `Assign "${taskName}" — Step 2/4: Context`,
       placeHolder: 'What context should the agent receive?',
     });
     if (!contextPick) { return; }
 
-    // Step 3: Assign
+    // Step 3: Interval (optional)
+    const interval = await vscode.window.showInputBox({
+      title: `Assign "${taskName}" — Step 3/4: Interval`,
+      prompt: 'Repeat interval (e.g. 6/1m = 6 times every 1min, 2/1h, 60 = every 60s). Leave empty for one-shot.',
+      placeHolder: 'e.g. 6/1m, 2/1h, 60',
+    });
+    if (interval === undefined) { return; } // cancelled
+
+    // Step 4: Variables (optional)
+    const varsInput = await vscode.window.showInputBox({
+      title: `Assign "${taskName}" — Step 4/4: Variables`,
+      prompt: 'Variables as key=value pairs separated by commas. Leave empty for none.',
+      placeHolder: 'e.g. nbr_images=20, style=cyberpunk',
+    });
+    if (varsInput === undefined) { return; } // cancelled
+
+    // Parse variables
+    const variables: Record<string, string> = {};
+    if (varsInput) {
+      for (const pair of varsInput.split(',')) {
+        const eq = pair.indexOf('=');
+        if (eq > 0) {
+          variables[pair.slice(0, eq).trim()] = pair.slice(eq + 1).trim();
+        }
+      }
+    }
+
+    // Assign
     try {
-      const resp = await api.sendAction('assign_task', {
+      const params: Record<string, any> = {
         conversation_id: this.conversationId || '',
         agent_name: agent,
         task_name: taskName,
         context: contextPick.label,
-      });
+      };
+      if (interval) { params.interval = interval; }
+      if (Object.keys(variables).length) { params.variables = variables; }
+
+      const resp = await api.sendAction('assign_task', params);
       if (resp.error) {
         vscode.window.showErrorMessage(`Assign failed: ${resp.error}`);
       } else {
-        vscode.window.showInformationMessage(`Task "${taskName}" assigned to ${agent} (${contextPick.label})`);
+        const details = [agent, contextPick.label, interval || 'one-shot'].filter(Boolean).join(', ');
+        vscode.window.showInformationMessage(`Task "${taskName}" assigned: ${details}`);
       }
     } catch (e: any) {
       vscode.window.showErrorMessage(`Assign failed: ${e.message}`);

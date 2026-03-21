@@ -4735,24 +4735,64 @@ async function cmdAgentList() {
 }
 
 async function cmdAgentCreate() {
-  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  const name = prompt('Agent name:');
-  if (!name) return;
-  const agentPrompt = prompt('System prompt for this agent:');
-  if (!agentPrompt) return;
+  showResourceCreator('agent');
+}
+
+function showResourceCreator(rtype) {
+  let overlay = document.getElementById('resourceEditorOverlay');
+  if (overlay) overlay.remove();
+  overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  const title = {agent:'Create Agent',skill:'Create Skill',mcp:'Create MCP Server',task_def:'Create Task',prompt:'Create Prompt'}[rtype] || 'Create ' + rtype;
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${escapeHtml(title)}</h3>
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
+  </div>` + _buildResourceForm(rtype, {}, true)
+    + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+    <button onclick="_submitResourceCreate('${rtype}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Create</button>
+  </div>`;
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  document.getElementById('res-name')?.focus();
+}
+
+async function _submitResourceCreate(rtype) {
+  const name = (document.getElementById('res-name')?.value || '').trim();
+  const scope = document.getElementById('res-scope')?.value || 'user';
+  if (!name) { addMsg('error', 'Name is required'); return; }
+  if (scope === 'global') { addMsg('error', 'Cannot create global resources from chat. Use the admin GUI.'); return; }
+
+  const fields = _RESOURCE_FIELDS[rtype] || [];
+  const data = {};
+  for (const [key, type] of fields) {
+    const el = document.getElementById('res-' + key);
+    if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
+  }
+
+  // Route to the correct action
+  let action = 'create_resource';
+  let body = { action, resource_type: rtype, name, data, scope, conversation_id: conversationId };
+  if (rtype === 'agent') {
+    action = 'create_agent';
+    body = { action, name, prompt: data.prompt || '', conversation_id: conversationId,
+             model: data.model, description: data.description, llm_service: data.llm_service };
+  } else if (rtype === 'task_def') {
+    action = 'create_task_def';
+    body = { action, name, prompt: data.prompt || '', conversation_id: conversationId,
+             criteria: data.criteria, default_interval: data.default_interval, description: data.description };
+  }
+  body.action = action;
+
   try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'create_agent', conversation_id: conversationId,
-        name: name, prompt: agentPrompt,
-      }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', `Agent '${name}' created. Use /agent select ${name} to activate.`);
-    loadResources();
-  } catch (e) { addMsg('error', 'Failed to create agent: ' + e.message); }
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
+    const result = await resp.json();
+    if (result.error) { addMsg('error', result.error); }
+    else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
+  } catch (e) { addMsg('error', e.message); }
 }
 
 function updateActiveAgentBadge() {
@@ -6590,7 +6630,7 @@ function _buildResourceForm(rtype, data, isNew) {
   let html = '';
   if (isNew) {
     html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="user">User</option><option value="global">Global</option></select></div>';
+    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="user">User</option><option value="conversation">Conversation</option></select></div>';
   }
   for (const [key, type] of fields) {
     const val = (data && data[key] != null) ? data[key] : '';

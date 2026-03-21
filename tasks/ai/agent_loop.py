@@ -3670,7 +3670,8 @@ class AgentLoopTask(BaseTask):
             else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
-                path = Path(f"config/users/{uid}/parameters.json")
+                from pathlib import Path as _CfgPath
+                path = _CfgPath(f"config/users/{uid}/parameters.json")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 data = ConfigStore.load_params(path)
                 data[key] = value
@@ -3696,7 +3697,8 @@ class AgentLoopTask(BaseTask):
             else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
-                path = Path(f"config/users/{uid}/parameters.json")
+                from pathlib import Path as _CfgPath
+                path = _CfgPath(f"config/users/{uid}/parameters.json")
                 data = ConfigStore.load_params(path)
                 data.pop(key, None)
                 ConfigStore.save_params(path, data)
@@ -3724,7 +3726,8 @@ class AgentLoopTask(BaseTask):
             else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
-                path = Path(f"config/users/{uid}/secrets.json")
+                from pathlib import Path as _CfgPath
+                path = _CfgPath(f"config/users/{uid}/secrets.json")
                 path.parent.mkdir(parents=True, exist_ok=True)
                 data = ConfigStore.load_secrets(path)
                 data[key] = value  # ConfigStore.save_secrets encrypts
@@ -3750,7 +3753,8 @@ class AgentLoopTask(BaseTask):
             else:  # user
                 uid = user_id or "anonymous"
                 from core.config_store import ConfigStore
-                path = Path(f"config/users/{uid}/secrets.json")
+                from pathlib import Path as _CfgPath
+                path = _CfgPath(f"config/users/{uid}/secrets.json")
                 data = ConfigStore.load_secrets(path)
                 data.pop(key, None)
                 ConfigStore.save_secrets(path, data)

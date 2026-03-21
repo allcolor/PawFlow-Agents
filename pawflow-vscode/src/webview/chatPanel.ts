@@ -334,6 +334,7 @@ code { font-family: var(--vscode-editor-font-family); }
 </head>
 <body>
 <div class="toolbar">
+  <button onclick="backToChat()">Chat</button>
   <button onclick="newChat()">+ New</button>
   <button onclick="loadConvs()">Conversations</button>
   <button onclick="sendCmd('compact')">Compact</button>
@@ -399,13 +400,15 @@ function send() {
   inputEl.style.height = '36px';
 }
 
-function newChat() {
+function backToChat() { closePanel(); }
+
+function newChat() { closePanel();
   vscode.postMessage({ type: 'newConversation' });
   messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
   currentHistoryConvId = null;
   currentHistoryOffset = 0;
 }
-function loadConvs() { vscode.postMessage({ type: 'loadConversations' }); }
+function loadConvs() { closePanel(); vscode.postMessage({ type: 'loadConversations' }); }
 function sendCmd(cmd, arg) { vscode.postMessage({ type: 'command', command: cmd, arg }); }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -700,78 +703,89 @@ function showPanel(name) {
   else if (name === 'tools') loadToolsPanel();
 }
 
+var _resMenuRtype = '';
+var _resMenuName = '';
+
 function showResMenu(e, rtype, name) {
   e.preventDefault();
   e.stopPropagation();
   var old = document.querySelector('.res-ctx');
   if (old) old.remove();
+
+  _resMenuRtype = rtype;
+  _resMenuName = name;
+
   var menu = document.createElement('div');
   menu.className = 'res-ctx';
   menu.style.left = e.clientX + 'px';
   menu.style.top = e.clientY + 'px';
 
-  var isActive = e.target.closest('.panel-item')?.innerHTML?.includes('\\u2713');
+  function addItem(label, action) {
+    var d = document.createElement('div');
+    d.textContent = label;
+    d.onclick = function() { menu.remove(); doResAction(action); };
+    menu.appendChild(d);
+  }
+  function addSep() {
+    var hr = document.createElement('hr');
+    menu.appendChild(hr);
+  }
 
   if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts') {
-    if (isActive) {
-      menu.innerHTML += '<div onclick="resAction(\\'deactivate_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Deactivate</div>';
-    } else {
-      menu.innerHTML += '<div onclick="resAction(\\'activate_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Activate</div>';
-    }
-    menu.innerHTML += '<div onclick="resAction(\\'delete_resource\\',\\'' + rtype.slice(0,-1) + '\\',\\'' + name + '\\')">Delete</div>';
+    addItem('Activate', 'activate');
+    addItem('Deactivate', 'deactivate');
+    addSep();
+    addItem('Delete', 'delete_res');
   }
   if (rtype === 'services') {
-    menu.innerHTML += '<div onclick="resAction(\\'service_enable\\',\\'\\',\\'' + name + '\\')">Enable</div>';
-    menu.innerHTML += '<div onclick="resAction(\\'service_disable\\',\\'\\',\\'' + name + '\\')">Disable</div>';
-    menu.innerHTML += '<hr>';
-    menu.innerHTML += '<div onclick="resAction(\\'service_uninstall\\',\\'\\',\\'' + name + '\\')">Uninstall</div>';
+    addItem('Enable', 'svc_enable');
+    addItem('Disable', 'svc_disable');
+    addSep();
+    addItem('Uninstall', 'svc_uninstall');
   }
   if (rtype === 'task_defs') {
-    menu.innerHTML += '<div onclick="resAssignTask(\\'' + name + '\\')">Assign to agent...</div>';
-    menu.innerHTML += '<div onclick="resAction(\\'delete_task_def\\',\\'\\',\\'' + name + '\\')">Delete</div>';
+    addItem('Assign to agent...', 'assign_task');
+    addSep();
+    addItem('Delete', 'del_task');
   }
   if (rtype === 'agents') {
-    menu.innerHTML += '<hr>';
-    menu.innerHTML += '<div onclick="resAction(\\'agent_enable\\',\\'\\',\\'' + name + '\\')">Enable</div>';
-    menu.innerHTML += '<div onclick="resAction(\\'agent_disable\\',\\'\\',\\'' + name + '\\')">Disable</div>';
+    addSep();
+    addItem('Enable agent', 'agent_enable');
+    addItem('Disable agent', 'agent_disable');
   }
 
   document.body.appendChild(menu);
   setTimeout(function() {
-    document.addEventListener('click', function rmMenu() {
-      menu.remove();
-      document.removeEventListener('click', rmMenu);
-    });
+    document.addEventListener('click', function rm() { menu.remove(); document.removeEventListener('click', rm); });
   }, 0);
 }
 
-function resAction(action, rtype, name) {
-  var old = document.querySelector('.res-ctx');
-  if (old) old.remove();
+function doResAction(action) {
+  var rtype = _resMenuRtype;
+  var name = _resMenuName;
+  var singularType = rtype.replace(/s$/, '');
+  var cmd = '';
   var params = {};
-  if (action === 'activate_resource' || action === 'deactivate_resource') {
-    params = { resource_type: rtype, name: name };
-  } else if (action === 'delete_resource') {
-    params = { resource_type: rtype, name: name };
-  } else if (action === 'service_enable' || action === 'service_disable' || action === 'service_uninstall') {
-    params = { service_id: name };
-  } else if (action === 'agent_enable' || action === 'agent_disable') {
-    params = { agent_name: name };
-  } else if (action === 'delete_task_def') {
-    params = { name: name };
-  }
-  vscode.postMessage({ type: 'command', command: action, arg: JSON.stringify(params) });
-  // Refresh after action
-  setTimeout(function() { loadResourcesPanel(); }, 500);
-}
 
-function resAssignTask(taskName) {
-  var old = document.querySelector('.res-ctx');
-  if (old) old.remove();
-  var agent = prompt('Assign to which agent?', 'assistant');
-  if (agent) {
-    vscode.postMessage({ type: 'command', command: 'assign_task',
-      arg: JSON.stringify({ agent_name: agent, task_name: taskName, context: 'isolated' }) });
+  if (action === 'activate') { cmd = 'activate_resource'; params = { resource_type: singularType, name: name }; }
+  else if (action === 'deactivate') { cmd = 'deactivate_resource'; params = { resource_type: singularType, name: name }; }
+  else if (action === 'delete_res') { cmd = 'delete_resource'; params = { resource_type: singularType, name: name }; }
+  else if (action === 'svc_enable') { cmd = 'service_enable'; params = { service_id: name }; }
+  else if (action === 'svc_disable') { cmd = 'service_disable'; params = { service_id: name }; }
+  else if (action === 'svc_uninstall') { cmd = 'service_uninstall'; params = { service_id: name }; }
+  else if (action === 'agent_enable') { cmd = 'agent_enable'; params = { agent_name: name }; }
+  else if (action === 'agent_disable') { cmd = 'agent_disable'; params = { agent_name: name }; }
+  else if (action === 'del_task') { cmd = 'delete_task_def'; params = { name: name }; }
+  else if (action === 'assign_task') {
+    var agent = prompt('Assign to which agent?', 'assistant');
+    if (!agent) return;
+    cmd = 'assign_task';
+    params = { agent_name: agent, task_name: name, context: 'isolated' };
+  }
+
+  if (cmd) {
+    vscode.postMessage({ type: 'command', command: cmd, arg: JSON.stringify(params) });
+    setTimeout(function() { loadResourcesPanel(); }, 500);
   }
 }
 

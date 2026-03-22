@@ -131,7 +131,9 @@ class FlowParser:
         """
         with open(filepath, 'r', encoding='utf-8') as f:
             config = json.load(f)
-        
+
+        from pathlib import Path
+        config['_source_dir'] = str(Path(filepath).resolve().parent)
         return cls.parse(config)
     
     @classmethod

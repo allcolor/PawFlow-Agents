@@ -234,6 +234,8 @@ class Flow:
         self.relations = config.get('relations', [])
         self.variables = config.get('variables', {})
         self.agent_tools: Dict[str, Dict] = config.get('agent_tools', {})
+        # Directory containing the flow definition file (for asset resolution)
+        self.source_dir: str = config.get('_source_dir', '')
     
     def add_task(self, task_id: str, task: Task):
         self.tasks[task_id] = task

@@ -153,6 +153,9 @@ class ContinuousFlowExecutor:
             # Inject parameter context into task
             if hasattr(task, 'set_parameter_context'):
                 task.set_parameter_context(self._parameter_context)
+            # Inject flow source directory for asset resolution
+            if flow.source_dir and hasattr(task, 'set_flow_source_dir'):
+                task.set_flow_source_dir(flow.source_dir)
 
         # Resolve ${flow.parameters.*} in service configs before connecting
         self._resolve_service_configs(flow)

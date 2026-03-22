@@ -45,6 +45,9 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         # Parameter context (injected by the executor at runtime)
         self._parameter_context = None
 
+        # Flow source directory (injected by the executor for asset resolution)
+        self._flow_source_dir: str = ""
+
     def log(self, level: str = "INFO", message: str = "", **kwargs):
         """
         Logguer un message.
@@ -367,6 +370,96 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         sources will auto-stop when all queues are empty and no workers are active.
         """
         return False
+
+    # ── Asset resolution ─────────────────────────────────────────────
+
+    def set_flow_source_dir(self, path: str):
+        """Inject the flow's source directory (called by executor)."""
+        self._flow_source_dir = path
+
+    def _resolve_asset_path(self, relative_path: str):
+        """Resolve an asset path relative to the flow's source directory.
+
+        Search order:
+        1. flow_source_dir / assets / relative_path
+        2. flow_source_dir / relative_path
+        3. Task's own module directory / relative_path
+
+        Returns:
+            pathlib.Path if found, None otherwise.
+        """
+        from pathlib import Path
+        candidates = []
+        if self._flow_source_dir:
+            flow_dir = Path(self._flow_source_dir)
+            candidates.append(flow_dir / "assets" / relative_path)
+            candidates.append(flow_dir / relative_path)
+        # Fallback: relative to the task's own Python file
+        try:
+            task_mod = __import__(self.__class__.__module__)
+            if hasattr(task_mod, '__file__') and task_mod.__file__:
+                task_dir = Path(task_mod.__file__).parent
+                candidates.append(task_dir / relative_path)
+        except Exception:
+            pass
+        for p in candidates:
+            if p.is_file():
+                return p
+        return None
+
+    def get_asset(self, path: str) -> bytes:
+        """Load a binary asset relative to the flow's assets directory.
+
+        Args:
+            path: Relative path (e.g. "chat_ui/i18n.js", "images/logo.png")
+
+        Returns:
+            File content as bytes.
+
+        Raises:
+            FileNotFoundError: If the asset is not found.
+        """
+        resolved = self._resolve_asset_path(path)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"Asset '{path}' not found (flow_dir={self._flow_source_dir})")
+        return resolved.read_bytes()
+
+    def get_asset_text(self, path: str, encoding: str = "utf-8") -> str:
+        """Load a text asset relative to the flow's assets directory.
+
+        Args:
+            path: Relative path (e.g. "chat_ui/sse.js")
+            encoding: Text encoding (default: utf-8)
+
+        Returns:
+            File content as string.
+        """
+        resolved = self._resolve_asset_path(path)
+        if resolved is None:
+            raise FileNotFoundError(
+                f"Asset '{path}' not found (flow_dir={self._flow_source_dir})")
+        return resolved.read_text(encoding=encoding)
+
+    def list_assets(self, prefix: str = "") -> List[str]:
+        """List available asset paths under a prefix.
+
+        Args:
+            prefix: Directory prefix (e.g. "chat_ui", "images")
+
+        Returns:
+            List of relative paths.
+        """
+        from pathlib import Path
+        results = []
+        if self._flow_source_dir:
+            assets_dir = Path(self._flow_source_dir) / "assets" / prefix
+            if assets_dir.is_dir():
+                for p in sorted(assets_dir.rglob("*")):
+                    if p.is_file():
+                        results.append(str(p.relative_to(
+                            Path(self._flow_source_dir) / "assets")))
+        return results
 
     def get_task_id(self) -> str:
         """

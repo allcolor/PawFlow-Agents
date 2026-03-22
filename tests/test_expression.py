@@ -5,8 +5,9 @@
 import os
 import unittest
 
-# Import des tasks pour declencher l'auto-registration
+# Import and register all tasks to trigger auto-registration
 import tasks  # noqa: F401
+tasks.register_all_tasks()
 
 from core.expression import resolve_expression
 from engine.parser import FlowParser

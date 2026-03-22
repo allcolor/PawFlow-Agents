@@ -158,9 +158,10 @@ def register_all_tasks():
     # Scrapling fetch
     from tasks.io.scrapling_fetch import ScraplingFetchTask
 
-    # File serving + Chat UI
+    # File serving + Chat UI + Assets
     from tasks.io.serve_file import ServeFileTask
     from tasks.io.serve_chat_ui import ServeChatUITask
+    from tasks.io.serve_assets import ServeAssetsTask
 
     # OAuth2 tasks
     from tasks.io.oauth_redirect import OAuthRedirectTask

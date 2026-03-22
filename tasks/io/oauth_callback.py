@@ -330,7 +330,7 @@ class OAuthCallbackTask(BaseTask):
                     provider=result.provider,
                     access_token=result.access_token,
                     refresh_token=result.refresh_token,
-                    expires_at=result.token_expires_at,
+                    expires_in=int(result.token_expires_at - __import__('time').time()) if result.token_expires_at else 3600,
                 )
             except Exception as e:
                 logger.warning(f"Failed to persist refresh token: {e}")

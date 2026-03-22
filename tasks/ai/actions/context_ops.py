@@ -1,0 +1,470 @@
+"""AgentLoopTask actions — context ops"""
+
+import json
+import logging
+import threading
+import time
+import threading
+from typing import Dict, Any, List, Optional
+
+from core import FlowFile
+from core.llm_client import LLMMessage, LLMClient
+from core.tool_registry import ToolRegistry
+
+logger = logging.getLogger(__name__)
+
+
+def _handle_context_ops(self, action, body, store, user_id, flowfile):
+    """Handle context ops actions. Returns [flowfile] or None."""
+
+    def _ctx_load(conv_id, agent_name=""):
+        """Load context for an agent (falls back to shared → messages)."""
+        if agent_name and agent_name != "ALL":
+            return store.load_agent_context(conv_id, agent_name)
+        return store.load_context(conv_id, user_id=user_id)
+
+    def _ctx_save(conv_id, data, agent_name=""):
+        """Save context for an agent (or shared if no agent)."""
+        if agent_name and agent_name != "ALL":
+            store.save_agent_context(conv_id, agent_name, data)
+        else:
+            store.save_context(conv_id, data)
+
+    def _resolve_agent_max_tokens(agent_name):
+        """Get max_tokens from an agent's LLM service config."""
+        try:
+            from core.resource_store import ResourceStore
+            adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
+            if adef and adef.get("llm_service"):
+                svc_id = adef["llm_service"]
+                if "${" in svc_id:
+                    from core.expression import resolve_expression
+                    svc_id = resolve_expression(svc_id, owner=user_id)
+                if svc_id and "${" not in svc_id:
+                    _, svc = self._resolve_llm_service(svc_id, user_id)
+                    if svc:
+                        v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
+                        if v:
+                            return v
+        except Exception:
+            pass
+        return 0
+
+    def _ctx_max_tokens(agent_name=""):
+        """Get max_context_size for an agent or shared context."""
+        flow_default = int(self.config.get("max_context_size", 64000))
+        if agent_name and agent_name not in ("", "ALL"):
+            return _resolve_agent_max_tokens(agent_name) or flow_default
+        try:
+            from core.resource_store import ResourceStore
+            all_agents = ResourceStore.instance().list_all("agent", user_id)
+            max_val = 0
+            for a in all_agents:
+                v = _resolve_agent_max_tokens(a["name"])
+                if v > max_val:
+                    max_val = v
+            default_svc = self.config.get("llm_service", "default")
+            if default_svc and "${" not in default_svc:
+                _, svc = self._resolve_llm_service(default_svc, user_id)
+                if svc:
+                    v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
+                    if v > max_val:
+                        max_val = v
+            return max_val or flow_default
+        except Exception:
+            return flow_default
+
+    if action == "compact":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        # Load source data
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
+        if not source_data or len(source_data) < 4:
+            flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
+            return [flowfile]
+        # Resolve client
+        _summ_client, _ = self._get_summarizer_client(user_id)
+        if _summ_client:
+            _compact_client = _summ_client
+        else:
+            svc_id = self.config.get("llm_service", "")
+            if not svc_id or "${" in svc_id:
+                svc_id = "default"
+            _compact_client, _ = self._resolve_client(
+                svc_id, user_id, resolve_expressions=False,
+            )
+        if not _compact_client:
+            flowfile.set_content(json.dumps({"error": "LLM service not found"}).encode())
+            return [flowfile]
+        _compact_max = _ctx_max_tokens(_ctx_agent)
+        _compact_source = source_data
+        _compact_conv = conv_id
+        _compact_agent_name = _ctx_agent
+        _compact_keep = int(self.config.get("context_keep_recent", 6))
+
+        def _do_compact():
+            msgs = self._deserialize_messages(_compact_source)
+            before = len(msgs)
+            estimated = self._estimate_tokens(msgs)
+            compacted = self._compact_if_needed(
+                msgs, _compact_client, _compact_max, 0.5,
+                _compact_keep, conversation_id=_compact_conv,
+                agent_name=_compact_agent_name,
+            )
+            after_tokens = self._estimate_tokens(compacted)
+            return {"before": before, "after": len(compacted),
+                    "tokens_before": estimated, "tokens_after": after_tokens,
+                    "agent": _compact_agent_name or "shared"}
+
+        return self._run_bg_context_op(conv_id, "compact", _do_compact, flowfile)
+
+    if action == "rebuild":
+        conv_id = body.get("conversation_id", "")
+        _rb_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        _rb_msgs = store.load(conv_id, user_id=user_id)
+        if not _rb_msgs:
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Resolve client for potential compaction
+        _summ_client, _ = self._get_summarizer_client(user_id)
+        _rb_client = _summ_client
+        if not _rb_client:
+            _rb_client, _ = self._resolve_client(
+                self.config.get("llm_service", "default"),
+                user_id, resolve_expressions=False,
+            )
+        _rb_max = _ctx_max_tokens(_rb_agent)
+
+        def _do_rebuild():
+            deserialized = self._deserialize_messages(_rb_msgs)
+            estimated = self._estimate_tokens(deserialized)
+            limit = int(_rb_max * 0.8)
+            if estimated <= limit:
+                _ctx_save(conv_id, _rb_msgs, _rb_agent)
+                return {"action": "full_restore", "before": len(_rb_msgs),
+                        "after": len(_rb_msgs), "tokens_after": estimated}
+            if not _rb_client:
+                raise ValueError("No LLM service for compaction")
+            compacted = self._compact_if_needed(
+                deserialized, _rb_client, _rb_max, 0.8,
+                int(self.config.get("context_keep_recent", 6)),
+                conversation_id=conv_id, agent_name=_rb_agent,
+            )
+            return {"action": "compacted", "before": len(_rb_msgs),
+                    "after": len(compacted),
+                    "tokens_after": self._estimate_tokens(compacted)}
+
+        return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)
+
+    if action in ("rebuild_clean", "rebuild_full"):
+        conv_id = body.get("conversation_id", "")
+        _rf_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        _rf_msgs = store.load(conv_id, user_id=user_id)
+        if not _rf_msgs:
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        def _do_rebuild_full():
+            deserialized = self._deserialize_messages(_rf_msgs)
+            estimated = self._estimate_tokens(deserialized)
+            if _rf_agent == "ALL":
+                agent_map = store.list_agent_contexts(conv_id)
+                for name in agent_map:
+                    if name == "*":
+                        store.save_context(conv_id, list(_rf_msgs))
+                    else:
+                        store.save_agent_context(conv_id, name, list(_rf_msgs))
+            else:
+                _ctx_save(conv_id, list(_rf_msgs), _rf_agent)
+            return {"action": "full_restore", "messages": len(_rf_msgs),
+                    "tokens_after": estimated,
+                    "agent": _rf_agent or "shared"}
+
+        return self._run_bg_context_op(conv_id, "rebuild_full", _do_rebuild_full, flowfile)
+        return [flowfile]
+
+    if action == "get_context":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        # Sub-conversation context: load from sub-conv directly
+        if _ctx_agent.startswith("task:"):
+            _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
+            _sub_cid = f"{conv_id}::task::{_sub_tid}"
+            context_data = store.load(_sub_cid) or []
+            diverged = True
+        else:
+            context_data = _ctx_load(conv_id, _ctx_agent)
+            diverged = context_data is not None
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+        deserialized = self._deserialize_messages(context_data)
+        estimated = self._estimate_tokens(deserialized)
+        # Classify messages for display
+        display_msgs = []
+        for m in context_data:
+            role = m.get("role", "unknown")
+            content = m.get("content", "")
+            if isinstance(content, list):
+                text_parts = [p.get("text", "") for p in content if p.get("type") == "text"]
+                content = "\n".join(text_parts) if text_parts else str(content)
+            has_tool_calls = bool(m.get("tool_calls"))
+            display_msgs.append({
+                "role": role,
+                "content": content[:300] if isinstance(content, str) else str(content)[:300],
+                "has_tool_calls": has_tool_calls,
+                "source": m.get("source"),
+            })
+        # Include agent context status map
+        _agent_ctx_map = store.list_agent_contexts(conv_id)
+        # Include active sub-conversations (task contexts)
+        _extras = store.get_extras(conv_id, user_id=user_id) or {}
+        for ek in _extras:
+            if ek.startswith("task_log:"):
+                _tid = ek[9:]
+                _sub_cid = f"{conv_id}::task::{_tid}"
+                _sub_msgs = store.load(_sub_cid)
+                if _sub_msgs:
+                    # Find agent name from task data
+                    _tasks_data = _extras.get("agent_tasks", {})
+                    _t_entry = _tasks_data.get(_tid, {}) if isinstance(_tasks_data, dict) else {}
+                    _t_agent = _t_entry.get("agent", "?")
+                    _agent_ctx_map[f"task:{_tid} ({_t_agent})"] = "sub-conv"
+        flowfile.set_content(json.dumps({
+            "context": display_msgs,
+            "message_count": len(context_data),
+            "token_estimate": estimated,
+            "diverged": diverged,
+            "agent_name": _ctx_agent or "",
+            "agent_contexts": _agent_ctx_map,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "get_context_full":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        diverged = context_data is not None
+        if context_data is None:
+            context_data = store.load(conv_id, user_id=user_id) or []
+        flowfile.set_content(json.dumps({
+            "context": context_data,
+            "message_count": len(context_data),
+            "diverged": diverged,
+        }, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "edit_context":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        index = body.get("index")
+        new_content = body.get("content", "")
+        new_role = body.get("role")
+        if not conv_id or index is None:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        _using_context = context_data is not None
+        if context_data is None:
+            context_data = store.load(conv_id, user_id=user_id) or []
+        if index < 0 or index >= len(context_data):
+            flowfile.set_content(json.dumps({
+                "error": f"Index {index} out of range (0-{len(context_data)-1}). "
+                         "The context may have changed â€” please refresh.",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data[index]["content"] = new_content
+        if new_role:
+            context_data[index]["role"] = new_role
+        _ctx_save(conv_id, context_data)
+        deserialized = self._deserialize_messages(context_data)
+        estimated = self._estimate_tokens(deserialized)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message_count": len(context_data),
+            "token_estimate": estimated,
+        }).encode())
+        return [flowfile]
+
+    if action == "delete_sub_context":
+        conv_id = body.get("conversation_id", "")
+        sub_name = body.get("agent_name", "")  # "task:t_xxx (AgentName)"
+        if not conv_id or not sub_name or not sub_name.startswith("task:"):
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or task agent_name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        _sub_tid = sub_name.split("(")[0].replace("task:", "").strip()
+        _sub_cid = f"{conv_id}::task::{_sub_tid}"
+        try:
+            store.delete(_sub_cid)
+            # Also clean up sync counter and task log
+            store.set_extra(conv_id, f"_sub_sync:{_sub_cid}", None)
+            store.set_extra(conv_id, f"task_log:{_sub_tid}", None)
+            flowfile.set_content(json.dumps({"ok": True, "deleted": _sub_cid}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "delete_context_message":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        index = body.get("index")
+        if not conv_id or index is None:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        if context_data is None:
+            context_data = store.load(conv_id, user_id=user_id) or []
+        if index < 0 or index >= len(context_data):
+            # Index from overlay may target messages if context was compacted;
+            # fall back to messages list
+            msgs = store.load(conv_id, user_id=user_id) or []
+            if 0 <= index < len(msgs):
+                msgs.pop(index)
+                store.save(conv_id, msgs, user_id=user_id)
+                deserialized = self._deserialize_messages(msgs)
+                estimated = self._estimate_tokens(deserialized)
+                flowfile.set_content(json.dumps({
+                    "ok": True,
+                    "message_count": len(msgs),
+                    "token_estimate": estimated,
+                }).encode())
+                return [flowfile]
+            flowfile.set_content(json.dumps({
+                "error": f"Index {index} out of range (0-{len(context_data)-1}). "
+                         "The context may have changed â€” please refresh.",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data.pop(index)
+        _ctx_save(conv_id, context_data)
+        deserialized = self._deserialize_messages(context_data)
+        estimated = self._estimate_tokens(deserialized)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message_count": len(context_data),
+            "token_estimate": estimated,
+        }).encode())
+        return [flowfile]
+
+    if action == "replace_context":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        new_context = body.get("context", [])
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        for msg in new_context:
+            if "role" not in msg or "content" not in msg:
+                flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+        _ctx_save(conv_id, new_context)
+        deserialized = self._deserialize_messages(new_context)
+        estimated = self._estimate_tokens(deserialized)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message_count": len(new_context),
+            "token_estimate": estimated,
+        }).encode())
+        return [flowfile]
+
+    if action == "add_context_message":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        role = body.get("role", "user")
+        content = body.get("content", "")
+        index = body.get("index")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        if context_data is None:
+            context_data = store.load(conv_id, user_id=user_id) or []
+        msg = {"role": role, "content": content}
+        if index is not None:
+            context_data.insert(index, msg)
+        else:
+            context_data.append(msg)
+        _ctx_save(conv_id, context_data)
+        deserialized = self._deserialize_messages(context_data)
+        estimated = self._estimate_tokens(deserialized)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message_count": len(context_data),
+            "token_estimate": estimated,
+        }).encode())
+        return [flowfile]
+
+    if action == "restart_from":
+        conv_id = body.get("conversation_id", "")
+        _rf_agent = body.get("agent_name", "")
+        keep_last = int(body.get("keep_last", 5))
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        _rf_msgs = store.load(conv_id, user_id=user_id)
+        if not _rf_msgs:
+            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        def _do_restart():
+            deserialized = self._deserialize_messages(_rf_msgs)
+            system_msgs = [m for m in deserialized if m.role == "system"]
+            non_system = [m for m in deserialized if m.role != "system"]
+            if keep_last == 0:
+                new_context = system_msgs
+            else:
+                kept = non_system[-keep_last:] if len(non_system) > keep_last else non_system
+                new_context = system_msgs + kept
+            serialized_ctx = self._serialize_messages(new_context)
+            store.save_agent_context(conv_id, _rf_agent, serialized_ctx)
+            return {"kept_messages": len(new_context) - len(system_msgs),
+                    "agent": _rf_agent or "shared"}
+
+        return self._run_bg_context_op(conv_id, "restart_from", _do_restart, flowfile)
+
+    if action == "delete_message":
+        conv_id = body.get("conversation_id", "")
+        msg_index = body.get("index")
+        if not conv_id or msg_index is None:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or index"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        deleted = store.delete_message(conv_id, int(msg_index), user_id=user_id)
+        flowfile.set_content(json.dumps({
+            "deleted": deleted, "conversation_id": conv_id,
+            "message_count": store.message_count(conv_id),
+        }).encode())
+        return [flowfile]
+
+    return None

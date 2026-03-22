@@ -4542,6 +4542,45 @@ class AgentLoopTask(BaseTask):
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
+        if action == "list_service_types":
+            from core import ServiceFactory
+            types = []
+            for stype in sorted(ServiceFactory.list_types()):
+                try:
+                    cls = ServiceFactory.get(stype)
+                    types.append({
+                        "type": stype,
+                        "name": getattr(cls, "NAME", stype),
+                        "description": getattr(cls, "DESCRIPTION", ""),
+                    })
+                except Exception:
+                    types.append({"type": stype, "name": stype, "description": ""})
+            flowfile.set_content(json.dumps({"service_types": types}).encode())
+            return [flowfile]
+
+        if action == "get_service_schema":
+            svc_type = body.get("service_type", "")
+            if not svc_type:
+                flowfile.set_content(json.dumps({"error": "Missing service_type"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+            try:
+                from core import ServiceFactory
+                cls = ServiceFactory.get(svc_type)
+                instance = object.__new__(cls)
+                instance.config = {}
+                schema = instance.get_parameter_schema()
+                flowfile.set_content(json.dumps({
+                    "type": svc_type,
+                    "name": getattr(cls, "NAME", svc_type),
+                    "description": getattr(cls, "DESCRIPTION", ""),
+                    "parameters": schema,
+                }).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+                flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
         if action == "service_install":
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
@@ -4554,19 +4593,21 @@ class AgentLoopTask(BaseTask):
                         "error": "Usage: /service install <type> <name> [key=val,...]",
                     }).encode())
                     return [flowfile]
-                # Parse config_str: "key=val,key2=val2" → dict
-                config = {}
-                if config_str:
+                # Accept config as dict or as "key=val,key2=val2" string
+                config = body.get("config", {})
+                if not config and config_str:
                     for pair in config_str.split(","):
                         pair = pair.strip()
                         if "=" in pair:
                             k, v = pair.split("=", 1)
                             config[k.strip()] = v.strip()
+                description = body.get("description", "")
                 sdef = registry.install(
                     user_id=user_id,
                     service_id=svc_name,
                     service_type=svc_type,
                     config=config,
+                    description=description,
                 )
                 flowfile.set_content(json.dumps({
                     "installed": True, "id": svc_name, "type": svc_type,

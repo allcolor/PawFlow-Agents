@@ -52,9 +52,14 @@ def _api_call(server_url, method, path, body=None, session_token=""):
 
 
 def generate_relay_id(username: str, directory: str) -> str:
-    """Generate a stable relay ID from username + directory."""
-    h = hashlib.sha256(f"{username}:{directory}".encode()).hexdigest()[:8]
-    return f"cli_{username}_{h}"
+    """Generate a stable relay ID from username + directory.
+
+    Format: fs_{username}_{sha256(username:normalized_dir)[:8]}
+    Consistent across PawCode CLI, VSCode extension, and Python relay.
+    """
+    normalized = str(Path(directory).resolve())
+    h = hashlib.sha256(f"{username}:{normalized}".encode()).hexdigest()[:8]
+    return f"fs_{username}_{h}"
 
 
 class RelayThread:

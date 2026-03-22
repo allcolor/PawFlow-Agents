@@ -245,7 +245,17 @@ class AgentPollerMixin:
                 # Thought key: conv::thought::agent_name
                 _thought_agent = entry_key.rsplit("::", 1)[-1]
             else:
-                _thought_agent = ""
+                # Resolve from active_resources
+                _ar = store.get_extra(cid, "active_resources") or {}
+                _thought_agent = _ar.get("agent", "")
+
+            if not _thought_agent:
+                logger.error(f"[BUG] Poller entry '{entry_key}' has no agent name! "
+                             f"reason={reason}, conv={cid[:8]}. "
+                             f"This should never happen — a schedule was created without agent.")
+                with self._active_lock:
+                    self._active_thoughts.discard(entry_key)
+                continue
 
             # Skip if this agent already has a thought running
             with self._active_lock:

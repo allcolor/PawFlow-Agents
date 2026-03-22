@@ -591,6 +591,9 @@ class AgentStreamingMixin:
                 _parent_cid = conversation_id.split("::task::")[0]
                 store.append_messages(_parent_cid, transcript_serialized,
                                        ttl=conv_ttl, user_id=user_id)
+            # Update known count so the finally-block pending check
+            # doesn't mistake our own flushed messages for new user input
+            ctx["_last_known_msg_count"] = store.message_count(conversation_id)
             new_messages = []
 
         # Persist the user message immediately so it's never lost

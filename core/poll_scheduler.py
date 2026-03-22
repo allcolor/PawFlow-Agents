@@ -143,10 +143,27 @@ class PollScheduler:
             with open(_SCHEDULE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if isinstance(data, list):
+                now = time.time()
+                loaded = 0
+                stale = 0
                 for entry in data:
                     actual_key = entry.get("key") or entry.get("conversation_id")
-                    if actual_key:
-                        self._schedules[actual_key] = entry
+                    if not actual_key:
+                        continue
+                    # Purge entries that are very old (>24h past due)
+                    recheck_at = entry.get("recheck_at", 0)
+                    if recheck_at and recheck_at < now - 86400:
+                        stale += 1
+                        continue
+                    # Purge entries with no conversation_id
+                    if not entry.get("conversation_id"):
+                        stale += 1
+                        continue
+                    self._schedules[actual_key] = entry
+                    loaded += 1
+                if stale:
+                    self._save()  # persist the cleanup
+                    logger.info(f"[poll_scheduler] Purged {stale} stale entries")
             logger.info(f"[poll_scheduler] Loaded {len(self._schedules)} scheduled rechecks")
         except Exception as e:
             logger.error(f"[poll_scheduler] Failed to load schedule: {e}")

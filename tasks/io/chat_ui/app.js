@@ -4293,7 +4293,7 @@ async function cmdUsage() {
 
 async function cmdLinkTelegram(tgId, botToken) {
   try {
-    const payload = { action: 'link_telegram', telegram_user_id: tgId };
+    const payload = { action: 'link_account', provider: 'telegram', provider_id: tgId };
     if (botToken) { payload.bot_token = botToken; }
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
@@ -4315,7 +4315,7 @@ async function cmdUnlinkTelegram() {
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'unlink_telegram' }),
+      body: JSON.stringify({ action: 'unlink_account', provider: 'telegram' }),
     });
     const data = await resp.json();
     if (data.unlinked) { addMsg('system', 'Telegram account unlinked.'); }
@@ -4327,7 +4327,7 @@ async function cmdLinkStatus() {
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_links' }),
+      body: JSON.stringify({ action: 'list_linked_accounts' }),
     });
     const data = await resp.json();
     const links = data.links || {};

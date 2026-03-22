@@ -21,7 +21,7 @@ from tasks.ai.actions.tools_exec import _handle_tools_exec
 from tasks.ai.actions.media import _handle_media
 from tasks.ai.actions.files_fs import _handle_files_fs
 from tasks.ai.actions.misc import _handle_misc
-from tasks.ai.actions.telegram import _handle_telegram
+from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 from tasks.ai.actions.usage import _handle_usage
 
@@ -39,7 +39,7 @@ _ACTION_HANDLERS = [
     _handle_media,
     _handle_files_fs,
     _handle_misc,
-    _handle_telegram,
+    _handle_account_linking,
     _handle_memory_prompts,
     _handle_usage,
 ]

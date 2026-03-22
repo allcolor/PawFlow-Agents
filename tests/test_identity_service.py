@@ -258,8 +258,8 @@ class TestTelegramConvCommands(unittest.TestCase):
         self.assertIn("not found", content)
 
 
-class TestAgentLoopLinkActions(unittest.TestCase):
-    """Test link_telegram / unlink_telegram / get_links actions."""
+class TestAgentLoopAccountLinking(unittest.TestCase):
+    """Test link_account / unlink_account / get_links actions."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
@@ -283,10 +283,10 @@ class TestAgentLoopLinkActions(unittest.TestCase):
         result = task.execute(ff)
         return json.loads(result[0].get_content().decode("utf-8"))
 
-    def test_link_telegram(self):
+    def test_link_account_telegram(self):
         resp = self._action({
-            "action": "link_telegram",
-            "telegram_user_id": "123456",
+            "action": "link_account", "provider": "telegram",
+            "provider_id": "123456",
         })
         self.assertTrue(resp.get("linked"))
         self.assertEqual(
@@ -294,34 +294,34 @@ class TestAgentLoopLinkActions(unittest.TestCase):
             "alice@test.com",
         )
 
-    def test_link_telegram_no_auth(self):
+    def test_link_account_telegram_no_auth(self):
         resp = self._action({
-            "action": "link_telegram",
-            "telegram_user_id": "123456",
+            "action": "link_account", "provider": "telegram",
+            "provider_id": "123456",
         }, user_id="")
         self.assertIn("error", resp)
 
-    def test_link_telegram_conflict(self):
+    def test_link_account_telegram_conflict(self):
         self.ids.link("bob@test.com", "telegram", "123456")
         resp = self._action({
-            "action": "link_telegram",
-            "telegram_user_id": "123456",
+            "action": "link_account", "provider": "telegram",
+            "provider_id": "123456",
         })
         self.assertIn("error", resp)
 
-    def test_unlink_telegram(self):
+    def test_unlink_account_telegram(self):
         self.ids.link("alice@test.com", "telegram", "123456")
-        resp = self._action({"action": "unlink_telegram"})
+        resp = self._action({"action": "unlink_account", "provider": "telegram"})
         self.assertTrue(resp.get("unlinked"))
         self.assertIsNone(self.ids.resolve_user("telegram", "123456"))
 
     def test_get_links(self):
         self.ids.link("alice@test.com", "telegram", "123456")
-        resp = self._action({"action": "get_links"})
+        resp = self._action({"action": "list_linked_accounts"})
         self.assertEqual(resp["links"]["telegram"], "123456")
 
     def test_get_links_empty(self):
-        resp = self._action({"action": "get_links"})
+        resp = self._action({"action": "list_linked_accounts"})
         self.assertEqual(resp["links"], {})
 
 

@@ -22,23 +22,41 @@ export async function activate(context: vscode.ExtensionContext) {
   relay = new RelayManager(context);
   statusBar = new StatusBarProvider();
 
-  // Try cached auth
-  const session = await auth.getSession(serverUrl);
+  // Try cached auth — validate token before using it
+  let session = await auth.getSession(serverUrl);
   if (session) {
     apiClient = new AgentAPIClient(serverUrl, session.token);
     apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
-    sseClient = new SSEClient(serverUrl, session.token);
-    statusBar.setConnected(session.username);
 
-    // Auto-start relay
-    if (config.get<boolean>('autoRelay', true)) {
-      const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-      if (workspaceDir) {
-        try {
-          await relay.start(apiClient, session.username, workspaceDir,
-                            config.get<boolean>('allowExec', true));
-        } catch (e: any) {
-          vscode.window.showWarningMessage(`PawFlow relay failed: ${e.message}`);
+    // Validate token with a lightweight API call
+    const check = await apiClient.sendAction('get_usage');
+    if ((check as any)._auth_expired) {
+      // Cached token expired — force re-login before continuing
+      console.log('[PawFlow] Cached token expired, triggering login...');
+      try {
+        session = await auth.login(serverUrl);
+        apiClient.setToken(session.token);
+      } catch {
+        // Login failed or cancelled — continue without auth
+        apiClient = undefined;
+        session = null;
+      }
+    }
+
+    if (session && apiClient) {
+      sseClient = new SSEClient(serverUrl, session.token);
+      statusBar.setConnected(session.username);
+
+      // Auto-start relay
+      if (config.get<boolean>('autoRelay', true)) {
+        const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (workspaceDir) {
+          try {
+            await relay.start(apiClient, session.username, workspaceDir,
+                              config.get<boolean>('allowExec', true));
+          } catch (e: any) {
+            vscode.window.showWarningMessage(`PawFlow relay failed: ${e.message}`);
+          }
         }
       }
     }

@@ -62,9 +62,16 @@ class ServeLoginTask(BaseTask):
         # If single OAuth provider and no builtin → auto-redirect
         oauth_providers = [p for p in providers if p["is_oauth"]]
         has_builtin = any(p["name"] == "builtin" for p in providers)
+        # Find oauth_service for state generation (shared with callback)
+        _oauth_svc = None
+        for svc in self._services.values():
+            if hasattr(svc, 'generate_state') and hasattr(svc, 'provider'):
+                _oauth_svc = svc
+                break
+
         if len(oauth_providers) == 1 and not has_builtin:
             provider = oauth_providers[0]
-            state = auth_svc.generate_state(provider["name"])
+            state = _oauth_svc.generate_state(metadata={"provider": provider["name"]}) if _oauth_svc else auth_svc.generate_state(provider["name"])
             redirect_uri = self._build_redirect_uri(flowfile, callback)
             p = auth_svc.get_provider(provider["name"])
             url = p.get_authorize_url(state, redirect_uri)
@@ -95,10 +102,20 @@ class ServeLoginTask(BaseTask):
         has_builtin = any(p["name"] == "builtin" for p in providers)
         oauth_providers = [p for p in providers if p["is_oauth"]]
 
+        # Find oauth_service for state generation (shared with callback)
+        oauth_svc = None
+        for svc in self._services.values():
+            if hasattr(svc, 'generate_state') and hasattr(svc, 'provider'):
+                oauth_svc = svc
+                break
+
         # Build OAuth buttons
         buttons_html = ""
         for p in oauth_providers:
-            state = auth_svc.generate_state(p["name"])
+            if oauth_svc:
+                state = oauth_svc.generate_state(metadata={"provider": p["name"]})
+            else:
+                state = auth_svc.generate_state(p["name"])
             provider_obj = auth_svc.get_provider(p["name"])
             url = provider_obj.get_authorize_url(state, redirect_uri)
             icon = p.get("icon", "")

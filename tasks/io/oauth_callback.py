@@ -291,12 +291,16 @@ class OAuthCallbackTask(BaseTask):
         if not code:
             return [self._error_response(flowfile, 400, "Missing authorization code")]
 
-        # Validate state → get provider name
-        state_data = auth_svc.validate_state(state)
+        # Validate state via oauth_service (same instance that generated it)
+        state_data = oauth_service.validate_state(state)
+        if state_data is False or state_data is None:
+            # Fallback: try auth_svc (in case state was generated there)
+            state_data = auth_svc.validate_state(state)
         if not state_data:
             return [self._error_response(flowfile, 403, "Invalid or expired state token")]
 
-        provider_name = state_data.get("provider", "")
+        # Extract provider from state metadata
+        provider_name = state_data.get("provider", "") if isinstance(state_data, dict) else ""
         if not provider_name:
             return [self._error_response(flowfile, 400, "No provider in state")]
 

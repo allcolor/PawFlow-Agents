@@ -174,7 +174,14 @@ class OAuthRedirectTask(BaseTask):
             scheme = "https" if flowfile.get_attribute("http.header.X-Forwarded-Proto") == "https" else "http"
             redirect_uri = f"{scheme}://{host}/auth/callback"
 
-        state = auth_svc.generate_state(provider_name)
+        # Generate state via oauth_service (shared with callback) — not auth_svc
+        # because auth_svc may be a different instance after service restart
+        for svc in (self._services or {}).values():
+            if hasattr(svc, 'generate_state') and hasattr(svc, 'provider'):
+                state = svc.generate_state(metadata={"provider": provider_name})
+                break
+        else:
+            state = auth_svc.generate_state(provider_name)
         url = provider.get_authorize_url(state, redirect_uri)
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")

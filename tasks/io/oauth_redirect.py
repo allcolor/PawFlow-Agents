@@ -51,6 +51,10 @@ class OAuthRedirectTask(BaseTask):
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
+        # PawFlow auth gateway: serve login page instead of redirect
+        if getattr(service, 'provider', '') == 'pawflow':
+            return self._serve_login_page(flowfile, service)
+
         # Check for relay_callback in query string
         import urllib.parse as _urlparse
         query_string = flowfile.get_attribute("http.query") or ""
@@ -71,6 +75,103 @@ class OAuthRedirectTask(BaseTask):
         flowfile.set_attribute("http.response.header.Location", authorize_url)
         flowfile.set_attribute("http.response.header.Cache-Control", "no-cache, no-store")
 
+        return [flowfile]
+
+    def _serve_login_page(self, flowfile, oauth_service):
+        """Serve PawFlow login page or handle login sub-routes."""
+        # Find the AuthGateway service
+        auth_svc = None
+        for svc in (self._services or {}).values():
+            if hasattr(svc, 'get_enabled_providers'):
+                auth_svc = svc
+                break
+        if not auth_svc:
+            flowfile.set_content(b'AuthGateway service not configured')
+            flowfile.set_attribute("http.response.status", "500")
+            return [flowfile]
+
+        path = flowfile.get_attribute("http.path") or "/auth/login"
+        method = flowfile.get_attribute("http.method") or "GET"
+        ip = flowfile.get_attribute("http.remote.addr") or ""
+
+        # POST /auth/login/builtin — username/password auth
+        if method == "POST" and path.endswith("/builtin"):
+            return self._handle_builtin_login(flowfile, auth_svc, ip)
+
+        # GET /auth/login/{provider} — OAuth redirect for specific provider
+        parts = path.rstrip("/").split("/")
+        if len(parts) >= 4 and parts[-1] not in ("login", ""):
+            provider_name = parts[-1]
+            return self._handle_oauth_redirect(flowfile, auth_svc, provider_name, ip)
+
+        # GET /auth/login — serve the login page
+        from tasks.io.serve_login import ServeLoginTask
+        login_task = ServeLoginTask({
+            "auth_service_id": "auth",
+            "callback_path": oauth_service.redirect_uri.split("://", 1)[-1].split("/", 1)[-1] if "://" in oauth_service.redirect_uri else "/auth/callback",
+        })
+        login_task._services = self._services or {}
+        return login_task.execute(flowfile)
+
+    def _handle_builtin_login(self, flowfile, auth_svc, ip):
+        """Handle POST /auth/login/builtin — username/password."""
+        import urllib.parse
+        body = flowfile.get_content().decode("utf-8", errors="replace")
+        params = urllib.parse.parse_qs(body)
+        username = params.get("username", [""])[0]
+        password = params.get("password", [""])[0]
+
+        result = auth_svc.authenticate_builtin(username, password, ip=ip)
+        if not result.success:
+            # Re-serve login page with error
+            error_html = f'<div class="error">{result.error}</div>'
+            flowfile.set_content(f'<html><body><script>history.back()</script>{error_html}</body></html>'.encode())
+            flowfile.set_attribute("http.response.status", "401")
+            flowfile.set_attribute("http.response.header.Content-Type", "text/html")
+            return [flowfile]
+
+        # Success — create session and redirect to chat
+        from core.security import SecurityManager
+        sm = SecurityManager.get_instance()
+        token = sm.create_session(result.username, result.roles[0] if result.roles else "viewer",
+                                   provider="builtin")
+        flowfile.set_content(b"")
+        flowfile.set_attribute("http.response.status", "302")
+        flowfile.set_attribute("http.response.header.Location", "/chat")
+        flowfile.set_attribute("http.response.header.Set-Cookie",
+                               f"session={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=86400")
+        return [flowfile]
+
+    def _handle_oauth_redirect(self, flowfile, auth_svc, provider_name, ip):
+        """Handle GET /auth/login/{provider} — redirect to OAuth provider."""
+        allowed, wait = auth_svc.check_rate_limit(ip)
+        if not allowed:
+            flowfile.set_content(f"Too many attempts. Wait {wait}s.".encode())
+            flowfile.set_attribute("http.response.status", "429")
+            return [flowfile]
+
+        provider = auth_svc.get_provider(provider_name)
+        if not provider:
+            flowfile.set_content(f"Provider '{provider_name}' not available".encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+
+        # Build redirect URI from the oauth service config
+        redirect_uri = ""
+        for svc in (self._services or {}).values():
+            if hasattr(svc, 'redirect_uri'):
+                redirect_uri = svc.redirect_uri
+                break
+        if not redirect_uri:
+            host = flowfile.get_attribute("http.header.Host") or "localhost:9090"
+            scheme = "https" if flowfile.get_attribute("http.header.X-Forwarded-Proto") == "https" else "http"
+            redirect_uri = f"{scheme}://{host}/auth/callback"
+
+        state = auth_svc.generate_state(provider_name)
+        url = provider.get_authorize_url(state, redirect_uri)
+        flowfile.set_content(b"")
+        flowfile.set_attribute("http.response.status", "302")
+        flowfile.set_attribute("http.response.header.Location", url)
         return [flowfile]
 
     def _build_inline_service(self):

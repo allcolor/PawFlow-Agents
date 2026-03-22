@@ -91,6 +91,10 @@ class OAuthCallbackTask(BaseTask):
         if service is None:
             return [self._error_response(flowfile, 500, "OAuth service not configured")]
 
+        # PawFlow auth gateway: delegate to gateway for code exchange + provisioning
+        if getattr(service, 'provider', '') == 'pawflow':
+            return self._handle_pawflow_callback(flowfile, service)
+
         # Extract code and state from query parameters
         code = flowfile.get_attribute("http.query.code") or ""
         state = flowfile.get_attribute("http.query.state") or ""
@@ -265,6 +269,78 @@ class OAuthCallbackTask(BaseTask):
         flowfile.set_attribute("http.auth.principal", session.username)
         flowfile.set_attribute("http.auth.roles", session.role.value)
 
+        return [flowfile]
+
+    def _handle_pawflow_callback(self, flowfile, oauth_service):
+        """Handle callback when using PawFlow auth gateway."""
+        # Find the AuthGateway service
+        auth_svc = None
+        for svc in (self._services or {}).values():
+            if hasattr(svc, 'authenticate_oauth'):
+                auth_svc = svc
+                break
+        if not auth_svc:
+            return [self._error_response(flowfile, 500, "AuthGateway not configured")]
+
+        # Extract code and state
+        query = flowfile.get_attribute("http.query") or ""
+        params = dict(urllib.parse.parse_qsl(query))
+        code = params.get("code", "")
+        state = params.get("state", "")
+
+        if not code:
+            return [self._error_response(flowfile, 400, "Missing authorization code")]
+
+        # Validate state → get provider name
+        state_data = auth_svc.validate_state(state)
+        if not state_data:
+            return [self._error_response(flowfile, 403, "Invalid or expired state token")]
+
+        provider_name = state_data.get("provider", "")
+        if not provider_name:
+            return [self._error_response(flowfile, 400, "No provider in state")]
+
+        # Exchange code via the gateway (handles provisioning + rate limiting)
+        ip = flowfile.get_attribute("http.remote.addr") or ""
+        redirect_uri = oauth_service.redirect_uri
+        result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
+
+        if not result.success:
+            return [self._error_response(flowfile, 403, result.error)]
+
+        # Create session
+        from core.security import SecurityManager
+        sm = SecurityManager.get_instance()
+        token = sm.create_session(
+            result.username,
+            result.roles[0] if result.roles else "viewer",
+            provider=result.provider,
+        )
+
+        # Store refresh token in session metadata (per-provider)
+        if result.refresh_token:
+            try:
+                from core.oauth_token_store import OAuthTokenStore
+                OAuthTokenStore.instance().save_tokens(
+                    user_id=result.username,
+                    provider=result.provider,
+                    access_token=result.access_token,
+                    refresh_token=result.refresh_token,
+                    expires_at=result.token_expires_at,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to persist refresh token: {e}")
+
+        # Redirect to chat
+        redirect = self.config.get("success_redirect", "/chat")
+        cookie = self.config.get("cookie_name", "pawflow_token")
+        max_age = int(self.config.get("cookie_max_age", 28800))
+
+        flowfile.set_content(b"")
+        flowfile.set_attribute("http.response.status", "302")
+        flowfile.set_attribute("http.response.header.Location", redirect)
+        flowfile.set_attribute("http.response.header.Set-Cookie",
+                               f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
         return [flowfile]
 
     def _get_oauth_service(self, flowfile: FlowFile):

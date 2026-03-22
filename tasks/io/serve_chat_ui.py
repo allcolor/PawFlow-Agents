@@ -32,13 +32,27 @@ def _load_chat_html() -> str:
 
     chat_ui_dir = Path(__file__).parent / "chat_ui"
     template = (chat_ui_dir / "template.html").read_text(encoding="utf-8")
-    js = (chat_ui_dir / "app.js").read_text(encoding="utf-8")
+
+    # Load JS modules in order (they share a single global scope)
+    _JS_MODULES = [
+        "i18n.js", "state.js", "conversations.js", "messages.js",
+        "active_agents.js", "typing.js", "sse.js", "local_files.js",
+        "dialogs.js", "commands.js", "context_editor.js", "memories.js",
+        "secrets.js", "files_panel.js", "attachments.js", "resources.js",
+        "services.js", "file_viewer.js", "file_explorer.js",
+    ]
+    js_parts = []
+    for mod in _JS_MODULES:
+        mod_path = chat_ui_dir / mod
+        if mod_path.exists():
+            js_parts.append(f"// ── {mod} ──\n" + mod_path.read_text(encoding="utf-8"))
+    js = "\n".join(js_parts)
 
     # Inject JS into the template placeholder
     html = template.replace("/* JS_PLACEHOLDER */", js)
     _cached_html = html
-    logger.info("Chat UI loaded: %d chars (%d template + %d JS)",
-                len(html), len(template), len(js))
+    logger.info("Chat UI loaded: %d chars (%d template + %d JS from %d modules)",
+                len(html), len(template), len(js), len(js_parts))
     return html
 
 

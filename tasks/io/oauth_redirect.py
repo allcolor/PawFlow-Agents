@@ -106,9 +106,16 @@ class OAuthRedirectTask(BaseTask):
 
         # GET /auth/login — serve the login page
         from tasks.io.serve_login import ServeLoginTask
+        # Extract callback path from redirect_uri or use default
+        _ruri = oauth_service.redirect_uri
+        if "://" in _ruri and "${" not in _ruri:
+            from urllib.parse import urlparse as _urlparse_cb
+            _cb_path = _urlparse_cb(_ruri).path or "/auth/callback"
+        else:
+            _cb_path = "/auth/callback"
         login_task = ServeLoginTask({
             "auth_service_id": "auth",
-            "callback_path": oauth_service.redirect_uri.split("://", 1)[-1].split("/", 1)[-1] if "://" in oauth_service.redirect_uri else "/auth/callback",
+            "callback_path": _cb_path,
         })
         login_task._services = self._services or {}
         return login_task.execute(flowfile)

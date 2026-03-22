@@ -203,14 +203,21 @@ class ContinuousFlowExecutor:
         from core.expression import resolve_expression
         params = self._parameter_context._params if self._parameter_context else {}
 
+        def _resolve_deep(obj):
+            """Recursively resolve expressions in nested dicts/lists."""
+            if isinstance(obj, str) and '${' in obj:
+                resolved = resolve_expression(obj, parameters=params)
+                if isinstance(resolved, str) and '${' in resolved:
+                    resolved = resolve_expression(resolved, parameters=params)
+                return resolved
+            elif isinstance(obj, dict):
+                return {k: _resolve_deep(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [_resolve_deep(v) for v in obj]
+            return obj
+
         for service_id, service in flow.services.items():
-            for key, value in list(service.config.items()):
-                if isinstance(value, str) and '${' in value:
-                    resolved = resolve_expression(value, parameters=params)
-                    # Second pass for cascading expressions
-                    if isinstance(resolved, str) and '${' in resolved:
-                        resolved = resolve_expression(resolved, parameters=params)
-                    service.config[key] = resolved
+            service.config = _resolve_deep(service.config)
 
     @property
     def task_states(self) -> TaskStateManager:

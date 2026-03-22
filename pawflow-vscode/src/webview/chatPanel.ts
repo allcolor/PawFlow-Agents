@@ -1123,38 +1123,55 @@ function showEditServiceForm(serviceId) {
   _pendingEdit = { rtype: '_service', name: serviceId };
 }
 
-function _renderServiceEditForm(serviceId, config) {
+var _editSvcId = '';
+
+function _renderServiceEditForm(serviceId, data) {
+  _editSvcId = serviceId;
+  var config = data.config || data;
+  var svcType = data.service_type || '';
   var overlay = document.getElementById('panelOverlay');
   overlay.className = 'panel-overlay visible';
 
-  var html = '<div class="panel-header"><h4>Edit Service: ' + esc(serviceId) + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
-  html += '<div style="padding:4px">';
-  var keys = Object.keys(config || {});
-  for (var i = 0; i < keys.length; i++) {
-    var k = keys[i];
-    if (k.startsWith('_')) continue;
-    var v = String(config[k]);
-    var isSecret = /key|secret|token|password/i.test(k);
-    html += '<label style="' + _cfLabelStyle + '">' + esc(k) + '</label>';
-    html += '<input id="se-' + k + '" type="' + (isSecret ? 'password' : 'text') + '" value="' + esc(v) + '" style="' + _cfInputStyle + '">';
-  }
+  var html = '<div class="panel-header"><h4>Edit: ' + esc(serviceId) + (svcType ? ' (' + esc(svcType) + ')' : '') + '</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+  html += '<div style="padding:4px"><div id="cf-svc-params"><div style="color:var(--vscode-descriptionForeground);font-size:11px">Loading schema...</div></div>';
   html += '<div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">'
     + '<button onclick="closePanel()" style="background:var(--vscode-button-secondaryBackground);color:var(--vscode-button-secondaryForeground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Cancel</button>'
-    + '<button onclick="submitServiceEdit(\\'' + esc(serviceId) + '\\')" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Save</button>'
+    + '<button onclick="submitServiceEdit()" style="background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;padding:4px 12px;border-radius:3px;cursor:pointer;font-size:12px">Save</button>'
     + '</div></div>';
   overlay.innerHTML = html;
+
+  // Load schema then render with current values
+  if (svcType) {
+    // Stash config for when schema arrives
+    (window as any)._editSvcConfig = config;
+    vscode.postMessage({ type: 'command', command: 'get_service_schema', arg: JSON.stringify({ service_type: svcType }) });
+  } else {
+    // No type known — fall back to raw key/value
+    _renderSvcSchemaParams({}, config);
+  }
 }
 
-function submitServiceEdit(serviceId) {
-  var inputs = document.querySelectorAll('[id^="se-"]');
-  var config = {};
-  inputs.forEach(function(el) {
-    config[el.id.slice(3)] = el.value;
-  });
+function submitServiceEdit() {
+  if (!_editSvcId) return;
+  var config: Record<string, any> = {};
+  if (_cachedSvcSchema) {
+    for (var pname in _cachedSvcSchema) {
+      var el = document.getElementById('cf-sp-' + pname);
+      if (!el) continue;
+      var pdef = _cachedSvcSchema[pname];
+      if (pdef.type === 'boolean') config[pname] = (el as HTMLInputElement).checked;
+      else if (pdef.type === 'integer') config[pname] = parseInt((el as HTMLInputElement).value) || 0;
+      else if (pdef.type === 'float') config[pname] = parseFloat((el as HTMLInputElement).value) || 0;
+      else if (pdef.type === 'map' || pdef.type === 'object') {
+        try { config[pname] = JSON.parse((el as HTMLTextAreaElement).value || '{}'); } catch { config[pname] = {}; }
+      } else config[pname] = (el as HTMLInputElement).value || '';
+    }
+  }
   vscode.postMessage({ type: 'command', command: 'update_service',
-    arg: JSON.stringify({ service_id: serviceId, config: config }) });
+    arg: JSON.stringify({ service_id: _editSvcId, config: config }) });
   closePanel();
-  statusEl.textContent = 'Service "' + serviceId + '" updated';
+  statusEl.textContent = 'Service "' + _editSvcId + '" updated';
+  _editSvcId = '';
   setTimeout(function() { statusEl.textContent = ''; }, 3000);
   setTimeout(function() { loadResourcesPanel(); }, 500);
 }
@@ -1321,12 +1338,18 @@ function showCreateForm(rtype) {
       + '<label style="' + _cfLabelStyle + '">Scope</label>'
       + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>';
   } else if (rtype === 'services') {
-    fields = '<label style="' + _cfLabelStyle + '">Service type</label>'
-      + '<input id="cf-svctype" style="' + _cfInputStyle + '" placeholder="filesystem">'
+    title = 'Install Service';
+    fields = '<label style="' + _cfLabelStyle + '">Service type (loading...)</label>'
+      + '<select id="cf-svctype" onchange="_onSvcTypeChange()" style="' + _cfInputStyle + '"><option value="">Loading...</option></select>'
       + '<label style="' + _cfLabelStyle + '">Service name</label>'
       + '<input id="cf-name" style="' + _cfInputStyle + '" placeholder="my_service">'
-      + '<label style="' + _cfLabelStyle + '">Config (key=value, one per line)</label>'
-      + '<textarea id="cf-config" style="' + _cfTextareaStyle + '" placeholder="port=9091\\ntoken=abc123\\nmode=readwrite"></textarea>';
+      + '<label style="' + _cfLabelStyle + '">Description (optional)</label>'
+      + '<input id="cf-desc" style="' + _cfInputStyle + '">'
+      + '<div id="cf-svc-params"></div>';
+    // Load service types async
+    setTimeout(function() {
+      vscode.postMessage({ type: 'command', command: 'list_service_types' });
+    }, 50);
   } else if (rtype === 'flows') {
     title = 'Deploy Flow';
     fields = '<label style="' + _cfLabelStyle + '">Template (loading...)</label>'
@@ -1402,12 +1425,28 @@ function submitCreateForm(rtype) {
     cmd = 'set_secret';
     params = { key: skey, value: svalue, scope: sscope };
   } else if (rtype === 'services') {
-    var svcType = (document.getElementById('cf-svctype')?.value || '').trim();
-    var svcName = (document.getElementById('cf-name')?.value || '').trim();
-    var config = (document.getElementById('cf-config')?.value || '').trim();
+    var svcType = (document.getElementById('cf-svctype') as HTMLSelectElement)?.value || '';
+    var svcName = (document.getElementById('cf-name') as HTMLInputElement)?.value?.trim() || '';
+    var svcDesc = (document.getElementById('cf-desc') as HTMLInputElement)?.value?.trim() || '';
     if (!svcType || !svcName) return;
+    var config: Record<string, any> = {};
+    // Collect schema-based params
+    var paramsDiv = document.getElementById('cf-svc-params');
+    if (paramsDiv && _cachedSvcSchema) {
+      for (var pname in _cachedSvcSchema) {
+        var el = document.getElementById('cf-sp-' + pname);
+        if (!el) continue;
+        var pdef = _cachedSvcSchema[pname];
+        if (pdef.type === 'boolean') config[pname] = (el as HTMLInputElement).checked;
+        else if (pdef.type === 'integer') config[pname] = parseInt((el as HTMLInputElement).value) || 0;
+        else if (pdef.type === 'float') config[pname] = parseFloat((el as HTMLInputElement).value) || 0;
+        else if (pdef.type === 'map' || pdef.type === 'object') {
+          try { config[pname] = JSON.parse((el as HTMLTextAreaElement).value || '{}'); } catch { config[pname] = {}; }
+        } else config[pname] = (el as HTMLInputElement).value || '';
+      }
+    }
     cmd = 'service_install';
-    params = { service_type: svcType, service_name: svcName, config_str: config.split('\\n').join(',') };
+    params = { service_type: svcType, service_name: svcName, description: svcDesc, config: config };
   } else if (rtype === 'flows') {
     var templateId = (document.getElementById('cf-template')?.value || '').trim();
     var flowScope = (document.getElementById('cf-scope')?.value || 'user');
@@ -1431,6 +1470,51 @@ function submitCreateForm(rtype) {
 
 function closePanel() {
   document.getElementById('panelOverlay').className = 'panel-overlay';
+}
+
+// ── Service schema-based form ─────────────────────────────────────
+var _cachedSvcSchema: Record<string, any> | null = null;
+
+function _onSvcTypeChange() {
+  var sel = document.getElementById('cf-svctype') as HTMLSelectElement;
+  var svcType = sel ? sel.value : '';
+  var paramsDiv = document.getElementById('cf-svc-params');
+  if (!paramsDiv || !svcType) { if (paramsDiv) paramsDiv.innerHTML = ''; return; }
+  paramsDiv.innerHTML = '<div style="color:var(--vscode-descriptionForeground);font-size:11px;padding:4px">Loading schema...</div>';
+  vscode.postMessage({ type: 'command', command: 'get_service_schema', arg: JSON.stringify({ service_type: svcType }) });
+}
+
+function _renderSvcSchemaParams(schema: Record<string, any>, values: Record<string, any> = {}) {
+  _cachedSvcSchema = schema;
+  var paramsDiv = document.getElementById('cf-svc-params');
+  if (!paramsDiv) return;
+  var html = '';
+  for (var pname in schema) {
+    var p = schema[pname];
+    var val = values[pname] !== undefined ? values[pname] : (p.default !== undefined ? p.default : '');
+    var req = p.required === true ? ' *' : '';
+    var desc = p.description ? '<div style="font-size:10px;color:var(--vscode-descriptionForeground)">' + p.description + '</div>' : '';
+    html += '<label style="' + _cfLabelStyle + '">' + pname + req + '</label>' + desc;
+    if (p.type === 'boolean') {
+      html += '<div style="margin:2px 0 8px"><input type="checkbox" id="cf-sp-' + pname + '"' + (val ? ' checked' : '') + '></div>';
+    } else if (p.type === 'select' && p.options) {
+      html += '<select id="cf-sp-' + pname + '" style="' + _cfInputStyle + '">';
+      for (var opt of p.options) {
+        html += '<option value="' + opt + '"' + (opt === val ? ' selected' : '') + '>' + opt + '</option>';
+      }
+      html += '</select>';
+    } else if (p.type === 'integer' || p.type === 'float') {
+      html += '<input type="number" id="cf-sp-' + pname + '" value="' + val + '" style="' + _cfInputStyle + '">';
+    } else if (p.type === 'map' || p.type === 'object' || p.type === 'textarea') {
+      var textVal = typeof val === 'object' ? JSON.stringify(val, null, 2) : String(val);
+      html += '<textarea id="cf-sp-' + pname + '" style="' + _cfTextareaStyle + '">' + textVal + '</textarea>';
+    } else if (p.sensitive) {
+      html += '<input type="password" id="cf-sp-' + pname + '" value="' + val + '" style="' + _cfInputStyle + '">';
+    } else {
+      html += '<input id="cf-sp-' + pname + '" value="' + val + '" style="' + _cfInputStyle + '">';
+    }
+  }
+  paramsDiv.innerHTML = html;
 }
 
 function loadResourcesPanel() {
@@ -1486,6 +1570,30 @@ function renderPanelResult(action, data) {
       var lbl = sel.previousElementSibling;
       if (lbl) lbl.textContent = 'Template';
     }
+    return true;
+  }
+
+  // Populate service type dropdown
+  if (action === 'list_service_types') {
+    var svcSel = document.getElementById('cf-svctype') as HTMLSelectElement;
+    if (svcSel) {
+      var types = data.service_types || [];
+      svcSel.innerHTML = types.map(function(t: any) {
+        return '<option value="' + esc(t.type) + '">' + esc(t.name || t.type) + '</option>';
+      }).join('') || '<option>(no types)</option>';
+      var svcLbl = svcSel.previousElementSibling;
+      if (svcLbl) svcLbl.textContent = 'Service type';
+      // Auto-load schema for first type
+      if (types.length) _onSvcTypeChange();
+    }
+    return true;
+  }
+
+  // Render service schema params (install or edit)
+  if (action === 'get_service_schema') {
+    var editConfig = (window as any)._editSvcConfig || {};
+    _renderSvcSchemaParams(data.parameters || {}, editConfig);
+    (window as any)._editSvcConfig = null;
     return true;
   }
 

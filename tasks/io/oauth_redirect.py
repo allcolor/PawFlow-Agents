@@ -140,8 +140,9 @@ class OAuthRedirectTask(BaseTask):
         # Success — create session and redirect to chat
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()
-        token = sm.create_session(result.username, result.roles[0] if result.roles else "viewer",
-                                   provider="builtin")
+        user = sm.get_user(result.username)
+        session = sm._create_session(user)
+        token = session.session_id
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", "/chat")

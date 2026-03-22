@@ -315,11 +315,11 @@ class OAuthCallbackTask(BaseTask):
         # Create session
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()
-        token = sm.create_session(
-            result.username,
-            result.roles[0] if result.roles else "viewer",
-            provider=result.provider,
-        )
+        user = sm.get_user(result.username)
+        if not user:
+            return [self._error_response(flowfile, 500, "User created but not found")]
+        session = sm._create_session(user)
+        token = session.session_id
 
         # Store refresh token in session metadata (per-provider)
         if result.refresh_token:

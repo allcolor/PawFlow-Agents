@@ -260,6 +260,32 @@ async function loadResources() {
         html += _sectionFooter();
       }
     } catch (_) {}
+
+    // Linked Accounts section
+    try {
+      const linksResp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'list_linked_accounts', conversation_id: conversationId }),
+      });
+      const linksData = await linksResp.json();
+      const links = linksData.links || {};
+      const linkKeys = Object.keys(links);
+      html += '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:#888;border-top:1px solid #222;">';
+      html += '<b>Linked Accounts</b>';
+      if (linkKeys.length) {
+        linkKeys.forEach(provider => {
+          html += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
+            <span style="font-size:11px;color:#e0e0e0;">${escapeHtml(provider)}</span>
+            <span style="font-size:10px;color:#666;">${escapeHtml(links[provider])}</span>
+            <span style="cursor:pointer;font-size:10px;color:#e94560;" title="Unlink" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
+          </div>`;
+        });
+      } else {
+        html += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
+      }
+      html += '</div>';
+    } catch (_la) {}
+
     if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
     el.innerHTML = html;
   } catch (e) {

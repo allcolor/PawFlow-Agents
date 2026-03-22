@@ -151,73 +151,71 @@ class ValidateSessionAuthTask(BaseTask):
     def _try_silent_refresh(self, flowfile: FlowFile, sm) -> object:
         """Try to silently refresh the OAuth session using stored refresh tokens.
 
+        1. Find the user from the expired/invalid session token
+        2. Find their OAuth provider via IdentityService
+        3. Use AuthGateway to refresh the access token
+        4. Create a new session
+
         Returns a new Session on success, or None on failure.
         """
         try:
-            from core.oauth_token_store import OAuthTokenStore
-            token_store = OAuthTokenStore.instance()
-
-            # We need to find the user — check all known users with tokens
-            # The cookie is invalid/expired, so we can't get user from session.
-            # But we can extract user from the old (expired) session if it existed,
-            # or from stored tokens.
+            # Find username from the old (expired) session
             cookie_name = self.config.get("cookie_name", "pawflow_token")
             old_token = self._extract_token(flowfile, cookie_name)
-
-            # Check if there's an expired session we can identify the user from
             username = None
-            provider = None
             for sid, sess in list(sm._sessions.items()):
                 if sid == old_token:
                     username = sess.username
                     break
 
-            # Also check recently expired sessions that may have been cleaned up
-            if not username:
-                # Try all users who have OAuth tokens stored
-                import os
-                users_dir = os.path.join("config", "users")
-                if os.path.isdir(users_dir):
-                    for user_dir in os.listdir(users_dir):
-                        tokens_path = os.path.join(users_dir, user_dir, "oauth_tokens.json")
-                        if os.path.exists(tokens_path):
-                            # Try refresh for this user
-                            for prov in ["google", "github", "microsoft"]:
-                                new_access = token_store.get_access_token(user_dir, prov)
-                                if new_access:
-                                    username = user_dir
-                                    provider = prov
-                                    break
-                        if username:
-                            break
-
             if not username:
                 return None
 
-            # Determine provider if not found yet
-            if not provider:
-                for prov in ["google", "github", "microsoft"]:
-                    if token_store.has_tokens(username, prov):
-                        new_access = token_store.get_access_token(username, prov)
-                        if new_access:
-                            provider = prov
-                            break
-
-            if not provider:
+            # Find which provider this user is linked to
+            from core.identity_service import IdentityService
+            links = IdentityService.instance().get_links(username)
+            if not links:
                 return None
 
-            # Re-create session for this user
-            user = sm._users.get(username)
-            if not user:
+            # Try refresh via AuthGateway for each linked provider
+            auth_svc = None
+            for svc in (getattr(self, '_services', {}) or {}).values():
+                if hasattr(svc, 'refresh_token'):
+                    auth_svc = svc
+                    break
+
+            if not auth_svc:
                 return None
 
-            session = sm._create_session(user,
-                ip_address=flowfile.get_attribute("http.remote.addr") or "",
-            )
+            from core.oauth_token_store import OAuthTokenStore
+            token_store = OAuthTokenStore.instance()
 
-            if session:
-                logger.info(f"Silent token refresh: renewed session for {username}")
-            return session
+            for provider_name in links:
+                if provider_name in ("builtin",):
+                    continue  # builtin doesn't have refresh tokens
+                refresh_token = token_store.get_refresh_token(username, provider_name)
+                if not refresh_token:
+                    continue
+
+                result = auth_svc.refresh_token(provider_name, refresh_token)
+                if result.success and result.access_token:
+                    # Save new tokens
+                    token_store.save_tokens(
+                        user_id=username, provider=provider_name,
+                        access_token=result.access_token,
+                        refresh_token=result.refresh_token or refresh_token,
+                        expires_in=int(result.token_expires_at - __import__('time').time())
+                            if result.token_expires_at else 3600,
+                    )
+                    # Create new session
+                    user = sm.get_user(username)
+                    if user:
+                        session = sm._create_session(user,
+                            ip_address=flowfile.get_attribute("http.remote.addr") or "")
+                        logger.info(f"Silent refresh: renewed session for {username} via {provider_name}")
+                        return session
+
+            return None
 
         except Exception as e:
             logger.debug(f"Silent refresh failed: {e}")

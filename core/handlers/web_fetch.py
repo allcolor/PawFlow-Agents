@@ -38,20 +38,19 @@ class ExecuteScriptHandler(ToolHandler):
     def name(self) -> str:
         return "execute_script"
 
+    _user_id: str = ""
+
     @property
     def description(self) -> str:
         return (
-            "Execute Python code ON THE SERVER (sandboxed) and return the result. "
-            "This does NOT run on the user's machine. "
-            "To run commands on the user's filesystem, use filesystem(action=exec) instead. "
+            "Execute Python code and return the result. "
+            "By default runs ON THE SERVER in a sandbox. "
+            "Set destination to a filesystem service to execute on the user's machine "
+            "via the relay (e.g. destination='fs:workspace'). "
             "File I/O uses URL schemes: "
             "open('filestore://name.zip', 'wb') to create downloadable files, "
-            "open('filestore://file_id_or_name', 'rb') to read from FileStore, "
             "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
-            "Plain open('file.csv', 'w') uses in-memory sandbox. "
-            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc. "
-            "For web dev: use filesystem(action=exec) to run local servers and build scripts, "
-            "and browser_action tool for screenshots and visual verification."
+            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc."
         )
 
     @property
@@ -63,22 +62,36 @@ class ExecuteScriptHandler(ToolHandler):
                     "type": "string",
                     "description": (
                         "Python code to execute. Can be an expression ('2+2') "
-                        "or statements. Use 'result' variable for output. "
-                        "open('file.csv', 'w') writes to a virtual sandbox "
-                        "and returns a download URL."
+                        "or statements. Use 'result' variable for output."
+                    ),
+                },
+                "destination": {
+                    "type": "string",
+                    "description": (
+                        "Where to execute: 'server' (default, sandbox) or "
+                        "filesystem service name (e.g. 'fs:workspace') to run via relay"
                     ),
                 },
             },
             "required": ["code"],
         }
 
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        from core.sandbox import execute_sandboxed
+    def set_user_id(self, uid: str):
+        self._user_id = uid
 
+    def execute(self, arguments: Dict[str, Any]) -> str:
         code = arguments.get("code", "")
+        destination = arguments.get("destination", "server")
         if not code:
             return "Error: no code provided"
 
+        # If destination is a filesystem service, delegate to relay exec
+        _dest = destination.strip().lower()
+        if _dest and _dest not in ("server", "sandbox", "local", ""):
+            return self._execute_remote(code, _dest)
+
+        # Default: execute in server sandbox
+        from core.sandbox import execute_sandboxed
         try:
             with self._vfs_lock:
                 output, created_files, _ = execute_sandboxed(
@@ -94,14 +107,53 @@ class ExecuteScriptHandler(ToolHandler):
             output = "Script executed (no 'result' variable set)"
 
         if created_files:
-            output += "\n\nFiles created (use show_file in a SEPARATE turn, not the same batch):\n"
+            output += "\n\nFiles created:\n"
             for url in created_files:
-                # Extract file_id from URL for easy reference
                 import re as _re_fid
                 _m = _re_fid.search(r'/files/([a-f0-9]+)/', url)
                 _fid = _m.group(1) if _m else ""
                 output += f"- {url}" + (f" (file_id: {_fid})" if _fid else "") + "\n"
         return output
+
+    def _execute_remote(self, code: str, service_name: str) -> str:
+        """Execute code on a remote filesystem service via relay."""
+        svc_name = service_name.replace("fs:", "", 1) if service_name.startswith("fs:") else service_name
+        svc = None
+        if self._fs_resolver:
+            svc = self._fs_resolver(svc_name)
+        if not svc:
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
+            except Exception:
+                pass
+        if not svc:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                svc = UserServiceRegistry.get_instance().get_live_instance(
+                    self._user_id, svc_name)
+            except Exception:
+                pass
+        if not svc:
+            return f"Error: filesystem service '{svc_name}' not found"
+        try:
+            result = svc.execute_command({
+                "action": "exec",
+                "command": f"python -c {repr(code)}",
+            })
+            if isinstance(result, dict):
+                stdout = result.get("stdout", "")
+                stderr = result.get("stderr", "")
+                output = stdout
+                if stderr:
+                    output += f"\nSTDERR: {stderr}"
+                exit_code = result.get("exit_code", 0)
+                if exit_code:
+                    output += f"\n(exit code: {exit_code})"
+                return output or "Script executed (no output)"
+            return str(result)
+        except Exception as e:
+            return f"Error executing on '{svc_name}': {e}"
 
 
 class ReadFileHandler(ToolHandler):
@@ -115,12 +167,14 @@ class ReadFileHandler(ToolHandler):
     def name(self) -> str:
         return "read_file"
 
+    _user_id: str = ""
+
     @property
     def description(self) -> str:
         return (
-            "Read a file from the sandbox. You can read any file that was "
-            "previously created by create_file or open() in execute_script. "
-            "Provide the filename (e.g. 'report.csv') or file ID."
+            "Read a file. By default reads from the server FileStore. "
+            "Set source to a filesystem service name to read from the user's "
+            "workspace (e.g. source='fs:workspace')."
         )
 
     @property
@@ -130,42 +184,37 @@ class ReadFileHandler(ToolHandler):
             "properties": {
                 "path": {
                     "type": "string",
-                    "description": "Filename (e.g. 'data.csv') or file ID to read from the sandbox",
+                    "description": "Filename, file ID, or path to read",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Where to read from: 'filestore' (default) or filesystem service name (e.g. 'fs:workspace')",
                 },
             },
             "required": ["path"],
         }
 
+    def set_user_id(self, uid: str):
+        self._user_id = uid
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         path = arguments.get("path", "")
+        source = arguments.get("source", "filestore")
         if not path:
             return "Error: no path provided"
 
-        from core.file_store import FileStore
-        store = FileStore.instance()
-        import os
-
-        name = os.path.basename(path) or path
-
-        # Try direct file_id lookup first
-        result = store.get(name)
-        if result:
-            content = result[1].decode("utf-8", errors="replace")
+        from core.storage_resolver import StorageResolver
+        resolver = StorageResolver(user_id=self._user_id)
+        try:
+            data, _ = resolver.read(source, path)
+            content = data.decode("utf-8", errors="replace")
             if len(content) > 10000:
                 content = content[:10000] + "\n... (truncated)"
             return content
-
-        # Try filename match
-        for f in store.list_files():
-            if f["filename"] == name:
-                result = store.get(f["file_id"])
-                if result:
-                    content = result[1].decode("utf-8", errors="replace")
-                    if len(content) > 10000:
-                        content = content[:10000] + "\n... (truncated)"
-                    return content
-
-        return f"Error: file '{name}' not found in sandbox"
+        except FileNotFoundError:
+            return f"Error: file '{path}' not found (source={source})"
+        except Exception as e:
+            return f"Error reading '{path}' from {source}: {e}"
 
 
 class WebSearchHandler(ToolHandler):

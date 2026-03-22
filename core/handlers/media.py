@@ -58,6 +58,14 @@ class ImageGenerationHandler(ToolHandler):
                     "type": "integer",
                     "description": "Image height in pixels (optional)",
                 },
+                "destination": {
+                    "type": "string",
+                    "description": "Where to save: 'filestore' (default) or filesystem service (e.g. 'fs:workspace'). When using a filesystem, also provide 'path'.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path when destination is a filesystem service (e.g. 'images/hero.png')",
+                },
             },
             "required": ["prompt"],
         }
@@ -75,7 +83,6 @@ class ImageGenerationHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        # Resolve service dynamically
         if not self._service_resolver:
             return "Error: no image service resolver configured"
         service, error = self._service_resolver()
@@ -86,26 +93,29 @@ class ImageGenerationHandler(ToolHandler):
         if not prompt:
             return "Error: no prompt provided"
 
-        try:
-            result = service.generate(**arguments)
-            # result = {"image_bytes": bytes, "content_type": str}
+        destination = arguments.get("destination", "filestore")
 
-            from core.file_store import FileStore
+        try:
+            gen_args = {k: v for k, v in arguments.items()
+                        if k not in ("destination", "path")}
+            result = service.generate(**gen_args)
+
             ct = result["content_type"]
             ext = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(
                 ct.split(";")[0].strip(), "png"
             )
-            filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
-            file_id = FileStore.instance().store(
-                filename, result["image_bytes"], content_type=ct,
-                user_id=self._user_id
-            )
-            download_url = f"{self._base_url}/files/{file_id}/{filename}"
-            return (
-                f"Image generated: {download_url}\n"
-                f"file_id: {file_id}\n"
-                f"To save to filesystem: use filesystem(action=write_file, path=<target>, file_id={file_id}, service=<fs>)"
-            )
+            filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+
+            from core.storage_resolver import StorageResolver
+            resolver = StorageResolver(user_id=self._user_id)
+            write_result = resolver.write(destination, filename,
+                                           result["image_bytes"], ct)
+
+            if write_result.get("file_id"):
+                url = f"{self._base_url}/files/{write_result['file_id']}/{filename}"
+                return f"Image generated: {url}\nfile_id: {write_result['file_id']}"
+            else:
+                return f"Image generated and saved to {write_result.get('destination', destination)}: {write_result.get('path', filename)}"
 
         except Exception as e:
             return f"Error generating image: {e}"
@@ -160,6 +170,14 @@ class VideoGenerationHandler(ToolHandler):
                     "type": "integer",
                     "description": "Video height in pixels (optional)",
                 },
+                "destination": {
+                    "type": "string",
+                    "description": "Where to save: 'filestore' (default) or filesystem service (e.g. 'fs:workspace'). When using a filesystem, also provide 'path'.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path when destination is a filesystem service",
+                },
             },
             "required": ["prompt"],
         }
@@ -177,7 +195,6 @@ class VideoGenerationHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time as _time
 
-        # Resolve service dynamically
         if not self._service_resolver:
             return "Error: no video service resolver configured"
         service, error = self._service_resolver()
@@ -188,26 +205,30 @@ class VideoGenerationHandler(ToolHandler):
         if not prompt:
             return "Error: no prompt provided"
 
-        try:
-            result = service.generate(**arguments)
-            # result = {"video_bytes": bytes, "content_type": str}
+        destination = arguments.get("destination", "filestore")
 
-            from core.file_store import FileStore
+        try:
+            gen_args = {k: v for k, v in arguments.items()
+                        if k not in ("destination", "path")}
+            result = service.generate(**gen_args)
+
             ct = result["content_type"]
             ext = {
                 "video/mp4": "mp4", "video/webm": "webm",
                 "video/quicktime": "mov", "video/x-msvideo": "avi",
             }.get(ct.split(";")[0].strip(), "mp4")
-            filename = f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
-            file_id = FileStore.instance().store(
-                filename, result["video_bytes"], content_type=ct,
-                user_id=self._user_id
-            )
-            download_url = f"{self._base_url}/files/{file_id}/{filename}"
-            return (
-                f"Video generated: {download_url}\n"
-                f"file_id: {file_id}"
-            )
+            filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+
+            from core.storage_resolver import StorageResolver
+            resolver = StorageResolver(user_id=self._user_id)
+            write_result = resolver.write(destination, filename,
+                                           result["video_bytes"], ct)
+
+            if write_result.get("file_id"):
+                url = f"{self._base_url}/files/{write_result['file_id']}/{filename}"
+                return f"Video generated: {url}\nfile_id: {write_result['file_id']}"
+            else:
+                return f"Video generated and saved to {write_result.get('destination', destination)}: {write_result.get('path', filename)}"
 
         except Exception as e:
             return f"Error generating video: {e}"

@@ -30,10 +30,10 @@ class CreateFileHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Create a downloadable file on the SERVER and return its URL. "
-            "Use this for files the user should preview/download in the chat. "
-            "WARNING: if you want to write a file to the user's FILESYSTEM, "
-            "use filesystem(action=write_file) instead — it's direct and avoids an extra copy."
+            "Create a file and return its location. "
+            "By default writes to the server FileStore (downloadable URL). "
+            "Set destination to a filesystem service name to write directly "
+            "to the user's workspace (e.g. destination='fs:workspace')."
         )
 
     @property
@@ -53,6 +53,10 @@ class CreateFileHandler(ToolHandler):
                     "type": "string",
                     "description": "MIME type (default: auto-detected from extension)",
                 },
+                "destination": {
+                    "type": "string",
+                    "description": "Where to write: 'filestore' (default, server), or filesystem service name (e.g. 'fs:workspace')",
+                },
             },
             "required": ["filename", "content"],
         }
@@ -64,25 +68,24 @@ class CreateFileHandler(ToolHandler):
         self._user_id = user_id
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        from core.file_store import FileStore
-
         filename = arguments.get("filename", "file.txt")
         content = arguments.get("content", "")
         content_type = arguments.get("content_type", "")
+        destination = arguments.get("destination", "filestore")
 
         if not content_type:
             content_type = self._guess_content_type(filename)
 
-        store = FileStore.instance()
-        file_id = store.store(filename, content.encode("utf-8"),
-                              content_type=content_type,
-                              user_id=self._user_id)
+        from core.storage_resolver import StorageResolver
+        resolver = StorageResolver(user_id=self._user_id)
+        result = resolver.write(destination, filename,
+                                content.encode("utf-8"), content_type)
 
-        url = f"{self._base_url}/files/{file_id}/{filename}"
-        return (
-            f"File created: {url}\n"
-            f"file_id: {file_id}"
-        )
+        if result.get("file_id"):
+            url = f"{self._base_url}/files/{result['file_id']}/{filename}"
+            return f"File created: {url}\nfile_id: {result['file_id']}"
+        else:
+            return f"File written to {result.get('destination', destination)}: {result.get('path', filename)}"
 
     @staticmethod
     def _guess_content_type(filename: str) -> str:

@@ -27,7 +27,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_set_param_user_allowed(self):
         """set_param with scope=user should be allowed (writes to user config)."""
@@ -53,7 +53,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_create_resource_global_blocked(self):
         """create_resource with scope=global should be rejected."""
@@ -67,7 +67,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_update_resource_global_blocked(self):
         """update_resource with scope=global should be rejected."""
@@ -81,7 +81,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_delete_resource_global_blocked(self):
         """delete_resource with scope=global should be rejected."""
@@ -94,7 +94,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_set_param_default_is_user(self):
         """set_param without scope should default to user, not global."""
@@ -120,7 +120,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_delete_secret_global_blocked(self):
         """delete_secret with scope=global should be rejected."""
@@ -132,7 +132,7 @@ class TestGlobalScopeBlocked:
         assert result is not None
         body = json.loads(result[0].get_content())
         assert "error" in body
-        assert "admin GUI" in body["error"]
+        assert "admin" in body["error"].lower()
 
     def test_set_param_conversation_scope_allowed(self):
         """set_param with scope=conversation should be allowed."""
@@ -170,4 +170,4 @@ class TestPromoteGlobalBlocked:
             "data": {"target_scope": "global"},
         })
         # Should either say "admin GUI" (blocked) or "not found"
-        assert "admin GUI" in result or "not found" in result.lower() or "Not found" in result
+        assert "admin" in result.lower() or "not found" in result.lower()

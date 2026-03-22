@@ -226,6 +226,18 @@ IMPORTANT:
 - **Relations** link tasks: from to with type (success/failure/all)
 - **FlowFile** is the data unit flowing between tasks (content bytes + attributes dict)
 
+## Storage (source/destination)
+Tools that read/write files support `source` and `destination` params:
+- `"filestore"` (default): server FileStore (temporary, downloadable URLs)
+- `"fs:<service>"`: filesystem service (relay to user's machine)
+- `"<service>"`: shorthand for `"fs:<service>"`
+
+Examples:
+- `create_file(filename="report.csv", content="...", destination="fs:workspace")` - write directly to user's workspace
+- `read_file(path="src/main.py", source="fs:workspace")` - read from user's filesystem
+- `generate_image(prompt="...", destination="fs:workspace", path="assets/hero.png")` - render directly to filesystem
+- `execute_script(code="...", destination="fs:workspace")` - execute on user's machine via relay
+
 ## Flow Scope (runtime dependencies)
 A flow declares its runtime scope in the JSON: `"scope": "independent" | "user" | "conversation"`
 - **independent** (default): no runtime dependencies

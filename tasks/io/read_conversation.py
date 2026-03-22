@@ -45,13 +45,13 @@ class ReadConversationTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        conv_id = self.config.get("conversation_id", "")
+        conv_id = flowfile.get_attribute("conversation_id") or self.config.get("conversation_id", "")
         limit = int(self.config.get("limit", 20))
         fmt = self.config.get("format", "json")
 
         if not conv_id or "${" in conv_id:
             flowfile.set_content(json.dumps({
-                "error": "No conversation_id — requires conversation-scoped flow",
+                "error": "No conversation_id - set via FlowFile attribute or flow parameter",
             }).encode())
             return [flowfile]
 

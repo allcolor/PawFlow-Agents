@@ -150,7 +150,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         value = body.get("value", "")
         scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
-        if scope == "global":
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot write global parameters from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
@@ -177,7 +177,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         key = body.get("key", "").strip()
         scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
-        if scope == "global":
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot delete global parameters from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
@@ -204,7 +204,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         value = body.get("value", "")
         scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
-        if scope == "global":
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot write global secrets from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
@@ -233,7 +233,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         key = body.get("key", "").strip()
         scope = body.get("scope", "user")
         conv_id = body.get("conversation_id", "")
-        if scope == "global":
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Cannot delete global secrets from chat. Use the admin GUI."}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]

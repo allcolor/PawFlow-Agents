@@ -440,8 +440,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rname = body.get("name", "").strip()
         data = body.get("data", {})
         scope = body.get("scope", "user")
-        if scope == "global":
-            flowfile.set_content(json.dumps({"error": "Cannot update global resources from chat. Use the admin GUI."}).encode())
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
         if not rtype or not rname:
@@ -463,8 +463,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rname = body.get("name", "").strip()
         data = body.get("data", {})
         scope = body.get("scope", "user")
-        if scope == "global":
-            flowfile.set_content(json.dumps({"error": "Cannot create global resources from chat. Use the admin GUI."}).encode())
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
         if not rtype or not rname:
@@ -487,8 +487,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rtype = body.get("resource_type", "")
         rname = body.get("name", "").strip()
         scope = body.get("scope", "user")
-        if scope == "global":
-            flowfile.set_content(json.dumps({"error": "Cannot delete global resources from chat. Use the admin GUI."}).encode())
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
         if not rtype or not rname:

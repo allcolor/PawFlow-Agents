@@ -173,6 +173,9 @@ def register_all_tasks():
     # Login page
     from tasks.io.serve_login import ServeLoginTask
 
+    # Create conversation (for user-scoped flows)
+    from tasks.io.create_conversation import CreateConversationTask
+
     # OAuth2 tasks
     from tasks.io.oauth_redirect import OAuthRedirectTask
     from tasks.io.oauth_callback import OAuthCallbackTask

@@ -64,7 +64,7 @@ class SpawnAgentTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        conv_id = self.config.get("conversation_id", "")
+        conv_id = flowfile.get_attribute("conversation_id") or self.config.get("conversation_id", "")
         user_id = self.config.get("user_id", "")
         agent_name = self.config.get("agent_name", "")
         mode = self.config.get("mode", "async")
@@ -72,7 +72,7 @@ class SpawnAgentTask(BaseTask):
 
         if not conv_id or "${" in conv_id:
             flowfile.set_content(json.dumps({
-                "error": "No conversation_id — requires conversation-scoped flow",
+                "error": "No conversation_id - set via FlowFile attribute or flow parameter",
             }).encode())
             return [flowfile]
 

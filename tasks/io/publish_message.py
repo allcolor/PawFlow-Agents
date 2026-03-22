@@ -51,10 +51,11 @@ class PublishMessageTask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        conv_id = self.config.get("conversation_id", "")
+        # FlowFile attribute takes priority (set by createConversation or upstream)
+        conv_id = flowfile.get_attribute("conversation_id") or self.config.get("conversation_id", "")
         if not conv_id or "${" in conv_id:
             flowfile.set_content(json.dumps({
-                "error": "No conversation_id — this task requires a conversation-scoped flow",
+                "error": "No conversation_id — set via FlowFile attribute or flow parameter",
             }).encode())
             return [flowfile]
 

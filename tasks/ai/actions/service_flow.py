@@ -230,8 +230,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "delete_service":
         sid = body.get("service_id", "")
         scope = body.get("scope", "user")
-        if scope == "global":
-            flowfile.set_content(json.dumps({"error": "Cannot delete global services from chat"}).encode())
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         try:
             from gui.services.user_service_registry import UserServiceRegistry
@@ -314,9 +314,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         deploy_scope = body.get("scope", "user")
         params = body.get("parameters", {})
         conv_id = body.get("conversation_id", "")
-        if deploy_scope == "global":
+        if deploy_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
-                {"error": "Cannot deploy global flows from chat \u2014 use admin GUI"}).encode())
+                {"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         if not template_id:
             flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
@@ -386,9 +386,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not iid:
             flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
             return [flowfile]
-        if target_scope == "global":
+        if target_scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps(
-                {"error": "Cannot promote to global from chat - use admin GUI"}).encode())
+                {"error": "Requires admin role for global scope"}).encode())
             return [flowfile]
         try:
             from gui.services.deployment_registry import DeploymentRegistry

@@ -35,6 +35,7 @@ def _register_all_services():
     import services.distributed_cache        # noqa: F401
     import services.llm_connection           # noqa: F401
     import services.oauth_provider_service   # noqa: F401
+    import services.auth_gateway_service    # noqa: F401
     import services.telegram_bot_service    # noqa: F401
     try:
         import services.discord_bot_service   # noqa: F401
@@ -168,6 +169,9 @@ def register_all_tasks():
     from tasks.io.spawn_agent import SpawnAgentTask
     from tasks.io.conv_task_ops import AssignTaskToAgentTask, CancelAgentTaskTask
     from tasks.io.read_conversation import ReadConversationTask
+
+    # Login page
+    from tasks.io.serve_login import ServeLoginTask
 
     # OAuth2 tasks
     from tasks.io.oauth_redirect import OAuthRedirectTask

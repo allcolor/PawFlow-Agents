@@ -45,6 +45,12 @@ _PROVIDER_PRESETS = {
         "userinfo_url": "https://graph.microsoft.com/v1.0/me",
         "scope": "openid email profile",
     },
+    "pawflow": {
+        "authorize_url": "/auth/login",
+        "token_url": "",  # handled internally by AuthGateway
+        "userinfo_url": "",
+        "scope": "",
+    },
     "google_drive": {
         "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
         "token_url": "https://oauth2.googleapis.com/token",
@@ -69,7 +75,7 @@ class OAuthProviderService(BaseService):
         return {
             "provider": {
                 "type": "select", "required": False, "default": "google",
-                "options": ["google", "github", "microsoft", "google_drive", "microsoft_onedrive", "custom"],
+                "options": ["pawflow", "google", "github", "microsoft", "google_drive", "microsoft_onedrive", "custom"],
                 "description": "OAuth2 provider (preset or custom)",
             },
             "client_id": {

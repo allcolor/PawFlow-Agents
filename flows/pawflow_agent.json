@@ -27,11 +27,26 @@
     "oauth": {
       "type": "oauthProvider",
       "parameters": {
-        "provider": "${flow.parameters.oauth_provider}",
-        "client_id": "${flow.parameters.oauth_client_id}",
-        "client_secret": "${flow.parameters.oauth_client_secret}",
-        "redirect_uri": "${flow.parameters.oauth_redirect_uri}",
-        "default_role": "${flow.parameters.oauth_default_role}"
+        "provider": "pawflow",
+        "redirect_uri": "${flow.parameters.oauth_redirect_uri}"
+      }
+    },
+    "auth": {
+      "type": "authGateway",
+      "parameters": {
+        "providers": {
+          "builtin": {"enabled": true},
+          "google": {
+            "enabled": true,
+            "client_id": "${flow.parameters.oauth_client_id}",
+            "client_secret": "${flow.parameters.oauth_client_secret}"
+          }
+        },
+        "auto_provision": {
+          "rules": [],
+          "default_action": "deny"
+        },
+        "session_ttl": 86400
       }
     }
   },

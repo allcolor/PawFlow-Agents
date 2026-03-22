@@ -27,6 +27,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from core import ServiceFactory
+from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
@@ -310,21 +311,21 @@ class FilesystemWSListener:
 
 # ── Filesystem Service ────────────────────────────────────────────
 
-class FilesystemService:
+class FilesystemService(BaseService):
     """Filesystem service backed by a reverse WebSocket relay."""
 
     TYPE = "filesystem"
     VERSION = "2.0.0"
     NAME = "Filesystem (Relay)"
+    DESCRIPTION = "Remote filesystem access via WebSocket relay"
 
     def __init__(self, config: Dict[str, Any]):
-        self.config = config
+        super().__init__(config)
         self._port = int(config.get("port", 9091))
         self._path = config.get("path", "/ws/relay")
         self._token = config.get("token", "")
         self._mode = config.get("mode", "readwrite")
         self._service_id = config.get("_service_id", "")
-        self._connection = None
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
 
@@ -337,6 +338,19 @@ class FilesystemService:
         # Pending requests: {request_id: (Event, result_holder)}
         self._pending: Dict[str, tuple] = {}
         self._pending_lock = threading.Lock()
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "port": {"type": "integer", "required": False, "default": 9091,
+                     "description": "WebSocket listener port for relay connections"},
+            "path": {"type": "string", "required": False, "default": "/ws/relay",
+                     "description": "WebSocket endpoint path"},
+            "token": {"type": "string", "required": True, "sensitive": True,
+                      "description": "Authentication token (relay must match)"},
+            "mode": {"type": "select", "required": False, "default": "readwrite",
+                     "options": ["readwrite", "readonly"],
+                     "description": "Access mode for file operations"},
+        }
 
     @property
     def service_id(self) -> str:

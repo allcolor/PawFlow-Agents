@@ -20,6 +20,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 from urllib.parse import urlparse
 
+from core.base_service import BaseService
+from core import ServiceFactory
+
 logger = logging.getLogger(__name__)
 
 _BLOCKED_SCHEMES = {"file", "javascript", "data", "vbscript"}
@@ -33,17 +36,24 @@ class BrowserSession:
     last_activity: float = field(default_factory=time.time)
 
 
-class BrowserService:
-    """Singleton service managing Playwright browser sessions.
+class BrowserService(BaseService):
+    """Browser automation service backed by Playwright.
 
-    All Playwright operations run on a dedicated worker thread
-    (Playwright requires same-thread access).
+    Manages browser sessions per conversation_id. Sessions are reused within
+    a conversation and auto-cleaned after inactivity.
     """
+
+    TYPE = "browser"
+    VERSION = "1.0.0"
+    NAME = "Browser Automation"
+    DESCRIPTION = "Playwright-based browser automation for web scraping and interaction"
 
     _instance: Optional["BrowserService"] = None
     _lock = threading.Lock()
 
-    def __init__(self):
+    def __init__(self, config: Dict[str, Any] = None):
+        config = config or {}
+        super().__init__(config)
         self._sessions: Dict[str, BrowserSession] = {}
         self._session_lock = threading.Lock()
         self._browser = None
@@ -53,20 +63,41 @@ class BrowserService:
         self._started = False
         self._stop_event = threading.Event()
         self._cleanup_thread: Optional[threading.Thread] = None
-        self._timeout = int(os.environ.get("PAWFLOW_BROWSER_TIMEOUT", "300"))
+        self._timeout = int(config.get("timeout",
+                            os.environ.get("PAWFLOW_BROWSER_TIMEOUT", "300")))
 
-        allowed = os.environ.get("PAWFLOW_BROWSER_ALLOWED_DOMAINS", "")
+        allowed = config.get("allowed_domains",
+                             os.environ.get("PAWFLOW_BROWSER_ALLOWED_DOMAINS", ""))
         self._allowed_domains = {d.strip().lower() for d in allowed.split(",") if d.strip()} if allowed else set()
 
-        blocked = os.environ.get("PAWFLOW_BROWSER_BLOCKED_DOMAINS", "")
+        blocked = config.get("blocked_domains",
+                             os.environ.get("PAWFLOW_BROWSER_BLOCKED_DOMAINS", ""))
         self._blocked_domains = {d.strip().lower() for d in blocked.split(",") if d.strip()} if blocked else set()
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "timeout": {"type": "integer", "required": False, "default": 300,
+                        "description": "Session inactivity timeout in seconds"},
+            "allowed_domains": {"type": "string", "required": False, "default": "",
+                                "description": "Comma-separated domain allowlist (empty = all allowed)"},
+            "blocked_domains": {"type": "string", "required": False, "default": "",
+                                "description": "Comma-separated domain blocklist"},
+        }
+
+    def connect(self):
+        """Start the browser worker thread."""
+        self._ensure_started()
+
+    def disconnect(self):
+        """Shutdown the browser and all sessions."""
+        self.shutdown()
 
     @classmethod
     def instance(cls) -> "BrowserService":
         if cls._instance is None:
             with cls._lock:
                 if cls._instance is None:
-                    cls._instance = cls()
+                    cls._instance = cls({})
         return cls._instance
 
     @classmethod
@@ -370,3 +401,9 @@ class BrowserService:
         if self._worker_thread and self._worker_thread.is_alive():
             self._worker_thread.join(timeout=10)
         self._started = False
+
+
+try:
+    ServiceFactory.register(BrowserService)
+except Exception:
+    pass  # Registration may fail if already registered

@@ -249,7 +249,9 @@ class AuthGatewayService(BaseService):
                 if ip:
                     self._rate_limiter.record_failure(ip)
                 return AuthResult(success=False, error="Account disabled")
-            sm.record_login(existing.username)
+            from datetime import datetime
+            existing.last_login = datetime.now().isoformat()
+            sm._save_users()
             if ip:
                 self._rate_limiter.record_success(ip)
             auth_result.user_id = existing.username

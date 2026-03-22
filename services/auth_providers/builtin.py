@@ -56,7 +56,10 @@ class BuiltinAuthProvider(AuthProvider):
             logger.warning(f"[auth:builtin] Bad password for: {username}")
             return AuthResult(success=False, error="Invalid credentials")
 
-        sm.record_login(username)
+        # Update last_login timestamp
+        from datetime import datetime
+        user.last_login = datetime.now().isoformat()
+        sm._save_users()
         logger.info(f"[auth:builtin] Login success: {username}")
         return AuthResult(
             success=True,

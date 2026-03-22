@@ -154,6 +154,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             except json.JSONDecodeError:
                 pass
 
+        # Reply-to context: prepend quoted message to user text
+        _reply_to = body_json.get("reply_to") if body_json else None
+        if _reply_to and isinstance(_reply_to, dict):
+            _reply_agent = _reply_to.get("agent", _reply_to.get("role", ""))
+            _reply_preview = _reply_to.get("text_preview", "")[:200]
+            if _reply_preview:
+                user_text = (
+                    f'[Replying to {_reply_agent}: "{_reply_preview}"]\n\n{user_text}'
+                )
+
         # Telegram multimodal: inject image from attributes
         tg_image = flowfile.get_attribute("telegram.image_base64") or ""
         if tg_image:
@@ -377,6 +387,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             user_source = {"type": "user", "name": user_id or "anonymous"}
             if _target_agent:
                 user_source["target_agent"] = _target_agent
+            if _reply_to:
+                user_source["reply_to"] = _reply_to
             # Also tag btw messages
             _is_btw = body_json.get("btw", False) if body_json else False
             if _is_btw:

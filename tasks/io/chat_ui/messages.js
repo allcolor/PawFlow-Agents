@@ -76,17 +76,31 @@ function addMsg(role, text, extra) {
   const timeStr = msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
 
-  // Action buttons (copy + delete) for all user-visible messages
+  // Action buttons (copy + delete + reply) for all user-visible messages
   let actionsHtml = '';
   if (role === 'user' || role === 'assistant') {
     actionsHtml = '<span class="msg-actions">'
+      + '<button onclick="setReplyTo(this)" title="Reply">\u21A9</button>'
       + '<button onclick="copyMsg(this)" title="Copy">\u{1F4CB}</button>'
       + '<button onclick="deleteMsg(this)" title="Delete">\u{1F5D1}</button>'
       + '</span>';
   }
 
+  // Reply-to quote (if this message is a reply)
+  let replyQuoteHtml = '';
+  if (extra && extra.source && extra.source.reply_to) {
+    const rt = extra.source.reply_to;
+    const rtAgent = rt.agent || rt.role || '';
+    const rtPreview = (rt.text_preview || '').substring(0, 100);
+    if (rtPreview) {
+      const rtIdx = rt.raw_index !== undefined ? rt.raw_index : -1;
+      replyQuoteHtml = '<div class="reply-quote" ' + (rtIdx >= 0 ? 'onclick="scrollToMessage(' + rtIdx + ')"' : '') + '>'
+        + '\u21A9 ' + escapeHtml(rtAgent) + ': "' + escapeHtml(rtPreview) + '"</div>';
+    }
+  }
+
   if (role === 'assistant') {
-    el.innerHTML = actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
+    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool' || role === 'tool_call') {
     el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
   } else if (role === 'tool_result') {
@@ -98,7 +112,7 @@ function addMsg(role, text, extra) {
       el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
     }
   } else if (role === 'user') {
-    el.innerHTML = actionsHtml + timeHtml + badge + escapeHtml(text);
+    el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
     el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);

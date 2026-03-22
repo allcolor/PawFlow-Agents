@@ -131,3 +131,47 @@ function updateDeleteBtn() {
   document.getElementById('filesBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
 }
+// ── Reply-to state ──
+let _replyTo = null;  // {raw_index, role, agent, text_preview}
+
+function setReplyTo(btn) {
+  const msgEl = btn.closest('.msg');
+  if (!msgEl) return;
+  const rawIndex = parseInt(msgEl.dataset.rawIndex || '-1');
+  const rawText = msgEl.dataset.rawText || '';
+  const isUser = msgEl.classList.contains('user');
+  const badge = msgEl.querySelector('.source-badge');
+  const agent = badge ? badge.textContent.trim() : (isUser ? 'User' : 'assistant');
+  _replyTo = { raw_index: rawIndex, role: isUser ? 'user' : 'assistant', agent, text_preview: rawText.substring(0, 200) };
+  // Show reply bar
+  let bar = document.getElementById('replyBar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'replyBar';
+    bar.style.cssText = 'background:#1a1a2e;border-top:1px solid #333;padding:4px 12px;display:flex;align-items:center;gap:8px;font-size:11px;color:#8888aa;';
+    document.querySelector('.input-area').parentNode.insertBefore(bar, document.querySelector('.input-area'));
+  }
+  bar.innerHTML = '\u21A9 <span style="color:#6c5ce7">' + escapeHtml(agent) + '</span>: "'
+    + escapeHtml(rawText.substring(0, 80)) + '..."'
+    + '<span onclick="cancelReply()" style="cursor:pointer;margin-left:auto;color:#e94560;font-size:14px">\u2715</span>';
+  bar.style.display = 'flex';
+  document.getElementById('input').focus();
+}
+
+function cancelReply() {
+  _replyTo = null;
+  const bar = document.getElementById('replyBar');
+  if (bar) bar.style.display = 'none';
+}
+
+function scrollToMessage(rawIndex) {
+  const msgs = document.querySelectorAll('.msg[data-raw-index]');
+  for (const m of msgs) {
+    if (parseInt(m.dataset.rawIndex) === rawIndex) {
+      m.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      m.style.outline = '2px solid #6c5ce7';
+      setTimeout(() => { m.style.outline = ''; }, 2000);
+      return;
+    }
+  }
+}

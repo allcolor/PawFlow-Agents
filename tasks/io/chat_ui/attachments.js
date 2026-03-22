@@ -215,6 +215,7 @@ async function send() {
     if (conversationId) body.conversation_id = conversationId;
     if (attachments.length > 0) body.attachments = attachments;
     if (pendingAgent) { body.pending_agent = pendingAgent; pendingAgent = null; }
+    if (_replyTo) { body.reply_to = _replyTo; cancelReply(); }
     const ttlVal = parseInt(document.getElementById('ttlSelect').value, 10);
     if (ttlVal > 0) body.ttl = ttlVal;
 

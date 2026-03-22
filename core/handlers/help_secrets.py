@@ -226,6 +226,20 @@ IMPORTANT:
 - **Relations** link tasks: from to with type (success/failure/all)
 - **FlowFile** is the data unit flowing between tasks (content bytes + attributes dict)
 
+## Expression Language (EL)
+Expressions ${...} support chainable operations:
+- String: upper, lower, trim, capitalize, title, reverse, length, substr(s,e), replace(old,new), append(s), prepend(s)
+- Conditional: equals(v), not_equals(v), contains(v), starts_with(v), ends_with(v), matches(regex), is_empty, then(v), else(v), default(v)
+- Split/Join: split(sep), join(sep), index(n), first, last, count
+- Encoding: base64_encode, base64_decode, url_encode, url_decode, hash_md5, hash_sha256, to_int, to_float, to_bool
+- JSON: json_get("key.nested")
+- Date: now(fmt), format_date(fmt), add_days(n), timestamp
+- Generators: uuid, uuid_short, random_int(min,max), random_string(n), now(fmt)
+- Syntax: ${scope.key:op1:op2("arg"):op3}
+- Nested: ${global.x:equals("y"):then("A"):else(${global.z:upper})}
+- Generators: ${:uuid}, ${:now("%Y-%m-%d")}
+- Multi-pass: resolved values containing ${...} are re-resolved
+
 ## Storage (source/destination)
 Tools that read/write files support `source` and `destination` params:
 - `"filestore"` (default): server FileStore (temporary, downloadable URLs)

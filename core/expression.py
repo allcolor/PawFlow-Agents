@@ -72,6 +72,39 @@ def _load_user_secrets(username: str) -> Dict[str, str]:
     return values  # Dict[str, ConfigValue]
 
 
+def _substitute_expressions(template: str, resolver_fn) -> str:
+    """Replace ${...} expressions, supporting nested ${...} in arguments.
+
+    Unlike re.sub with [^}]+, this properly handles balanced braces:
+    ${global.x:then(${global.y})} → finds the outer ${...} correctly.
+    """
+    result = []
+    i = 0
+    while i < len(template):
+        if template[i] == '$' and i + 1 < len(template) and template[i + 1] == '{':
+            # Find matching closing brace (balanced)
+            depth = 1
+            j = i + 2
+            while j < len(template) and depth > 0:
+                if template[j] == '{' and j > 0 and template[j - 1] == '$':
+                    depth += 1
+                elif template[j] == '}':
+                    depth -= 1
+                j += 1
+            if depth == 0:
+                inner = template[i + 2:j - 1]
+                resolved = resolver_fn(inner)
+                result.append(str(resolved))
+                i = j
+            else:
+                result.append(template[i])
+                i += 1
+        else:
+            result.append(template[i])
+            i += 1
+    return "".join(result)
+
+
 def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = None,
                        parameters: Optional[Dict[str, Any]] = None,
                        owner: Optional[str] = None,
@@ -310,9 +343,35 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 return clean, scope
         return clean, None
 
+    def _resolve_single(expr_inner):
+        """Resolve a single ${...} expression (for recursive arg resolution)."""
+        m = re.match(r'^\$\{(.+)\}$', expr_inner)
+        if m:
+            return replacer_core(m.group(1))
+        return expr_inner
+
     def replacer(match):
+        return replacer_core(match.group(1))
+
+    def replacer_core(expr):
         nonlocal secrets, variables
-        expr = match.group(1)
+
+        # Parse pipeline operations (e.g. "global.key:upper:equals("X"):then("Y")")
+        from core.expression_pipeline import parse_pipeline, evaluate_pipeline
+        scope_key, operations = parse_pipeline(expr)
+
+        # If pure generator (empty scope_key), evaluate directly
+        if not scope_key and operations:
+            return evaluate_pipeline("", operations, resolve_fn=_resolve_single)
+
+        # Use scope_key for resolution (without pipeline ops)
+        expr = scope_key
+
+        def _return_val(val):
+            """Apply pipeline operations if any, then return."""
+            if operations:
+                return evaluate_pipeline(str(val), operations, resolve_fn=_resolve_single)
+            return val
 
         # Parse :!important modifier
         expr, exact_scope = _parse_important(expr)
@@ -327,7 +386,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             if expr.startswith(sec_prefix):
                 key = expr[len(sec_prefix):]
                 val, found = _cascade_secret(key, exact_scope=exact_scope)
-                return val if found else match.group(0)
+                return _return_val(val) if found else "${" + scope_key + "}"
 
         # secrets.key_name → per-user secrets (legacy agent_secrets, no cascade)
         if expr.startswith('secrets.'):
@@ -336,7 +395,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                 secrets = _load_secrets()
             if key in secrets:
                 resolved = _resolve_value(secrets[key])
-                return match.group(0) if resolved is None else resolved
+                return "${" + scope_key + "}" if resolved is None else _return_val(resolved)
             return match.group(0)
 
         # ── Parameters ──────────────────────────────────────────────────
@@ -351,7 +410,12 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             if expr.startswith(param_prefix):
                 key = expr[len(param_prefix):]
                 val, found = _cascade_param(key, exact_scope=exact_scope)
-                return val if found else match.group(0)
+                if found:
+                    return _return_val(val)
+                # Not found: if has operations (e.g. :default), try with empty
+                if operations:
+                    return evaluate_pipeline("", operations, resolve_fn=_resolve_single)
+                return "${" + scope_key + "}"
 
         # var.key_name (plaintext variables, no cascade)
         if expr.startswith('var.'):
@@ -359,21 +423,35 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             if variables is None:
                 variables = _load_variables()
             if key in variables:
-                return variables[key]
-            return match.group(0)
+                return _return_val(variables[key])
+            return "${" + scope_key + "}"
 
         # env.VAR
         if expr.startswith('env.'):
             var = expr[len('env.'):]
-            return os.environ.get(var, match.group(0))
+            val = os.environ.get(var)
+            if val is not None:
+                return _return_val(val)
+            return "${" + scope_key + "}"
 
         # Attribut du FlowFile
         if expr in attrs:
-            return attrs[expr]
+            val = attrs[expr]
+            if operations:
+                return evaluate_pipeline(val, operations, resolve_fn=_resolve_single)
+            return val
 
-        return match.group(0)
+        if operations:
+            # Expression not resolved but has operations — try pipeline with empty value
+            # This allows ${nonexistent:default("fallback")} to work
+            result_val = evaluate_pipeline("", operations, resolve_fn=_resolve_single)
+            if result_val:
+                return result_val
 
-    result = re.sub(r'\$\{([^}]+)\}', replacer, template)
+        return "${" + expr + "}"
+
+    # Custom substitution that handles nested ${...} in arguments
+    result = _substitute_expressions(template, replacer_core)
 
     # Recursive resolution: if result still has ${...}, resolve again
     if '${' in result and result != template:

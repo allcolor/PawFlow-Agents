@@ -1215,28 +1215,28 @@ function esc(s) { const d = document.createElement('div'); d.textContent = s; re
 function renderMd(text) {
   // Basic markdown: **bold**, *italic*, \`code\`, \`\`\`blocks\`\`\`
   return text
-    .replace(/\`\`\`(\\w*)\\n([\\s\\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>')
+    .replace(/\`\`\`(\w*)\n([\s\S]*?)\`\`\`/g, '<pre><code>$2</code></pre>')
     .replace(/\`([^\`]+)\`/g, '<code>$1</code>')
-    .replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>')
-    .replace(/\\*([^*]+)\\*/g, '<em>$1</em>')
-    .replace(/^- (.+)$/gm, '\\u2022 $1')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/^- (.+)$/gm, '\u2022 $1')
     .replace(/^#{1,3} (.+)$/gm, '<strong>$1</strong>')
     // Detect image URLs and render inline
-    .replace(/(https?:\\/\\/[^\\s]+\\/files\\/[^\\s]+\\.(png|jpg|jpeg|gif|webp|svg))/gi, '<img src="$1" style="max-width:100%;max-height:300px;border-radius:4px;margin:4px 0" />')
-    .replace(/\\n/g, '<br>');
+    .replace(/(https?:\/\/[^\s]+\/files\/[^\s]+\.(png|jpg|jpeg|gif|webp|svg))/gi, '<img src="$1" style="max-width:100%;max-height:300px;border-radius:4px;margin:4px 0" />')
+    .replace(/\n/g, '<br>');
 }
 
 function renderToolResult(content) {
   // Strip TOOL OUTPUT wrapper
-  let text = content.replace(/\\[TOOL OUTPUT[^\\]]*\\]\\n?/g, '').replace(/\\n\\[\\/TOOL OUTPUT\\]/g, '');
+  let text = content.replace(/\[TOOL OUTPUT[^\]]*\]\n?/g, '').replace(/\n\[\/TOOL OUTPUT\]/g, '');
   // Detect diffs
-  const lines = text.split('\\n');
+  const lines = text.split('\n');
   const hasDiff = lines.some(function(l) { return l.trimStart().startsWith('+ ') || l.trimStart().startsWith('- '); });
   if (hasDiff && (text.includes('replacement') || text.includes('Edited ') || text.includes('Written '))) {
     return '<pre class="diff">' + lines.map(function(l) {
       const s = l.trimStart();
-      if (s.startsWith('+ ') || s.match(/^\\d+\\s+\\+ /)) return '<span class="diff-add">' + esc(l) + '</span>';
-      if (s.startsWith('- ') || s.match(/^\\d+\\s+- /)) return '<span class="diff-del">' + esc(l) + '</span>';
+      if (s.startsWith('+ ') || s.match(/^\d+\s+\+ /)) return '<span class="diff-add">' + esc(l) + '</span>';
+      if (s.startsWith('- ') || s.match(/^\d+\s+- /)) return '<span class="diff-del">' + esc(l) + '</span>';
       if (s.startsWith('@@')) return '<span class="diff-hunk">' + esc(l) + '</span>';
       return '<span class="diff-ctx">' + esc(l) + '</span>';
     }).join('\\n') + '</pre>';

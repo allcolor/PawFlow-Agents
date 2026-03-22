@@ -300,6 +300,9 @@ class SecurityManager:
         if session and session.is_expired:
             del self._sessions[session_id]
             return None
+        # Sliding window: extend session on each access
+        if session:
+            session.expires_at = time.time() + self._session_ttl
         return session
 
     def logout(self, session_id: str):

@@ -7,6 +7,8 @@ import { AgentResponse, SendMessageRequest } from './types';
 export class AgentAPIClient {
   private serverUrl: string;
   private sessionToken: string;
+  private _onAuthExpired: (() => void) | null = null;
+  private _authExpiredFired = false;
 
   constructor(serverUrl: string, sessionToken: string) {
     this.serverUrl = serverUrl.replace(/\/$/, '');
@@ -15,6 +17,11 @@ export class AgentAPIClient {
 
   setToken(token: string): void {
     this.sessionToken = token;
+    this._authExpiredFired = false; // reset on new token
+  }
+
+  onAuthExpired(callback: () => void): void {
+    this._onAuthExpired = callback;
   }
 
   async sendMessage(request: SendMessageRequest): Promise<AgentResponse> {
@@ -52,6 +59,11 @@ export class AgentAPIClient {
         res.on('end', () => {
           if (res.statusCode === 401 || res.statusCode === 403) {
             resolve({ error: 'Session expired — please re-login', _auth_expired: true });
+            // Trigger auto-relogin (once per expiry cycle)
+            if (this._onAuthExpired && !this._authExpiredFired) {
+              this._authExpiredFired = true;
+              this._onAuthExpired();
+            }
             return;
           }
           try {

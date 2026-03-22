@@ -26,6 +26,7 @@ export async function activate(context: vscode.ExtensionContext) {
   const session = await auth.getSession(serverUrl);
   if (session) {
     apiClient = new AgentAPIClient(serverUrl, session.token);
+    apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
     sseClient = new SSEClient(serverUrl, session.token);
     statusBar.setConnected(session.username);
 
@@ -58,7 +59,15 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.commands.registerCommand('pawflow.login', async () => {
       try {
         const session = await auth.login(serverUrl);
-        apiClient = new AgentAPIClient(serverUrl, session.token);
+        if (apiClient) {
+          apiClient.setToken(session.token);
+        } else {
+          apiClient = new AgentAPIClient(serverUrl, session.token);
+          apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
+        }
+        if (sseClient) {
+          sseClient.disconnect();
+        }
         sseClient = new SSEClient(serverUrl, session.token);
         statusBar.setConnected(session.username);
         vscode.window.showInformationMessage(`PawFlow: Logged in as ${session.username}`);

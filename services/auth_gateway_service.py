@@ -53,6 +53,8 @@ def _register_all_providers():
     _PROVIDER_CLASSES["facebook"] = FacebookAuthProvider
     _PROVIDER_CLASSES["amazon"] = AmazonAuthProvider
     _PROVIDER_CLASSES["telegram"] = TelegramAuthProvider
+    from services.auth_providers.generic_oauth import GenericOAuthProvider
+    _PROVIDER_CLASSES["generic"] = GenericOAuthProvider
 
 
 _register_all_providers()
@@ -113,8 +115,13 @@ class AuthGatewayService(BaseService):
                 continue
             cls = _PROVIDER_CLASSES.get(pname)
             if not cls:
-                logger.warning(f"[auth_gateway] Unknown provider: {pname}")
-                continue
+                # Unknown provider name → try generic OAuth
+                if pconfig.get("authorize_url") and pconfig.get("token_url"):
+                    cls = _PROVIDER_CLASSES.get("generic")
+                    pconfig.setdefault("name", pname)
+                else:
+                    logger.warning(f"[auth_gateway] Unknown provider: {pname}")
+                    continue
             try:
                 if pname == "builtin":
                     self._providers[pname] = cls()
@@ -294,10 +301,10 @@ class AuthGatewayService(BaseService):
                 email=auth_result.email,
                 display_name=auth_result.display_name or username,
             )
-            # Store OAuth link
-            user.oauth_provider = auth_result.provider
-            user.oauth_id = auth_result.user_id
-            sm._save_users()
+            # Link identity via IdentityService (generic multi-provider)
+            from core.identity_service import IdentityService
+            IdentityService.instance().link(username, auth_result.provider,
+                                             auth_result.user_id)
             logger.info(f"[auth_gateway] Created user {username} "
                         f"(provider={auth_result.provider}, role={role.value})")
         except ValueError:
@@ -314,18 +321,32 @@ class AuthGatewayService(BaseService):
         return auth_result
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
-        """Find existing user by OAuth ID or email."""
-        # list_users() returns dicts, so use get_user() for User objects
+        """Find existing user by linked identity or email."""
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+
+        # 1. Search by linked identity (IdentityService — primary)
+        username = ids.resolve(auth_result.provider, auth_result.user_id)
+        if username:
+            user = sm.get_user(username)
+            if user:
+                return user
+
+        # 2. Fallback: search by legacy oauth_provider/oauth_id on User
         for udict in sm.list_users():
-            username = udict.get("username", "")
-            # Match by OAuth ID
+            uname = udict.get("username", "")
             if (udict.get("oauth_provider") == auth_result.provider
                     and udict.get("oauth_id") == auth_result.user_id):
-                return sm.get_user(username)
-            # Match by email
-            if (auth_result.email
-                    and udict.get("email", "").lower() == auth_result.email.lower()):
-                return sm.get_user(username)
+                # Migrate: link via IdentityService for future lookups
+                ids.link(uname, auth_result.provider, auth_result.user_id)
+                return sm.get_user(uname)
+
+        # 3. Fallback: search by email
+        if auth_result.email:
+            for udict in sm.list_users():
+                if udict.get("email", "").lower() == auth_result.email.lower():
+                    return sm.get_user(udict["username"])
+
         return None
 
     def _derive_username(self, auth_result: AuthResult) -> str:

@@ -148,6 +148,23 @@ class IdentityService:
                     and not k.endswith("_bot_token")
                     and isinstance(v, str)}
 
+    def resolve(self, provider: str, provider_id: str) -> Optional[str]:
+        """Reverse lookup: find PawFlow username from a provider identity.
+
+        Args:
+            provider: Provider name (e.g. 'google', 'telegram', 'x', 'builtin')
+            provider_id: The provider-specific user ID
+
+        Returns:
+            PawFlow username if linked, None otherwise.
+        """
+        with self._store_lock:
+            self._ensure_loaded()
+            for user_id, mapping in self._mappings.items():
+                if mapping.get(provider) == provider_id:
+                    return user_id
+        return None
+
     def list_all(self) -> Dict[str, Dict[str, str]]:
         """List all mappings (admin)."""
         with self._store_lock:

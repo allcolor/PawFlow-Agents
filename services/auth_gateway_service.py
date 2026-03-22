@@ -313,16 +313,17 @@ class AuthGatewayService(BaseService):
 
     def _find_existing_user(self, sm, auth_result: AuthResult):
         """Find existing user by OAuth ID or email."""
-        # Search by oauth_id
-        for user in sm.list_users():
-            if (user.oauth_provider == auth_result.provider
-                    and user.oauth_id == auth_result.user_id):
-                return user
-        # Search by email
-        if auth_result.email:
-            for user in sm.list_users():
-                if user.email and user.email.lower() == auth_result.email.lower():
-                    return user
+        # list_users() returns dicts, so use get_user() for User objects
+        for udict in sm.list_users():
+            username = udict.get("username", "")
+            # Match by OAuth ID
+            if (udict.get("oauth_provider") == auth_result.provider
+                    and udict.get("oauth_id") == auth_result.user_id):
+                return sm.get_user(username)
+            # Match by email
+            if (auth_result.email
+                    and udict.get("email", "").lower() == auth_result.email.lower()):
+                return sm.get_user(username)
         return None
 
     def _derive_username(self, auth_result: AuthResult) -> str:

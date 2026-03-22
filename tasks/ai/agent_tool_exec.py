@@ -89,7 +89,7 @@ class AgentToolExecMixin:
                 if tc.name == "filesystem" and tc.arguments.get("action") in ("write_file", "edit"):
                     modified_path = tc.arguments.get("path", "")
                     if modified_path and modified_path.endswith(".py"):
-                        from core.tool_registry import _detect_related_tests
+                        from core.handlers.devops import _detect_related_tests
                         candidates = _detect_related_tests(modified_path)
                         if candidates:
                             hint = ", ".join(candidates[:3])

@@ -46,14 +46,8 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 logger = logging.getLogger(__name__)
 
 
-class AgentCancelled(Exception):
-    """Raised when agent generation is cancelled by user."""
-    pass
-
-
-class _InterruptComplete(Exception):
-    """Internal: raised when interrupt-synthesis is done to break out of the loop."""
-    pass
+# Exceptions shared across agent loop mixins
+from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete  # noqa: F401
 
 
 

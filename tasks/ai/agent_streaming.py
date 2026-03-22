@@ -16,6 +16,7 @@ from core.llm_client import (
     LLMToolCall, LLMToolResult, LLMClientError,
 )
 from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
+from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 logger = logging.getLogger(__name__)
 

@@ -412,12 +412,10 @@ class SecurityManager:
         with open(path, 'w') as f:
             json.dump(data, f, indent=2)
 
-    _MAX_SESSIONS_PER_USER = 10
-
     def _load_sessions(self):
         """Load sessions from disk (survives process/module reloads).
 
-        Enforces max sessions per user — keeps only the most recent ones.
+        Expired sessions are discarded on load.
         """
         path = Path(SESSIONS_PATH)
         if not path.exists():
@@ -426,35 +424,27 @@ class SecurityManager:
             with open(path, 'r') as f:
                 data = json.load(f)
             now = time.time()
-            # Group by user, keep only most recent per user
-            from collections import defaultdict
-            by_user = defaultdict(list)
+            skipped = 0
             for s in data.get("sessions", []):
                 expires_at = s.get("expires_at", 0)
                 if expires_at > 0 and now > expires_at:
+                    skipped += 1
                     continue  # skip expired
-                by_user[s["username"]].append(s)
-
-            loaded = 0
-            for username, sessions in by_user.items():
-                # Sort by created_at desc, keep most recent
-                sessions.sort(key=lambda x: x.get("created_at", 0), reverse=True)
-                for s in sessions[:self._MAX_SESSIONS_PER_USER]:
-                    session = Session(
-                        session_id=s["session_id"],
-                        username=s["username"],
-                        role=Role(s["role"]),
-                        created_at=s.get("created_at", now),
-                        expires_at=s.get("expires_at", 0),
-                        ip_address=s.get("ip_address", ""),
-                    )
-                    self._sessions[session.session_id] = session
-                    loaded += 1
-
-            total_raw = sum(len(v) for v in by_user.values())
-            if loaded:
-                logger.info(f"Restored {loaded} session(s) from disk"
-                            + (f" (pruned {total_raw - loaded} excess)" if total_raw > loaded else ""))
+                session = Session(
+                    session_id=s["session_id"],
+                    username=s["username"],
+                    role=Role(s["role"]),
+                    created_at=s.get("created_at", now),
+                    expires_at=expires_at,
+                    ip_address=s.get("ip_address", ""),
+                )
+                self._sessions[session.session_id] = session
+            if self._sessions or skipped:
+                logger.info(f"Restored {len(self._sessions)} session(s) from disk"
+                            + (f" ({skipped} expired removed)" if skipped else ""))
+            # Re-save to clean up expired ones from disk
+            if skipped:
+                self._save_sessions()
         except Exception as e:
             logger.warning(f"Failed to load sessions: {e}")
 

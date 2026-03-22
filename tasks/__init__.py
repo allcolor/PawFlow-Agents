@@ -163,6 +163,12 @@ def register_all_tasks():
     from tasks.io.serve_chat_ui import ServeChatUITask
     from tasks.io.serve_assets import ServeAssetsTask
 
+    # Conversation-scoped flow tasks
+    from tasks.io.publish_message import PublishMessageTask
+    from tasks.io.spawn_agent import SpawnAgentTask
+    from tasks.io.conv_task_ops import AssignTaskToAgentTask, CancelAgentTaskTask
+    from tasks.io.read_conversation import ReadConversationTask
+
     # OAuth2 tasks
     from tasks.io.oauth_redirect import OAuthRedirectTask
     from tasks.io.oauth_callback import OAuthCallbackTask

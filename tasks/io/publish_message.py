@@ -1,0 +1,100 @@
+"""PublishMessage Task — Publish a message into a linked conversation.
+
+For conversation-scoped flows: takes FlowFile content and publishes it
+as a message in the conversation, visible to the user via SSE.
+
+Flow pattern:
+    someTask → publishMessage
+
+Config:
+    conversation_id: "${flow.parameters._conversation_id}"
+    agent_name: Source agent name for the message badge (default: "flow")
+    role: Message role — "assistant" or "system" (default: "assistant")
+"""
+
+import json
+import logging
+import time
+from typing import Dict, Any, List
+
+from core import FlowFile, TaskFactory
+from core.base_task import BaseTask
+
+logger = logging.getLogger(__name__)
+
+
+class PublishMessageTask(BaseTask):
+    """Publish a message into a conversation from a flow."""
+
+    TYPE = "publishMessage"
+    VERSION = "1.0.0"
+    NAME = "Publish Message"
+    DESCRIPTION = "Publish a message into a linked conversation"
+    ICON = "chat"
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "conversation_id": {
+                "type": "string", "required": True,
+                "default": "${flow.parameters._conversation_id}",
+                "description": "Target conversation ID",
+            },
+            "agent_name": {
+                "type": "string", "required": False, "default": "flow",
+                "description": "Source agent name (shown as badge in chat)",
+            },
+            "role": {
+                "type": "select", "required": False, "default": "assistant",
+                "options": ["assistant", "system"],
+                "description": "Message role",
+            },
+        }
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        conv_id = self.config.get("conversation_id", "")
+        if not conv_id or "${" in conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "No conversation_id — this task requires a conversation-scoped flow",
+            }).encode())
+            return [flowfile]
+
+        agent_name = self.config.get("agent_name", "flow")
+        role = self.config.get("role", "assistant")
+        text = flowfile.get_content().decode("utf-8", errors="replace")
+
+        if not text.strip():
+            return [flowfile]  # Nothing to publish
+
+        # 1. Persist to ConversationStore
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        source = {"type": "agent", "name": agent_name}
+        store.append_messages(conv_id, [{
+            "role": role,
+            "content": text,
+            "source": source,
+            "timestamp": time.time(),
+        }])
+
+        # 2. Publish via SSE so the chat UI sees it in real-time
+        from core.conversation_event_bus import ConversationEventBus
+        bus = ConversationEventBus.instance()
+        bus.publish_event(conv_id, "done", {
+            "response": text,
+            "conversation_id": conv_id,
+            "agent_name": agent_name,
+            "source": source,
+            "model": "",
+            "provider": "flow",
+            "tokens_in": 0,
+            "tokens_out": 0,
+            "tools_called": [],
+            "iterations": 0,
+            "duration_ms": 0,
+        })
+
+        logger.info(f"[publishMessage] Published to {conv_id[:8]} as {agent_name}")
+        return [flowfile]
+
+
+TaskFactory.register(PublishMessageTask)

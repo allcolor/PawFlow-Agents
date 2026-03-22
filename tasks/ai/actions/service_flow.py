@@ -1,4 +1,4 @@
-"""AgentLoopTask actions — service flow"""
+"""AgentLoopTask actions  - service flow"""
 
 import json
 import logging
@@ -310,12 +310,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "deploy_flow":
         template_id = body.get("template_id", "")
-        scope = body.get("scope", "user")
+        deploy_scope = body.get("scope", "user")
         params = body.get("parameters", {})
         conv_id = body.get("conversation_id", "")
-        if scope == "global":
+        if deploy_scope == "global":
             flowfile.set_content(json.dumps(
-                {"error": "Cannot deploy global flows from chat â€” use admin GUI"}).encode())
+                {"error": "Cannot deploy global flows from chat \u2014 use admin GUI"}).encode())
             return [flowfile]
         if not template_id:
             flowfile.set_content(json.dumps({"error": "Missing template_id"}).encode())
@@ -341,17 +341,40 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps(
                     {"error": f"Template '{template_id}' not found in flows/"}).encode())
                 return [flowfile]
-            dr = DeploymentRegistry.get_instance()
+
+            # Read flow scope from template (runtime dependency declaration)
+            flow_config = json.loads(tpath.read_text(encoding="utf-8"))
+            flow_scope = flow_config.get("scope", "independent")
+
+            # Validate runtime dependencies
             uid = user_id or "anonymous"
+            if flow_scope in ("user", "conversation") and not uid:
+                flowfile.set_content(json.dumps(
+                    {"error": f"Flow requires user context (scope={flow_scope})"}).encode())
+                return [flowfile]
+            if flow_scope == "conversation" and not conv_id:
+                flowfile.set_content(json.dumps(
+                    {"error": "Flow requires conversation context (scope=conversation)"}).encode())
+                return [flowfile]
+
+            # Inject runtime parameters based on flow scope
+            if flow_scope in ("user", "conversation"):
+                params["_user_id"] = uid
+            if flow_scope == "conversation":
+                params["_conversation_id"] = conv_id
+            params["_flow_scope"] = flow_scope
+
+            dr = DeploymentRegistry.get_instance()
             iid = dr.deploy(
                 template_path=str(tpath),
                 owner=uid,
                 parameters=params,
                 source="agent",
-                conversation_id=conv_id if scope == "conversation" else None,
+                conversation_id=conv_id if deploy_scope == "conversation" else None,
             )
             flowfile.set_content(json.dumps(
-                {"ok": True, "instance_id": iid, "scope": scope}).encode())
+                {"ok": True, "instance_id": iid, "scope": deploy_scope,
+                 "flow_scope": flow_scope}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -364,7 +387,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         if target_scope == "global":
             flowfile.set_content(json.dumps(
-                {"error": "Cannot promote to global from chat â€” use admin GUI"}).encode())
+                {"error": "Cannot promote to global from chat - use admin GUI"}).encode())
             return [flowfile]
         try:
             from gui.services.deployment_registry import DeploymentRegistry

@@ -1,0 +1,228 @@
+"""SpawnAgent Task — Spawn an agent in a linked conversation from a flow.
+
+Supports sync (wait for response) and async (fire and forget) modes.
+The agent runs in the conversation context with configurable history access.
+
+Flow pattern:
+    someTask → spawnAgent → handleResponse (sync)
+    someTask → spawnAgent                  (async)
+
+Config:
+    conversation_id: "${flow.parameters._conversation_id}"
+    user_id: "${flow.parameters._user_id}"
+    agent_name: Name of the agent to spawn
+    mode: "sync" (wait for response) or "async" (fire and forget)
+    context_mode: "isolated" | "last:N" | "summary:N" | "full"
+"""
+
+import json
+import logging
+import time
+from typing import Dict, Any, List
+
+from core import FlowFile, TaskFactory
+from core.base_task import BaseTask
+
+logger = logging.getLogger(__name__)
+
+
+class SpawnAgentTask(BaseTask):
+    """Spawn an agent in a conversation from a flow."""
+
+    TYPE = "spawnAgent"
+    VERSION = "1.0.0"
+    NAME = "Spawn Agent"
+    DESCRIPTION = "Spawn an agent in a linked conversation (sync or async)"
+    ICON = "ai"
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "conversation_id": {
+                "type": "string", "required": True,
+                "default": "${flow.parameters._conversation_id}",
+                "description": "Target conversation ID",
+            },
+            "user_id": {
+                "type": "string", "required": True,
+                "default": "${flow.parameters._user_id}",
+                "description": "User ID for agent resolution",
+            },
+            "agent_name": {
+                "type": "string", "required": True,
+                "description": "Name of the agent to spawn",
+            },
+            "mode": {
+                "type": "select", "required": False, "default": "async",
+                "options": ["sync", "async"],
+                "description": "sync = wait for response, async = fire and forget",
+            },
+            "context_mode": {
+                "type": "select", "required": False, "default": "isolated",
+                "options": ["isolated", "last:5", "last:10", "last:20", "full"],
+                "description": "How much conversation context the agent receives",
+            },
+        }
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        conv_id = self.config.get("conversation_id", "")
+        user_id = self.config.get("user_id", "")
+        agent_name = self.config.get("agent_name", "")
+        mode = self.config.get("mode", "async")
+        context_mode = self.config.get("context_mode", "isolated")
+
+        if not conv_id or "${" in conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "No conversation_id — requires conversation-scoped flow",
+            }).encode())
+            return [flowfile]
+
+        if not agent_name:
+            flowfile.set_content(json.dumps({
+                "error": "Missing agent_name",
+            }).encode())
+            return [flowfile]
+
+        message = flowfile.get_content().decode("utf-8", errors="replace")
+        if not message.strip():
+            flowfile.set_content(json.dumps({
+                "error": "Empty message — nothing to send to agent",
+            }).encode())
+            return [flowfile]
+
+        if mode == "sync":
+            return self._execute_sync(flowfile, conv_id, user_id,
+                                       agent_name, message, context_mode)
+        else:
+            return self._execute_async(flowfile, conv_id, user_id,
+                                        agent_name, message)
+
+    def _execute_sync(self, flowfile, conv_id, user_id, agent_name,
+                       message, context_mode):
+        """Sync mode: resolve agent, run loop, wait for response."""
+        from core.agent_executor import resolve_agent_task, SubAgentExecutor
+        from core.llm_client import LLMClient
+
+        try:
+            task = resolve_agent_task(agent_name, message, user_id, conv_id)
+            task.context_mode = context_mode
+            task.parent_conversation_id = conv_id
+
+            # Resolve LLM client for this agent
+            llm_svc = task.llm_service
+            client = None
+            if llm_svc:
+                try:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    svc = UserServiceRegistry.get_instance().get_live_instance(
+                        user_id, llm_svc)
+                    if not svc:
+                        svc = GlobalServiceRegistry.get_instance().get_live_instance(
+                            llm_svc)
+                    if svc:
+                        client = svc.get_client()
+                except Exception:
+                    pass
+            if not client:
+                # Fallback to default service
+                try:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    svc = GlobalServiceRegistry.get_instance().get_live_instance("default")
+                    if svc:
+                        client = svc.get_client()
+                except Exception:
+                    pass
+            if not client:
+                flowfile.set_content(json.dumps({
+                    "error": f"No LLM client available for agent '{agent_name}'",
+                }).encode())
+                return [flowfile]
+
+            from core.tool_registry import create_default_registry
+            registry = create_default_registry()
+            executor = SubAgentExecutor(client, registry, max_workers=1)
+            result = executor.execute_agent(task)
+            executor.shutdown()
+
+            # Publish the response in the conversation
+            from core.conversation_store import ConversationStore
+            from core.conversation_event_bus import ConversationEventBus
+            source = {"type": "agent", "name": agent_name}
+
+            if result.status == "completed" and result.response:
+                ConversationStore.instance().append_messages(conv_id, [{
+                    "role": "assistant",
+                    "content": result.response,
+                    "source": source,
+                    "timestamp": time.time(),
+                }])
+                ConversationEventBus.instance().publish_event(conv_id, "done", {
+                    "response": result.response,
+                    "conversation_id": conv_id,
+                    "agent_name": agent_name,
+                    "source": source,
+                    "model": result.model,
+                    "provider": result.provider,
+                    "tokens_in": result.tokens_in,
+                    "tokens_out": result.tokens_out,
+                    "tools_called": result.tools_called,
+                    "iterations": result.iterations,
+                    "duration_ms": result.duration_ms,
+                })
+
+            flowfile.set_content(json.dumps({
+                "status": result.status,
+                "response": result.response,
+                "agent": agent_name,
+                "tokens_in": result.tokens_in,
+                "tokens_out": result.tokens_out,
+                "duration_ms": result.duration_ms,
+            }, ensure_ascii=False).encode())
+
+        except KeyError:
+            flowfile.set_content(json.dumps({
+                "error": f"Agent '{agent_name}' not found",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({
+                "error": f"SpawnAgent sync failed: {e}",
+            }).encode())
+
+        return [flowfile]
+
+    def _execute_async(self, flowfile, conv_id, user_id, agent_name, message):
+        """Async mode: inject message into conversation, agent picks it up."""
+        from core.conversation_store import ConversationStore
+        from core.conversation_event_bus import ConversationEventBus
+
+        store = ConversationStore.instance()
+        bus = ConversationEventBus.instance()
+
+        # Append as a user message with target_agent metadata
+        store.append_messages(conv_id, [{
+            "role": "user",
+            "content": message,
+            "source": {
+                "type": "flow",
+                "name": self.config.get("_service_id", "flow"),
+                "target_agent": agent_name,
+            },
+            "timestamp": time.time(),
+        }])
+
+        # Notify so the agentLoop picks it up at next checkpoint
+        bus.publish_event(conv_id, "message_queued", {
+            "conversation_id": conv_id,
+            "target_agent": agent_name,
+        })
+
+        logger.info(f"[spawnAgent] Async: sent to {agent_name} in {conv_id[:8]}")
+        flowfile.set_content(json.dumps({
+            "status": "queued",
+            "agent": agent_name,
+            "conversation_id": conv_id,
+        }).encode())
+        return [flowfile]
+
+
+TaskFactory.register(SpawnAgentTask)

@@ -1,0 +1,96 @@
+"""ReadConversation Task — Read messages from a linked conversation.
+
+For conversation-scoped flows: loads recent messages from the conversation
+into the FlowFile content for processing by downstream tasks.
+
+Flow pattern:
+    trigger → readConversation → processMessages
+"""
+
+import json
+import logging
+from typing import Dict, Any, List
+
+from core import FlowFile, TaskFactory
+from core.base_task import BaseTask
+
+logger = logging.getLogger(__name__)
+
+
+class ReadConversationTask(BaseTask):
+    """Read messages from a linked conversation."""
+
+    TYPE = "readConversation"
+    VERSION = "1.0.0"
+    NAME = "Read Conversation"
+    DESCRIPTION = "Read messages from a linked conversation"
+    ICON = "chat"
+
+    def get_parameter_schema(self) -> Dict[str, Any]:
+        return {
+            "conversation_id": {
+                "type": "string", "required": True,
+                "default": "${flow.parameters._conversation_id}",
+                "description": "Conversation to read from",
+            },
+            "limit": {
+                "type": "integer", "required": False, "default": 20,
+                "description": "Number of recent messages to read",
+            },
+            "format": {
+                "type": "select", "required": False, "default": "json",
+                "options": ["json", "text"],
+                "description": "Output format",
+            },
+        }
+
+    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        conv_id = self.config.get("conversation_id", "")
+        limit = int(self.config.get("limit", 20))
+        fmt = self.config.get("format", "json")
+
+        if not conv_id or "${" in conv_id:
+            flowfile.set_content(json.dumps({
+                "error": "No conversation_id — requires conversation-scoped flow",
+            }).encode())
+            return [flowfile]
+
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+
+        page = store.load_page(conv_id, limit=limit, offset=0)
+        if page is None:
+            flowfile.set_content(json.dumps({
+                "error": "Conversation not found",
+            }).encode())
+            return [flowfile]
+
+        messages = page.get("messages", [])
+
+        if fmt == "text":
+            lines = []
+            for m in messages:
+                role = m.get("role", "?").upper()
+                content = m.get("content", "")
+                if isinstance(content, list):
+                    content = " ".join(
+                        p.get("text", "") for p in content
+                        if isinstance(p, dict) and p.get("type") == "text"
+                    )
+                source = m.get("source", {})
+                agent = source.get("name", "") if isinstance(source, dict) else ""
+                prefix = f"[{agent}]" if agent else f"[{role}]"
+                lines.append(f"{prefix}: {content}")
+            flowfile.set_content("\n\n".join(lines).encode("utf-8"))
+        else:
+            flowfile.set_content(json.dumps({
+                "conversation_id": conv_id,
+                "messages": messages,
+                "total_count": page.get("total_count", len(messages)),
+            }, ensure_ascii=False).encode("utf-8"))
+
+        flowfile.set_attribute("conversation.message_count", str(len(messages)))
+        return [flowfile]
+
+
+TaskFactory.register(ReadConversationTask)

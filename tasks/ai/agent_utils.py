@@ -517,6 +517,22 @@ class AgentUtilsMixin:
             DynamicToolStore.instance().cleanup_conversation(conversation_id)
         except Exception as e:
             logger.warning(f"[cleanup] dynamic tool cleanup failed: {e}")
+        # Stop and undeploy conversation-scoped flow instances
+        try:
+            from gui.services.deployment_registry import DeploymentRegistry
+            from gui.services.executor_registry import ExecutorRegistry
+            dr = DeploymentRegistry.get_instance()
+            er = ExecutorRegistry.get_instance()
+            for iid, inst in list(dr.list_all().items()):
+                if getattr(inst, "conversation_id", None) == conversation_id:
+                    ex = er.get(iid)
+                    if ex and ex.is_running:
+                        ex.stop()
+                    er.unregister(iid)
+                    dr.undeploy(iid)
+                    logger.info(f"[cleanup] Stopped conv-scoped flow {iid}")
+        except Exception as e:
+            logger.warning(f"[cleanup] conv-scoped flow cleanup failed: {e}")
 
 
     @staticmethod

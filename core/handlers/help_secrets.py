@@ -223,8 +223,21 @@ IMPORTANT:
 ## Key Concepts
 - **Tasks** are processing nodes (transform, route, fetch, send data)
 - **Services** are shared resources (HTTP listeners, Telegram bots, DB connections)
-- **Relations** link tasks: from → to with type (success/failure/all)
+- **Relations** link tasks: from to with type (success/failure/all)
 - **FlowFile** is the data unit flowing between tasks (content bytes + attributes dict)
+
+## Flow Scope (runtime dependencies)
+A flow declares its runtime scope in the JSON: `"scope": "independent" | "user" | "conversation"`
+- **independent** (default): no runtime dependencies
+- **user**: needs `_user_id` (injected automatically at deploy)
+- **conversation**: needs `_user_id` + `_conversation_id` (must be deployed from a conversation)
+
+Conversation-scoped tasks (only work when `_conversation_id` is set):
+- **publishMessage**: publish a message into the conversation (SSE + persist)
+- **spawnAgent**: spawn an agent sync (wait) or async (fire & forget)
+- **assignTaskToAgent**: assign a recurring task to an agent
+- **cancelAgentTask**: cancel a running agent task
+- **readConversation**: read messages from the conversation
 
 ## CRITICAL: Routing & Fan-Out Rules
 

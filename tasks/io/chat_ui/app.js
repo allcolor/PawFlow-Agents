@@ -6291,12 +6291,13 @@ async function showDeployFlowDialog() {
       return;
     }
     let optionsHtml = templates.map(t =>
-      `<option value="${t.id}">${t.name} (${t.tasks_count} tasks, ${t.services_count} services)${t.version ? ' v' + t.version : ''}</option>`
+      `<option value="${t.id}" data-scope="${t.scope || 'independent'}">${t.name} (${t.tasks_count} tasks)${t.version ? ' v' + t.version : ''} [${t.scope || 'independent'}]</option>`
     ).join('');
     panel.querySelector('div:last-child').innerHTML = `
       <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Template</label>
-        <select id="deploy-template" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
-      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label>
+        <select id="deploy-template" onchange="_onDeployTemplateChange()" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">${optionsHtml}</select></div>
+      <div id="deploy-scope-info" style="margin-bottom:8px;font-size:11px;color:#aaa;"></div>
+      <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Deploy scope</label>
         <select id="deploy-scope" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">
           <option value="user">User</option>
           <option value="conversation">Conversation</option>
@@ -6326,6 +6327,26 @@ function _submitDeployFlow() {
     else { addMsg('system', `Flow deployed: ${d.instance_id} (${scope})`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   }).catch(e => addMsg('error', e.message));
 }
+function _onDeployTemplateChange() {
+  var sel = document.getElementById('deploy-template');
+  var opt = sel.options[sel.selectedIndex];
+  var flowScope = opt ? opt.getAttribute('data-scope') || 'independent' : 'independent';
+  var info = document.getElementById('deploy-scope-info');
+  var scopeSel = document.getElementById('deploy-scope');
+  if (flowScope === 'conversation') {
+    info.innerHTML = '<span style="color:#f4a261;">This flow requires a conversation context.</span>';
+    scopeSel.value = 'conversation';
+    scopeSel.disabled = true;
+  } else if (flowScope === 'user') {
+    info.innerHTML = '<span style="color:#58a6ff;">This flow requires a user context.</span>';
+    scopeSel.disabled = false;
+  } else {
+    info.innerHTML = '<span style="color:#3fb950;">Independent flow — no runtime dependencies.</span>';
+    scopeSel.disabled = false;
+  }
+}
+// Trigger on initial load
+setTimeout(function() { if (document.getElementById('deploy-template')) _onDeployTemplateChange(); }, 100);
 
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {

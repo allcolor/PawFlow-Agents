@@ -297,6 +297,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             "name": raw.get("name", fp.stem),
                             "version": raw.get("version", ""),
                             "description": raw.get("description", ""),
+                            "scope": raw.get("scope", "independent"),
                             "tasks_count": len(raw.get("tasks", {})),
                             "services_count": len(raw.get("services", {})),
                             "file_path": str(fp),

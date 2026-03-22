@@ -1,0 +1,261 @@
+"""AgentLoopTask mixin — AgentSerialization methods
+
+Auto-extracted from tasks/ai/agent_loop.py.
+All methods access self (AgentLoopTask instance).
+"""
+import json
+import logging
+import threading
+import time
+from typing import Dict, Any, List, Optional
+
+
+from core import FlowFile
+from core.llm_client import (
+    LLMClient, LLMMessage, LLMResponse, LLMToolDefinition,
+    LLMToolCall, LLMToolResult, LLMClientError,
+)
+from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
+
+logger = logging.getLogger(__name__)
+
+
+
+class AgentSerializationMixin:
+    """Methods extracted from AgentLoopTask."""
+
+
+    def _serialize_messages(self, messages: List[LLMMessage],
+                           channel: str = "") -> List[Dict[str, Any]]:
+        """Serialize messages for storage (ephemeral messages are excluded)."""
+        result = []
+        for m in messages:
+            if m.source and m.source.get("type") == "ephemeral":
+                continue
+            entry: Dict[str, Any] = {"role": m.role, "content": m.content}
+            if m.tool_calls:
+                entry["tool_calls"] = [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in m.tool_calls
+                ]
+            if m.tool_call_id:
+                entry["tool_call_id"] = m.tool_call_id
+            if channel and m.role in ("user", "assistant"):
+                entry["channel"] = channel
+            if m.source:
+                entry["source"] = m.source
+            result.append(entry)
+        return result
+
+
+    def _deserialize_messages(self, data: List[Dict[str, Any]]) -> List[LLMMessage]:
+        """Deserialize messages from storage."""
+        messages = []
+        for entry in data:
+            tool_calls = None
+            if "tool_calls" in entry:
+                tool_calls = [
+                    LLMToolCall(
+                        id=tc["id"],
+                        name=tc["name"],
+                        arguments=tc.get("arguments", {}),
+                    )
+                    for tc in entry["tool_calls"]
+                ]
+            messages.append(LLMMessage(
+                role=entry["role"],
+                content=entry.get("content", ""),
+                tool_calls=tool_calls,
+                tool_call_id=entry.get("tool_call_id"),
+                source=entry.get("source"),
+            ))
+        return messages
+
+
+
+    @staticmethod
+    def _classify_messages_for_display(
+        raw_messages: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Classify stored messages for chat UI display.
+
+        Returns list of dicts with:
+          type: "user" | "assistant" | "tool_call" | "tool_result" | "system"
+          role: original role
+          content: text content
+          tool_name: (for tool_call/tool_result) tool name
+          tool_args: (for tool_call) stringified arguments
+        System messages are excluded (internal to LLM context).
+        """
+        result = []
+        for raw_idx, m in enumerate(raw_messages):
+            role = m.get("role", "")
+            if role == "system":
+                continue  # skip system prompts
+            raw_content = m.get("content", "")
+            # Normalize content to string (may be a list for multipart messages)
+            if isinstance(raw_content, list):
+                text_parts = []
+                for p in raw_content:
+                    if isinstance(p, dict):
+                        if p.get("type") == "text":
+                            text_parts.append(p.get("text", ""))
+                        elif p.get("type") == "image_url":
+                            text_parts.append("[Image]")
+                        elif p.get("type") == "document":
+                            text_parts.append(f"[Document: {p.get('filename', 'file')}]")
+                    elif isinstance(p, str):
+                        text_parts.append(p)
+                content = "\n".join(text_parts)
+            elif isinstance(raw_content, str):
+                content = raw_content
+            else:
+                content = str(raw_content) if raw_content else ""
+
+            tool_calls = m.get("tool_calls")
+            tool_call_id = m.get("tool_call_id")
+
+            if role == "assistant" and tool_calls:
+                # Assistant message that contains tool calls
+                if content:
+                    _tc_entry = {
+                        "type": "assistant", "role": "assistant",
+                        "content": content,
+                    }
+                    if m.get("source"):
+                        _tc_entry["source"] = m["source"]
+                    if m.get("timestamp"):
+                        _tc_entry["timestamp"] = m["timestamp"]
+                    result.append(_tc_entry)
+                _tc_source = m.get("source")
+                for tc in tool_calls:
+                    # Build rich display matching SSE tool_call format
+                    _tc_name = tc.get("name", "?")
+                    _tc_args = tc.get("arguments", {})
+                    _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
+                    # Format source label
+                    _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
+                    _src_svc = (_tc_source or {}).get("llm_service", "") if _tc_source else ""
+                    _src_label = _src_agent
+                    if _src_svc:
+                        _src_label += f" via {_src_svc}"
+                    # Special formatting for spawn_agents
+                    if _tc_name == "spawn_agents" and isinstance(_tc_args, dict):
+                        tasks = _tc_args.get("tasks", [])
+                        if tasks and isinstance(tasks, list):
+                            lines = []
+                            for t in tasks:
+                                dst = t.get("agent", "?")
+                                preview = (t.get("message", "") or "")[:80]
+                                lines.append(f"➡ {_src_label} → {dst}" + (f": {preview}" if preview else ""))
+                            _display = "\n".join(lines)
+                        else:
+                            _display = f"🔧 [{_src_label}] {_tc_name}"
+                    else:
+                        # Format args preview
+                        _args_preview = ""
+                        if isinstance(_tc_args, dict) and _tc_args:
+                            _parts = []
+                            for k, v in _tc_args.items():
+                                vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
+                                _parts.append(f"{k}={vs}")
+                            _args_preview = ", ".join(_parts)
+                            if len(_args_preview) > 120:
+                                _args_preview = _args_preview[:120] + "..."
+                        _display = f"🔧 [{_src_label}] {_tc_name}"
+                        if _args_preview:
+                            _display += f"({_args_preview})"
+                    result.append({
+                        "type": "tool_call", "role": "assistant",
+                        "content": _display,
+                        "tool_name": _tc_name,
+                        "tool_args": _tc_args_str,
+                        "source": _tc_source,
+                    })
+            elif role == "tool" and tool_call_id:
+                # Tool result message — strip security wrapper for display
+                display_content = content
+                if display_content.startswith("[TOOL OUTPUT"):
+                    # Remove "[TOOL OUTPUT — ...]\n" prefix and "\n[/TOOL OUTPUT]" suffix
+                    first_nl = display_content.find("\n")
+                    if first_nl >= 0:
+                        display_content = display_content[first_nl + 1:]
+                    if display_content.endswith("[/TOOL OUTPUT]"):
+                        display_content = display_content[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                # Use longer preview for diff results
+                _is_diff = any(p in display_content for p in ("replacement(s):", "Edited ", "hunks"))
+                _limit = 2000 if _is_diff else 300
+                preview = display_content[:_limit]
+                result.append({
+                    "type": "tool_result", "role": "tool",
+                    "content": preview + ("..." if len(display_content) > _limit else ""),
+                    "tool_call_id": tool_call_id,
+                })
+            elif role in ("user", "assistant"):
+                # Skip internal system instructions injected as user messages
+                if role == "user" and content.startswith("[System:"):
+                    continue
+                entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
+                if m.get("timestamp"):
+                    entry["timestamp"] = m["timestamp"]
+                if m.get("channel"):
+                    entry["channel"] = m["channel"]
+                if m.get("source"):
+                    entry["source"] = m["source"]
+                elif role == "assistant":
+                    # Infer source from identity prefix if present
+                    import re as _re_src
+                    _prefix_match = _re_src.match(r'^\[([^\]]+)\]:\s*', content)
+                    if _prefix_match:
+                        entry["source"] = {"type": "agent", "name": _prefix_match.group(1)}
+                    else:
+                        entry["source"] = {"type": "agent", "name": ""}
+                result.append(entry)
+        return result
+
+
+    @staticmethod
+    def _messages_to_text(messages: List[LLMMessage]) -> str:
+        """Convert a list of messages to readable text for summarization."""
+        lines = []
+        for m in messages:
+            role = m.role.upper()
+            if isinstance(m.content, str):
+                content = m.content
+            elif isinstance(m.content, list):
+                parts = []
+                for p in m.content:
+                    if p.get("type") == "text":
+                        parts.append(p["text"])
+                    elif p.get("type") == "document":
+                        parts.append(f"[Document: {p.get('filename', 'file')}] {p.get('text', '')[:500]}")
+                    elif p.get("type") == "image_url":
+                        parts.append("[Image attached]")
+                content = "\n".join(parts)
+            else:
+                content = str(m.content)
+
+            if m.tool_calls:
+                tc_desc = ", ".join(f"{tc.name}({json.dumps(tc.arguments)[:100]})" for tc in m.tool_calls)
+                lines.append(f"{role}: {content}\n  Tool calls: {tc_desc}")
+            elif m.role == "tool":
+                lines.append(f"TOOL_RESULT (id={m.tool_call_id}): {content[:300]}")
+            else:
+                lines.append(f"{role}: {content}")
+        return "\n\n".join(lines)
+
+    # ── Attachment handling ──────────────────────────────────────────
+
+
+    @staticmethod
+    def _sanitize_for_llm(text: str) -> str:
+        """Remove characters that break LLM API JSON parsing."""
+        import re as _re
+        # Strip C0/C1 control chars except \n \r \t
+        text = _re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+        # Remove lone surrogates (invalid in JSON)
+        text = text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
+        # Replace null bytes that may survive
+        text = text.replace('\x00', '')
+        return text
+

@@ -477,8 +477,8 @@ class TestChatUIExecElements(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        from pathlib import Path
-        cls.html = Path("tasks/io/serve_chat_ui.py").read_text(encoding="utf-8")
+        from tasks.io.serve_chat_ui import _load_chat_html
+        cls.html = _load_chat_html()
 
     def test_exec_approval_listener(self):
         self.assertIn("exec_approval_request", self.html)

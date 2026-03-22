@@ -265,12 +265,12 @@
     detail: 'Remove a previously installed custom tool by name.',
   },
   '/link': {
-    usage: '/link telegram <id> [bot_token] | unlink | status',
-    short: 'Link/unlink external accounts (Telegram)',
-    detail: 'Link your account to a Telegram user ID for cross-platform messaging.\n\n'
-      + '  /link telegram <user_id> [bot_token] — Link Telegram account\n'
-      + '  /link unlink                          — Unlink Telegram\n'
-      + '  /link status                          — Show link status',
+    usage: '/link <provider> <id> [bot_token] | unlink <provider> | status',
+    short: 'Link/unlink external accounts',
+    detail: 'Link your account to an external provider for cross-platform messaging.\n\n'
+      + '  /link <provider> <id> [bot_token] — Link account\n'
+      + '  /link unlink <provider>           — Unlink account\n'
+      + '  /link status                      — Show linked accounts',
   },
   '/add-secret': {
     usage: '/add-secret <name> <value>',
@@ -320,6 +320,130 @@
       + 'Frequency format: <min>[-<max>]/<duration>. Units: s, m, h, d.\n'
       + 'Only one schedule per agent — re-running /autoconv on replaces the previous.\n'
       + 'Only fires when the conversation is idle (no active interaction).',
+  },
+  '/new': {
+    usage: '/new',
+    short: 'Start a new conversation',
+    detail: 'Starts a fresh conversation, disconnecting from the current one.',
+  },
+  '/conv': {
+    usage: '/conv',
+    short: 'List/switch conversations',
+    detail: 'Shows a list of conversations to switch between.',
+  },
+  '/history': {
+    usage: '/history [N] [offset]',
+    short: 'Show conversation messages',
+    detail: 'Display messages from the current conversation.\n\n'
+      + '  /history          \u2014 Show last 50 messages\n'
+      + '  /history 100      \u2014 Show last 100\n'
+      + '  /history 50 100   \u2014 Show 50 messages starting from offset 100',
+  },
+  '/export': {
+    usage: '/export [json|md]',
+    short: 'Export conversation',
+    detail: 'Export the current conversation as JSON or Markdown.',
+  },
+  '/rename': {
+    usage: '/rename <title>',
+    short: 'Rename current conversation',
+    detail: 'Set a title for the current conversation.',
+  },
+  '/delete': {
+    usage: '/delete <conversation_id>',
+    short: 'Delete a conversation',
+    detail: 'Permanently delete a conversation by ID.',
+  },
+  '/delete-msg': {
+    usage: '/delete-msg <index>',
+    short: 'Delete a message by index',
+    detail: 'Remove a specific message from the conversation by its index.',
+  },
+  '/search': {
+    usage: '/search <query>',
+    short: 'Search messages in current conversation',
+    detail: 'Search for text in all messages of the current conversation.',
+  },
+  '/model': {
+    usage: '/model <name>',
+    short: 'Switch LLM model',
+    detail: 'Change the LLM model for the current agent.\n\n  /model gpt-4o\n  /model reset',
+  },
+  '/flow': {
+    usage: '/flow list | templates | deploy | start | stop | params | undeploy | promote',
+    short: 'Manage data flows',
+    detail: 'Deploy, start, stop and manage data flows.\n\n'
+      + '  /flow list                     \u2014 List deployed flows\n'
+      + '  /flow templates                \u2014 List available templates\n'
+      + '  /flow deploy <id> [scope]      \u2014 Deploy a flow\n'
+      + '  /flow start <id> [key=val ...] \u2014 Start a flow\n'
+      + '  /flow stop <id>                \u2014 Stop a flow\n'
+      + '  /flow params <id>              \u2014 View flow parameters\n'
+      + '  /flow undeploy <id>            \u2014 Remove a flow\n'
+      + '  /flow promote <id>             \u2014 Promote to user scope',
+  },
+  '/prompt': {
+    usage: '/prompt list | use <name>',
+    short: 'Manage prompts',
+    detail: 'List available prompts or view a specific prompt.\n\n'
+      + '  /prompt list       \u2014 List all prompts\n'
+      + '  /prompt use <name> \u2014 Show prompt content',
+  },
+  '/run': {
+    usage: '/run <command>',
+    short: 'Execute shell command via relay',
+    detail: 'Run a command on the filesystem relay. Requires an active relay connection.',
+  },
+  '/diff': {
+    usage: '/diff [file|ref]',
+    short: 'Show git diff',
+    detail: 'Show git diff via the filesystem relay.\n\n  /diff\n  /diff HEAD~1\n  /diff src/main.py',
+  },
+  '/copy': {
+    usage: '/copy [N]',
+    short: 'Copy last response to clipboard',
+    detail: 'Copy the last (or Nth) assistant response to clipboard.',
+  },
+  '/paste': {
+    usage: '/paste',
+    short: 'Paste clipboard content',
+    detail: 'Paste image or text from clipboard as an attachment.',
+  },
+  '/upload': {
+    usage: '/upload',
+    short: 'Upload a file',
+    detail: 'Opens the file picker to upload a file as attachment.',
+  },
+  '/plan': {
+    usage: '/plan [list | show <id> | approve <id> | cancel <id> | delete <id> | <description>]',
+    short: 'View and manage plans',
+    detail: 'View, approve, cancel, or delete plans. Or ask the agent to create one.\n\n'
+      + '  /plan                      \u2014 Open the plans panel\n'
+      + '  /plan list                 \u2014 List all plans in chat\n'
+      + '  /plan approve <id>         \u2014 Approve a pending plan\n'
+      + '  /plan cancel <id>          \u2014 Cancel a plan\n'
+      + '  /plan delete <id>          \u2014 Delete a plan\n'
+      + '  /plan <description>        \u2014 Ask the agent to create a plan\n',
+  },
+  '/watch': {
+    usage: '/watch <path>|stop',
+    short: 'Watch file for changes',
+    detail: 'Not available in web UI. Use the CLI for file watching.',
+  },
+  '/clear-files': {
+    usage: '/clear-files',
+    short: 'Clear pending attachments',
+    detail: 'Remove all queued file attachments.',
+  },
+  '/clear': {
+    usage: '/clear',
+    short: 'Clear the chat display',
+    detail: 'Removes all messages from the visible chat. History is preserved server-side.',
+  },
+  '/login': {
+    usage: '/login',
+    short: 'Re-authenticate',
+    detail: 'Redirects to the login page.',
   },
 };
 
@@ -680,7 +804,7 @@ async function handleSlashCommand(text) {
   }
 
   if (cmd === '/usage') {
-    await cmdUsage();
+    addMsg('system', '/usage is deprecated. Use /cost <agent|ALL> instead.');
     return true;
   }
 
@@ -1222,17 +1346,19 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/link') {
     const sub = (parts[1] || '').toLowerCase();
-    if (sub === 'telegram') {
-      const tgId = parts[2];
-      const botToken = parts[3] || '';
-      if (!tgId) { addMsg('system', 'Usage: /link telegram <telegram_user_id> [bot_token]'); return true; }
-      await cmdLinkTelegram(tgId, botToken);
-    } else if (sub === 'unlink') {
-      await cmdUnlinkTelegram();
-    } else if (sub === 'status') {
+    if (sub === 'status' || !sub) {
       await cmdLinkStatus();
+    } else if (sub === 'unlink') {
+      const provider = parts[2] || '';
+      if (!provider) { addMsg('system', 'Usage: /link unlink <provider>'); return true; }
+      await cmdUnlinkAccount(provider);
     } else {
-      addMsg('system', 'Usage: /link telegram <id> | /link unlink | /link status');
+      // /link <provider> <id> [bot_token]
+      const provider = parts[1];
+      const providerId = parts[2] || '';
+      const botToken = parts[3] || '';
+      if (!providerId) { addMsg('system', 'Usage: /link <provider> <id> [bot_token]'); return true; }
+      await cmdLinkAccount(provider, providerId, botToken);
     }
     return true;
   }
@@ -1419,6 +1545,482 @@ async function handleSlashCommand(text) {
     return true;
   }
 
+  if (cmd === '/new') {
+    newChat();
+    return true;
+  }
+
+  if (cmd === '/conv') {
+    loadConversations();
+    return true;
+  }
+
+  if (cmd === '/history') {
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    const n = parseInt(parts[1]) || 50;
+    const offset = parseInt(parts[2]) || 0;
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: n, offset }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else {
+        const msgs = data.messages || [];
+        for (const m of msgs) {
+          let content = m.content || '';
+          if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+            content = content.replace(/^\[[^\]]+\]:\s*/, '');
+          }
+          addMsg(m.type || m.role, content, m);
+        }
+        addMsg('system', msgs.length + ' message(s) loaded.');
+      }
+    } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/export') {
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    const fmt = parts[1] || 'markdown';
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'export', conversation_id: conversationId, format: fmt }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else if (data.url) {
+        const a = document.createElement('a');
+        a.href = data.url;
+        a.download = data.filename || 'export';
+        a.click();
+        addMsg('system', 'Exported: ' + (data.filename || data.url));
+      }
+    } catch (e) { addMsg('error', 'Export failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/rename') {
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    const title = text.slice(cmd.length).trim();
+    if (!title) { addMsg('system', 'Usage: /rename <new title>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'set_conv_title', conversation_id: conversationId, title }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else { addMsg('system', 'Renamed to: ' + title); }
+    } catch (e) { addMsg('error', 'Rename failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/delete') {
+    const target = parts[1] || '';
+    if (!target) { addMsg('system', 'Usage: /delete <conversation_id>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'delete_conversation', conversation_id: target }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else if (data.deleted) {
+        addMsg('system', 'Deleted ' + target.slice(0, 8));
+        if (conversationId === target) { newChat(); }
+      }
+    } catch (e) { addMsg('error', 'Delete failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/delete-msg') {
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    const idx = parseInt(parts[1]);
+    if (isNaN(idx)) { addMsg('system', 'Usage: /delete-msg <index>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'delete_message', conversation_id: conversationId, index: idx }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else { addMsg('system', 'Message ' + idx + ' deleted'); }
+    } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/search') {
+    if (!conversationId) { addMsg('system', t('noConv')); return true; }
+    const query = text.slice(cmd.length).trim();
+    if (!query) { addMsg('system', 'Usage: /search <query>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: 500, offset: 0 }),
+      });
+      const data = await resp.json();
+      const messages = data.messages || [];
+      const lq = query.toLowerCase();
+      const found = [];
+      for (const m of messages) {
+        const content = m.content || '';
+        if (typeof content === 'string' && content.toLowerCase().includes(lq)) {
+          found.push('[' + (m.type || m.role || '?') + '] ' + content.slice(0, 100));
+        }
+      }
+      if (found.length) {
+        addMsg('system', 'Found ' + found.length + ' match(es):\n' + found.slice(0, 20).join('\n'));
+      } else {
+        addMsg('system', 'No matches found.');
+      }
+    } catch (e) { addMsg('error', 'Search failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/model') {
+    const modelName = parts[1] || '';
+    if (!modelName) { addMsg('system', 'Usage: /model <name>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'model', model: modelName, agent: '', conversation_id: conversationId || '' }),
+      });
+      const data = await resp.json();
+      addMsg('system', data.message || data.error || 'Model updated');
+    } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/flow') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'list_conv_flows' }),
+        });
+        const data = await resp.json();
+        const flows = data.flows || [];
+        if (!flows.length) { addMsg('system', 'No deployed flows.'); }
+        else {
+          const lines = flows.map(function(f) { return (f.status === 'running' ? '\u25b6' : '\u23f9') + ' ' + f.id + ' \u2014 ' + f.name + ' [' + f.status + ']'; });
+          addMsg('system', 'Flows:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'templates') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'list_available_flows' }),
+        });
+        const data = await resp.json();
+        const templates = data.templates || [];
+        if (!templates.length) { addMsg('system', 'No flow templates.'); }
+        else {
+          const lines = templates.map(function(tmpl) { return tmpl.id + (tmpl.version ? ' v' + tmpl.version : '') + ' \u2014 ' + tmpl.name + ' (' + tmpl.tasks_count + ' tasks)'; });
+          addMsg('system', 'Flow templates:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'deploy') {
+      const templateId = parts[2];
+      const scope = parts[3] || 'user';
+      if (!templateId) { addMsg('system', 'Usage: /flow deploy <template_id> [user|conversation]'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, conversation_id: conversationId || '' }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Deployed: ' + (data.instance_id || '?') + ' (' + scope + ')'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'start') {
+      const iid = parts[2];
+      if (!iid) { addMsg('system', 'Usage: /flow start <instance_id> [key=val ...]'); return true; }
+      const overrides = {};
+      for (let i = 3; i < parts.length; i++) {
+        if (parts[i].includes('=')) {
+          const [k, ...v] = parts[i].split('=');
+          overrides[k] = v.join('=');
+        }
+      }
+      try {
+        if (Object.keys(overrides).length) {
+          await fetch(API, {
+            method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({ action: 'update_flow_params', instance_id: iid, parameters: overrides }),
+          });
+        }
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'start_flow', instance_id: iid }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Flow \'' + iid + '\' started'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'stop') {
+      const iid = parts[2];
+      if (!iid) { addMsg('system', 'Usage: /flow stop <instance_id>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'stop_flow', instance_id: iid }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Flow \'' + iid + '\' stopped'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'params') {
+      const iid = parts[2];
+      if (!iid) { addMsg('system', 'Usage: /flow params <instance_id>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'get_flow_instance', instance_id: iid }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else {
+          const params = { ...(data.template_parameters || {}), ...(data.parameters || {}) };
+          const lines = Object.entries(params).map(function(entry) { return '  ' + entry[0] + ' = ' + entry[1]; });
+          addMsg('system', 'Flow ' + (data.flow_name || iid) + ' [' + (data.status || '?') + ']:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'undeploy') {
+      const iid = parts[2];
+      if (!iid) { addMsg('system', 'Usage: /flow undeploy <instance_id>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'undeploy_flow', instance_id: iid }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Flow \'' + iid + '\' undeployed'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'promote') {
+      const iid = parts[2];
+      if (!iid) { addMsg('system', 'Usage: /flow promote <instance_id>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'promote_flow', instance_id: iid, target_scope: 'user' }),
+        });
+        const data = await resp.json();
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Flow \'' + iid + '\' promoted to user scope'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else {
+      addMsg('system', 'Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote');
+    }
+    return true;
+  }
+
+  if (cmd === '/prompt') {
+    const sub = (parts[1] || 'list').toLowerCase();
+    if (sub === 'list') {
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'list_prompts', conversation_id: conversationId || '' }),
+        });
+        const data = await resp.json();
+        const prompts = data.prompts || [];
+        if (!prompts.length) { addMsg('system', 'No prompts.'); }
+        else {
+          const lines = prompts.map(function(p) { return '\u2022 ' + p.name + ': ' + (p.description || p.content || '').slice(0, 60); });
+          addMsg('system', 'Prompts:\n' + lines.join('\n'));
+        }
+      } catch (e) { addMsg('error', e.message); }
+    } else if (sub === 'use') {
+      const name = parts[2] || '';
+      if (!name) { addMsg('system', 'Usage: /prompt use <name>'); return true; }
+      try {
+        const resp = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({ action: 'get_prompt', conversation_id: conversationId || '', name }),
+        });
+        const data = await resp.json();
+        if (data.content) { addMsg('system', 'Prompt \'' + name + '\':\n' + data.content); }
+        else { addMsg('error', 'Prompt \'' + name + '\' not found'); }
+      } catch (e) { addMsg('error', e.message); }
+    } else {
+      addMsg('system', 'Usage: /prompt list | use <name>');
+    }
+    return true;
+  }
+
+  if (cmd === '/run') {
+    const command = text.slice(cmd.length).trim();
+    if (!command) { addMsg('system', 'Usage: /run <command>'); return true; }
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'fs_exec', service: '', command, timeout: 30 }),
+      });
+      const data = await resp.json();
+      if (data.error) { addMsg('error', data.error); }
+      else {
+        const out = (data.stdout || '') + (data.stderr ? '\n[stderr] ' + data.stderr : '');
+        addMsg('system', '$ ' + command + ' (exit ' + (data.returncode || 0) + ')\n' + out);
+      }
+    } catch (e) { addMsg('error', 'Exec failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/diff') {
+    const ref = parts.slice(1).join(' ') || '.';
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'fs_exec', service: '', command: 'git diff ' + ref, timeout: 15 }),
+      });
+      const data = await resp.json();
+      const output = data.stdout || '';
+      if (!output) { addMsg('system', 'No changes.'); }
+      else {
+        const lines = output.split('\n');
+        const html = lines.map(function(l) {
+          if (l.startsWith('+')) return '<span class="diff-add">' + escapeHtml(l) + '</span>';
+          if (l.startsWith('-')) return '<span class="diff-del">' + escapeHtml(l) + '</span>';
+          if (l.startsWith('@@')) return '<span class="diff-hunk">' + escapeHtml(l) + '</span>';
+          return '<span class="diff-ctx">' + escapeHtml(l) + '</span>';
+        }).join('\n');
+        const el = addMsg('system', '');
+        el.innerHTML = '<pre class="diff">' + html + '</pre>';
+      }
+    } catch (e) { addMsg('error', 'Diff failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/copy') {
+    const msgs = document.querySelectorAll('.msg.assistant');
+    if (!msgs.length) { addMsg('system', 'No responses to copy.'); return true; }
+    const n = parseInt(parts[1]) || 1;
+    const target = msgs[msgs.length - n];
+    if (!target) { addMsg('system', 'Only ' + msgs.length + ' responses available.'); return true; }
+    const text_to_copy = target.textContent || '';
+    try {
+      await navigator.clipboard.writeText(text_to_copy);
+      addMsg('system', 'Copied ' + text_to_copy.length + ' chars to clipboard.');
+    } catch (e) { addMsg('error', 'Copy failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/paste') {
+    try {
+      const items = await navigator.clipboard.read();
+      for (const item of items) {
+        if (item.types.includes('image/png')) {
+          const blob = await item.getType('image/png');
+          const reader = new FileReader();
+          reader.onload = function() {
+            const b64 = reader.result.split(',')[1];
+            pendingFiles.push({ filename: 'clipboard.png', mime_type: 'image/png', data: b64 });
+            addMsg('system', 'Image pasted from clipboard (' + pendingFiles.length + ' file(s) queued).');
+          };
+          reader.readAsDataURL(blob);
+          return true;
+        }
+      }
+      // No image — try text
+      const text_content = await navigator.clipboard.readText();
+      if (text_content) {
+        document.getElementById('chatInput').value += text_content;
+        addMsg('system', 'Text pasted from clipboard.');
+      }
+    } catch (e) { addMsg('error', 'Paste failed: ' + e.message); }
+    return true;
+  }
+
+  if (cmd === '/upload') {
+    const fileInput = document.getElementById('fileInput');
+    if (fileInput) { fileInput.click(); }
+    else { addMsg('system', 'File upload not available. Drag & drop files into the chat.'); }
+    return true;
+  }
+
+  if (cmd === '/plan') {
+    const arg = text.slice(cmd.length).trim();
+    // No args or "list" — open plans panel
+    if (!arg || arg === 'list') {
+      const panel = document.getElementById('plansPanel');
+      if (panel.style.display === 'none') {
+        panel.style.display = 'block';
+      }
+      await loadPlans();
+      if (arg === 'list') {
+        // Also show plans inline in chat
+        try {
+          const resp = await fetch(API, {
+            method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({ action: 'get_plans', conversation_id: conversationId }),
+          });
+          const data = await resp.json();
+          let planArr = Array.isArray(data.plans) ? data.plans : Object.values(data.plans || {});
+          if (!planArr.length) { addMsg('system', 'No active plans.'); return true; }
+          let lines = ['**Plans:**'];
+          for (const p of planArr) {
+            if (!p || !p.title) continue;
+            const steps = p.steps || [];
+            const done = steps.filter(s => s.status === 'done').length;
+            const icon = {'pending_approval': '\u23F3', 'approved': '\u2705', 'in_progress': '\u25B6', 'completed': '\u2714', 'cancelled': '\u274C'}[p.status] || '\u2753';
+            lines.push('  ' + icon + ' **' + p.title + '** (`' + (p.id || '?') + '`) \u2014 ' + p.status + ' \u2014 ' + done + '/' + steps.length + ' done');
+          }
+          addMsg('system', lines.join('\n'));
+        } catch (e) { addMsg('error', 'Failed to list plans: ' + e.message); }
+      }
+      return true;
+    }
+    // Subcommands: approve, cancel, delete
+    const parts = arg.split(/\s+/);
+    const subcmd = parts[0].toLowerCase();
+    if (['approve', 'cancel', 'delete'].includes(subcmd)) {
+      const planId = parts[1];
+      if (!planId) { addMsg('system', 'Usage: /plan ' + subcmd + ' <plan_id>'); return true; }
+      const actionMap = { 'approve': 'approve_plan', 'cancel': 'cancel_plan', 'delete': 'delete_plan' };
+      await planAction(actionMap[subcmd], planId);
+      return true;
+    }
+    // Otherwise treat as plan creation request to agent
+    const planMsg = '[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\n\n' + arg;
+    addMsg('user', '/plan ' + arg);
+    showTyping();
+    try {
+      const body = { message: planMsg };
+      if (conversationId) body.conversation_id = conversationId;
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
+      const data = await resp.json();
+      if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
+    } catch (e) { hideTyping(); addMsg('error', e.message); }
+    return true;
+  }
+
+  if (cmd === '/watch') {
+    addMsg('system', '/watch is not available in the web UI. Use the CLI for file watching.');
+    return true;
+  }
+
+  if (cmd === '/clear-files' || cmd === '/detach') {
+    pendingFiles = [];
+    addMsg('system', 'Pending attachments cleared.');
+    return true;
+  }
+
+  if (cmd === '/clear') {
+    document.getElementById('messages').innerHTML = '';
+    return true;
+  }
+
+  if (cmd === '/login') {
+    window.location.href = '/login';
+    return true;
+  }
+
   // Unknown slash command — show error, don't send as message
   addMsg('system', 'Unknown command: ' + cmd + '. Type /help for available commands.');
   return true;
@@ -1501,9 +2103,9 @@ async function cmdUsage() {
   } catch (e) { addMsg('error', 'Failed to get usage: ' + e.message); }
 }
 
-async function cmdLinkTelegram(tgId, botToken) {
+async function cmdLinkAccount(provider, providerId, botToken) {
   try {
-    const payload = { action: 'link_account', provider: 'telegram', provider_id: tgId };
+    const payload = { action: 'link_account', provider, provider_id: providerId };
     if (botToken) { payload.bot_token = botToken; }
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
@@ -1512,24 +2114,23 @@ async function cmdLinkTelegram(tgId, botToken) {
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); }
     else {
-      let msg = `Telegram user ${tgId} linked successfully!`;
-      if (data.bot_username) { msg += ` Personal bot: @${data.bot_username}`; }
-      if (data.bot_warning) { msg += `\n\u26a0\ufe0f ${data.bot_warning}`; }
-      msg += '\nYou can now use /conv commands on Telegram to access your conversations.';
+      let msg = provider + ' account ' + providerId + ' linked successfully!';
+      if (data.bot_username) { msg += ' Bot: @' + data.bot_username; }
+      if (data.bot_warning) { msg += '\n\u26a0\ufe0f ' + data.bot_warning; }
       addMsg('system', msg);
     }
   } catch (e) { addMsg('error', 'Failed to link: ' + e.message); }
 }
 
-async function cmdUnlinkTelegram() {
+async function cmdUnlinkAccount(provider) {
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'unlink_account', provider: 'telegram' }),
+      body: JSON.stringify({ action: 'unlink_account', provider }),
     });
     const data = await resp.json();
-    if (data.unlinked) { addMsg('system', 'Telegram account unlinked.'); }
-    else { addMsg('system', 'No Telegram link found.'); }
+    if (data.unlinked) { addMsg('system', provider + ' account unlinked.'); }
+    else { addMsg('system', 'No ' + provider + ' link found.'); }
   } catch (e) { addMsg('error', 'Failed to unlink: ' + e.message); }
 }
 
@@ -1542,11 +2143,10 @@ async function cmdLinkStatus() {
     const data = await resp.json();
     const links = data.links || {};
     if (Object.keys(links).length === 0) {
-      addMsg('system', 'No linked accounts. Use /link telegram <id> to link.');
+      addMsg('system', 'No linked accounts. Use /link <provider> <id> to link.');
     } else {
-      const lines = Object.entries(links).map(([ch, id]) => `\u2022 ${ch}: ${id}`);
-      const active = data.active_telegram_conv || 'none';
-      addMsg('system', 'Linked accounts:\n' + lines.join('\n') + '\n\nActive Telegram conversation: ' + active);
+      const lines = Object.entries(links).map(function(entry) { return '\u2022 ' + entry[0] + ': ' + entry[1]; });
+      addMsg('system', 'Linked accounts:\n' + lines.join('\n'));
     }
   } catch (e) { addMsg('error', 'Failed to get links: ' + e.message); }
 }

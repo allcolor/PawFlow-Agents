@@ -203,4 +203,23 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         count = data.get("agent_count", 0)
         app.renderer.print_system(f"Broadcast complete — {count} agent(s) responded")
 
+    elif ev_type == "plan_created":
+        plan = data.get("plan", data)
+        title = plan.get("title", data.get("title", ""))
+        steps = plan.get("steps", [])
+        step_count = len(steps) if isinstance(steps, list) else data.get("steps", 0)
+        app.renderer.print_system(f"\U0001f4cb Plan created: {title} ({step_count} steps)")
+
+    elif ev_type == "plan_updated":
+        plan = data.get("plan", data)
+        title = plan.get("title", data.get("title", ""))
+        done = data.get("done", sum(1 for s in plan.get("steps", []) if s.get("status") == "done"))
+        total = data.get("total", len(plan.get("steps", [])))
+        status = plan.get("status", "")
+        app.renderer.print_system(f"\U0001f4cb Plan updated: {title} [{status}] {done}/{total} done")
+
+    elif ev_type == "plan_deleted":
+        plan_id = data.get("plan_id", "")
+        app.renderer.print_system(f"\U0001f4cb Plan deleted: {plan_id}")
+
     return True, streaming_agent, thinking_agent

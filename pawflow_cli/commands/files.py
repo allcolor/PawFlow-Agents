@@ -1,4 +1,4 @@
-"""File commands: /upload, /paste, /clear-files, /copy, /view, /files, /run, /diff, /multi, /watch, /call, /plan."""
+"""File commands: /upload, /paste, /clear-files, /copy, /view, /files, /run, /diff, /multi, /watch, /call, /plan, /autoconv."""
 
 import os
 import threading
@@ -190,16 +190,145 @@ def handle_files_commands(app, cmd, arg, text):
         return True
 
     if cmd == "/plan":
-        if not arg:
-            app.renderer.print_error("Usage: /plan <description of what to do>")
+        if not app.conversation_id:
+            app.renderer.print_error("No active conversation")
             return True
-        # Send as a message with plan-mode instruction prefix
-        plan_msg = (
-            "[PLAN MODE — Read-only strategy. Analyze the request, identify affected files, "
-            "outline the approach step by step. Do NOT make any changes yet. "
-            "Just present the plan and wait for approval.]\n\n" + arg
-        )
-        app._send_message(plan_msg)
+        parts = arg.split(None, 1) if arg else ["list"]
+        subcmd = parts[0].lower()
+        subarg = parts[1] if len(parts) > 1 else ""
+
+        try:
+            if subcmd == "list" or not arg:
+                data = app.api.send_action("get_plans", conversation_id=app.conversation_id)
+                plans_list = data.get("plans", [])
+                if not plans_list:
+                    app.renderer.print_system("No plans.")
+                else:
+                    for p in plans_list:
+                        done = sum(1 for s in p.get("steps", []) if s.get("status") == "done")
+                        total = len(p.get("steps", []))
+                        app.renderer.print(f"  [{p['status']}] {p['id']} \u2014 {p['title']} ({done}/{total})")
+            elif subcmd == "show":
+                if not subarg:
+                    app.renderer.print_error("Usage: /plan show <plan_id>")
+                    return True
+                data = app.api.send_action("get_plan", conversation_id=app.conversation_id, plan_id=subarg)
+                plan = data.get("plan", {})
+                if not plan:
+                    app.renderer.print_error(f"Plan '{subarg}' not found")
+                    return True
+                done = sum(1 for s in plan.get("steps", []) if s.get("status") == "done")
+                total = len(plan.get("steps", []))
+                app.renderer.print(f"  **{plan['title']}** [{plan['status']}] ({done}/{total})")
+                for s in plan.get("steps", []):
+                    icon = {"pending": "\u25cb", "in_progress": "\u25d4", "done": "\u2713", "skipped": "\u2013", "error": "\u2717"}.get(s["status"], "\u25cb")
+                    assigned = f" \u2192 {s['assigned_to']}" if s.get("assigned_to") else ""
+                    note = f" \u2014 {s['note']}" if s.get("note") else ""
+                    app.renderer.print(f"    {icon} {s['index']}. {s['description']}{assigned}{note}")
+            elif subcmd == "create":
+                # /plan create "title" "step1" "step2" ...
+                import shlex
+                try:
+                    parts_q = shlex.split(subarg)
+                except ValueError:
+                    parts_q = subarg.split('"')
+                    parts_q = [p.strip() for p in parts_q if p.strip()]
+                if len(parts_q) < 2:
+                    app.renderer.print_error('Usage: /plan create "title" "step1" "step2" ...')
+                    return True
+                title = parts_q[0]
+                steps = parts_q[1:]
+                data = app.api.send_action("create_plan_user", conversation_id=app.conversation_id, title=title, steps=steps)
+                plan = data.get("plan", {})
+                app.renderer.print_system(f"Plan '{plan.get('id', '?')}' created: {title} ({len(steps)} steps)")
+            elif subcmd == "approve":
+                if not subarg:
+                    app.renderer.print_error("Usage: /plan approve <plan_id>")
+                    return True
+                data = app.api.send_action("approve_plan", conversation_id=app.conversation_id, plan_id=subarg)
+                app.renderer.print_system(f"Plan '{subarg}' approved")
+            elif subcmd == "reject":
+                pid_parts = subarg.split(None, 1)
+                pid = pid_parts[0] if pid_parts else ""
+                reason = pid_parts[1] if len(pid_parts) > 1 else ""
+                if not pid:
+                    app.renderer.print_error("Usage: /plan reject <plan_id> [reason]")
+                    return True
+                data = app.api.send_action("reject_plan", conversation_id=app.conversation_id, plan_id=pid, reason=reason)
+                app.renderer.print_system(f"Plan '{pid}' rejected")
+            elif subcmd == "assign":
+                # /plan assign <plan_id> <agent> [step_range]
+                assign_parts = subarg.split()
+                if len(assign_parts) < 2:
+                    app.renderer.print_error("Usage: /plan assign <plan_id> <agent> [1-3]")
+                    return True
+                pid = assign_parts[0]
+                agent = assign_parts[1]
+                sr = assign_parts[2] if len(assign_parts) > 2 else ""
+                data = app.api.send_action("assign_plan", conversation_id=app.conversation_id, plan_id=pid, agent=agent, step_range=sr)
+                app.renderer.print_system(f"Plan '{pid}' assigned to {agent}" + (f" (steps {sr})" if sr else ""))
+            elif subcmd == "skip":
+                skip_parts = subarg.split()
+                if len(skip_parts) < 2:
+                    app.renderer.print_error("Usage: /plan skip <plan_id> <step>")
+                    return True
+                data = app.api.send_action("update_plan_step", conversation_id=app.conversation_id, plan_id=skip_parts[0], step=int(skip_parts[1]), status="skipped")
+                app.renderer.print_system(f"Step {skip_parts[1]} skipped")
+            elif subcmd == "cancel":
+                if not subarg:
+                    app.renderer.print_error("Usage: /plan cancel <plan_id>")
+                    return True
+                data = app.api.send_action("cancel_plan", conversation_id=app.conversation_id, plan_id=subarg)
+                app.renderer.print_system(f"Plan '{subarg}' cancelled")
+            elif subcmd == "delete":
+                if not subarg:
+                    app.renderer.print_error("Usage: /plan delete <plan_id>")
+                    return True
+                data = app.api.send_action("delete_plan", conversation_id=app.conversation_id, plan_id=subarg)
+                app.renderer.print_system(f"Plan '{subarg}' deleted")
+            else:
+                app.renderer.print_error("Usage: /plan [list|show|create|approve|reject|assign|skip|cancel|delete]")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/autoconv":
+        if not app.conversation_id:
+            app.renderer.print_error("No active conversation")
+            return True
+        parts = arg.split() if arg else []
+        if not parts or parts[0].lower() not in ("on", "off", "status", "now"):
+            app.renderer.print_error("Usage: /autoconv <on|off|status|now> <agent|ALL> [freq]")
+            return True
+        sub = parts[0].lower()
+        agent = parts[1] if len(parts) > 1 else ""
+        if not agent:
+            app.renderer.print_error(f"Usage: /autoconv {sub} <agent|ALL> [freq]")
+            return True
+        try:
+            kwargs = {"conversation_id": app.conversation_id, "sub": sub, "agent": agent}
+            if sub == "on":
+                kwargs["frequency"] = parts[2] if len(parts) > 2 else "6/1m"
+            data = app.api.send_action("random_thought", **kwargs)
+            if data.get("error"):
+                app.renderer.print_error(data["error"])
+            elif sub == "on":
+                app.renderer.print_system(f"Auto-conversation enabled for {agent} ({data.get('frequency', '?')})")
+            elif sub == "off":
+                app.renderer.print_system(f"Auto-conversation disabled for {agent}")
+            elif sub == "now":
+                app.renderer.print_system(f"Auto-conversation triggered for {agent}")
+            else:
+                # status
+                agents = data.get("agents", [])
+                if isinstance(agents, list):
+                    for a in agents:
+                        status = "on" if a.get("enabled") else "off"
+                        app.renderer.print(f"  {a.get('agent', '?')}: {status} ({a.get('frequency', 'N/A')})")
+                else:
+                    app.renderer.print_system(str(data))
+        except Exception as e:
+            app.renderer.print_error(str(e))
         return True
 
     return False

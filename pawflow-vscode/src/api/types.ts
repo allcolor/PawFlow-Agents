@@ -4,11 +4,19 @@ export interface Attachment {
   data: string;
 }
 
+export interface ReplyTo {
+  raw_index: number;
+  role: string;
+  agent: string;
+  text_preview: string;
+}
+
 export interface SendMessageRequest {
   message: string;
   conversation_id?: string;
   target_agent?: string;
   attachments?: Attachment[];
+  reply_to?: ReplyTo;
 }
 
 export interface AgentResponse {

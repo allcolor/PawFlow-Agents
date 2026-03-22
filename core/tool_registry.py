@@ -29,15 +29,19 @@ logger = logging.getLogger(__name__)
 
 # Handler classes moved to core/handlers/ — re-exported for compatibility
 from core.handlers import (  # noqa: F401
+    ApprovePlanHandler,
     AskAgentHandler,
     AskUserHandler,
+    AssignPlanHandler,
     AssignTaskHandler,
     BrowserActionHandler,
+    CancelPlanHandler,
     CompleteTaskHandler,
     ConfigurableToolHandler,
     CreateFileHandler,
     CreatePlanHandler,
     CreateToolHandler,
+    DeletePlanHandler,
     ExecuteScriptHandler,
     FilesystemToolHandler,
     FlowManagerHandler,
@@ -264,6 +268,10 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ForgetHandler())
     registry.register(CreatePlanHandler())
     registry.register(UpdatePlanHandler())
+    registry.register(ApprovePlanHandler())
+    registry.register(AssignPlanHandler())
+    registry.register(CancelPlanHandler())
+    registry.register(DeletePlanHandler())
     registry.register(NotifyUserHandler())
     registry.register(AskUserHandler())
     registry.register(CreateToolHandler())

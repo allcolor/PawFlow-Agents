@@ -326,6 +326,32 @@
     scrollBottom();
   });
 
+  // ── Plan events ──────────────────────────────────────────────
+  eventSource.addEventListener('plan_created', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const plan = data.plan || data;
+    const title = plan.title || data.title || '';
+    const stepCount = (plan.steps && plan.steps.length) || data.steps || 0;
+    addMsg('system', '\u{1F4CB} Plan created: ' + title + ' (' + stepCount + ' steps)');
+    // Show plans button and refresh panel if open
+    const plansBtn = document.getElementById('plansBtn');
+    if (plansBtn) plansBtn.style.display = '';
+    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
+    scrollBottom();
+  });
+
+  eventSource.addEventListener('plan_updated', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
+  });
+
+  eventSource.addEventListener('plan_deleted', (e) => {
+    lastSSEActivity = Date.now();
+    if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

@@ -58,6 +58,7 @@ class ServeLoginTask(BaseTask):
         callback = self.config.get("callback_path", "/auth/callback")
         chat_path = self.config.get("chat_path", "/chat")
         title = self.config.get("title", "PawFlow")
+        relay_callback = self.config.get("relay_callback", "")
 
         # If single OAuth provider and no builtin → auto-redirect
         oauth_providers = [p for p in providers if p["is_oauth"]]
@@ -71,7 +72,10 @@ class ServeLoginTask(BaseTask):
 
         if len(oauth_providers) == 1 and not has_builtin:
             provider = oauth_providers[0]
-            state = _oauth_svc.generate_state(metadata={"provider": provider["name"]}) if _oauth_svc else auth_svc.generate_state(provider["name"])
+            _meta = {"provider": provider["name"]}
+            if relay_callback:
+                _meta["relay_callback"] = relay_callback
+            state = _oauth_svc.generate_state(metadata=_meta) if _oauth_svc else auth_svc.generate_state(provider["name"])
             redirect_uri = self._build_redirect_uri(flowfile, callback)
             p = auth_svc.get_provider(provider["name"])
             url = p.get_authorize_url(state, redirect_uri)
@@ -82,7 +86,8 @@ class ServeLoginTask(BaseTask):
 
         # Render login page
         html = self._render_page(providers, auth_svc, flowfile,
-                                  callback, chat_path, title)
+                                  callback, chat_path, title,
+                                  relay_callback=relay_callback)
         flowfile.set_content(html.encode("utf-8"))
         flowfile.set_attribute("http.response.status", "200")
         flowfile.set_attribute("http.response.header.Content-Type",
@@ -96,7 +101,7 @@ class ServeLoginTask(BaseTask):
         return f"{scheme}://{host}{callback_path}"
 
     def _render_page(self, providers, auth_svc, flowfile,
-                      callback, chat_path, title):
+                      callback, chat_path, title, relay_callback=""):
         """Render the login page HTML with provider buttons."""
         redirect_uri = self._build_redirect_uri(flowfile, callback)
         has_builtin = any(p["name"] == "builtin" for p in providers)
@@ -112,8 +117,11 @@ class ServeLoginTask(BaseTask):
         # Build OAuth buttons
         buttons_html = ""
         for p in oauth_providers:
+            _meta = {"provider": p["name"]}
+            if relay_callback:
+                _meta["relay_callback"] = relay_callback
             if oauth_svc:
-                state = oauth_svc.generate_state(metadata={"provider": p["name"]})
+                state = oauth_svc.generate_state(metadata=_meta)
             else:
                 state = auth_svc.generate_state(p["name"])
             provider_obj = auth_svc.get_provider(p["name"])

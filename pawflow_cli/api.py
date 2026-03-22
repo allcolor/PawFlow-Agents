@@ -43,7 +43,7 @@ class AgentAPIClient:
 
     def send_message(self, message: str, conversation_id: str = None,
                      target_agent: str = "", attachments: list = None,
-                     pending_agent: str = "") -> dict:
+                     pending_agent: str = "", reply_to: dict = None) -> dict:
         """Send a chat message to the agent."""
         body = {"message": message}
         if conversation_id:
@@ -54,6 +54,8 @@ class AgentAPIClient:
             body["attachments"] = attachments
         if pending_agent:
             body["pending_agent"] = pending_agent
+        if reply_to:
+            body["reply_to"] = reply_to
         return self._post("/api/agent", body)
 
     def _post(self, path: str, body: dict) -> dict:

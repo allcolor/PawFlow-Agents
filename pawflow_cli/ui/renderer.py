@@ -464,6 +464,90 @@ class TerminalRenderer:
             else:
                 print(f"    ↳ {display[:200]}")
 
+        elif mtype == "sub_agent_trace":
+            self._render_sub_agent_trace(msg)
+
+    # ── Sub-agent trace ──
+
+    def _render_sub_agent_trace(self, msg: dict):
+        """Render a sub-agent trace as a compact indented block."""
+        source = msg.get("source", {})
+        trace = msg.get("trace", [])
+        content = msg.get("content", "")
+
+        agent_name = source.get("name", "sub-agent")
+        parent = source.get("parent_agent", "")
+        depth = source.get("depth", 1)
+
+        # Gather stats from trace entries
+        total_tools = 0
+        tokens_in = 0
+        tokens_out = 0
+        status = "completed"
+        tool_names = []
+
+        for entry in trace:
+            etype = entry.get("type", "")
+            if etype == "iteration":
+                total_tools += entry.get("total_tools", 0)
+            elif etype == "tool_call":
+                tool_names.append(entry.get("tool", "?"))
+            elif etype == "done":
+                status = entry.get("status", "completed")
+                tokens_in = entry.get("tokens_in", 0)
+                tokens_out = entry.get("tokens_out", 0)
+
+        # If total_tools wasn't set in iterations, use tool_call count
+        if not total_tools:
+            total_tools = len(tool_names)
+
+        # Indentation based on depth
+        indent = "  " * depth
+
+        # Response preview (first line, truncated)
+        preview = ""
+        if content:
+            first_line = content.split("\n")[0].strip()
+            preview = first_line if len(first_line) <= 80 else first_line[:77] + "..."
+
+        if self.console:
+            from rich.markup import escape
+            color = _agent_color(agent_name)
+            parent_str = f"{escape(parent)} → " if parent else ""
+            stats = f"{total_tools} tool{'s' if total_tools != 1 else ''}"
+            if tokens_in or tokens_out:
+                stats += f", {tokens_in:,}↑ {tokens_out:,}↓"
+
+            # Header line
+            self.console.print(
+                f"{indent}[dim]┌[/dim] [{color}]{parent_str}{escape(agent_name)}[/{color}] "
+                f"[dim italic]({stats})[/dim italic]"
+            )
+            # Tool calls
+            for tn in tool_names:
+                self.console.print(f"{indent}[dim]│[/dim] [yellow]⚡ {escape(tn)}[/yellow]")
+            # Status
+            status_icon = "✓" if status == "completed" else "✗"
+            status_style = "green" if status == "completed" else "red"
+            self.console.print(
+                f"{indent}[dim]│[/dim] [{status_style}]{status_icon} {escape(status)}[/{status_style}]"
+            )
+            # Response preview
+            if preview:
+                self.console.print(f"{indent}[dim]│ {escape(preview)}[/dim]")
+            # Footer
+            self.console.print(f"{indent}[dim]└─────[/dim]")
+        else:
+            parent_str = f"{parent} → " if parent else ""
+            print(f"{indent}┌ {parent_str}{agent_name} ({total_tools} tools)")
+            for tn in tool_names:
+                print(f"{indent}│ ⚡ {tn}")
+            status_icon = "✓" if status == "completed" else "✗"
+            print(f"{indent}│ {status_icon} {status}")
+            if preview:
+                print(f"{indent}│ {preview}")
+            print(f"{indent}└─────")
+
     # ── Conversations ──
 
     def print_conversation_list(self, conversations: list):

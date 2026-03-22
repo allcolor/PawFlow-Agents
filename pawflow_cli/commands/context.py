@@ -1,4 +1,4 @@
-"""Context commands: /compact, /model, /rebuild, /restart, /summary, /context, /llm."""
+"""Context commands: /compact, /model, /rebuild, /rebuild-full, /restart, /summary, /context, /llm."""
 
 
 def handle_context_commands(app, cmd, arg, text):
@@ -35,6 +35,17 @@ def handle_context_commands(app, cmd, arg, text):
         try:
             app.api.send_action("rebuild", conversation_id=app.conversation_id, agent_name=arg or "")
             app.renderer.print_system("Rebuild started")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd in ("/rebuild-full", "/rebuild_clean"):
+        if not app.conversation_id:
+            app.renderer.print_error("No active conversation")
+            return True
+        try:
+            app.api.send_action("rebuild_full", conversation_id=app.conversation_id, agent_name=arg or "")
+            app.renderer.print_system("Full rebuild started")
         except Exception as e:
             app.renderer.print_error(str(e))
         return True

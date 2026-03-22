@@ -196,6 +196,27 @@ class SubAgentExecutor:
             "source_llm_service": task.source_llm_service,
             "llm_service": task.llm_service,
         })
+
+        # Create display-only trace message in parent conversation
+        _trace_created = False
+        if task.parent_conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                _depth = _get_depth()
+                ConversationStore.instance().create_display_trace(
+                    task.parent_conversation_id, task.id,
+                    source={
+                        "name": task.agent_name,
+                        "parent_agent": task.source_agent or "",
+                        "task_id": task.id,
+                        "depth": _depth,
+                    },
+                    user_id=task.user_id,
+                )
+                _trace_created = True
+            except Exception as _te:
+                logger.debug("Failed to create display trace: %s", _te)
+
         deadline = start + (task.timeout or self._default_timeout)
         max_iter = task.max_iterations or self._default_max_iterations
 
@@ -326,6 +347,16 @@ class SubAgentExecutor:
                     "tokens_in": result.tokens_in,
                     "tokens_out": result.tokens_out,
                 })
+                if _trace_created:
+                    try:
+                        from core.conversation_store import ConversationStore
+                        ConversationStore.instance().append_display_trace(
+                            task.parent_conversation_id, task.id,
+                            {"type": "iteration", "iteration": iteration,
+                             "total_tools": len(result.tools_called)},
+                        )
+                    except Exception:
+                        pass
 
                 response = client.complete(
                     messages=messages,
@@ -371,6 +402,15 @@ class SubAgentExecutor:
                         "tool": tc.name,
                         "iteration": result.iterations,
                     })
+                    if _trace_created:
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().append_display_trace(
+                                task.parent_conversation_id, task.id,
+                                {"type": "tool_call", "tool": tc.name},
+                            )
+                        except Exception:
+                            pass
                     tool_result = self._execute_tool(tc, tool_handlers, task.agent_name)
                     messages.append(LLMMessage(
                         role="tool",
@@ -437,28 +477,20 @@ class SubAgentExecutor:
             "provider": result.provider,
         })
 
-        # Append new sub-conv messages to parent (append-only, thread-safe)
-        if sub_conv_id and task.parent_conversation_id:
+        if _trace_created:
             try:
                 from core.conversation_store import ConversationStore
-                _store = ConversationStore.instance()
-                _sub_msgs = _store.load(sub_conv_id) or []
-                # Only append messages added since last sync
-                _sync_key = f"_sub_sync:{sub_conv_id}"
-                _last_sync = _store.get_extra(task.parent_conversation_id, _sync_key) or 0
-                _new = _sub_msgs[_last_sync:]
-                if _new:
-                    # Tag with agent source
-                    _source = {"type": "agent", "name": task.agent_name,
-                               "llm_service": task.llm_service}
-                    for m in _new:
-                        if isinstance(m, dict) and "source" not in m:
-                            m["source"] = _source
-                    _store.append_messages(task.parent_conversation_id, _new,
-                                            user_id=task.user_id)
-                    _store.set_extra(task.parent_conversation_id, _sync_key, len(_sub_msgs))
-            except Exception as _pe:
-                logger.debug("Failed to sync sub-conv to parent: %s", _pe)
+                ConversationStore.instance().append_display_trace(
+                    task.parent_conversation_id, task.id,
+                    {"type": "done", "status": result.status,
+                     "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
+                     "iterations": result.iterations,
+                     "tools_called": result.tools_called,
+                     "model": result.model, "error": result.error},
+                    content_update=result.response or result.error or "",
+                )
+            except Exception as _te:
+                logger.debug("Failed to append done trace: %s", _te)
 
         # Cleanup sub-conversation (unless agent scheduled continuation)
         if sub_conv_id and result.status in ("completed", "error", "timeout"):

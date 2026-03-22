@@ -84,6 +84,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         # Load source data
         context_data = _ctx_load(conv_id, _ctx_agent)
         source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
+        # Filter out display-only sub-agent traces
+        if source_data:
+            source_data = [m for m in source_data if not (isinstance(m, dict) and m.get("display_only"))]
         if not source_data or len(source_data) < 4:
             flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
             return [flowfile]
@@ -131,6 +134,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rb_msgs = store.load(conv_id, user_id=user_id)
+        # Filter out display-only sub-agent traces
+        if _rb_msgs:
+            _rb_msgs = [m for m in _rb_msgs if not (isinstance(m, dict) and m.get("display_only"))]
         if not _rb_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -174,6 +180,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rf_msgs = store.load(conv_id, user_id=user_id)
+        # Filter out display-only sub-agent traces
+        if _rf_msgs:
+            _rf_msgs = [m for m in _rf_msgs if not (isinstance(m, dict) and m.get("display_only"))]
         if not _rf_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -432,6 +441,9 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rf_msgs = store.load(conv_id, user_id=user_id)
+        # Filter out display-only sub-agent traces
+        if _rf_msgs:
+            _rf_msgs = [m for m in _rf_msgs if not (isinstance(m, dict) and m.get("display_only"))]
         if not _rf_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")

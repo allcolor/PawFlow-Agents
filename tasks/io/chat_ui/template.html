@@ -100,6 +100,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .msg.btw { align-self: flex-start; background: #0d1b2a; color: #c0c0d0; font-size: 13px;
            border-left: 3px solid #60a5fa; border-radius: 8px; padding: 8px 14px;
            max-width: 85%; font-style: italic; opacity: 0.9; }
+.msg.sub_agent_trace { align-self: flex-start; background: #0d1b2a; border: 1px solid #1a3a5c;
+                       border-left: 3px solid #9b59b6; border-radius: 8px; padding: 0; max-width: 85%; }
+.sub-trace-header { padding: 6px 12px; cursor: pointer; font-size: 12px; color: #b0b0d0; user-select: none; }
+.sub-trace-header:hover { color: #e0e0e0; }
+.sub-trace-body { padding: 4px 12px 8px 12px; border-top: 1px solid #1a3a5c; }
+.trace-entry { font-size: 11px; color: #6c6c8a; padding: 1px 0; }
+.trace-entry.done { color: #4ecdc4; }
+.trace-content { font-size: 13px; color: #c0c0d0; margin-top: 6px; padding-top: 6px;
+                 border-top: 1px dashed #1a3a5c; white-space: pre-wrap; word-wrap: break-word; }
 .msg { position: relative; }
 .msg-actions { position: sticky; top: 0; float: right; display: none; gap: 2px; margin: -4px -6px 0 8px;
                z-index: 2; background: inherit; border-radius: 6px; padding: 2px; }
@@ -306,6 +315,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
+    <button class="btn" id="plansBtn" onclick="togglePlansPanel()" style="display:none" title="Plans">&#x1F4CB;</button>
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="explorerBtn" onclick="openExplorer()" title="File Explorer">&#128193;</button>
@@ -316,6 +326,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
     <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
   </div>
+</div>
+<div class="files-panel" id="plansPanel" style="display:none">
+  <div class="files-header"><strong>Plans</strong><button class="btn-close-panel" onclick="togglePlansPanel()">&times;</button></div>
+  <div class="files-list" id="plansList"></div>
 </div>
 <div class="files-panel" id="schedsPanel" style="display:none">
   <div class="files-header"><strong>Scheduled Tasks</strong><button class="btn-close-panel" onclick="toggleSchedsPanel()">&times;</button></div>

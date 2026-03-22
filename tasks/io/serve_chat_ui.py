@@ -38,8 +38,8 @@ def _load_chat_html() -> str:
         "i18n.js", "state.js", "conversations.js", "messages.js",
         "active_agents.js", "typing.js", "sse.js", "local_files.js",
         "dialogs.js", "commands.js", "context_editor.js", "memories.js",
-        "secrets.js", "files_panel.js", "attachments.js", "resources.js",
-        "services.js", "file_viewer.js", "file_explorer.js",
+        "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
+        "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
     ]
     js_parts = []
     for mod in _JS_MODULES:

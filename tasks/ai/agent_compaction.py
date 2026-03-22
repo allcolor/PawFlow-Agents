@@ -190,6 +190,9 @@ class AgentCompactionMixin:
         If *conversation_id* is given, the resulting summary is persisted
         to the ConversationStore so it can be reused after a restart.
         """
+        # Ensure no display-only messages leak into compaction
+        messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+
         # Always deflate any leftover image base64 before estimating
         self._deflate_image_messages(messages)
         # Strip base64 blobs from ALL messages — images, tool results, user attachments

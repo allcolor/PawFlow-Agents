@@ -39,7 +39,11 @@ class AgentToolConfigMixin:
         from core.tool_registry import (
             AskAgentHandler, AskUserHandler, BrowserActionHandler,
             CreateFileHandler,
+            ApprovePlanHandler,
+            AssignPlanHandler,
+            CancelPlanHandler,
             CreatePlanHandler,
+            DeletePlanHandler,
             CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
             FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler,
@@ -139,7 +143,8 @@ class AgentToolConfigMixin:
             elif isinstance(h, LinkIdentityHandler):
                 if user_id:
                     h.set_user_id(user_id)
-            elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler)):
+            elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler, ApprovePlanHandler,
+                                 AssignPlanHandler, CancelPlanHandler, DeletePlanHandler)):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
             elif isinstance(h, NotifyUserHandler):

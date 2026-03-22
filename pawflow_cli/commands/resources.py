@@ -1,4 +1,4 @@
-"""Resource commands: /resources, /tools, /cost, /skill, /task, /service, /flow, /activate, /deactivate, /prompt."""
+"""Resource commands: /resources, /tools, /cost, /skill, /task, /service, /flow, /activate, /deactivate, /prompt, /vidservice, /imgservice, /share, /install, /uninstall."""
 
 
 def handle_resources_commands(app, cmd, arg, text):
@@ -324,6 +324,115 @@ def handle_resources_commands(app, cmd, arg, text):
                     app.renderer.print_markdown(content)
                 else:
                     app.renderer.print_error(f"Prompt '{name}' not found")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/vidservice":
+        parts = arg.split(None, 2) if arg else ["list"]
+        subcmd = parts[0].lower()
+        try:
+            if subcmd == "list":
+                data = app.api.send_action("list_video_services", conversation_id=app.conversation_id or "")
+                services = data if isinstance(data, list) else []
+                for s in services:
+                    selected = " ← " + ", ".join(s.get("selected_for", [])) if s.get("selected_for") else ""
+                    app.renderer.print(f"  {s.get('id', '?')} ({s.get('type', '?')}, {s.get('scope', '?')}){selected}")
+                if not services:
+                    app.renderer.print_system("No video services.")
+            elif subcmd == "select":
+                name = parts[1] if len(parts) > 1 else ""
+                agent = parts[2] if len(parts) > 2 else "*"
+                if not name:
+                    app.renderer.print_error("Usage: /vidservice select <name> [agent]")
+                    return True
+                app.api.send_action("set_video_service", conversation_id=app.conversation_id or "", service_name=name, agent_name=agent)
+                target = "all agents" if agent == "*" else agent
+                app.renderer.print_system(f"Video service set to '{name}' for {target}")
+            elif subcmd == "clear":
+                agent = parts[1] if len(parts) > 1 else ""
+                app.api.send_action("clear_video_service", conversation_id=app.conversation_id or "", agent_name=agent)
+                app.renderer.print_system("Video service preference cleared")
+            else:
+                app.renderer.print_error("Usage: /vidservice list | select <name> [agent] | clear [agent]")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/imgservice":
+        parts = arg.split(None, 2) if arg else ["list"]
+        subcmd = parts[0].lower()
+        try:
+            if subcmd == "list":
+                data = app.api.send_action("list_image_services", conversation_id=app.conversation_id or "")
+                services = data if isinstance(data, list) else []
+                for s in services:
+                    selected = " ← " + ", ".join(s.get("selected_for", [])) if s.get("selected_for") else ""
+                    app.renderer.print(f"  {s.get('id', '?')} ({s.get('type', '?')}, {s.get('scope', '?')}){selected}")
+                if not services:
+                    app.renderer.print_system("No image services.")
+            elif subcmd == "select":
+                name = parts[1] if len(parts) > 1 else ""
+                agent = parts[2] if len(parts) > 2 else "*"
+                if not name:
+                    app.renderer.print_error("Usage: /imgservice select <name> [agent]")
+                    return True
+                app.api.send_action("set_image_service", conversation_id=app.conversation_id or "", service_name=name, agent_name=agent)
+                target = "all agents" if agent == "*" else agent
+                app.renderer.print_system(f"Image service set to '{name}' for {target}")
+            elif subcmd == "clear":
+                agent = parts[1] if len(parts) > 1 else ""
+                app.api.send_action("clear_image_service", conversation_id=app.conversation_id or "", agent_name=agent)
+                app.renderer.print_system("Image service preference cleared")
+            else:
+                app.renderer.print_error("Usage: /imgservice list | select <name> [agent] | clear [agent]")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/share":
+        parts = arg.split(None, 2) if arg else []
+        if len(parts) < 3:
+            app.renderer.print_error("Usage: /share <type> <name> <conversation_id>")
+            return True
+        try:
+            app.api.send_action("share_resource", conversation_id=app.conversation_id or "",
+                                resource_type=parts[0], name=parts[1], target_conversation_id=parts[2])
+            app.renderer.print_system(f"Shared {parts[0]} '{parts[1]}' to {parts[2][:8]}")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/install":
+        if not arg:
+            app.renderer.print_error("Usage: /install <filename.py>")
+            return True
+        import os
+        fpath = arg.strip().strip('"').strip("'")
+        if not os.path.isfile(fpath):
+            app.renderer.print_error(f"File not found: {fpath}")
+            return True
+        try:
+            content = open(fpath, "r").read()
+            data = app.api.send_action("install_tool", filename=os.path.basename(fpath), code=content)
+            if data.get("error"):
+                app.renderer.print_error(data["error"])
+            else:
+                app.renderer.print_system(f"Tool installed: {data.get('name', os.path.basename(fpath))}")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/uninstall":
+        if not arg:
+            app.renderer.print_error("Usage: /uninstall <tool_name>")
+            return True
+        try:
+            data = app.api.send_action("uninstall_tool", name=arg.strip())
+            if data.get("error"):
+                app.renderer.print_error(data["error"])
+            else:
+                app.renderer.print_system(f"Tool '{arg.strip()}' uninstalled")
         except Exception as e:
             app.renderer.print_error(str(e))
         return True

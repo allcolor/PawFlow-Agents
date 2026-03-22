@@ -113,6 +113,8 @@ function addMsg(role, text, extra) {
     }
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
+  } else if (role === 'sub_agent_trace') {
+    el.innerHTML = renderSubAgentTrace(text, extra);
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
     el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
@@ -323,6 +325,56 @@ function renderMarkdown(text) {
     }
   }
   return parts.join('');
+}
+
+function renderSubAgentTrace(content, extra) {
+  const source = (extra && extra.source) || {};
+  const trace = (extra && extra.trace) || [];
+  const traceId = (extra && extra.trace_id) || '';
+  const parentAgent = source.parent_agent || 'assistant';
+  const agentName = source.name || 'sub-agent';
+  // Summarize trace for header
+  let totalTools = 0;
+  let tokensIn = 0;
+  let tokensOut = 0;
+  for (const entry of trace) {
+    if (entry.type === 'tool_call') totalTools++;
+    if (entry.type === 'done') {
+      tokensIn = entry.tokens_in || 0;
+      tokensOut = entry.tokens_out || 0;
+    }
+  }
+  const header = escapeHtml(displayAgentName(parentAgent)) + ' \u2192 ' + escapeHtml(displayAgentName(agentName))
+    + ' (' + totalTools + ' tool' + (totalTools !== 1 ? 's' : '') + ', ' + tokensIn + '\u2191 ' + tokensOut + '\u2193)';
+  // Build trace entries
+  let traceHtml = '';
+  for (const entry of trace) {
+    if (entry.type === 'iteration') {
+      traceHtml += '<div class="trace-entry">iteration ' + entry.iteration + ' \u00b7 ' + (entry.total_tools || 0) + ' tools</div>';
+    } else if (entry.type === 'tool_call') {
+      traceHtml += '<div class="trace-entry">\u26a1 ' + escapeHtml(entry.tool || '?') + '</div>';
+    } else if (entry.type === 'done') {
+      const status = entry.status || 'done';
+      traceHtml += '<div class="trace-entry done">\u2713 ' + escapeHtml(status) + ' (' + (entry.tokens_in || 0) + '\u2191 ' + (entry.tokens_out || 0) + '\u2193)</div>';
+    }
+  }
+  // Content preview (truncated in header, full in body)
+  const contentText = content || '';
+  if (contentText) {
+    traceHtml += '<div class="trace-content">' + renderMarkdown(contentText) + '</div>';
+  }
+  return '<div class="sub-agent-trace"' + (traceId ? ' data-trace-id="' + escapeHtml(traceId) + '"' : '') + '>'
+    + '<div class="sub-trace-header" onclick="toggleTrace(this)">\u25b6 ' + header + '</div>'
+    + '<div class="sub-trace-body" style="display:none">' + traceHtml + '</div>'
+    + '</div>';
+}
+
+function toggleTrace(headerEl) {
+  const body = headerEl.nextElementSibling;
+  if (!body) return;
+  const isHidden = body.style.display === 'none';
+  body.style.display = isHidden ? '' : 'none';
+  headerEl.textContent = (isHidden ? '\u25bc ' : '\u25b6 ') + headerEl.textContent.substring(2);
 }
 
 // Auto-scroll state: true by default, turned off when user scrolls up manually

@@ -31,6 +31,10 @@ from core.handlers.flow_management import (  # noqa: F401
     AskAgentHandler,
     CreatePlanHandler,
     UpdatePlanHandler,
+    ApprovePlanHandler,
+    AssignPlanHandler,
+    CancelPlanHandler,
+    DeletePlanHandler,
 )
 from core.handlers.help_secrets import (  # noqa: F401
     PawFlowHelpHandler,

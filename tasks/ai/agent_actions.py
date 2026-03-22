@@ -24,6 +24,7 @@ from tasks.ai.actions.misc import _handle_misc
 from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 from tasks.ai.actions.usage import _handle_usage
+from tasks.ai.actions.plans import _handle_plans
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,7 @@ _ACTION_HANDLERS = [
     _handle_account_linking,
     _handle_memory_prompts,
     _handle_usage,
+    _handle_plans,
 ]
 
 

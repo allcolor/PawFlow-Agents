@@ -186,10 +186,18 @@ class TestPlanHandlers(unittest.TestCase):
             "title": "Test plan",
             "steps": [{"description": "Step 1"}],
         })
-        plan = self.store.get_extra("conv1", "plan")
-        self.assertIsNotNone(plan)
+        plans = self.store.get_extra("conv1", "plans")
+        self.assertIsNotNone(plans)
+        self.assertEqual(len(plans), 1)
+        plan = list(plans.values())[0]
         self.assertEqual(plan["title"], "Test plan")
         self.assertEqual(len(plan["steps"]), 1)
+        self.assertEqual(plan["status"], "pending_approval")
+
+    def _get_plan_id(self, conv_id="conv1"):
+        """Helper: get the first plan ID from the store."""
+        plans = self.store.get_extra(conv_id, "plans") or {}
+        return list(plans.keys())[0] if plans else None
 
     def test_update_plan(self):
         # Create first
@@ -203,10 +211,12 @@ class TestPlanHandlers(unittest.TestCase):
                 {"description": "C"},
             ],
         })
+        plan_id = self._get_plan_id()
         # Update
         uh = UpdatePlanHandler()
         uh.set_conversation_id("conv1")
         result = uh.execute({
+            "plan_id": plan_id,
             "updates": [{"step": 1, "status": "done"}],
         })
         self.assertIn("1/3", result)
@@ -215,10 +225,11 @@ class TestPlanHandlers(unittest.TestCase):
         uh = UpdatePlanHandler()
         uh.set_conversation_id("conv1")
         result = uh.execute({
+            "plan_id": "p_nonexistent",
             "updates": [{"step": 1, "status": "done"}],
         })
         self.assertIn("Error", result)
-        self.assertIn("no active plan", result)
+        self.assertIn("not found", result)
 
     def test_update_plan_with_note(self):
         ch = CreatePlanHandler()
@@ -227,9 +238,11 @@ class TestPlanHandlers(unittest.TestCase):
             "title": "Noted plan",
             "steps": [{"description": "Do X"}],
         })
+        plan_id = self._get_plan_id()
         uh = UpdatePlanHandler()
         uh.set_conversation_id("conv1")
         result = uh.execute({
+            "plan_id": plan_id,
             "updates": [{"step": 1, "status": "done", "note": "All good"}],
         })
         self.assertIn("All good", result)
@@ -241,22 +254,26 @@ class TestPlanHandlers(unittest.TestCase):
             "title": "Plan",
             "steps": [{"description": "Only step"}],
         })
+        plan_id = self._get_plan_id()
         uh = UpdatePlanHandler()
         uh.set_conversation_id("conv1")
         # Step 99 doesn't exist — should not crash
         result = uh.execute({
+            "plan_id": plan_id,
             "updates": [{"step": 99, "status": "done"}],
         })
         self.assertIn("0/1", result)  # no step was actually updated
 
-    def test_create_plan_replaces(self):
+    def test_create_multiple_plans(self):
         h = CreatePlanHandler()
         h.set_conversation_id("conv1")
         h.execute({"title": "Plan A", "steps": [{"description": "X"}]})
         h.execute({"title": "Plan B", "steps": [{"description": "Y"}, {"description": "Z"}]})
-        plan = self.store.get_extra("conv1", "plan")
-        self.assertEqual(plan["title"], "Plan B")
-        self.assertEqual(len(plan["steps"]), 2)
+        plans = self.store.get_extra("conv1", "plans")
+        self.assertEqual(len(plans), 2)
+        titles = [p["title"] for p in plans.values()]
+        self.assertIn("Plan A", titles)
+        self.assertIn("Plan B", titles)
 
 
 # ══════════════════════════════════════════════════════════════════

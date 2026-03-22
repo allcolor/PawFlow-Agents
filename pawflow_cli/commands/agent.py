@@ -1,4 +1,4 @@
-"""Agent commands: /agent, /msg, /btw, /stop, /interrupt."""
+"""Agent commands: /agent, /msg, /btw, /stop, /interrupt, /setname."""
 
 
 def handle_agent_commands(app, cmd, arg, text):
@@ -107,6 +107,20 @@ def handle_agent_commands(app, cmd, arg, text):
             action = "cancel" if force else "interrupt"
             app.api.send_action(action, conversation_id=app.conversation_id, target=target, agent_name=target)
             app.renderer.print_system(f"{'Cancelled' if force else 'Interrupted'} {target}")
+        except Exception as e:
+            app.renderer.print_error(str(e))
+        return True
+
+    if cmd == "/setname":
+        parts = arg.split(None, 1) if arg else []
+        if not parts:
+            app.renderer.print_error("Usage: /setname <agent> [nickname]")
+            return True
+        real = parts[0]
+        nick = parts[1] if len(parts) > 1 else ""
+        try:
+            app.api.send_action("set_agent_nickname", conversation_id=app.conversation_id, real_name=real, nickname=nick)
+            app.renderer.print_system(f"Nickname set: {real} → {nick or '(cleared)'}")
         except Exception as e:
             app.renderer.print_error(str(e))
         return True

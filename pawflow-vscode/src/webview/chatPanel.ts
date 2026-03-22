@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import { AgentAPIClient } from '../api/client';
 import { SSEClient } from '../api/sse';
 import { RelayManager } from '../relay/manager';
-import { SSEEvent, Attachment } from '../api/types';
+import { SSEEvent, Attachment, ReplyTo } from '../api/types';
 
 export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined;
@@ -33,7 +33,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     view.webview.onDidReceiveMessage(async (msg) => {
       switch (msg.type) {
         case 'sendMessage':
-          await this.sendMessage(msg.text, msg.attachments);
+          await this.sendMessage(msg.text, msg.attachments, msg.reply_to);
           break;
         case 'newConversation':
           this.newConversation();
@@ -48,7 +48,25 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
           await this.handleApproval(msg.requestId, msg.result, msg.approvalType);
           break;
         case 'command':
-          await this.sendCommand(msg.command, msg.arg);
+          if (msg.command === 'clipboard_write') {
+            await vscode.env.clipboard.writeText(msg.arg || '');
+            this.postMessage({ type: 'actionResult', action: 'clipboard_write', data: { ok: true } });
+          } else if (msg.command === 'clipboard_read') {
+            const text = await vscode.env.clipboard.readText();
+            this.postMessage({ type: 'clipboardContent', text });
+          } else if (msg.command === 'clear_attachments') {
+            this.pendingAttachments = [];
+            this.postMessage({ type: 'actionResult', action: 'clear_attachments', data: { ok: true } });
+          } else if (msg.command === 'assign_plan_dialog') {
+            await this.showAssignPlanDialog(msg.arg);
+          } else if (msg.command === 'assign_step_dialog') {
+            const parsed = JSON.parse(msg.arg || '{}');
+            await this.showAssignStepDialog(parsed.plan_id, parsed.step);
+          } else if (msg.command === 'create_plan_dialog') {
+            await this.showCreatePlanDialog();
+          } else {
+            await this.sendCommand(msg.command, msg.arg);
+          }
           break;
         // assignTaskDialog handled in webview JS now (showAssignForm)
       }
@@ -65,7 +83,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     this.postMessage({ type: 'relayStatus', status });
   }
 
-  async sendMessage(text: string, attachments?: Attachment[]): Promise<void> {
+  async sendMessage(text: string, attachments?: Attachment[], replyTo?: ReplyTo): Promise<void> {
     const api = this.getApi();
     if (!api) {
       this.postMessage({ type: 'error', message: 'Not logged in. Run PawFlow: Login.' });
@@ -81,6 +99,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         conversation_id: this.conversationId || undefined,
         target_agent: this.selectedAgent || undefined,
         attachments: allAttachments.length ? allAttachments : undefined,
+        reply_to: replyTo || undefined,
       });
       console.log('[PawFlow] sendMessage response:', JSON.stringify(resp).slice(0, 500));
 
@@ -119,7 +138,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   }
 
   sendPlan(description: string): void {
-    const msg = `[PLAN MODE — Read-only strategy. Analyze the request, outline the approach step by step. Do NOT make any changes yet.]\n\n${description}`;
+    const msg = `[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\n\n${description}`;
     this.sendMessage(msg);
   }
 
@@ -145,6 +164,117 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       this.postMessage({ type: 'actionResult', action: command, data: resp });
     } catch (e: any) {
       this.postMessage({ type: 'error', message: e.message });
+    }
+  }
+
+  private async showAssignPlanDialog(planId: string): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+
+    let agentNames: string[] = [];
+    try {
+      const data = await api.sendAction('list_agents', { conversation_id: this.conversationId || '' });
+      agentNames = Object.keys(data.agents || {});
+    } catch {}
+
+    const agent = await vscode.window.showQuickPick(agentNames, {
+      title: 'Assign plan to agent',
+      placeHolder: 'Select agent',
+    });
+    if (!agent) { return; }
+
+    const stepRange = await vscode.window.showInputBox({
+      title: 'Step range (optional)',
+      prompt: 'e.g. 1-3, remaining, or leave empty for full plan',
+      placeHolder: 'empty = full plan',
+    });
+    if (stepRange === undefined) { return; }
+
+    try {
+      const resp = await api.sendAction('assign_plan', {
+        conversation_id: this.conversationId || '',
+        plan_id: planId,
+        agent,
+        step_range: stepRange || '',
+      });
+      if (resp.error) {
+        vscode.window.showErrorMessage(`Assign failed: ${resp.error}`);
+      } else {
+        vscode.window.showInformationMessage(`Plan assigned to ${agent}`);
+        this.postMessage({ type: 'actionResult', action: 'assign_plan', data: resp });
+      }
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Assign failed: ${e.message}`);
+    }
+  }
+
+  private async showAssignStepDialog(planId: string, stepIndex: number): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+
+    let agentNames: string[] = [];
+    try {
+      const data = await api.sendAction('list_agents', { conversation_id: this.conversationId || '' });
+      agentNames = Object.keys(data.agents || {});
+    } catch {}
+
+    const agent = await vscode.window.showQuickPick(agentNames, {
+      title: `Assign step ${stepIndex} to agent`,
+      placeHolder: 'Select agent',
+    });
+    if (!agent) { return; }
+
+    try {
+      const resp = await api.sendAction('assign_plan', {
+        conversation_id: this.conversationId || '',
+        plan_id: planId,
+        agent,
+        step_range: String(stepIndex),
+      });
+      if (resp.error) {
+        vscode.window.showErrorMessage(`Assign failed: ${resp.error}`);
+      } else {
+        vscode.window.showInformationMessage(`Step ${stepIndex} assigned to ${agent}`);
+        this.postMessage({ type: 'actionResult', action: 'assign_plan', data: resp });
+      }
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Assign failed: ${e.message}`);
+    }
+  }
+
+  private async showCreatePlanDialog(): Promise<void> {
+    const api = this.getApi();
+    if (!api) { return; }
+
+    const title = await vscode.window.showInputBox({
+      title: 'Create Plan — Title',
+      prompt: 'Plan title',
+    });
+    if (!title) { return; }
+
+    const stepsText = await vscode.window.showInputBox({
+      title: 'Create Plan — Steps',
+      prompt: 'Steps separated by semicolons (;)',
+      placeHolder: 'Step 1; Step 2; Step 3',
+    });
+    if (!stepsText) { return; }
+
+    const steps = stepsText.split(';').map(s => s.trim()).filter(Boolean);
+
+    try {
+      const resp = await api.sendAction('create_plan_user', {
+        conversation_id: this.conversationId || '',
+        title,
+        steps,
+      });
+      if (resp.error) {
+        vscode.window.showErrorMessage(`Create plan failed: ${resp.error}`);
+      } else {
+        vscode.window.showInformationMessage(`Plan created: ${title}`);
+        this.postMessage({ type: 'actionResult', action: 'create_plan_user', data: resp });
+      }
+    } catch (e: any) {
+      vscode.window.showErrorMessage(`Create plan failed: ${e.message}`);
     }
   }
 
@@ -438,6 +568,14 @@ code { font-family: var(--vscode-editor-font-family); }
 .diff-hunk { color: #58a6ff; }
 .diff-ctx { color: var(--vscode-descriptionForeground); }
 .thinking { color: var(--vscode-descriptionForeground); font-style: italic; animation: pulse 2s infinite; }
+.msg-actions { float: right; display: none; gap: 2px; }
+.msg:hover .msg-actions { display: inline-flex; }
+.msg-actions button { background: none; border: none; cursor: pointer; font-size: 11px; color: var(--vscode-descriptionForeground); padding: 0 3px; }
+.msg-actions button:hover { color: var(--vscode-editor-foreground); }
+.reply-bar { background: var(--vscode-textBlockQuote-background); border-top: 1px solid var(--vscode-panel-border); padding: 4px 12px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--vscode-descriptionForeground); }
+.reply-bar .reply-close { cursor: pointer; margin-left: auto; color: var(--vscode-errorForeground); font-size: 14px; background: none; border: none; }
+.reply-quote { font-size: 10px; color: var(--vscode-descriptionForeground); border-left: 2px solid var(--vscode-textLink-foreground); padding: 2px 6px; margin-bottom: 4px; cursor: pointer; }
+.reply-quote:hover { background: var(--vscode-list-hoverBackground); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
 .load-more { text-align: center; padding: 8px; color: var(--vscode-textLink-foreground); cursor: pointer; font-size: 12px; }
 .load-more:hover { text-decoration: underline; }
@@ -467,6 +605,15 @@ code { font-family: var(--vscode-editor-font-family); }
 .res-ctx div { padding: 4px 12px; font-size: 11px; cursor: pointer; color: var(--vscode-menu-foreground); }
 .res-ctx div:hover { background: var(--vscode-menu-selectionBackground); color: var(--vscode-menu-selectionForeground); }
 .res-ctx hr { border: none; border-top: 1px solid var(--vscode-menu-separatorBackground); margin: 2px 0; }
+.sub-trace { border-left: 2px solid #f4a261; margin: 4px 0; border-radius: 4px; font-size: 11px; }
+.sub-trace-header { padding: 4px 8px; cursor: pointer; color: var(--vscode-descriptionForeground); display: flex; align-items: center; gap: 4px; }
+.sub-trace-header:hover { background: var(--vscode-list-hoverBackground); }
+.sub-trace-body { display: none; padding: 2px 8px 4px 16px; color: var(--vscode-descriptionForeground); font-size: 10px; }
+.sub-trace-body.open { display: block; }
+.trace-entry { padding: 1px 0; }
+.trace-entry.tool { color: #f4a261; }
+.trace-entry.done { color: #3fb950; }
+.trace-content { margin-top: 4px; padding: 4px; background: var(--vscode-textBlockQuote-background); border-radius: 3px; white-space: pre-wrap; font-size: 11px; color: var(--vscode-editor-foreground); }
 </style>
 </head>
 <body>
@@ -480,6 +627,8 @@ code { font-family: var(--vscode-editor-font-family); }
   <button onclick="showPanel('context')" title="LLM Context">&#128065; Context</button>
   <button onclick="showPanel('files')" title="Files">&#128196; Files</button>
   <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
+  <button onclick="showPanel('accounts')" title="Linked Accounts">&#128279; Accounts</button>
+  <button onclick="showPanel('plans')" title="Plans">&#128203; Plans</button>
   <span class="relay-badge"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
 </div>
 <div id="activeAgents" style="display:none;padding:2px 8px;border-bottom:1px solid var(--vscode-panel-border);font-size:10px;color:var(--vscode-descriptionForeground)"></div>
@@ -489,6 +638,7 @@ code { font-family: var(--vscode-editor-font-family); }
   </div>
   <div class="panel-overlay" id="panelOverlay"></div>
 </div>
+<div id="replyBar" class="reply-bar" style="display:none"></div>
 <div id="status" class="status"></div>
 <div class="input-area">
   <textarea id="input" rows="1" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
@@ -507,6 +657,42 @@ var _hadToolCalls = false;
 var _lastToolCall = '';
 var activeAgents = {};
 var _resData = null;
+var _replyTo = null; // {raw_index, role, agent, text_preview}
+var _msgRawIndex = 0; // tracks raw message index for reply-to
+
+function setReplyTo(btn) {
+  var msgEl = btn.closest('.msg');
+  if (!msgEl) return;
+  var rawIndex = parseInt(msgEl.dataset.rawIndex || '-1');
+  var rawText = msgEl.dataset.rawText || '';
+  var isUser = msgEl.classList.contains('user');
+  var badge = msgEl.querySelector('.agent-badge');
+  var agent = badge ? badge.textContent.trim() : (isUser ? 'User' : 'assistant');
+  _replyTo = { raw_index: rawIndex, role: isUser ? 'user' : 'assistant', agent: agent, text_preview: rawText.substring(0, 200) };
+  var bar = document.getElementById('replyBar');
+  bar.innerHTML = '\\u21a9 <strong>' + esc(agent) + '</strong>: "' + esc(rawText.substring(0, 80)) + '..."'
+    + '<button class="reply-close" onclick="cancelReply()">\\u2715</button>';
+  bar.style.display = 'flex';
+  inputEl.focus();
+}
+
+function cancelReply() {
+  _replyTo = null;
+  var bar = document.getElementById('replyBar');
+  if (bar) bar.style.display = 'none';
+}
+
+function scrollToMsg(rawIndex) {
+  var msgs = document.querySelectorAll('.msg[data-raw-index]');
+  for (var i = 0; i < msgs.length; i++) {
+    if (msgs[i].dataset.rawIndex === String(rawIndex)) {
+      msgs[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
+      msgs[i].style.outline = '2px solid var(--vscode-textLink-foreground)';
+      setTimeout(function() { msgs[i].style.outline = ''; }, 2000);
+      return;
+    }
+  }
+}
 
 function updateActiveAgents(agent, status) {
   if (!agent) { console.error('[BUG] updateActiveAgents called with empty agent name, status=' + status); return; }
@@ -542,7 +728,8 @@ function _renderActiveAgents() {
 
 function deleteMsg(btn) {
   var msgEl = btn.closest('.msg');
-  var index = Array.from(messagesEl.children).indexOf(msgEl);
+  var rawIndex = msgEl.dataset.rawIndex;
+  var index = rawIndex !== undefined ? parseInt(rawIndex) : Array.from(messagesEl.children).indexOf(msgEl);
   vscode.postMessage({ type: 'command', command: 'delete_message', arg: JSON.stringify({ index: index }) });
   msgEl.remove();
 }
@@ -558,22 +745,448 @@ function agentColor(name) {
   return AGENT_COLORS[h % AGENT_COLORS.length];
 }
 
-function send() {
-  const text = inputEl.value.trim();
-  if (!text) return;
+var COMMANDS = {
+  // === Client-side commands ===
+  '/new':         { handler: 'newChat' },
+  '/conv':        { handler: 'loadConvs' },
+  '/clear':       { handler: 'clearChat' },
+  '/help':        { handler: 'showHelp' },
 
-  // Handle slash commands locally
-  if (text.startsWith('/')) {
-    if (text === '/new') { newChat(); inputEl.value = ''; return; }
-    if (text === '/conv') { loadConvs(); inputEl.value = ''; return; }
-    if (text === '/compact') { sendCmd('compact'); inputEl.value = ''; return; }
-    if (text.startsWith('/model ')) { sendCmd('model', text.slice(7)); inputEl.value = ''; return; }
-    if (text.startsWith('/agent ')) { sendCmd('select_agent', text.slice(7)); inputEl.value = ''; return; }
-    // Other slash commands: send as message (the server handles /review, /plan, etc.)
+  // === Action-based commands (call sendCmd) ===
+  // Context
+  '/compact':       { action: 'compact', argName: 'agent_name' },
+  '/rebuild':       { action: 'rebuild', argName: 'agent_name' },
+  '/rebuild-full':  { action: 'rebuild_full', argName: 'agent_name' },
+  '/rebuild_clean': { action: 'rebuild_full', argName: 'agent_name' },
+  '/restart':       { action: 'restart_from', parser: 'restartParser' },
+  '/restart_from':  { action: 'restart_from', parser: 'restartParser' },
+  '/summary':       { action: 'resume_conversation', parser: 'summaryParser' },
+  '/context':       { action: 'get_context', argName: 'agent_name' },
+
+  // Model / LLM
+  '/model':       { action: 'model', argName: 'model' },
+  '/llm':         { action: 'set_llm_service', parser: 'llmParser' },
+  '/set_llm_service': { action: 'set_llm_service', parser: 'llmParser' },
+
+  // Resources (simple action)
+  '/resources':   { action: 'list_resources' },
+  '/tools':       { action: 'list_tools' },
+  '/secrets':     { action: 'list_secrets' },
+  '/list-secrets': { action: 'list_secrets' },
+  '/variables':   { action: 'list_variables' },
+  '/list-variables': { action: 'list_variables' },
+  '/vars':        { action: 'list_variables' },
+  '/cost':        { action: 'cost', argName: 'agent' },
+  '/usage':       { action: 'cost', argName: 'agent' },
+  '/files':       { action: 'list_conv_files' },
+
+  // Agent
+  '/agent':       { parser: 'agentParser' },
+  '/msg':         { parser: 'msgParser' },
+  '/btw':         { parser: 'btwParser' },
+  '/stop':        { parser: 'stopParser' },
+  '/resume':      { parser: 'resumeParser' },
+  '/setname':     { parser: 'setnameParser' },
+
+  // Resources with subcommands
+  '/skill':       { parser: 'skillParser' },
+  '/task':        { parser: 'taskParser' },
+  '/service':     { parser: 'serviceParser' },
+  '/flow':        { parser: 'flowParser' },
+  '/prompt':      { parser: 'promptParser' },
+  '/memory':      { parser: 'memoryParser' },
+  '/schedules':   { parser: 'schedulesParser' },
+  '/link':        { parser: 'linkParser' },
+  '/autoconv':    { parser: 'autoconvParser' },
+  '/vidservice':  { parser: 'mediaServiceParser', mediaType: 'video' },
+  '/imgservice':  { parser: 'mediaServiceParser', mediaType: 'image' },
+
+  // Activation
+  '/activate':    { action: 'activate_resource', parser: 'activateParser' },
+  '/deactivate':  { action: 'deactivate_resource', parser: 'activateParser' },
+  '/share':       { parser: 'shareParser' },
+
+  // Secrets & Variables
+  '/add-secret':  { parser: 'addSecretParser' },
+  '/add-variable': { parser: 'addVariableParser' },
+  '/add-var':     { parser: 'addVariableParser' },
+
+  // File / Dev tools
+  '/upload':      { handler: 'triggerUpload' },
+  '/copy':        { handler: 'copyLastMsg' },
+  '/paste':       { handler: 'pasteClipboard' },
+  '/view':        { parser: 'viewParser' },
+  '/call':        { parser: 'callParser' },
+  '/install':     { handler: 'showInstallHelp' },
+  '/uninstall':   { parser: 'uninstallParser' },
+  '/run':         { parser: 'runParser' },
+  '/diff':        { parser: 'diffParser' },
+  '/plan':        { parser: 'planParser' },
+  '/watch':       { handler: 'showWatchNotAvailable' },
+  '/clear-files': { handler: 'clearAttachments' },
+  '/detach':      { handler: 'clearAttachments' },
+
+  // Conversation
+  '/history':     { parser: 'historyParser' },
+  '/export':      { parser: 'exportParser' },
+  '/rename':      { parser: 'renameParser' },
+  '/delete':      { parser: 'deleteParser' },
+  '/delete-msg':  { parser: 'deleteMsgParser' },
+  '/search':      { parser: 'searchParser' },
+
+  // Session
+  '/login':       { handler: 'showLoginMsg' },
+  '/quit':        { handler: 'showQuitMsg' },
+  '/exit':        { handler: 'showQuitMsg' },
+};
+
+// Client-side handler functions
+function clearChat() { messagesEl.innerHTML = ''; }
+function showHelp() {
+  var cmds = Object.keys(COMMANDS).filter(function(c) { return c.charAt(1) !== '_' && !c.includes('_clean'); }).sort();
+  var lines = ['<b>Available commands:</b><br>'];
+  for (var i = 0; i < cmds.length; i++) {
+    lines.push('<code>' + esc(cmds[i]) + '</code>');
+  }
+  var el = addMsg('system', '');
+  el.innerHTML = lines.join(' ');
+}
+function triggerUpload() { addMsg('system', 'Drag & drop files into the chat or use the file attach button.'); }
+function copyLastMsg(arg) {
+  var msgs = document.querySelectorAll('.msg.assistant');
+  if (!msgs.length) { addMsg('system', 'No responses to copy.'); return; }
+  var n = parseInt(arg) || 1;
+  var target = msgs[msgs.length - n];
+  if (!target) { addMsg('system', 'Only ' + msgs.length + ' responses available.'); return; }
+  var txt = target.textContent || '';
+  vscode.postMessage({ type: 'command', command: 'clipboard_write', arg: txt });
+  addMsg('system', 'Copied ' + txt.length + ' chars.');
+}
+function pasteClipboard() { vscode.postMessage({ type: 'command', command: 'clipboard_read' }); }
+function showInstallHelp() { addMsg('system', 'To install a tool, drag & drop a .py file into the chat.'); }
+function showWatchNotAvailable() { addMsg('system', '/watch is not available in VSCode. Use the CLI.'); }
+function clearAttachments() { vscode.postMessage({ type: 'command', command: 'clear_attachments' }); addMsg('system', 'Attachments cleared.'); }
+function showLoginMsg() { addMsg('system', 'Use the PawFlow: Login command from the command palette (Ctrl+Shift+P).'); }
+function showQuitMsg() { addMsg('system', '/quit is not applicable in VSCode.'); }
+
+// Parsers for complex commands
+function restartParser(parts, text) {
+  var agent = '', keep = 5;
+  for (var i = 1; i < parts.length; i++) {
+    var v = parseInt(parts[i]);
+    if (!isNaN(v)) keep = v;
+    else agent = parts[i];
+  }
+  var p = { keep_last: keep };
+  if (agent) p.agent_name = agent;
+  return p;
+}
+function summaryParser(parts, text) {
+  var agent = '', tokens = 500;
+  for (var i = 1; i < parts.length; i++) {
+    var v = parseInt(parts[i]);
+    if (!isNaN(v)) tokens = v;
+    else agent = parts[i];
+  }
+  var p = { max_tokens: tokens };
+  if (agent) p.agent_name = agent;
+  return p;
+}
+function llmParser(parts, text) {
+  if (parts.length < 3) { addMsg('system', 'Usage: /llm <agent> <service>'); return null; }
+  return { agent_name: parts[1], llm_service: parts.slice(2).join(' ') };
+}
+function agentParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_agents' };
+  if (sub === 'select' || (sub !== 'create' && sub !== 'delete' && sub !== 'msg' && sub !== 'btw' && sub !== 'interrupt' && sub !== 'setname' && sub !== 'enable' && sub !== 'disable' && sub !== 'promote' && sub !== 'resume'))
+    return { _action: 'select_agent', name: parts[2] || sub };
+  if (sub === 'create') return { _action: 'create_agent', name: parts[2] || '', prompt: parts.slice(3).join(' ') };
+  if (sub === 'delete') return { _action: 'delete_agent', name: parts[2] || '' };
+  if (sub === 'setname') return { _action: 'set_agent_nickname', real_name: parts[2] || '', nickname: parts[3] || '' };
+  if (sub === 'enable') return { _action: 'agent_enable', agent_name: parts[2] || '' };
+  if (sub === 'disable') return { _action: 'agent_disable', agent_name: parts[2] || '' };
+  if (sub === 'promote') return { _action: 'agent_promote', agent_name: parts[2] || '', target_scope: parts[3] || 'user' };
+  if (sub === 'msg' || sub === 'message') {
+    var target = parts[2] || '';
+    var msg = parts.slice(3).join(' ');
+    if (target.toUpperCase() === 'ALL') return { _action: 'broadcast_agents', message: msg };
+    return { _sendMessage: true, target: target, text: msg };
+  }
+  if (sub === 'btw') return { _action: 'btw', agent_name: parts[2] || '', message: parts.slice(3).join(' ') };
+  if (sub === 'interrupt') {
+    var t = parts[2] || '';
+    return { _action: 'interrupt', target: t, agent_name: t };
+  }
+  if (sub === 'resume') {
+    var t = parts[2] || '';
+    return { _sendMessage: true, target: t, text: parts.slice(3).join(' ') || 'Continue from where you left off.' };
+  }
+  return { _action: 'list_agents' };
+}
+function msgParser(parts, text) {
+  var target = parts[1] || '';
+  var msg = parts.slice(2).join(' ');
+  if (!target || !msg) { addMsg('system', 'Usage: /msg <agent|ALL> <text>'); return null; }
+  if (target.toUpperCase() === 'ALL') return { _action: 'broadcast_agents', message: msg };
+  return { _sendMessage: true, target: target, text: msg };
+}
+function btwParser(parts, text) {
+  if (parts.length < 3) { addMsg('system', 'Usage: /btw <agent|ALL> <text>'); return null; }
+  return { _action: 'btw', agent_name: parts[1], message: parts.slice(2).join(' ') };
+}
+function stopParser(parts, text) {
+  var force = parts.includes('-f');
+  var target = parts.filter(function(p) { return p !== '-f' && p !== parts[0]; })[0] || '';
+  if (!target) { addMsg('system', 'Usage: /stop <agent|ALL> [-f]'); return null; }
+  return { _action: force ? 'cancel' : 'interrupt', target: target, agent_name: target };
+}
+function resumeParser(parts, text) {
+  var target = parts[1] || '';
+  if (!target) { addMsg('system', 'Usage: /resume <agent|ALL>'); return null; }
+  return { _sendMessage: true, target: target, text: parts.slice(2).join(' ') || 'Continue from where you left off.' };
+}
+function setnameParser(parts, text) {
+  if (!parts[1]) { addMsg('system', 'Usage: /setname <agent> [nickname]'); return null; }
+  return { _action: 'set_agent_nickname', real_name: parts[1], nickname: parts[2] || '' };
+}
+function activateParser(parts, text) {
+  if (parts.length < 3) { addMsg('system', 'Usage: ' + parts[0] + ' <type> <name>'); return null; }
+  return { resource_type: parts[1], name: parts[2] };
+}
+function shareParser(parts, text) {
+  if (parts.length < 4) { addMsg('system', 'Usage: /share <type> <name> <conv_id>'); return null; }
+  return { _action: 'share_resource', resource_type: parts[1], name: parts[2], target_conversation_id: parts[3] };
+}
+function skillParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_resources' };
+  if (sub === 'add' || sub === 'create') return { _action: 'create_resource', resource_type: 'skill', name: parts[2] || '', prompt: parts.slice(3).join(' ') };
+  if (sub === 'del' || sub === 'delete') return { _action: 'delete_resource', resource_type: 'skill', name: parts[2] || '' };
+  addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name>');
+  return null;
+}
+function taskParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list' || sub === 'status') return { _action: 'task_status', include_library: true };
+  if (sub === 'create') return { _action: 'create_task_def', name: parts[2] || '', prompt: parts.slice(3).join(' ') };
+  if (sub === 'assign') return { _action: 'assign_task', agent_name: parts[2] || '', task_name: parts.slice(3).join(' ') };
+  if (sub === 'del' || sub === 'delete') return { _action: 'delete_task_def', name: parts[2] || '' };
+  if (sub === 'pause' || sub === 'resume' || sub === 'cancel') return { _action: sub + '_task', task_id: parts[2] || '' };
+  if (sub === 'log') return { _action: 'task_log', name: parts[2] || '' };
+  addMsg('system', 'Usage: /task list | create | assign | del | pause | resume | cancel | log');
+  return null;
+}
+function serviceParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'service_list' };
+  if (sub === 'install') return { _action: 'service_install', service_type: parts[2] || '', service_name: parts[3] || '', config_str: parts.slice(4).join(' ') };
+  if (sub === 'uninstall') return { _action: 'service_uninstall', service_id: parts[2] || '' };
+  if (sub === 'enable') return { _action: 'service_enable', service_id: parts[2] || '' };
+  if (sub === 'disable') return { _action: 'service_disable', service_id: parts[2] || '' };
+  addMsg('system', 'Usage: /service list | install | uninstall | enable | disable');
+  return null;
+}
+function flowParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_conv_flows' };
+  if (sub === 'templates') return { _action: 'list_available_flows' };
+  if (sub === 'deploy') return { _action: 'deploy_flow', template_id: parts[2] || '', scope: parts[3] || 'user' };
+  if (sub === 'start') return { _action: 'start_flow', instance_id: parts[2] || '' };
+  if (sub === 'stop') return { _action: 'stop_flow', instance_id: parts[2] || '' };
+  if (sub === 'params') return { _action: 'get_flow_instance', instance_id: parts[2] || '' };
+  if (sub === 'undeploy') return { _action: 'undeploy_flow', instance_id: parts[2] || '' };
+  if (sub === 'promote') return { _action: 'promote_flow', instance_id: parts[2] || '', target_scope: 'user' };
+  addMsg('system', 'Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote');
+  return null;
+}
+function promptParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_prompts' };
+  if (sub === 'use') return { _action: 'get_prompt', name: parts[2] || '' };
+  addMsg('system', 'Usage: /prompt list | use <name>');
+  return null;
+}
+function memoryParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_memories', agent_name: parts[2] || '' };
+  if (sub === 'add') return { _action: 'add_memory', content: parts.slice(2).join(' ') };
+  if (sub === 'del' || sub === 'delete') return { _action: 'delete_memory', memory_id: parts[2] || '' };
+  if (sub === 'edit') return { _action: 'edit_memory', memory_id: parts[2] || '', content: parts.slice(3).join(' ') };
+  if (sub === 'search') return { _action: 'search_memories', query: parts.slice(2).join(' ') };
+  addMsg('system', 'Usage: /memory list | add | del | edit | search');
+  return null;
+}
+function schedulesParser(parts, text) {
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_schedules' };
+  if (sub === 'add') return { _action: 'add_schedule', when: parts[2] || '', reason: parts.slice(3).join(' ') };
+  if (sub === 'del' || sub === 'delete' || sub === 'clear') return { _action: 'delete_schedule' };
+  addMsg('system', 'Usage: /schedules list | add <when> | del');
+  return null;
+}
+function linkParser(parts, text) {
+  var sub = (parts[1] || '').toLowerCase();
+  if (!sub || sub === 'status') return { _action: 'list_linked_accounts' };
+  if (sub === 'unlink') return { _action: 'unlink_account', provider: parts[2] || '' };
+  return { _action: 'link_account', provider: parts[1], provider_id: parts[2] || '', bot_token: parts[3] || '' };
+}
+function autoconvParser(parts, text) {
+  var sub = (parts[1] || '').toLowerCase();
+  if (!sub) { addMsg('system', 'Usage: /autoconv <on|off|status|now> <agent|ALL> [freq]'); return null; }
+  var p = { _action: 'random_thought', sub: sub, agent: parts[2] || '' };
+  if (sub === 'on') p.frequency = parts[3] || '6/1m';
+  return p;
+}
+function mediaServiceParser(parts, text) {
+  var isVideo = COMMANDS[parts[0]] && COMMANDS[parts[0]].mediaType === 'video';
+  var prefix = isVideo ? 'video' : 'image';
+  var sub = (parts[1] || 'list').toLowerCase();
+  if (sub === 'list') return { _action: 'list_' + prefix + '_services' };
+  if (sub === 'select') return { _action: 'set_' + prefix + '_service', service_name: parts[2] || '', agent_name: parts[3] || '*' };
+  if (sub === 'clear') return { _action: 'clear_' + prefix + '_service', agent_name: parts[2] || '' };
+  addMsg('system', 'Usage: /' + prefix + 'service list | select <name> [agent] | clear [agent]');
+  return null;
+}
+function addSecretParser(parts, text) {
+  if (parts.length < 3) { addMsg('system', 'Usage: /add-secret <name> <value>'); return null; }
+  return { _action: 'add_secret', name: parts[1], value: parts.slice(2).join(' ') };
+}
+function addVariableParser(parts, text) {
+  if (parts.length < 3) { addMsg('system', 'Usage: /add-variable <name> <value>'); return null; }
+  return { _action: 'add_variable', name: parts[1], value: parts.slice(2).join(' ') };
+}
+function viewParser(parts, text) {
+  if (!parts[1]) { addMsg('system', 'Usage: /view <filename>'); return null; }
+  return { _action: 'view_file', filename: parts.slice(1).join(' ') };
+}
+function callParser(parts, text) {
+  if (!parts[1]) { addMsg('system', 'Usage: /call <tool> {json}'); return null; }
+  var toolName = parts[1];
+  var argsJson = parts.slice(2).join(' ');
+  var args = {};
+  try { if (argsJson) args = JSON.parse(argsJson); } catch(e) { addMsg('system', 'Invalid JSON: ' + e.message); return null; }
+  return { _action: 'call_tool', tool_name: toolName, arguments: args };
+}
+function uninstallParser(parts, text) {
+  if (!parts[1]) { addMsg('system', 'Usage: /uninstall <tool_name>'); return null; }
+  return { _action: 'uninstall_tool', name: parts[1] };
+}
+function runParser(parts, text) {
+  var cmd = text.replace(/^\/run\s+/, '');
+  if (!cmd) { addMsg('system', 'Usage: /run <command>'); return null; }
+  return { _action: 'fs_exec', command: cmd, timeout: 30 };
+}
+function diffParser(parts, text) {
+  var ref = parts.slice(1).join(' ') || '.';
+  return { _action: 'fs_exec', command: 'git diff ' + ref, timeout: 15 };
+}
+function planParser(parts, text) {
+  var arg = text.replace(/^\/plan\s*/, '').trim();
+  // No args — open plans panel
+  if (!arg) { showPanel('plans'); return null; }
+  // Subcommands
+  var sub = arg.split(/\s+/);
+  if (sub[0] === 'list') { showPanel('plans'); return null; }
+  if (sub[0] === 'approve' && sub[1]) { return { _action: 'approve_plan', plan_id: sub[1] }; }
+  if (sub[0] === 'cancel' && sub[1]) { return { _action: 'cancel_plan', plan_id: sub[1] }; }
+  if (sub[0] === 'delete' && sub[1]) { return { _action: 'delete_plan', plan_id: sub[1] }; }
+  // Default: send as plan creation request
+  return { _sendPlan: true, text: arg };
+}
+function historyParser(parts, text) {
+  var n = parseInt(parts[1]) || 50;
+  var offset = parseInt(parts[2]) || 0;
+  return { _action: 'load_history', limit: n, offset: offset };
+}
+function exportParser(parts, text) {
+  return { _action: 'export', format: parts[1] || 'markdown' };
+}
+function renameParser(parts, text) {
+  var title = text.replace(/^\/rename\s+/, '');
+  if (!title) { addMsg('system', 'Usage: /rename <title>'); return null; }
+  return { _action: 'set_conv_title', title: title };
+}
+function deleteParser(parts, text) {
+  if (!parts[1]) { addMsg('system', 'Usage: /delete <conversation_id>'); return null; }
+  return { _action: 'delete_conversation', conversation_id: parts[1] };
+}
+function deleteMsgParser(parts, text) {
+  var idx = parseInt(parts[1]);
+  if (isNaN(idx)) { addMsg('system', 'Usage: /delete-msg <index>'); return null; }
+  return { _action: 'delete_message', index: idx };
+}
+function searchParser(parts, text) {
+  var query = text.replace(/^\/search\s+/, '');
+  if (!query) { addMsg('system', 'Usage: /search <query>'); return null; }
+  return { _action: 'search_messages', query: query };
+}
+
+function dispatchCommand(text) {
+  var parts = text.split(/\s+/);
+  var cmd = parts[0].toLowerCase();
+  var arg = text.slice(cmd.length).trim();
+  var def = COMMANDS[cmd];
+  if (!def) return false;
+
+  // Client-side handler
+  if (def.handler) {
+    window[def.handler](arg);
+    return true;
   }
 
-  addMsg('user', text);
-  vscode.postMessage({ type: 'sendMessage', text });
+  // Parse params
+  var params = null;
+  if (def.parser) {
+    var parserFn = window[def.parser];
+    if (parserFn) params = parserFn(parts, text);
+    if (params === null) return true; // parser showed error
+  } else if (def.action) {
+    params = {};
+    if (def.argName && arg) params[def.argName] = arg;
+  }
+
+  if (!params) params = {};
+
+  // Handle special parser results
+  if (params._sendMessage) {
+    vscode.postMessage({ type: 'sendMessage', text: params.text, target: params.target });
+    addMsg('user', '/msg ' + params.target + ' ' + params.text);
+    return true;
+  }
+  if (params._sendPlan) {
+    vscode.postMessage({ type: 'sendMessage', text: '[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\\n\\n' + params.text });
+    addMsg('user', '/plan ' + params.text);
+    return true;
+  }
+
+  // Determine action
+  var action = params._action || def.action;
+  if (!action) return false;
+  delete params._action;
+
+  // Send command to extension host
+  sendCmd(action, JSON.stringify(params));
+  return true;
+}
+
+function send() {
+  var text = inputEl.value.trim();
+  if (!text) return;
+
+  if (text.startsWith('/')) {
+    if (dispatchCommand(text)) {
+      inputEl.value = '';
+      inputEl.style.height = '36px';
+      return;
+    }
+  }
+
+  addMsg('user', text, _replyTo ? { source: { reply_to: _replyTo } } : undefined);
+  var msg = { type: 'sendMessage', text: text };
+  if (_replyTo) msg.reply_to = _replyTo;
+  vscode.postMessage(msg);
+  cancelReply();
   inputEl.value = '';
   inputEl.style.height = '36px';
 }
@@ -634,19 +1247,72 @@ function renderToolResult(content) {
 function addMsg(type, content, meta) {
   const div = document.createElement('div');
   div.className = 'msg ' + type;
-  var delBtn = (type === 'user' || type === 'assistant') ? '<span style="float:right;cursor:pointer;color:var(--vscode-descriptionForeground);font-size:10px" onclick="deleteMsg(this)" title="Delete">&times;</span>' : '';
+
+  // Track raw index for reply-to
+  var rawIdx = meta?.raw_index !== undefined ? meta.raw_index : _msgRawIndex++;
+  div.dataset.rawIndex = rawIdx;
+  div.dataset.rawText = (content || '').substring(0, 200);
+
+  // Action buttons for user/assistant messages
+  var actionsHtml = '';
+  if (type === 'user' || type === 'assistant') {
+    actionsHtml = '<span class="msg-actions">'
+      + '<button onclick="setReplyTo(this)" title="Reply">\\u21a9</button>'
+      + '<button onclick="deleteMsg(this)" title="Delete">&times;</button>'
+      + '</span>';
+  }
+
+  // Reply-to quote
+  var replyQuoteHtml = '';
+  var replySource = meta?.source?.reply_to || meta?.reply_to;
+  if (replySource && replySource.text_preview) {
+    var rtAgent = replySource.agent || replySource.role || '';
+    var rtPreview = replySource.text_preview.substring(0, 100);
+    var rtIdx = replySource.raw_index !== undefined ? replySource.raw_index : -1;
+    replyQuoteHtml = '<div class="reply-quote"' + (rtIdx >= 0 ? ' onclick="scrollToMsg(' + rtIdx + ')"' : '') + '>'
+      + '\\u21a9 ' + esc(rtAgent) + ': "' + esc(rtPreview) + '"</div>';
+  }
+
   if (type === 'user') {
-    div.innerHTML = delBtn + esc(content);
+    div.innerHTML = actionsHtml + replyQuoteHtml + esc(content);
   } else if (type === 'assistant') {
     const agent = meta?.agent_name || meta?.source?.name || '';
     const svc = meta?.source?.llm_service || '';
     const color = agentColor(agent);
-    div.innerHTML = delBtn + '<span class="agent-badge" style="background:' + color + '">'
+    div.innerHTML = actionsHtml + replyQuoteHtml + '<span class="agent-badge" style="background:' + color + '">'
       + esc(agent) + (svc ? ' via ' + esc(svc) : '') + '</span>' + renderMd(content);
   } else if (type === 'tool_call') {
     div.innerHTML = '&#9889; ' + esc(content);
   } else if (type === 'tool_result') {
     div.innerHTML = '&#10003; ' + renderToolResult(content);
+  } else if (type === 'sub_agent_trace') {
+    var src = meta?.source || {};
+    var trace = meta?.trace || [];
+    var traceId = meta?.trace_id || '';
+    var agent = src.name || '?';
+    var parent = src.parent_agent || '?';
+    var depth = src.depth || 0;
+    var doneEntry = null;
+    for (var ti = trace.length - 1; ti >= 0; ti--) {
+      if (trace[ti].type === 'done') { doneEntry = trace[ti]; break; }
+    }
+    var toolCount = (doneEntry?.tools_called || []).length;
+    var tokIn = doneEntry?.tokens_in || 0;
+    var tokOut = doneEntry?.tokens_out || 0;
+    var summary = parent + ' \\u2192 ' + agent + ' (' + toolCount + ' tools, ' + tokIn + '\\u2191 ' + tokOut + '\\u2193)';
+    var bodyLines = trace.map(function(e) {
+      if (e.type === 'iteration') return '<div class="trace-entry">iter ' + e.iteration + ' \\u00b7 ' + (e.total_tools || 0) + ' tools</div>';
+      if (e.type === 'tool_call') return '<div class="trace-entry tool">\\u26a1 ' + esc(e.tool || '?') + '</div>';
+      if (e.type === 'done') return '<div class="trace-entry done">\\u2713 ' + esc(e.status || '?') + ' (' + (e.tokens_in || 0) + '\\u2191 ' + (e.tokens_out || 0) + '\\u2193)</div>';
+      return '';
+    }).join('');
+    var contentHtml = content ? '<div class="trace-content">' + renderMd(content) + '</div>' : '';
+    div.className = 'sub-trace';
+    div.dataset.traceId = traceId;
+    div.style.marginLeft = (depth * 12) + 'px';
+    div.innerHTML = '<div class="sub-trace-header" onclick="this.nextElementSibling.classList.toggle(\\\'open\\\')">'
+      + '\\u25b6 ' + esc(summary) + '</div>'
+      + '<div class="sub-trace-body">' + bodyLines + contentHtml + '</div>';
   } else {
     div.textContent = content;
   }
@@ -693,8 +1359,45 @@ window.addEventListener('message', function(e) {
       break;
     case 'actionResult':
       if (renderPanelResult(msg.action, msg.data)) break;
-      if (msg.action === 'model') statusEl.textContent = 'Model: ' + (msg.data?.model || '?');
-      else if (msg.action === 'select_agent') statusEl.textContent = 'Agent: ' + (msg.data?.agent || '?');
+      if (msg.data && msg.data.error) { addMsg('error', msg.data.error); break; }
+      var d = msg.data || {};
+      if (msg.action === 'model') statusEl.textContent = 'Model: ' + (d.model || d.message || '?');
+      else if (msg.action === 'select_agent') { statusEl.textContent = 'Agent: ' + (d.agent || d.name || '?'); }
+      else if (msg.action === 'list_tools') {
+        var tools = d.tools || [];
+        if (!tools.length) addMsg('system', 'No tools.');
+        else addMsg('system', 'Tools (' + tools.length + '):\\n' + tools.map(function(t) { return '  ' + t.name + ': ' + (t.description || '').slice(0, 60); }).join('\\n'));
+      }
+      else if (msg.action === 'list_secrets') {
+        var secrets = d.secrets || [];
+        addMsg('system', secrets.length ? 'Secrets: ' + secrets.join(', ') : 'No secrets.');
+      }
+      else if (msg.action === 'list_variables') {
+        var vars = d.variables || {};
+        var vlines = Object.entries(vars).map(function(e) { return '  ' + e[0] + ' = ' + e[1]; });
+        addMsg('system', vlines.length ? 'Variables:\\n' + vlines.join('\\n') : 'No variables.');
+      }
+      else if (msg.action === 'cost') {
+        var svcs = d.services || [];
+        if (!svcs.length) addMsg('system', 'No usage data.');
+        else {
+          var clines = svcs.map(function(s) { return (s.llm_service || '?') + ': ' + (s.tokens_in || 0) + ' in / ' + (s.tokens_out || 0) + ' out' + (s.cost !== undefined ? ' $' + s.cost.toFixed(4) : ''); });
+          addMsg('system', clines.join('\\n'));
+        }
+      }
+      else if (msg.action === 'approve_plan') { addMsg('system', '\\u2705 Plan approved'); loadPlansPanel(); }
+      else if (msg.action === 'reject_plan') { addMsg('system', '\\u274C Plan rejected'); loadPlansPanel(); }
+      else if (msg.action === 'cancel_plan') { addMsg('system', '\\u23F9 Plan cancelled'); loadPlansPanel(); }
+      else if (msg.action === 'delete_plan') { addMsg('system', '\\u2705 Plan deleted'); loadPlansPanel(); }
+      else if (msg.action === 'update_plan_step') { loadPlansPanel(); }
+      else if (msg.action === 'assign_plan') { addMsg('system', '\\u2705 Plan assigned'); loadPlansPanel(); }
+      else if (msg.action === 'create_plan_user') { addMsg('system', '\\u2705 Plan created: ' + (d.plan ? d.plan.title : '')); loadPlansPanel(); }
+      else if (d.result || d.message) addMsg('system', d.result || d.message);
+      else if (typeof d === 'string') addMsg('system', d);
+      else addMsg('system', JSON.stringify(d).slice(0, 500));
+      break;
+    case 'clipboardContent':
+      if (msg.text) { inputEl.value += msg.text; addMsg('system', 'Pasted from clipboard.'); }
       break;
     case 'relayStatus':
       updateRelayStatus(msg.status);
@@ -807,6 +1510,27 @@ function handleSSE(event) {
       break;
     }
 
+    case 'plan_created': {
+      const plan = data.plan || data;
+      const title = plan.title || data.title || '';
+      const stepCount = (plan.steps && plan.steps.length) || data.steps || 0;
+      addMsg('system', '\\u{1F4CB} Plan created: ' + title + ' (' + stepCount + ' steps)');
+      break;
+    }
+
+    case 'plan_updated':
+      // Refresh plans panel if open
+      if (document.getElementById('panelOverlay')?.className === 'panel-overlay visible' && _pendingPanel === '') {
+        loadPlansPanel();
+      }
+      break;
+
+    case 'plan_deleted':
+      if (document.getElementById('panelOverlay')?.className === 'panel-overlay visible' && _pendingPanel === '') {
+        loadPlansPanel();
+      }
+      break;
+
     default:
       // Silently ignore unknown events
       break;
@@ -876,6 +1600,7 @@ function showConvList(convs) {
 
 function replayHistory(data) {
   messagesEl.innerHTML = '';
+  _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
   currentHistoryOffset = (data.messages || []).length;
 
@@ -908,6 +1633,8 @@ function showPanel(name) {
   else if (name === 'context') loadContextPanel();
   else if (name === 'files') loadFilesPanel();
   else if (name === 'tools') loadToolsPanel();
+  else if (name === 'accounts') loadAccountsPanel();
+  else if (name === 'plans') loadPlansPanel();
 }
 
 var _resMenuRtype = '';
@@ -1538,6 +2265,22 @@ function loadToolsPanel() {
   _pendingPanel = 'tools';
 }
 
+function loadAccountsPanel() {
+  vscode.postMessage({ type: 'command', command: 'list_linked_accounts' });
+  _pendingPanel = 'accounts';
+}
+
+function loadPlansPanel() {
+  vscode.postMessage({ type: 'command', command: 'get_plans' });
+  _pendingPanel = 'plans';
+}
+
+function unlinkAccount(provider) {
+  if (!confirm('Unlink ' + provider + ' account?')) return;
+  vscode.postMessage({ type: 'command', command: 'unlink_account', arg: JSON.stringify({ provider: provider }) });
+  setTimeout(function() { loadAccountsPanel(); }, 500);
+}
+
 var _pendingPanel = '';
 
 function renderPanelResult(action, data) {
@@ -1702,6 +2445,26 @@ function renderPanelResult(action, data) {
     return true;
   }
 
+  if (action === 'list_linked_accounts' && _pendingPanel === 'accounts') {
+    var links = data.links || {};
+    var providers = Object.keys(links);
+    let html = '<div class="panel-header"><h4>Linked Accounts (' + providers.length + ')</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    if (!providers.length) {
+      html += '<div class="msg system">No linked accounts. Use /link &lt;provider&gt; &lt;id&gt; to link one.</div>';
+    }
+    for (var pi = 0; pi < providers.length; pi++) {
+      var provider = providers[pi];
+      var channelId = links[provider];
+      html += '<div class="panel-item" style="display:flex;align-items:center;justify-content:space-between">'
+        + '<span><strong>' + esc(provider) + '</strong> \\u2014 ' + esc(String(channelId)) + '</span>'
+        + '<button onclick="unlinkAccount(\\'' + esc(provider) + '\\')" style="background:none;border:none;color:var(--vscode-errorForeground);cursor:pointer;font-size:11px">\\u2715 Unlink</button>'
+        + '</div>';
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
   if (action === 'list_tools' && _pendingPanel === 'tools') {
     const tools = data.tools || [];
     let html = '<div class="panel-header"><h4>Tools (' + tools.length + ')</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
@@ -1713,7 +2476,137 @@ function renderPanelResult(action, data) {
     return true;
   }
 
+  if (action === 'get_plans' && _pendingPanel === 'plans') {
+    var planArr = Array.isArray(data.plans) ? data.plans : Object.values(data.plans || {});
+    let html = '<div class="panel-header"><h4>Plans (' + planArr.length + ')</h4><button class="panel-close" onclick="closePanel()">\\u2715</button></div>';
+    html += '<div style="padding:4px 8px"><button onclick="createPlanDialog()" style="padding:4px 10px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:none;border-radius:4px;cursor:pointer;font-size:11px">+ Create Plan</button></div>';
+    if (!planArr.length) {
+      html += '<div class="msg system">No active plans. Use /plan &lt;description&gt; to ask the agent to create one.</div>';
+    }
+    for (var pi = 0; pi < planArr.length; pi++) {
+      var plan = planArr[pi];
+      var pid = plan.id || ('plan_' + pi);
+      if (!plan || !plan.title) continue;
+      var steps = plan.steps || [];
+      var doneCount = steps.filter(function(s: any) { return s.status === 'done'; }).length;
+      var total = steps.length;
+      var pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      var planStatus = plan.status || 'unknown';
+      var statusColors: any = {'pending_approval':'#f0ad4e','approved':'#6c5ce7','in_progress':'#3498db','completed':'#4ecdc4','cancelled':'#e94560'};
+      var sColor = statusColors[planStatus] || '#808090';
+
+      html += '<div class="panel-item" style="border-left:3px solid ' + sColor + ';padding:6px 8px;margin:4px 0" oncontextmenu="showPlanCtx(event,\\'' + esc(pid) + '\\',\\'' + esc(planStatus) + '\\');return false">';
+      html += '<div style="display:flex;justify-content:space-between;align-items:center">';
+      html += '<strong>' + esc(plan.title) + '</strong>';
+      html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;color:' + sColor + '">' + esc(planStatus) + '</span>';
+      html += '</div>';
+      // Progress bar
+      var barColor = pct === 100 ? '#4ecdc4' : pct > 50 ? '#6c5ce7' : '#f0ad4e';
+      html += '<div style="height:3px;background:var(--vscode-panel-border);border-radius:2px;margin:4px 0;overflow:hidden">';
+      html += '<div style="height:100%;width:' + pct + '%;background:' + barColor + ';border-radius:2px"></div></div>';
+      html += '<div style="font-size:10px;color:var(--vscode-descriptionForeground)">' + doneCount + '/' + total + ' steps done (' + pct + '%)</div>';
+      // Steps
+      for (var si = 0; si < steps.length; si++) {
+        var step = steps[si];
+        var stepIcons: any = {'pending':'\\u25cb','in_progress':'\\u25d4','done':'\\u2713','skipped':'\\u2013','error':'\\u2717'};
+        var stepColors: any = {'pending':'var(--vscode-descriptionForeground)','in_progress':'#6c5ce7','done':'#4ecdc4','skipped':'#555','error':'#e94560'};
+        var sIcon = stepIcons[step.status] || '\\u25cb';
+        var sSColor = stepColors[step.status] || 'var(--vscode-descriptionForeground)';
+        var sDeco = step.status === 'skipped' ? 'line-through' : 'none';
+        var assignee = step.assigned_to ? ' [' + esc(step.assigned_to) + ']' : '';
+        html += '<div style="font-size:11px;color:' + sSColor + ';text-decoration:' + sDeco + ';margin:1px 0;padding-left:8px" oncontextmenu="showPlanStepCtx(event,\\'' + esc(pid) + '\\',' + step.index + ',\\'' + esc(step.status) + '\\');return false">';
+        html += sIcon + ' ' + step.index + '. ' + esc(step.description) + assignee;
+        if (step.note) html += ' <span style="color:#555;font-style:italic">' + esc(step.note) + '</span>';
+        html += '</div>';
+      }
+      html += '</div>';
+    }
+    overlay.innerHTML = html;
+    _pendingPanel = '';
+    return true;
+  }
+
   return false;
+}
+
+// ── Plan context menus ──
+function showPlanCtx(e: any, planId: string, planStatus: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  var menu = document.createElement('div');
+  menu.className = 'res-ctx';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  function addItem(label: string, fn: () => void) {
+    var d = document.createElement('div');
+    d.textContent = label;
+    d.onclick = function() { menu.remove(); fn(); };
+    menu.appendChild(d);
+  }
+  if (planStatus === 'pending_approval') {
+    addItem('\\u2705 Approve', function() { sendCmd('approve_plan', JSON.stringify({plan_id: planId})); setTimeout(loadPlansPanel, 500); });
+  }
+  if (planStatus !== 'cancelled' && planStatus !== 'completed') {
+    addItem('\\u27A4 Assign to...', function() { assignPlanDialog(planId); });
+  }
+  if (planStatus !== 'cancelled' && planStatus !== 'completed') {
+    addItem('\\u23F9 Cancel', function() { sendCmd('cancel_plan', JSON.stringify({plan_id: planId})); setTimeout(loadPlansPanel, 500); });
+  }
+  addItem('\\u2716 Delete', function() { sendCmd('delete_plan', JSON.stringify({plan_id: planId})); setTimeout(loadPlansPanel, 500); });
+  document.body.appendChild(menu);
+  setTimeout(function() { document.addEventListener('click', function() { menu.remove(); }, {once: true}); }, 0);
+}
+
+function showPlanStepCtx(e: any, planId: string, stepIndex: number, currentStatus: string) {
+  e.preventDefault();
+  e.stopPropagation();
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  var menu = document.createElement('div');
+  menu.className = 'res-ctx';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+  function addItem(label: string, fn: () => void) {
+    var d = document.createElement('div');
+    d.textContent = label;
+    d.onclick = function() { menu.remove(); fn(); };
+    menu.appendChild(d);
+  }
+  if (currentStatus !== 'done') {
+    addItem('\\u2713 Mark Done', function() { sendCmd('update_plan_step', JSON.stringify({plan_id: planId, step: stepIndex, status: 'done'})); setTimeout(loadPlansPanel, 500); });
+  }
+  if (currentStatus !== 'in_progress') {
+    addItem('\\u25d4 In Progress', function() { sendCmd('update_plan_step', JSON.stringify({plan_id: planId, step: stepIndex, status: 'in_progress'})); setTimeout(loadPlansPanel, 500); });
+  }
+  if (currentStatus !== 'skipped') {
+    addItem('\\u2013 Skip', function() { sendCmd('update_plan_step', JSON.stringify({plan_id: planId, step: stepIndex, status: 'skipped'})); setTimeout(loadPlansPanel, 500); });
+  }
+  if (currentStatus !== 'pending') {
+    addItem('\\u25cb Reset', function() { sendCmd('update_plan_step', JSON.stringify({plan_id: planId, step: stepIndex, status: 'pending'})); setTimeout(loadPlansPanel, 500); });
+  }
+  if (currentStatus === 'pending' || currentStatus === 'in_progress' || currentStatus === 'error') {
+    addItem('\\u27A4 Assign to...', function() { assignStepDialog(planId, stepIndex); });
+  }
+  document.body.appendChild(menu);
+  setTimeout(function() { document.addEventListener('click', function() { menu.remove(); }, {once: true}); }, 0);
+}
+
+function assignPlanDialog(planId: string) {
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  vscode.postMessage({ type: 'command', command: 'assign_plan_dialog', arg: planId });
+}
+
+function assignStepDialog(planId: string, stepIndex: number) {
+  var old = document.querySelector('.res-ctx');
+  if (old) old.remove();
+  vscode.postMessage({ type: 'command', command: 'assign_step_dialog', arg: JSON.stringify({ plan_id: planId, step: stepIndex }) });
+}
+
+function createPlanDialog() {
+  vscode.postMessage({ type: 'command', command: 'create_plan_dialog' });
 }
 
 // Update relay status

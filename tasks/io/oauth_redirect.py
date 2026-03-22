@@ -51,15 +51,15 @@ class OAuthRedirectTask(BaseTask):
             flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
-        # PawFlow auth gateway: serve login page instead of redirect
-        if getattr(service, 'provider', '') == 'pawflow':
-            return self._serve_login_page(flowfile, service)
-
-        # Check for relay_callback in query string
+        # Check for relay_callback in query string (before any redirect)
         import urllib.parse as _urlparse
         query_string = flowfile.get_attribute("http.query") or ""
         query_params = _urlparse.parse_qs(query_string)
         relay_callback = query_params.get("relay_callback", [""])[0]
+
+        # PawFlow auth gateway: serve login page instead of redirect
+        if getattr(service, 'provider', '') == 'pawflow':
+            return self._serve_login_page(flowfile, service, relay_callback=relay_callback)
 
         metadata = {}
         if relay_callback:
@@ -77,7 +77,7 @@ class OAuthRedirectTask(BaseTask):
 
         return [flowfile]
 
-    def _serve_login_page(self, flowfile, oauth_service):
+    def _serve_login_page(self, flowfile, oauth_service, relay_callback=""):
         """Serve PawFlow login page or handle login sub-routes."""
         # Find the AuthGateway service
         auth_svc = None
@@ -116,6 +116,7 @@ class OAuthRedirectTask(BaseTask):
         login_task = ServeLoginTask({
             "auth_service_id": "auth",
             "callback_path": _cb_path,
+            "relay_callback": relay_callback,
         })
         login_task._services = self._services or {}
         return login_task.execute(flowfile)

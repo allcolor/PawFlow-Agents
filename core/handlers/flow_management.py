@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import threading
+import uuid
 from typing import Dict, Any, List, Optional
 
 from core.tool_handler import ToolHandler
@@ -713,11 +714,7 @@ class AskAgentHandler(ToolHandler):
 
 
 class CreatePlanHandler(ToolHandler):
-    """Create or replace a structured plan for a multi-step task.
-
-    The agent uses this to break down complex user requests into steps,
-    show progress, and track completion.
-    """
+    """Create a structured plan for a multi-step task."""
 
     def __init__(self):
         self._conversation_id = ""
@@ -730,9 +727,8 @@ class CreatePlanHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Create a structured plan for a multi-step task. Each step has a "
-            "description and status (pending/in_progress/done/skipped). "
-            "Use this for complex requests that involve multiple operations. "
-            "The plan is shown to the user and persisted with the conversation."
+            "description and status. The plan requires user approval before execution. "
+            "Use assign_plan to assign it to agents after approval."
         )
 
     @property
@@ -750,11 +746,6 @@ class CreatePlanHandler(ToolHandler):
                         "type": "object",
                         "properties": {
                             "description": {"type": "string"},
-                            "status": {
-                                "type": "string",
-                                "enum": ["pending", "in_progress", "done", "skipped"],
-                                "default": "pending",
-                            },
                         },
                         "required": ["description"],
                     },
@@ -768,18 +759,28 @@ class CreatePlanHandler(ToolHandler):
         self._conversation_id = cid
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        import time
         title = arguments.get("title", "")
         steps = arguments.get("steps", [])
         if not title or not steps:
             return "Error: title and steps are required"
 
+        plan_id = f"p_{uuid.uuid4().hex[:8]}"
         plan = {
+            "id": plan_id,
             "title": title,
+            "status": "pending_approval",
+            "created_by": "agent",
+            "created_at": time.time(),
+            "assigned_to": [],
             "steps": [
                 {
                     "index": i + 1,
                     "description": s.get("description", ""),
-                    "status": s.get("status", "pending"),
+                    "status": "pending",
+                    "note": "",
+                    "task_id": "",
+                    "assigned_to": "",
                 }
                 for i, s in enumerate(steps)
             ],
@@ -789,20 +790,27 @@ class CreatePlanHandler(ToolHandler):
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
-                store.set_extra(self._conversation_id, "plan", plan)
+                plans = store.get_extra(self._conversation_id, "plans") or {}
+                plans[plan_id] = plan
+                store.set_extra(self._conversation_id, "plans", plans)
+                # Emit SSE event
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        self._conversation_id, "plan_created", {"plan": plan})
+                except Exception:
+                    pass
             except Exception as e:
                 logger.warning(f"Failed to persist plan: {e}")
 
-        lines = [f"**Plan: {title}**"]
+        lines = [f"Plan '{plan_id}' created: **{title}** ({len(steps)} steps)"]
+        lines.append("Status: pending_approval \u2014 waiting for user to approve.")
         for s in plan["steps"]:
-            icon = {"pending": "\u25cb", "in_progress": "\u25d4",
-                    "done": "\u25cf", "skipped": "\u25cb"}.get(s["status"], "\u25cb")
-            lines.append(f"  {icon} {s['index']}. {s['description']}")
+            lines.append(f"  \u25cb {s['index']}. {s['description']}")
         return "\n".join(lines)
 
-
 class UpdatePlanHandler(ToolHandler):
-    """Update the status of steps in the current plan."""
+    """Update the status of steps in a plan."""
 
     def __init__(self):
         self._conversation_id = ""
@@ -814,7 +822,7 @@ class UpdatePlanHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Update the status of one or more steps in the current plan. "
+            "Update the status of one or more steps in a plan. "
             "Call this as you complete steps to show progress to the user."
         )
 
@@ -823,6 +831,10 @@ class UpdatePlanHandler(ToolHandler):
         return {
             "type": "object",
             "properties": {
+                "plan_id": {
+                    "type": "string",
+                    "description": "Plan ID (e.g. p_abc12345)",
+                },
                 "updates": {
                     "type": "array",
                     "items": {
@@ -831,36 +843,38 @@ class UpdatePlanHandler(ToolHandler):
                             "step": {"type": "integer", "description": "Step number (1-based)"},
                             "status": {
                                 "type": "string",
-                                "enum": ["pending", "in_progress", "done", "skipped"],
+                                "enum": ["pending", "in_progress", "done", "skipped", "error"],
                             },
-                            "note": {"type": "string", "description": "Optional note about the result"},
+                            "note": {"type": "string", "description": "Optional note"},
                         },
                         "required": ["step", "status"],
                     },
                 },
             },
-            "required": ["updates"],
+            "required": ["plan_id", "updates"],
         }
 
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
         updates = arguments.get("updates", [])
-        if not updates:
-            return "Error: updates list is required"
+        if not plan_id or not updates:
+            return "Error: plan_id and updates are required"
 
         plan = None
         if self._conversation_id:
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
-                plan = store.get_extra(self._conversation_id, "plan")
+                plans = store.get_extra(self._conversation_id, "plans") or {}
+                plan = plans.get(plan_id)
             except Exception:
                 pass
 
         if not plan:
-            return "Error: no active plan found. Use create_plan first."
+            return f"Error: plan '{plan_id}' not found."
 
         for u in updates:
             step_num = int(u.get("step", 0))
@@ -873,24 +887,300 @@ class UpdatePlanHandler(ToolHandler):
                         s["note"] = note
                     break
 
+        # Auto-update plan status
+        statuses = [s["status"] for s in plan["steps"]]
+        if all(s in ("done", "skipped") for s in statuses):
+            plan["status"] = "completed"
+        elif any(s == "in_progress" for s in statuses):
+            plan["status"] = "in_progress"
+
         # Persist
         if self._conversation_id:
             try:
                 from core.conversation_store import ConversationStore
-                ConversationStore.instance().set_extra(
-                    self._conversation_id, "plan", plan,
-                )
+                store = ConversationStore.instance()
+                plans = store.get_extra(self._conversation_id, "plans") or {}
+                plans[plan_id] = plan
+                store.set_extra(self._conversation_id, "plans", plans)
+                # Emit SSE event
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        self._conversation_id, "plan_updated", {"plan": plan})
+                except Exception:
+                    pass
             except Exception:
                 pass
 
         # Format
-        lines = [f"**Plan: {plan['title']}**"]
         done_count = sum(1 for s in plan["steps"] if s["status"] == "done")
         total = len(plan["steps"])
-        lines.append(f"Progress: {done_count}/{total}")
+        lines = [f"**{plan['title']}** — {done_count}/{total} done [{plan['status']}]"]
         for s in plan["steps"]:
-            icon = {"pending": "\u25cb", "in_progress": "\u25d4",
-                    "done": "\u2713", "skipped": "\u2013"}.get(s["status"], "\u25cb")
+            icon = {"pending": "○", "in_progress": "◔", "done": "✓",
+                    "skipped": "–", "error": "✗"}.get(s["status"], "○")
             note = f' — {s["note"]}' if s.get("note") else ""
             lines.append(f"  {icon} {s['index']}. {s['description']}{note}")
         return "\n".join(lines)
+
+
+class ApprovePlanHandler(ToolHandler):
+    """Approve a plan (agent can approve plans created by other agents)."""
+
+    def __init__(self):
+        self._conversation_id = ""
+
+    @property
+    def name(self) -> str:
+        return "approve_plan"
+
+    @property
+    def description(self) -> str:
+        return "Approve a plan that is pending approval. Only approve plans you did not create yourself."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan ID to approve"},
+            },
+            "required": ["plan_id"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
+        if not plan_id or not self._conversation_id:
+            return "Error: plan_id required"
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            plans = store.get_extra(self._conversation_id, "plans") or {}
+            plan = plans.get(plan_id)
+            if not plan:
+                return f"Error: plan '{plan_id}' not found"
+            if plan["status"] != "pending_approval":
+                return f"Plan is already {plan['status']}"
+            plan["status"] = "approved"
+            plans[plan_id] = plan
+            store.set_extra(self._conversation_id, "plans", plans)
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                bus = ConversationEventBus.instance()
+                bus.publish_event(self._conversation_id, "plan_updated", {"plan": plan})
+                created_by = plan.get("created_by", "")
+                if created_by and created_by != "user":
+                    bus.publish_event(self._conversation_id, "notification", {
+                        "message": f"Plan '{plan['title']}' ({plan_id}) approved. Proceed with execution.",
+                        "target_agent": created_by,
+                    })
+            except Exception:
+                pass
+            return f"Plan '{plan_id}' approved."
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class AssignPlanHandler(ToolHandler):
+    """Assign a plan to an agent, creating tasks for execution."""
+
+    def __init__(self):
+        self._conversation_id = ""
+
+    @property
+    def name(self) -> str:
+        return "assign_plan"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Assign a plan to an agent for execution. Implies approval if pending. "
+            "By default assigns unassigned steps. Use step_range for specific steps "
+            "(e.g. '1-3', '2,4,5') or 'remaining' for all non-completed steps. "
+            "Can reassign steps that are pending, in_progress, or error."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan ID to assign"},
+                "agent": {"type": "string", "description": "Agent name or ALL"},
+                "step_range": {
+                    "type": "string",
+                    "description": "Optional step range (e.g. '1-3', '2,4,5'). If omitted, assigns full plan as one task.",
+                },
+            },
+            "required": ["plan_id", "agent"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
+        agent = arguments.get("agent", "")
+        step_range = arguments.get("step_range", "")
+        if not plan_id or not agent or not self._conversation_id:
+            return "Error: plan_id and agent required"
+
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            plans = store.get_extra(self._conversation_id, "plans") or {}
+            plan = plans.get(plan_id)
+            if not plan:
+                return f"Error: plan '{plan_id}' not found"
+            if plan["status"] == "cancelled":
+                return "Error: cannot assign a cancelled plan"
+            # Assign implies approval
+            if plan["status"] == "pending_approval":
+                plan["status"] = "approved"
+            plan["status"] = "in_progress"
+            if agent not in plan.get("assigned_to", []):
+                plan.setdefault("assigned_to", []).append(agent)
+
+            reassignable = ("pending", "in_progress", "error")
+            assigned_count = 0
+            if step_range == "remaining":
+                for s in plan["steps"]:
+                    if s["status"] in reassignable:
+                        s["assigned_to"] = agent
+                        assigned_count += 1
+            elif step_range:
+                target_steps = []
+                for part in step_range.split(","):
+                    part = part.strip()
+                    if "-" in part:
+                        a, b = part.split("-", 1)
+                        target_steps.extend(range(int(a), int(b) + 1))
+                    else:
+                        target_steps.append(int(part))
+                for s in plan["steps"]:
+                    if s["index"] in target_steps and s["status"] in reassignable:
+                        s["assigned_to"] = agent
+                        assigned_count += 1
+            else:
+                for s in plan["steps"]:
+                    if not s.get("assigned_to") and s["status"] in reassignable:
+                        s["assigned_to"] = agent
+                        assigned_count += 1
+
+            plans[plan_id] = plan
+            store.set_extra(self._conversation_id, "plans", plans)
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    self._conversation_id, "plan_updated", {"plan": plan})
+            except Exception:
+                pass
+            mode = f"steps {step_range}" if step_range else "full plan"
+            return f"Plan '{plan_id}' assigned to {agent} ({mode}, {assigned_count} steps)."
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class CancelPlanHandler(ToolHandler):
+    """Cancel a plan."""
+
+    def __init__(self):
+        self._conversation_id = ""
+
+    @property
+    def name(self) -> str:
+        return "cancel_plan"
+
+    @property
+    def description(self) -> str:
+        return "Cancel a plan. Steps in progress may still complete."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan ID to cancel"},
+            },
+            "required": ["plan_id"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
+        if not plan_id or not self._conversation_id:
+            return "Error: plan_id required"
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            plans = store.get_extra(self._conversation_id, "plans") or {}
+            plan = plans.get(plan_id)
+            if not plan:
+                return f"Error: plan '{plan_id}' not found"
+            plan["status"] = "cancelled"
+            plans[plan_id] = plan
+            store.set_extra(self._conversation_id, "plans", plans)
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    self._conversation_id, "plan_updated", {"plan": plan})
+            except Exception:
+                pass
+            return f"Plan '{plan_id}' cancelled."
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class DeletePlanHandler(ToolHandler):
+    """Delete a plan permanently."""
+
+    def __init__(self):
+        self._conversation_id = ""
+
+    @property
+    def name(self) -> str:
+        return "delete_plan"
+
+    @property
+    def description(self) -> str:
+        return "Permanently delete a plan from the conversation."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan ID to delete"},
+            },
+            "required": ["plan_id"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
+        if not plan_id or not self._conversation_id:
+            return "Error: plan_id required"
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            plans = store.get_extra(self._conversation_id, "plans") or {}
+            if plan_id not in plans:
+                return f"Error: plan '{plan_id}' not found"
+            del plans[plan_id]
+            store.set_extra(self._conversation_id, "plans", plans)
+            try:
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    self._conversation_id, "plan_deleted", {"plan_id": plan_id})
+            except Exception:
+                pass
+            return f"Plan '{plan_id}' deleted."
+        except Exception as e:
+            return f"Error: {e}"

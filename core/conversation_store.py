@@ -241,6 +241,81 @@ class ConversationStore:
                 entry["expires_at"] = time.time() + ttl
         self._save_to_disk(conversation_id)
 
+    def create_display_trace(self, conversation_id: str, trace_id: str,
+                             source: Dict[str, Any],
+                             user_id: str = "") -> bool:
+        """Create a display-only trace message for a sub-agent run.
+
+        Display-only messages are shown in the chat UI but NEVER included
+        in any agent's LLM context (skipped during rebuild/compact/summary).
+
+        Args:
+            trace_id: Unique ID for this sub-agent run (e.g. task_id).
+            source: Metadata dict with name, parent_agent, task_id, depth.
+        """
+        msg = {
+            "role": "sub_agent_trace",
+            "display_only": True,
+            "trace_id": trace_id,
+            "source": source,
+            "content": "",
+            "trace": [],
+            "timestamp": time.time(),
+        }
+        with self._store_lock:
+            self._ensure_loaded()
+            if conversation_id in self._deleted:
+                return False
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
+                return False
+            entry["messages"].append(msg)
+            entry["updated_at"] = time.time()
+        self._save_to_disk(conversation_id)
+        return True
+
+    def append_display_trace(self, conversation_id: str, trace_id: str,
+                             entry_data: Dict[str, Any],
+                             content_update: str = "") -> bool:
+        """Atomically append a trace entry to a display-only message.
+
+        This is append-only: the trace list only grows, never shrinks.
+        If content_update is provided, the message's content field is also updated
+        (used when sub_agent_done provides the final response).
+
+        Args:
+            trace_id: The trace_id of the target display message.
+            entry_data: Dict to append to the trace array (e.g. {"type": "tool_call", ...}).
+            content_update: If non-empty, replace the message's content field.
+        """
+        entry_data.setdefault("ts", time.time())
+        with self._store_lock:
+            self._ensure_loaded()
+            entry = self._conversations.get(conversation_id)
+            if entry is None:
+                return False
+            # Find the trace message by trace_id (scan from end, usually recent)
+            target = None
+            for msg in reversed(entry["messages"]):
+                if isinstance(msg, dict) and msg.get("trace_id") == trace_id:
+                    target = msg
+                    break
+            if target is None:
+                return False
+            target["trace"].append(entry_data)
+            if content_update:
+                target["content"] = content_update
+            entry["updated_at"] = time.time()
+        self._save_to_disk(conversation_id)
+        return True
+
+    @staticmethod
+    def filter_display_only(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Return messages excluding display_only entries (for LLM context building)."""
+        return [m for m in messages if not (isinstance(m, dict) and m.get("display_only"))]
+
     def message_count(self, conversation_id: str) -> int:
         """Return the current number of messages in a conversation."""
         with self._store_lock:

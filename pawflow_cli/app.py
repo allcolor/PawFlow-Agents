@@ -42,7 +42,9 @@ _COMMANDS = [
     "/add-secret", "/secrets", "/add-variable", "/variables",
     "/schedules", "/cost", "/copy", "/clear", "/login", "/quit", "/exit",
     "/help", "/run", "/diff", "/watch", "/multi", "/plan",
-    "/rename", "/delete-msg", "/search",
+    "/rename", "/delete-msg", "/search", "/link",
+    "/vidservice", "/imgservice", "/share", "/install", "/uninstall",
+    "/rebuild-full", "/rebuild_clean", "/setname", "/autoconv",
 ]
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
@@ -573,8 +575,10 @@ class PawCode:
                 "- `/msg <agent|ALL> <text>` — Send to agent\n"
                 "- `/btw <agent|ALL> <question>` — Side question\n"
                 "- `/stop <agent|ALL> [-f]` — Interrupt/cancel agent\n"
+                "- `/setname <agent> [nickname]` — Set agent nickname\n"
                 "\n## Context\n"
                 "- `/rebuild` — Rebuild context\n"
+                "- `/rebuild-full` — Full rebuild (clean + rebuild)\n"
                 "- `/restart [agent] [keep]` — Restart context\n"
                 "- `/summary [agent] [tokens]` — Summarize context\n"
                 "- `/context [agent|task:id]` — Show context\n"
@@ -616,6 +620,9 @@ class PawCode:
                 "- `/deactivate <type> <name>` — Deactivate resource\n"
                 "- `/tools` — List tools\n"
                 "- `/call <tool> {json}` — Call tool directly\n"
+                "- `/share <type> <name> <conv_id>` — Share resource to conversation\n"
+                "- `/install <filename.py>` — Install custom tool\n"
+                "- `/uninstall <tool_name>` — Uninstall custom tool\n"
                 "\n## Secrets & Variables\n"
                 "- `/add-secret <name> <value>` — Store secret\n"
                 "- `/secrets` — List secrets\n"
@@ -628,6 +635,8 @@ class PawCode:
                 "\n## LLM & Model\n"
                 "- `/model <name>` — Switch model\n"
                 "- `/llm <agent> <service>` — Override LLM service\n"
+                "- `/imgservice list|select|clear` — Manage image service\n"
+                "- `/vidservice list|select|clear` — Manage video service\n"
                 "\n## Files & Prompts\n"
                 "- `/files` — List conversation files\n"
                 "- `/upload <path>` — Upload file (or drag file onto terminal)\n"
@@ -641,16 +650,30 @@ class PawCode:
                 "- `/delete-msg <index>` — Delete message by index\n"
                 "- `/search <query>` — Search messages in current conversation\n"
                 "\n## Dev Tools\n"
-                "- `/plan <description>` — Ask agent for a plan (read-only, no changes)\n"
+                "- `/plan` or `/plan list` — List all plans\n"
+                "- `/plan show <id>` — Show plan details with steps\n"
+                "- `/plan create \"title\" \"step1\" \"step2\"` — Create a plan manually\n"
+                "- `/plan approve <id>` — Approve a pending plan\n"
+                "- `/plan reject <id> [reason]` — Reject a plan\n"
+                "- `/plan assign <id> <agent> [1-3]` — Assign plan to agent\n"
+                "- `/plan skip <id> <step>` — Skip a step\n"
+                "- `/plan cancel <id>` — Cancel a plan\n"
+                "- `/plan delete <id>` — Delete a plan\n"
+                "- `/plan <description>` — Ask agent to create a plan\n"
                 "- `/run <command>` — Run shell command on relay directly\n"
                 "- `/diff [file|ref]` — Show git diff with colors\n"
                 "- `/watch <file>` — Watch file for changes (poll 3s)\n"
                 "- `/watch stop` — Stop watching\n"
                 "- `/multi` — Multiline input mode\n"
                 "- `/copy [N]` — Copy last response to clipboard\n"
+                "\n## Linked Accounts\n"
+                "- `/link` — List linked accounts (`/link status`)\n"
+                "- `/link <provider> <id> [bot_token]` — Link account\n"
+                "- `/link unlink <provider>` — Unlink account\n"
                 "\n## Other\n"
                 "- `/cost` — Token usage/cost\n"
                 "- `/login` — Re-authenticate\n"
+                "- `/autoconv <on|off|status|now> <agent> [freq]` — Auto-conversation\n"
                 "- `/quit` — Exit (`/exit` alias)\n"
                 "\n*Aliases: `/message` = `/msg`, `/interrupt` = `/stop`, "
                 "`/detach` = `/clear-files`*\n"
@@ -729,6 +752,124 @@ class PawCode:
         self._cleanup()
         sys.exit(0)
 
+    def run_prompt(self, prompt: str, conversation_id: str = None,
+                   output_format: str = "text"):
+        """Non-interactive mode: send one prompt, stream response, exit."""
+        import json as _json
+
+        # Authenticate silently
+        auth = authenticate(self.server_url)
+        self.session_token = auth["token"]
+        self.username = auth["username"]
+        self.api = AgentAPIClient(self.server_url, self.session_token)
+
+        # Start relay
+        self.relay = RelayThread(
+            self.server_url, self.session_token, self.username,
+            self.directory, self.allow_exec,
+        )
+        self.relay.start()
+
+        # Resolve conversation
+        if not conversation_id:
+            config = load_config()
+            conversation_id = config.get("last_conversation_id")
+
+        # Send message
+        resp = self.api.send_message(
+            message=prompt,
+            conversation_id=conversation_id,
+        )
+        if resp.get("error"):
+            print(resp["error"], file=sys.stderr)
+            self._cleanup()
+            sys.exit(1)
+
+        cid = resp.get("conversation_id")
+        if cid:
+            self.conversation_id = cid
+            save_config({"last_conversation_id": cid})
+
+        # Connect SSE and wait for response
+        self.sse = SSEClient(self.server_url, self.session_token)
+        self.sse.connect(cid)
+
+        response_text = ""
+        streaming_tokens = {}
+        is_full = output_format == "full"
+
+        while True:
+            try:
+                event = self.sse.events.get(timeout=120)
+            except queue.Empty:
+                print("Timeout waiting for response", file=sys.stderr)
+                break
+
+            ev_type = event.get("event", "")
+            data = event.get("data", {})
+
+            if ev_type == "token":
+                agent = data.get("agent_name", "")
+                text = data.get("text", "")
+                streaming_tokens.setdefault(agent, "")
+                streaming_tokens[agent] += text
+                if output_format == "text":
+                    sys.stdout.write(text)
+                    sys.stdout.flush()
+
+            elif ev_type == "tool_call" and is_full:
+                tool = data.get("tool", "?")
+                args = data.get("arguments", {})
+                print(f"\n[tool_call] {tool}({_json.dumps(args, ensure_ascii=False)[:200]})",
+                      file=sys.stderr)
+
+            elif ev_type == "tool_result" and is_full:
+                tool = data.get("tool", "?")
+                result = str(data.get("result", ""))[:500]
+                print(f"[tool_result] {tool}: {result}", file=sys.stderr)
+
+            elif ev_type == "done":
+                response_text = data.get("response", "")
+                agent = data.get("agent_name", "")
+                # If we were streaming tokens, we already printed them
+                if not streaming_tokens.get(agent) and response_text:
+                    if output_format == "text":
+                        sys.stdout.write(response_text)
+                elif streaming_tokens.get(agent) and output_format == "text":
+                    pass  # already printed via tokens
+
+                if output_format == "json":
+                    result = {
+                        "response": response_text or streaming_tokens.get(agent, ""),
+                        "agent": agent,
+                        "conversation_id": cid,
+                        "tokens_in": data.get("tokens_in", 0),
+                        "tokens_out": data.get("tokens_out", 0),
+                        "model": data.get("model", ""),
+                    }
+                    print(_json.dumps(result, ensure_ascii=False))
+                elif output_format == "markdown":
+                    text = response_text or streaming_tokens.get(agent, "")
+                    print(text)
+
+                if not data.get("continuing"):
+                    break
+
+            elif ev_type == "error_event":
+                print(f"\nError: {data.get('message', 'Unknown error')}", file=sys.stderr)
+                break
+
+            elif ev_type == "cancelled":
+                print(f"\nCancelled", file=sys.stderr)
+                break
+
+        # Ensure trailing newline for text mode
+        if output_format == "text" and (response_text or streaming_tokens):
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+
+        self._cleanup()
+
     def _cleanup(self):
         if self.sse:
             self.sse.disconnect()
@@ -752,6 +893,14 @@ def main():
                         help="Don't mount filesystem relay (chat only)")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
+    parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
+                        help="Non-interactive mode: send a prompt and exit. "
+                             "Use -p \"prompt\" or pipe via stdin with -p -")
+    parser.add_argument("-c", "--conversation", default=None,
+                        help="Conversation ID to use with -p (default: last or new)")
+    parser.add_argument("--output", choices=["text", "json", "markdown", "full"],
+                        default="text",
+                        help="Output format for -p mode (default: text)")
     args = parser.parse_args()
 
     cli = PawCode(
@@ -763,6 +912,25 @@ def main():
     if args.login:
         from pawflow_cli.config import clear_session
         clear_session()
+
+    # Non-interactive prompt mode: -p "prompt" or echo "q" | pawcode -p -
+    if args.prompt is not None:
+        prompt_text = args.prompt
+        if prompt_text == "-":
+            prompt_text = sys.stdin.read().strip()
+        if not prompt_text:
+            print("Error: empty prompt", file=sys.stderr)
+            sys.exit(1)
+        try:
+            cli.run_prompt(prompt_text,
+                           conversation_id=args.conversation,
+                           output_format=args.output)
+        except KeyboardInterrupt:
+            sys.exit(130)
+        except Exception as e:
+            print(f"Error: {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
 
     try:
         cli.start()

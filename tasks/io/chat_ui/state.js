@@ -115,6 +115,8 @@ function newChat() {
   document.getElementById('filesPanel').style.display = 'none';
   document.getElementById('schedsBtn').style.display = 'none';
   document.getElementById('schedsPanel').style.display = 'none';
+  document.getElementById('plansBtn').style.display = 'none';
+  document.getElementById('plansPanel').style.display = 'none';
   highlightConv(null);
   // Close sidebar on mobile
   document.getElementById('sidebar').classList.remove('open');
@@ -130,6 +132,7 @@ function updateDeleteBtn() {
   document.getElementById('refreshConvBtn').style.display = show;
   document.getElementById('filesBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
+  document.getElementById('plansBtn').style.display = show;
 }
 // ── Reply-to state ──
 let _replyTo = null;  // {raw_index, role, agent, text_preview}

@@ -334,14 +334,28 @@ class OAuthCallbackTask(BaseTask):
             except Exception as e:
                 logger.warning(f"Failed to persist refresh token: {e}")
 
-        # Redirect to chat
+        # Check if this auth was initiated by a relay (CLI/plugin)
+        relay_callback = ""
+        if isinstance(state_data, dict):
+            relay_callback = state_data.get("relay_callback", "")
+
         redirect = self.config.get("success_redirect", "/chat")
         cookie = self.config.get("cookie_name", "pawflow_token")
         max_age = int(self.config.get("cookie_max_age", 28800))
 
         flowfile.set_content(b"")
         flowfile.set_attribute("http.response.status", "302")
-        flowfile.set_attribute("http.response.header.Location", redirect)
+        if relay_callback:
+            # Redirect to relay callback (CLI/plugin) with token
+            cb_url = relay_callback + ("&" if "?" in relay_callback else "?")
+            cb_url += urllib.parse.urlencode({
+                "token": token,
+                "username": result.username,
+                "role": user.role.value if hasattr(user, 'role') else "user",
+            })
+            flowfile.set_attribute("http.response.header.Location", cb_url)
+        else:
+            flowfile.set_attribute("http.response.header.Location", redirect)
         flowfile.set_attribute("http.response.header.Set-Cookie",
                                f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
         return [flowfile]

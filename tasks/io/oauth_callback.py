@@ -187,33 +187,32 @@ class OAuthCallbackTask(BaseTask):
         from core.security import SecurityManager, Role
         sm = SecurityManager.get_instance()
 
-        # Override default role from service config
-        default_role_str = service.default_role
-        default_role = Role(default_role_str) if default_role_str in [r.value for r in Role] else Role.OPERATOR
+        # Find or create user via IdentityService
+        from core.identity_service import IdentityService
+        ids = IdentityService.instance()
+        username = ids.resolve(service.provider, oauth_id)
+        user = sm.get_user(username) if username else None
 
-        # Temporarily override the default OAuth role
-        original_code = None
-        session = sm.authenticate_oauth(
-            provider=service.provider,
-            oauth_id=oauth_id,
-            email=email,
-            display_name=display_name,
-            ip_address=flowfile.get_attribute("http.remote.addr") or "",
-        )
+        if not user:
+            # Auto-create user
+            username = email.split("@")[0] if email else f"{service.provider}_{oauth_id[:8]}"
+            base = username
+            counter = 1
+            while sm.get_user(username):
+                username = f"{base}_{counter}"
+                counter += 1
+            default_role_str = service.default_role
+            default_role = Role(default_role_str) if default_role_str in [r.value for r in Role] else Role.OPERATOR
+            user = sm.create_user(username, "", default_role,
+                                  email=email, display_name=display_name or username)
+            ids.link(username, service.provider, oauth_id)
 
-        if not session:
-            return [self._error_response(flowfile, 403, "OAuth authentication denied")]
+        if not user.enabled:
+            return [self._error_response(flowfile, 403, "Account disabled")]
 
+        session = sm._create_session(user,
+            ip_address=flowfile.get_attribute("http.remote.addr") or "")
         logger.info(f"OAuth session created: user={session.username}, role={session.role.value}")
-
-        # Update role for new users (authenticate_oauth defaults to VIEWER)
-        user = sm._users.get(session.username)
-        if user and user.oauth_id == oauth_id and user.role == Role.VIEWER:
-            # Only upgrade if this is likely a new user (still at default VIEWER)
-            if default_role != Role.VIEWER:
-                user.role = default_role
-                session.role = default_role
-                sm._save_users()
 
         logger.info(f"OAuth2 login successful: {session.username} "
                     f"(provider={service.provider}, role={session.role.value})")

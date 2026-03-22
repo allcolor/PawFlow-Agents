@@ -80,9 +80,6 @@ class User:
     created_at: str = field(default_factory=lambda: datetime.now().isoformat())
     last_login: str = ""
     enabled: bool = True
-    # OAuth2 fields
-    oauth_provider: str = ""
-    oauth_id: str = ""
 
     def check_password(self, password: str) -> bool:
         ok = _verify_password(password, self.password_hash, self.username)
@@ -104,8 +101,6 @@ class User:
             "created_at": self.created_at,
             "last_login": self.last_login,
             "enabled": self.enabled,
-            "oauth_provider": self.oauth_provider,
-            "oauth_id": self.oauth_id,
         }
 
     @staticmethod
@@ -119,8 +114,6 @@ class User:
             created_at=data.get("created_at", ""),
             last_login=data.get("last_login", ""),
             enabled=data.get("enabled", True),
-            oauth_provider=data.get("oauth_provider", ""),
-            oauth_id=data.get("oauth_id", ""),
         )
 
 
@@ -289,45 +282,6 @@ class SecurityManager:
         user.last_login = datetime.now().isoformat()
         self._save_users()
         return session
-
-    def authenticate_oauth(self, provider: str, oauth_id: str,
-                           email: str = "", display_name: str = "",
-                           ip_address: str = "") -> Optional[Session]:
-        """Authenticate via OAuth2. Auto-creates user if needed."""
-        # Find existing user by OAuth ID
-        for user in self._users.values():
-            if user.oauth_provider == provider and user.oauth_id == oauth_id:
-                if not user.enabled:
-                    return None
-                session = self._create_session(user, ip_address)
-                user.last_login = datetime.now().isoformat()
-                self._save_users()
-                return session
-
-        # Auto-create new user from OAuth
-        username = f"{provider}_{oauth_id[:8]}"
-        if email:
-            username = email.split("@")[0]
-        # Ensure unique
-        base = username
-        counter = 1
-        while username in self._users:
-            username = f"{base}_{counter}"
-            counter += 1
-
-        user = User(
-            username=username,
-            role=Role.VIEWER,  # Default role for OAuth users
-            email=email,
-            display_name=display_name or username,
-            oauth_provider=provider,
-            oauth_id=oauth_id,
-        )
-        self._users[username] = user
-        self._save_users()
-        logger.info(f"OAuth user auto-created: {username} (provider={provider})")
-
-        return self._create_session(user, ip_address)
 
     def _create_session(self, user: User, ip_address: str = "") -> Session:
         session = Session(

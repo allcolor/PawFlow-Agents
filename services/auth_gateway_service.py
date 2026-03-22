@@ -332,16 +332,7 @@ class AuthGatewayService(BaseService):
             if user:
                 return user
 
-        # 2. Fallback: search by legacy oauth_provider/oauth_id on User
-        for udict in sm.list_users():
-            uname = udict.get("username", "")
-            if (udict.get("oauth_provider") == auth_result.provider
-                    and udict.get("oauth_id") == auth_result.user_id):
-                # Migrate: link via IdentityService for future lookups
-                ids.link(uname, auth_result.provider, auth_result.user_id)
-                return sm.get_user(uname)
-
-        # 3. Fallback: search by email
+        # 2. Fallback: search by email
         if auth_result.email:
             for udict in sm.list_users():
                 if udict.get("email", "").lower() == auth_result.email.lower():

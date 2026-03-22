@@ -211,11 +211,7 @@ class ValidateSessionAuthTask(BaseTask):
             if not user:
                 return None
 
-            session = sm.authenticate_oauth(
-                provider=provider,
-                oauth_id=user.oauth_id or "",
-                email=user.email or username,
-                display_name=user.display_name or username,
+            session = sm._create_session(user,
                 ip_address=flowfile.get_attribute("http.remote.addr") or "",
             )
 

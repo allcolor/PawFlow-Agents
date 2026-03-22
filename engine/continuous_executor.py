@@ -1100,6 +1100,13 @@ class ContinuousFlowExecutor:
         if total_skipped:
             logger.info(f"Skipped {total_skipped} stale FlowFiles from checkpoint")
 
+        # Clear checkpoint after recovery to prevent re-restoring stale FlowFiles
+        # on next startup if the server crashes during processing
+        try:
+            self._checkpoint_mgr.clear()
+        except Exception:
+            pass
+
     def save_checkpoint_now(self) -> Optional[str]:
         """Manually trigger a checkpoint. Returns checkpoint path."""
         if not self._checkpoint_mgr:

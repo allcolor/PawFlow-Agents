@@ -153,7 +153,7 @@ export async function activate(context: vscode.ExtensionContext) {
     if (status === 'running') {
       statusBar.setConnected(auth.getUsername() + ' [relay ✓]');
     } else {
-      statusBar.setConnected(auth.getUsername());
+      statusBar.setError(auth.getUsername() + ' [relay ✗]');
     }
   });
 

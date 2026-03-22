@@ -19,6 +19,7 @@ export class StatusBarProvider implements vscode.Disposable {
   setConnected(username: string): void {
     this.item.text = `$(comment-discussion) PawFlow: ${username}`;
     this.item.tooltip = `Connected as ${username}`;
+    this.item.backgroundColor = undefined;
   }
 
   setThinking(agent: string, verb: string): void {

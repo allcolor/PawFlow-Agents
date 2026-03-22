@@ -218,10 +218,12 @@ export class RelayManager implements vscode.Disposable {
 
     socket.on('error', (e) => {
       this.outputChannel.appendLine(`[Relay] Error: ${e.message}`);
+      this._onStatusChange.fire('disconnected');
       this._scheduleReconnect();
     });
 
     socket.on('close', () => {
+      this._onStatusChange.fire('disconnected');
       this._scheduleReconnect();
     });
 

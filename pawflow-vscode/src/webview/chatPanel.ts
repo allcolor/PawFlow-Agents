@@ -54,6 +54,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     });
 
+    // Resume last conversation on startup
+    this.resumeLastConversation();
+
     // Connect SSE if we have a conversation
     this.setupSSE();
   }
@@ -92,6 +95,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 
       if (resp.conversation_id) {
         this.conversationId = resp.conversation_id;
+        this.saveLastConversation(resp.conversation_id);
         this.setupSSE();
       }
 
@@ -164,6 +168,41 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     }
   }
 
+  private async resumeLastConversation(): Promise<void> {
+    const lastCid = this.context.globalState.get<string>('pawflow.lastConversationId');
+    if (!lastCid) { return; }
+    // Wait for API client to be ready (login is async, may not be done yet)
+    let api = this.getApi();
+    for (let attempt = 0; !api && attempt < 10; attempt++) {
+      await new Promise(r => setTimeout(r, 500));
+      api = this.getApi();
+    }
+    if (!api) {
+      console.log('[PawFlow] No API client after waiting — skipping resume');
+      return;
+    }
+    try {
+      const data = await api.sendAction('load_history', {
+        conversation_id: lastCid, limit: 50, offset: 0,
+      });
+      if (!data.error) {
+        this.conversationId = lastCid;
+        this.saveLastConversation(lastCid);
+        this.setupSSE();
+        this.postMessage({ type: 'history', data });
+        console.log(`[PawFlow] Resumed last conversation: ${lastCid.slice(0, 8)}`);
+      }
+    } catch (e) {
+      console.log('[PawFlow] Could not resume last conversation:', e);
+    }
+  }
+
+  private saveLastConversation(cid: string): void {
+    if (cid) {
+      this.context.globalState.update('pawflow.lastConversationId', cid);
+    }
+  }
+
   private async loadConversations(): Promise<void> {
     const api = this.getApi();
     if (!api) {
@@ -192,6 +231,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.postMessage({ type: 'error', message: data.error });
       } else {
         this.conversationId = cid;
+        this.saveLastConversation(cid);
         this.setupSSE();
         this.postMessage({ type: 'history', data });
       }
@@ -371,8 +411,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 html, body { height: 100%; overflow: hidden; }
 body { font-family: var(--vscode-font-family); background: var(--vscode-editor-background); color: var(--vscode-editor-foreground); display: flex; flex-direction: column; }
 .toolbar { display: flex; gap: 4px; padding: 4px; border-bottom: 1px solid var(--vscode-panel-border); }
-.toolbar button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; }
+.toolbar button { background: var(--vscode-button-secondaryBackground); color: var(--vscode-button-secondaryForeground); border: none; padding: 3px 8px; border-radius: 3px; cursor: pointer; font-size: 11px; border-bottom: 2px solid transparent; }
 .toolbar button:hover { background: var(--vscode-button-secondaryHoverBackground); }
+.toolbar button.active { border-bottom-color: var(--vscode-textLink-foreground); color: var(--vscode-textLink-foreground); }
 .messages { flex: 1; overflow-y: auto; padding: 8px; min-height: 0; }
 .msg { margin-bottom: 8px; padding: 6px 8px; border-radius: 6px; font-size: 13px; line-height: 1.5; }
 .msg.user { background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); }
@@ -430,10 +471,9 @@ code { font-family: var(--vscode-editor-font-family); }
 </head>
 <body>
 <div class="toolbar">
-  <button onclick="backToChat()">Chat</button>
+  <button id="tbChat" class="active" onclick="backToChat()">Chat</button>
+  <button id="tbConvs" onclick="loadConvs()">Conversations</button>
   <button onclick="newChat()">+ New</button>
-  <button onclick="loadConvs()">Conversations</button>
-  <button onclick="sendCmd('compact')">Compact</button>
 </div>
 <div class="toolbar-row2">
   <button onclick="showPanel('resources')" title="Resources">&#128218; Resources</button>
@@ -469,20 +509,33 @@ var activeAgents = {};
 var _resData = null;
 
 function updateActiveAgents(agent, status) {
+  if (!agent) { console.error('[BUG] updateActiveAgents called with empty agent name, status=' + status); return; }
   if (status === 'done' || status === 'cancelled') {
     delete activeAgents[agent];
   } else {
-    activeAgents[agent] = status;
+    activeAgents[agent] = { status: status, ts: Date.now() };
+  }
+  _renderActiveAgents();
+}
+function _renderActiveAgents() {
+  // Purge stale entries (>5 min without update)
+  var now = Date.now();
+  for (var k in activeAgents) {
+    if (now - (activeAgents[k].ts || 0) > 300000) delete activeAgents[k];
   }
   var el = document.getElementById('activeAgents');
   var keys = Object.keys(activeAgents);
   if (keys.length === 0) {
     el.style.display = 'none';
   } else {
-    el.style.display = 'block';
+    el.style.display = 'flex';
     el.innerHTML = keys.map(function(a) {
       var color = agentColor(a);
-      return '<span style="margin-right:8px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + color + ';margin-right:3px"></span>' + esc(a) + ': ' + esc(activeAgents[a]) + '</span>';
+      var s = activeAgents[a].status || '';
+      return '<span style="margin-right:10px;display:inline-flex;align-items:center;gap:3px">'
+        + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + color + '"></span>'
+        + '<strong>' + esc(a) + '</strong> ' + esc(s)
+        + '</span>';
     }).join('');
   }
 }
@@ -525,15 +578,23 @@ function send() {
   inputEl.style.height = '36px';
 }
 
-function backToChat() { closePanel(); }
+function setActiveTab(id) {
+  var btns = document.querySelectorAll('.toolbar button[id]');
+  for (var i = 0; i < btns.length; i++) btns[i].classList.remove('active');
+  var el = document.getElementById(id);
+  if (el) el.classList.add('active');
+}
+
+function backToChat() { closePanel(); setActiveTab('tbChat'); }
 
 function newChat() { closePanel();
   vscode.postMessage({ type: 'newConversation' });
   messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
   currentHistoryConvId = null;
   currentHistoryOffset = 0;
+  setActiveTab('tbChat');
 }
-function loadConvs() { closePanel(); vscode.postMessage({ type: 'loadConversations' }); }
+function loadConvs() { closePanel(); setActiveTab('tbConvs'); vscode.postMessage({ type: 'loadConversations' }); }
 function sendCmd(cmd, arg) { vscode.postMessage({ type: 'command', command: cmd, arg }); }
 
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
@@ -644,6 +705,9 @@ window.addEventListener('message', function(e) {
 function handleSSE(event) {
   const { event: evType, data } = event;
   const agent = data.agent_name || '';
+  if (!agent && ['thinking', 'token', 'tool_call', 'done', 'cancelled'].indexOf(evType) >= 0) {
+    console.error('[BUG] SSE event "' + evType + '" has no agent_name', JSON.stringify(data).slice(0, 200));
+  }
 
   switch (evType) {
     case 'thinking':
@@ -788,15 +852,25 @@ function answerAgent(btn, answer) {
 }
 
 function showConvList(convs) {
-  messagesEl.innerHTML = '<div class="msg system">Conversations:</div>';
+  messagesEl.innerHTML = '<div style="padding:4px 8px;font-size:12px;color:var(--vscode-descriptionForeground);border-bottom:1px solid var(--vscode-panel-border);margin-bottom:4px">Conversations (' + convs.length + ')</div>';
   for (const c of convs) {
     const div = document.createElement('div');
-    div.className = 'msg system';
-    div.style.cursor = 'pointer';
-    div.style.textAlign = 'left';
-    div.textContent = c.conversation_id.slice(0, 8) + ' \\u2014 ' + (c.preview || '(empty)').slice(0, 60);
-    div.onclick = function() { vscode.postMessage({ type: 'resumeConversation', conversationId: c.conversation_id }); };
+    div.style.cssText = 'padding:8px 10px;cursor:pointer;border-bottom:1px solid var(--vscode-panel-border);font-size:12px;transition:background 0.1s';
+    div.onmouseenter = function() { div.style.background = 'var(--vscode-list-hoverBackground)'; };
+    div.onmouseleave = function() { div.style.background = ''; };
+    var preview = (c.preview || '').slice(0, 70);
+    var count = c.message_count || '?';
+    var date = c.updated_at ? new Date(c.updated_at * 1000).toLocaleString() : '';
+    div.innerHTML = '<div style="font-weight:500;color:var(--vscode-editor-foreground)">' + esc(preview || '(new conversation)') + '</div>'
+      + '<div style="font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px">'
+      + esc(c.conversation_id.slice(0, 8)) + ' \\u2022 ' + count + ' msgs'
+      + (date ? ' \\u2022 ' + date : '')
+      + '</div>';
+    div.onclick = function() { setActiveTab('tbChat'); vscode.postMessage({ type: 'resumeConversation', conversationId: c.conversation_id }); };
     messagesEl.appendChild(div);
+  }
+  if (!convs.length) {
+    messagesEl.innerHTML += '<div style="padding:16px;text-align:center;color:var(--vscode-descriptionForeground);font-size:12px">No conversations yet</div>';
   }
 }
 

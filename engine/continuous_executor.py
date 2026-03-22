@@ -1039,17 +1039,43 @@ class ContinuousFlowExecutor:
             logger.error(f"Checkpoint failed: {e}")
 
     def _recover_from_checkpoint(self):
-        """Recover queued FlowFiles from the latest checkpoint."""
+        """Recover queued FlowFiles from the latest checkpoint.
+
+        Never blocks startup — corrupted checkpoints are skipped and deleted.
+        HTTP-originated FlowFiles are discarded (requests already timed out).
+        """
         if not self._checkpoint_mgr:
             return
-        data = self._checkpoint_mgr.load_latest_checkpoint()
+        try:
+            data = self._checkpoint_mgr.load_latest_checkpoint()
+        except Exception as e:
+            logger.error(f"Checkpoint load failed, skipping recovery: {e}")
+            return
         if not data:
             return
 
-        restored_queues = self._checkpoint_mgr.restore_flowfiles(data)
+        try:
+            restored_queues = self._checkpoint_mgr.restore_flowfiles(data)
+        except Exception as e:
+            logger.error(f"Checkpoint restore failed, skipping: {e}")
+            return
+
         total_restored = 0
+        total_skipped = 0
 
         for (src, tgt), flowfiles in restored_queues.items():
+            # Skip HTTP-originated FlowFiles — the requests are long gone
+            safe_flowfiles = []
+            for ff in flowfiles:
+                req_id = ff.get_attribute("http.request.id") if hasattr(ff, 'get_attribute') else None
+                if req_id:
+                    total_skipped += 1
+                    continue
+                safe_flowfiles.append(ff)
+
+            if not safe_flowfiles:
+                continue
+
             # Find matching connection
             outgoing = self._connections.get_outgoing(src)
             target_conn = None
@@ -1059,17 +1085,20 @@ class ContinuousFlowExecutor:
                     break
 
             if target_conn and target_conn.is_empty():
-                for ff in flowfiles:
+                for ff in safe_flowfiles:
                     target_conn.enqueue(ff)
                     total_restored += 1
-            elif flowfiles:
+            elif safe_flowfiles:
+                total_skipped += len(safe_flowfiles)
                 logger.warning(
-                    f"Cannot restore {len(flowfiles)} FlowFiles "
+                    f"Cannot restore {len(safe_flowfiles)} FlowFiles "
                     f"for {src}->{tgt}: connection not found or not empty"
                 )
 
         if total_restored:
             logger.info(f"Recovered {total_restored} FlowFiles from checkpoint")
+        if total_skipped:
+            logger.info(f"Skipped {total_skipped} stale FlowFiles from checkpoint")
 
     def save_checkpoint_now(self) -> Optional[str]:
         """Manually trigger a checkpoint. Returns checkpoint path."""

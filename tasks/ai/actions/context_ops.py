@@ -158,7 +158,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             if estimated <= limit:
                 _ctx_save(conv_id, _rb_msgs, _rb_agent)
                 return {"action": "full_restore", "before": len(_rb_msgs),
-                        "after": len(_rb_msgs), "tokens_after": estimated}
+                        "after": len(_rb_msgs), "tokens_after": estimated,
+                        "agent": _rb_agent or "shared"}
             if not _rb_client:
                 raise ValueError("No LLM service for compaction")
             compacted = self._compact_if_needed(
@@ -168,7 +169,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             )
             return {"action": "compacted", "before": len(_rb_msgs),
                     "after": len(compacted),
-                    "tokens_after": self._estimate_tokens(compacted)}
+                    "tokens_after": self._estimate_tokens(compacted),
+                    "agent": _rb_agent or "shared"}
 
         return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)
 
@@ -200,8 +202,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                         store.save_agent_context(conv_id, name, list(_rf_msgs))
             else:
                 _ctx_save(conv_id, list(_rf_msgs), _rf_agent)
-            return {"action": "full_restore", "messages": len(_rf_msgs),
-                    "tokens_after": estimated,
+            return {"action": "full_restore", "before": len(_rf_msgs),
+                    "after": len(_rf_msgs), "tokens_after": estimated,
                     "agent": _rf_agent or "shared"}
 
         return self._run_bg_context_op(conv_id, "rebuild_full", _do_rebuild_full, flowfile)

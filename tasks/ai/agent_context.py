@@ -601,15 +601,34 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         logger.info("max_context_size: svc=%s agent=%s task=%s → %d (svc_type=%s)",
                      _svc_max, _agent_max, _task_max, _resolved_max_ctx,
                      getattr(resolved_svc, 'TYPE', '?'))
+        # Estimate tool definitions token cost
+        _tools_tokens = 0
+        if tool_defs:
+            _tools_chars = sum(
+                len(td.name) + len(td.description or "") + len(json.dumps(td.parameters or {}))
+                for td in tool_defs
+            )
+            _tools_tokens = _tools_chars // 4  # rough estimate
+        _tools_pct = (_tools_tokens / _resolved_max_ctx * 100) if _resolved_max_ctx else 0
+
+        _forced_mode = (
+            str(self.config.get("tools_mode", "")).lower()
+            or str((_selected_agent_def or {}).get("tools_mode", "")).lower()
+        )
         _lazy_tools = (
-            str(self.config.get("tools_mode", "")).lower() == "lazy"
-            or str((_selected_agent_def or {}).get("tools_mode", "")).lower() == "lazy"
+            _forced_mode == "lazy"
             or (
-                _resolved_max_ctx < 16000
-                and str(self.config.get("tools_mode", "")).lower() != "full"
+                _forced_mode != "full"
                 and len(tool_defs) > 4
+                and (
+                    _resolved_max_ctx < 16000           # small context model
+                    or _tools_pct > 10                  # tools > 10% of context budget
+                )
             )
         )
+        if _lazy_tools and tool_defs:
+            logger.info("Lazy tools triggered: %d tools = ~%d tokens (%.1f%% of %d)",
+                         len(tool_defs), _tools_tokens, _tools_pct, _resolved_max_ctx)
         _full_tool_defs = tool_defs  # keep reference for get_tool_schema
         if _lazy_tools and tool_defs:
             from core.tool_registry import GetToolSchemaHandler, UseToolHandler

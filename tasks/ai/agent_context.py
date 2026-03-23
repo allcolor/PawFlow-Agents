@@ -591,12 +591,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # Lazy tools mode: for small-context LLMs, replace full tool schemas
         # with just get_tool_schema + use_tool (~200 tokens instead of ~7000)
-        _svc_max = (getattr(resolved_svc, 'config', {}) or {}).get("max_context_size", 0)
-        _agent_max = (_selected_agent_def or {}).get("max_context_size", 0)
-        _task_max = self.config.get("max_context_size", 64000)
-        _resolved_max_ctx = int(_svc_max or _agent_max or _task_max)
-        logger.info("max_context_size: svc=%s agent=%s task=%s → %d",
-                     _svc_max, _agent_max, _task_max, _resolved_max_ctx)
+        # Resolve max_context_size: service > agent > task config.
+        # 0 means "not set" (use next level), explicit value wins.
+        _svc_cfg = (getattr(resolved_svc, 'config', {}) or {})
+        _svc_max = int(_svc_cfg.get("max_context_size", 0) or 0)
+        _agent_max = int((_selected_agent_def or {}).get("max_context_size", 0) or 0)
+        _task_max = int(self.config.get("max_context_size", 0) or 0)
+        _resolved_max_ctx = _svc_max or _agent_max or _task_max or 200000
+        logger.info("max_context_size: svc=%s agent=%s task=%s → %d (svc_type=%s)",
+                     _svc_max, _agent_max, _task_max, _resolved_max_ctx,
+                     getattr(resolved_svc, 'TYPE', '?'))
         _lazy_tools = (
             str(self.config.get("tools_mode", "")).lower() == "lazy"
             or str((_selected_agent_def or {}).get("tools_mode", "")).lower() == "lazy"

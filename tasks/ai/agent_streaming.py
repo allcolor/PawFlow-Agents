@@ -534,7 +534,61 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         # Consecutive tool call limiter
         _consecutive_tool_s: Dict[str, int] = {}
-        _max_consec_s = ctx.get("max_consecutive_tool_calls", 25)
+        _max_consec_s = ctx.get("max_consecutive_tool_calls", 100)
+
+        def _do_drain():
+            """Drain pending user messages from input queue into context."""
+            if not (hasattr(self, '_drain_pending') and self._drain_pending):
+                return
+            try:
+                _pending = self._drain_pending()
+                for _pff in _pending:
+                    _pbody = _pff.get_content()
+                    if isinstance(_pbody, bytes):
+                        _pbody = _pbody.decode("utf-8", errors="replace")
+                    _pconv = None
+                    _ptext = _pbody
+                    try:
+                        _pjson = json.loads(_pbody)
+                        if isinstance(_pjson, dict) and "message" in _pjson:
+                            _ptext = _pjson["message"]
+                            _pconv = _pjson.get("conversation_id")
+                            if _pjson.get("action"):
+                                continue
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    if _pconv and _pconv != conversation_id:
+                        continue
+                    if _ptext and _ptext.strip():
+                        _uid = _pff.get_attribute("http.auth.principal") or user_id
+                        _append(LLMMessage(
+                            role="user", content=_ptext,
+                            source={"type": "user", "name": _uid},
+                        ))
+                        logger.info(
+                            f"[agent:{conversation_id[:8]}] injected pending "
+                            f"user message: {_ptext[:80]!r}")
+                        _req_id = _pff.get_attribute("http.request.id")
+                        if _req_id:
+                            _pff.set_content(json.dumps({
+                                "status": "accepted",
+                                "conversation_id": conversation_id,
+                                "injected": True,
+                            }).encode("utf-8"))
+                            try:
+                                from services.http_listener_service import _instances
+                                for _port, _svc in _instances.items():
+                                    if _svc._server and _req_id in _svc._server._pending_requests:
+                                        _svc.complete_response(
+                                            _req_id, 200,
+                                            {"Content-Type": "application/json"},
+                                            _pff.get_content()
+                                        )
+                                        break
+                            except Exception:
+                                pass
+            except Exception as _drain_err:
+                logger.debug(f"Queue drain failed: {_drain_err}")
 
         _fatal_error = False
         try:
@@ -548,65 +602,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     if not self._is_current_generation(gen_key, my_generation):
                         raise AgentCancelled()
 
-                    # Drain pending user messages from the input queue.
-                    # This allows the user to send messages while the agent
-                    # is working — they're injected into the context ASAP.
-                    if iteration > 1 and hasattr(self, '_drain_pending') and self._drain_pending:
-                        try:
-                            _pending = self._drain_pending()
-                            for _pff in _pending:
-                                _pbody = _pff.get_content()
-                                if isinstance(_pbody, bytes):
-                                    _pbody = _pbody.decode("utf-8", errors="replace")
-                                _pconv = None
-                                _ptext = _pbody
-                                try:
-                                    _pjson = json.loads(_pbody)
-                                    if isinstance(_pjson, dict) and "message" in _pjson:
-                                        _ptext = _pjson["message"]
-                                        _pconv = _pjson.get("conversation_id")
-                                        # Check if it's an action (not a message)
-                                        if _pjson.get("action"):
-                                            continue  # skip actions, only inject messages
-                                except (json.JSONDecodeError, ValueError):
-                                    pass
-                                # Only inject if same conversation
-                                if _pconv and _pconv != conversation_id:
-                                    continue
-                                if _ptext and _ptext.strip():
-                                    _uid = _pff.get_attribute("http.auth.principal") or user_id
-                                    _append(LLMMessage(
-                                        role="user", content=_ptext,
-                                        source={"type": "user", "name": _uid},
-                                    ))
-                                    logger.info(
-                                        f"[agent:{conversation_id[:8]}] injected pending "
-                                        f"user message: {_ptext[:80]!r}")
-                                    # Send HTTP response for the drained FlowFile
-                                    _req_id = _pff.get_attribute("http.request.id")
-                                    if _req_id:
-                                        _pff.set_content(json.dumps({
-                                            "status": "accepted",
-                                            "conversation_id": conversation_id,
-                                            "injected": True,
-                                        }).encode("utf-8"))
-                                        _pff.set_attribute("http.response.status", "200")
-                                        _pff.set_attribute("http.response.header.Content-Type", "application/json")
-                                        # Route response back
-                                        try:
-                                            from services.http_listener_service import _instances
-                                            for _port, _svc in _instances.items():
-                                                if _svc._server and _req_id in _svc._server._pending_requests:
-                                                    _svc.complete_response(
-                                                        _req_id, 200,
-                                                        {"Content-Type": "application/json"},
-                                                        _pff.get_content()
-                                                    )
-                                                    break
-                                        except Exception:
-                                            pass
-                        except Exception as _drain_err:
-                            logger.debug(f"Queue drain failed: {_drain_err}")
+                    _do_drain()
 
                     # Also check conversation store for messages from other channels
                     if use_conv_store and conversation_id and iteration > 1:
@@ -1018,6 +1014,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "tools_called": tools_called[-3:],
                             "total_tools": len(tools_called),
                         })
+
+                    # Drain pending user messages after tool batch —
+                    # user messages sent during long tool calls (generate_image
+                    # polling) are picked up here instead of waiting for next iter
+                    _do_drain()
 
                     # Check cancellation after tool execution
                     if not self._is_current_generation(gen_key, my_generation):

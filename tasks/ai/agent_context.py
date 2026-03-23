@@ -123,7 +123,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         temperature = float(self.config.get("temperature", 0.7))
         max_tokens = int(self.config.get("max_context_size", 0))
         max_iterations = int(self.config.get("max_iterations", 200))
-        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 25))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 100))
         _resilience_style = self.config.get("resilience_style", "balanced")
         if _resilience_style == "cautious":
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)
@@ -389,6 +389,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         user_id = flowfile.get_attribute("http.auth.principal") or ""
 
         if user_text.strip() or attachments:
+            if attachments:
+                logger.info("User message has %d attachment(s): %s",
+                            len(attachments),
+                            ", ".join(f"{a.get('filename','?')} ({a.get('mime_type','?')}, {len(a.get('data',''))//1024}KB)"
+                                      for a in attachments))
             user_content = self._build_user_content(user_text, attachments)
             user_source = {"type": "user", "name": user_id or "anonymous"}
             if _target_agent:

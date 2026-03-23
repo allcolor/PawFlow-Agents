@@ -656,7 +656,7 @@ class AgentPollerMixin:
         if not max_tokens:
             max_tokens = 4096
         max_iterations = int(self.config.get("max_iterations", 200))
-        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 25))
+        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 100))
         _resilience_style = self.config.get("resilience_style", "balanced")
         if _resilience_style == "cautious":
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)

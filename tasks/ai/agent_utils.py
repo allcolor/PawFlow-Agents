@@ -462,13 +462,23 @@ class AgentUtilsMixin:
         byte-level tokenizers may need 1.0–1.5.  The service config key
         ``chars_per_token`` can override this per-LLM.
         """
-        # Precise counting via tiktoken
+        # Precise counting via tiktoken — strip image data first
         try:
             from core.token_counter import count_messages_tokens
-            return count_messages_tokens([
-                {"content": m.content if hasattr(m, 'content') else str(m)}
-                for m in messages
-            ])
+            _stripped = []
+            for m in messages:
+                c = m.content if hasattr(m, 'content') else str(m)
+                if isinstance(c, list):
+                    # Replace image_url parts with a small placeholder
+                    c = " ".join(
+                        p.get("text", "") if p.get("type") == "text"
+                        else "[image]" if p.get("type") == "image_url"
+                        else p.get("text", "") if p.get("type") == "document"
+                        else ""
+                        for p in c
+                    )
+                _stripped.append({"content": c})
+            return count_messages_tokens(_stripped)
         except Exception:
             pass
         # Fallback to character estimation

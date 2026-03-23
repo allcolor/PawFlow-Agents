@@ -87,7 +87,8 @@ class FileStore:
     def store(self, filename: str, content: bytes,
               content_type: str = "application/octet-stream",
               conversation_id: str = "",
-              user_id: str = "") -> str:
+              user_id: str = "",
+              ttl: int = 0) -> str:
         """Store a file and return its file_id.
 
         Args:
@@ -96,6 +97,7 @@ class FileStore:
             content_type: MIME type
             conversation_id: Optional conversation context
             user_id: Owner user ID (empty = no ownership restriction)
+            ttl: Time-to-live in seconds (0 = no expiry)
 
         Returns:
             file_id: Unique identifier for retrieval
@@ -122,6 +124,7 @@ class FileStore:
                 "conversation_id": conversation_id,
                 "user_id": user_id,
                 "shared_with": [],
+                "ttl": ttl,
             }
 
         self._save_index()
@@ -143,6 +146,16 @@ class FileStore:
             self._ensure_loaded()
             entry = self._entries.get(file_id)
             if entry is None:
+                return None
+
+        # TTL check
+        _ttl = entry.get("ttl", 0)
+        if _ttl > 0:
+            _age = time.time() - entry.get("created_at", 0)
+            if _age > _ttl:
+                with self._store_lock:
+                    self._remove_entry(file_id)
+                self._save_index()
                 return None
 
         # Access control: check ownership or sharing
@@ -298,22 +311,32 @@ class FileStore:
             return len(self._entries)
 
     def cleanup_expired(self, max_age_hours: int = 24):
-        """Remove files older than *max_age_hours*.
+        """Remove files older than *max_age_hours* or past their individual TTL.
 
         Files without a ``created_at`` timestamp are skipped (never auto-deleted).
+        Files with ttl > 0 expire after ttl seconds regardless of max_age_hours.
         """
-        cutoff = time.time() - (max_age_hours * 3600)
+        now = time.time()
+        cutoff = now - (max_age_hours * 3600)
         to_delete: list = []
         with self._store_lock:
             for fid, entry in list(self._entries.items()):
                 created = entry.get("created_at", 0)
-                if created > 0 and created < cutoff:
+                if not created:
+                    continue
+                # Individual TTL (tool results, etc.)
+                _ttl = entry.get("ttl", 0)
+                if _ttl > 0 and (now - created) > _ttl:
+                    to_delete.append(fid)
+                    continue
+                # Global age cutoff
+                if created < cutoff:
                     to_delete.append(fid)
         for fid in to_delete:
             self.delete(fid)
         if to_delete:
-            logger.info("FileStore: cleaned up %d expired files (>%dh)",
-                        len(to_delete), max_age_hours)
+            logger.info("FileStore: cleaned up %d expired files",
+                        len(to_delete))
 
     # -- Disk persistence (index file) --
 

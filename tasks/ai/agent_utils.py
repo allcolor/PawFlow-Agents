@@ -387,6 +387,8 @@ class AgentUtilsMixin:
 
     # Tool result max size in context (chars). Anything over → FileStore.
     _TOOL_RESULT_MAX = 400
+    # TTL for tool result files in FileStore (seconds). Default 1h.
+    _TOOL_RESULT_TTL = 3600
 
 
     @staticmethod
@@ -426,6 +428,7 @@ class AgentUtilsMixin:
                 fname, result.encode("utf-8"),
                 conversation_id=conversation_id,
                 user_id=user_id,
+                ttl=self._TOOL_RESULT_TTL,
             )
             url = f"/files/{fid}/{fname}"
             # Build a clean preview

@@ -22,21 +22,23 @@ class BaseService(VariableResolverMixin, Service, ABC):
     def __init__(self, config: Dict[str, Any]):
         """
         Initialiser le service.
-        
+
         Args:
-            config: Configuration du service
+            config: Configuration du service (may be LazyResolveDict)
         """
-        # Sauvegarder la configuration originale
-        self._original_config = config.copy()
-        
-        # Résoudre les variables dans la configuration
-        resolved_config = self._resolve_variables(config)
-        
-        # Initialiser la classe parente
-        super().__init__(resolved_config)
-        
-        # Stocker la configuration résolue
-        self.config = resolved_config
+        from core.expression import LazyResolveDict
+        if isinstance(config, LazyResolveDict):
+            # LazyResolveDict resolves expressions on every access —
+            # don't copy or pre-resolve, keep the lazy behavior.
+            self._original_config = config
+            super().__init__(config)
+            self.config = config
+        else:
+            # Regular dict: resolve variables once (legacy behavior)
+            self._original_config = config.copy()
+            resolved_config = self._resolve_variables(config)
+            super().__init__(resolved_config)
+            self.config = resolved_config
 
         # État de la connexion
         self._connection: Optional[Any] = None

@@ -528,7 +528,7 @@ class ContinuousFlowExecutor:
                     # Request expired — silently discard
                     if source_conn:
                         source_conn.dequeue()
-                    self._task_states.record_run(task_id, "unknown", 0, True, 0, 0)
+                    self._task_states.record_run(task_id)
                     return
 
             # Attempt execution with retries

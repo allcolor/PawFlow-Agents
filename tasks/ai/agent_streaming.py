@@ -455,15 +455,18 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             if not (use_conv_store and conversation_id and new_messages):
                 return
             from core.conversation_store import ConversationStore
-            # Deflate images before any persistence
-            self._deflate_image_messages(new_messages)
+            # Deflate images on a COPY for persistence — originals stay
+            # intact so the LLM can still see fresh images in this iteration
+            import copy as _cp
+            _persist_msgs = _cp.deepcopy(new_messages)
+            self._deflate_image_messages(_persist_msgs)
 
             # Full serialization for agent context (all messages)
-            all_serialized = self._serialize_messages(new_messages, channel=channel)
+            all_serialized = self._serialize_messages(_persist_msgs, channel=channel)
 
             # Transcript: only conversation messages (user + assistant text, no tool plumbing)
             transcript_msgs = [
-                m for m in new_messages
+                m for m in _persist_msgs
                 if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
                 and m.role != "tool"
             ]

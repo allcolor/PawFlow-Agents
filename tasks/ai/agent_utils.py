@@ -418,7 +418,7 @@ class AgentUtilsMixin:
     def _truncate_tool_result(self, result: str, tool_name: str,
                                conversation_id: str = "",
                                user_id: str = "") -> str:
-        """Truncate tool results > 800 chars — store full content in FileStore.
+        """Truncate tool results — store full content in FileStore if large.
 
         The LLM gets a short preview + file reference. It can use
         read_file with offset/limit to inspect specific parts on demand.
@@ -431,6 +431,22 @@ class AgentUtilsMixin:
 
         # Small result without base64 → pass through
         if result_len <= self._TOOL_RESULT_MAX and not has_base64:
+            return result
+
+        # If the result already references a FileStore file, don't re-save.
+        import re as _re_fs
+        _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
+        if "[Full result" in result and _FS_REF.search(result):
+            return result  # already truncated with FileStore ref
+        if result.startswith("[") and "lines," in result and "chars" in result:
+            # Paginated read_file output — already controlled by offset/limit
+            # Truncate for context but don't duplicate to FileStore
+            if result_len > self._TOOL_RESULT_MAX:
+                return (
+                    result[:self._TOOL_RESULT_MAX // 2]
+                    + f"\n\n... [{result_len - self._TOOL_RESULT_MAX // 2:,} chars omitted"
+                    + " — use offset/limit to read specific sections]"
+                )
             return result
 
         # Store full result in FileStore, return preview + reference

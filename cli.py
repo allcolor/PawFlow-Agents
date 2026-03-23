@@ -272,26 +272,42 @@ def cmd_gui(args):
     logger.info(f"  Admin: http://{args.host}:{args.port}/admin")
 
     # 2. Keep main thread alive, handle Ctrl+C gracefully
+    _shutting_down = False
+
     def _shutdown(sig, frame):
+        nonlocal _shutting_down
+        if _shutting_down:
+            # Second Ctrl+C → force kill immediately
+            logger.info("Force kill.")
+            os._exit(1)
+        _shutting_down = True
         logger.info("Shutting down...")
         # Prevent hot-reload from restarting the process
         try:
-            reg = ExecutorRegistry.get_instance()
-            reg.request_shutdown()
-            for eid in list(reg._executors.keys()):
-                try:
-                    reg._executors[eid].stop()
-                except Exception:
-                    pass
+            ExecutorRegistry.get_instance().request_shutdown()
         except Exception:
             pass
+        # Stop executors in a thread with timeout
+        import threading
+        def _stop_all():
+            try:
+                reg = ExecutorRegistry.get_instance()
+                for eid in list(reg._executors.keys()):
+                    try:
+                        reg._executors[eid].stop()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+        t = threading.Thread(target=_stop_all, daemon=True)
+        t.start()
+        t.join(timeout=3)
         os._exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        # Block main thread (the server runs in background threads)
         while True:
             time.sleep(1)
     except KeyboardInterrupt:

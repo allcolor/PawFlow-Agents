@@ -318,9 +318,13 @@ class ExecutorRegistry:
 
         Gracefully stops all executors, then re-exec's the process with
         the same arguments. Flows auto-restore via restore_from_disk().
+
+        On Windows, os.execv spawns a child (doesn't replace), so we use
+        subprocess + os._exit to get clean process replacement.
         """
         if self._shutting_down:
             return
+        import subprocess
         import sys
         # Stop all running executors gracefully
         try:
@@ -332,6 +336,7 @@ class ExecutorRegistry:
                     pass
         except Exception:
             pass
-        # Re-exec the process
-        os.execv(sys.executable, [sys.executable] + sys.argv)
+        # Spawn new process, then kill this one
+        subprocess.Popen([sys.executable] + sys.argv)
+        os._exit(0)
 

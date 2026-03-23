@@ -37,7 +37,8 @@ class FilesystemToolHandler(ToolHandler):
             "Access files and run commands on the user's filesystem through a configured service. "
             "Actions: list_dir, read_file (supports offset/limit for pagination), read_pdf, read_notebook (.ipynb), edit_notebook (edit/insert/delete cells), "
             "write_file (use content for text OR file_id to copy a server file like generated images), "
-            "edit (exact string replace), batch_edit (atomic multi-file edit), apply_patch (unified diff), "
+            "edit (exact string replace OR line-based: use start_line/end_line/new_string to replace a range of lines), "
+            "batch_edit (atomic multi-file edit), apply_patch (unified diff), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
             "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
             "Git: git_status, git_log, git_diff, git_commit (files, amend), git_pull, git_push, git_checkout, "
@@ -121,11 +122,11 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "old_string": {
                     "type": "string",
-                    "description": "Exact string to find (for edit action)",
+                    "description": "Exact string to find (for edit action). Alternative: use start_line/end_line for line-based edit.",
                 },
                 "new_string": {
                     "type": "string",
-                    "description": "Replacement string (for edit action)",
+                    "description": "Replacement string (for edit action — both string-match and line-based modes)",
                 },
                 "command": {
                     "type": "string",
@@ -223,11 +224,11 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "start_line": {
                     "type": "integer",
-                    "description": "Start line for git_blame range",
+                    "description": "Start line (1-based) for line-based edit or git_blame. Use with end_line + new_string to replace lines.",
                 },
                 "end_line": {
                     "type": "integer",
-                    "description": "End line for git_blame range",
+                    "description": "End line (inclusive) for line-based edit or git_blame.",
                 },
                 "edits": {
                     "type": "array",
@@ -582,17 +583,30 @@ class FilesystemToolHandler(ToolHandler):
                 old_string = arguments.get("old_string", "")
                 new_string = arguments.get("new_string", "")
                 replace_all = arguments.get("replace_all", False)
-                result = svc.edit(path, old_string, new_string, replace_all)
-                # Format diff for display
-                diff = result.get("diff", [])
-                if diff:
-                    diff_text = f"Edited {result.get('path', path)} (line {result.get('line', '?')}), " \
-                                f"{result.get('replacements', 0)} replacement(s):\n"
-                    for d in diff:
-                        prefix = "- " if d["type"] == "remove" else "+ " if d["type"] == "add" else "  "
-                        diff_text += f"{d['line']:4d} {prefix}{d['text']}\n"
-                    return diff_text
-                return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s)"
+                _start_ln = int(arguments.get("start_line", 0) or 0)
+                _end_ln = int(arguments.get("end_line", 0) or 0)
+
+                if _start_ln > 0 and _end_ln > 0:
+                    # Line-based edit: pass start_line/end_line to relay
+                    result = svc._request("edit", path,
+                                          start_line=_start_ln, end_line=_end_ln,
+                                          new_string=new_string)
+                    return (f"Edited {result.get('path', path)}: "
+                            f"replaced lines {_start_ln}-{_end_ln} "
+                            f"({result.get('lines_removed', 0)} removed, "
+                            f"{result.get('lines_inserted', 0)} inserted)")
+                else:
+                    result = svc.edit(path, old_string, new_string, replace_all)
+                    # Format diff for display
+                    diff = result.get("diff", [])
+                    if diff:
+                        diff_text = f"Edited {result.get('path', path)} (line {result.get('line', '?')}), " \
+                                    f"{result.get('replacements', 0)} replacement(s):\n"
+                        for d in diff:
+                            prefix = "- " if d["type"] == "remove" else "+ " if d["type"] == "add" else "  "
+                            diff_text += f"{d['line']:4d} {prefix}{d['text']}\n"
+                        return diff_text
+                    return f"Edited {result.get('path', path)}: {result.get('replacements', 0)} replacement(s)"
 
             elif action == "exec":
                 command = arguments.get("command", "")

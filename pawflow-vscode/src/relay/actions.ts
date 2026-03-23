@@ -172,8 +172,24 @@ export function executeAction(
         const oldString = req.old_string || '';
         const newString = req.new_string || '';
         const replaceAll = req.replace_all || false;
-        if (!oldString) { return { ok: false, error: 'Missing old_string' }; }
+        const startLine = req.start_line || 0;
+        const endLine = req.end_line || 0;
         let text = fs.readFileSync(absPath, 'utf-8');
+
+        if (startLine > 0 && endLine > 0) {
+          // Line-based edit: replace lines start_line..end_line with new_string
+          const lines = text.split('\n');
+          const s = Math.max(0, startLine - 1);
+          const e = Math.min(lines.length, endLine);
+          const removed = lines.slice(s, e);
+          const newLines = newString.split('\n');
+          lines.splice(s, e - s, ...newLines);
+          text = lines.join('\n');
+          fs.writeFileSync(absPath, text, 'utf-8');
+          return { ok: true, data: { lines_replaced: `${startLine}-${endLine}`, lines_removed: removed.length, lines_inserted: newLines.length, path: rel(absPath, rootDir) } };
+        }
+
+        if (!oldString) { return { ok: false, error: 'Missing old_string (or use start_line/end_line)' }; }
         const count = text.split(oldString).length - 1;
         if (count === 0) { return { ok: false, error: `old_string not found in ${path.basename(absPath)}` }; }
         if (count > 1 && !replaceAll) { return { ok: false, error: `old_string found ${count} times (use replace_all)` }; }

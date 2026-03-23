@@ -309,14 +309,33 @@ def _action_find_replace(handler, path, req):
 
 
 def _action_edit(handler, path, req):
-    """Exact string replacement (like Claude Code Edit tool)."""
+    """Edit file: exact string replacement OR line-based replacement."""
     old_string = req.get("old_string", "")
     new_string = req.get("new_string", "")
     replace_all = req.get("replace_all", False)
-    if not old_string:
-        raise ValueError("Missing 'old_string' parameter")
+    start_line = int(req.get("start_line", 0) or 0)
+    end_line = int(req.get("end_line", 0) or 0)
     p = Path(path)
     text = p.read_text(encoding="utf-8")
+    root = Path(handler.root_dir).resolve()
+    rel = str(p.relative_to(root)).replace("\\", "/")
+
+    # Line-based edit
+    if start_line > 0 and end_line > 0:
+        lines = text.split("\n")
+        s = max(0, start_line - 1)
+        e = min(len(lines), end_line)
+        removed = lines[s:e]
+        new_lines = new_string.split("\n")
+        lines[s:e] = new_lines
+        p.write_text("\n".join(lines), encoding="utf-8")
+        return {"lines_replaced": f"{start_line}-{end_line}",
+                "lines_removed": len(removed),
+                "lines_inserted": len(new_lines), "path": rel}
+
+    # String-based edit
+    if not old_string:
+        raise ValueError("Missing 'old_string' (or use start_line/end_line)")
     count = text.count(old_string)
     if count == 0:
         raise ValueError(f"old_string not found in {p.name}")
@@ -327,8 +346,6 @@ def _action_edit(handler, path, req):
     else:
         new_text = text.replace(old_string, new_string, 1)
     p.write_text(new_text, encoding="utf-8")
-    root = Path(handler.root_dir).resolve()
-    rel = str(p.relative_to(root)).replace("\\", "/")
     return {"replacements": count if replace_all else 1, "path": rel}
 
 

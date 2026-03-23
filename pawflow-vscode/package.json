@@ -4,56 +4,140 @@
   "description": "AI agent chat and code assistant powered by PawFlow",
   "version": "0.1.0",
   "publisher": "pawflow",
-  "engines": { "vscode": "^1.85.0" },
-  "categories": ["AI", "Chat", "Other"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "AI",
+    "Chat",
+    "Other"
+  ],
   "main": "./dist/extension.js",
-  "activationEvents": ["onStartupFinished"],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "contributes": {
     "viewsContainers": {
-      "activitybar": [{
-        "id": "pawflow",
-        "title": "PawFlow",
-        "icon": "media/pawflow-icon.svg"
-      }]
+      "activitybar": [
+        {
+          "id": "pawflow",
+          "title": "PawFlow",
+          "icon": "media/pawflow-icon.svg"
+        }
+      ]
     },
     "views": {
-      "pawflow": [{
-        "type": "webview",
-        "id": "pawflow.chatView",
-        "name": "Chat"
-      }]
+      "pawflow": [
+        {
+          "type": "webview",
+          "id": "pawflow.chatView",
+          "name": "Chat"
+        }
+      ]
     },
     "commands": [
-      { "command": "pawflow.openChat", "title": "PawFlow: Open Chat" },
-      { "command": "pawflow.newConversation", "title": "PawFlow: New Conversation" },
-      { "command": "pawflow.login", "title": "PawFlow: Login" },
-      { "command": "pawflow.toggleRelay", "title": "PawFlow: Toggle Relay" },
-      { "command": "pawflow.connectRelay", "title": "PawFlow: Connect Relay" },
-      { "command": "pawflow.disconnectRelay", "title": "PawFlow: Disconnect Relay" },
-      { "command": "pawflow.switchAgent", "title": "PawFlow: Switch Agent" },
-      { "command": "pawflow.switchModel", "title": "PawFlow: Switch Model" },
-      { "command": "pawflow.compact", "title": "PawFlow: Compact Context" },
-      { "command": "pawflow.plan", "title": "PawFlow: Plan (Read-Only)" },
-      { "command": "pawflow.runCommand", "title": "PawFlow: Run Shell Command" },
-      { "command": "pawflow.explainSelection", "title": "PawFlow: Explain This Code" },
-      { "command": "pawflow.fixSelection", "title": "PawFlow: Fix This Code" },
-      { "command": "pawflow.addTestsForSelection", "title": "PawFlow: Add Tests" },
-      { "command": "pawflow.askAboutSelection", "title": "PawFlow: Ask About This" },
-      { "command": "pawflow.sendFileToChat", "title": "PawFlow: Send File to Chat" }
+      {
+        "command": "pawflow.openChat",
+        "title": "PawFlow: Open Chat"
+      },
+      {
+        "command": "pawflow.newConversation",
+        "title": "PawFlow: New Conversation"
+      },
+      {
+        "command": "pawflow.login",
+        "title": "PawFlow: Login"
+      },
+      {
+        "command": "pawflow.toggleRelay",
+        "title": "PawFlow: Toggle Relay"
+      },
+      {
+        "command": "pawflow.connectRelay",
+        "title": "PawFlow: Connect Relay"
+      },
+      {
+        "command": "pawflow.disconnectRelay",
+        "title": "PawFlow: Disconnect Relay"
+      },
+      {
+        "command": "pawflow.switchAgent",
+        "title": "PawFlow: Switch Agent"
+      },
+      {
+        "command": "pawflow.switchModel",
+        "title": "PawFlow: Switch Model"
+      },
+      {
+        "command": "pawflow.compact",
+        "title": "PawFlow: Compact Context"
+      },
+      {
+        "command": "pawflow.plan",
+        "title": "PawFlow: Plan (Read-Only)"
+      },
+      {
+        "command": "pawflow.runCommand",
+        "title": "PawFlow: Run Shell Command"
+      },
+      {
+        "command": "pawflow.explainSelection",
+        "title": "PawFlow: Explain This Code"
+      },
+      {
+        "command": "pawflow.fixSelection",
+        "title": "PawFlow: Fix This Code"
+      },
+      {
+        "command": "pawflow.addTestsForSelection",
+        "title": "PawFlow: Add Tests"
+      },
+      {
+        "command": "pawflow.askAboutSelection",
+        "title": "PawFlow: Ask About This"
+      },
+      {
+        "command": "pawflow.sendFileToChat",
+        "title": "PawFlow: Send File to Chat"
+      }
     ],
     "menus": {
       "editor/context": [
-        { "command": "pawflow.explainSelection", "group": "pawflow@1", "when": "editorHasSelection" },
-        { "command": "pawflow.fixSelection", "group": "pawflow@2", "when": "editorHasSelection" },
-        { "command": "pawflow.addTestsForSelection", "group": "pawflow@3", "when": "editorHasSelection" },
-        { "command": "pawflow.askAboutSelection", "group": "pawflow@4", "when": "editorHasSelection" }
+        {
+          "command": "pawflow.explainSelection",
+          "group": "pawflow@1",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "pawflow.fixSelection",
+          "group": "pawflow@2",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "pawflow.addTestsForSelection",
+          "group": "pawflow@3",
+          "when": "editorHasSelection"
+        },
+        {
+          "command": "pawflow.askAboutSelection",
+          "group": "pawflow@4",
+          "when": "editorHasSelection"
+        }
       ],
       "explorer/context": [
-        { "command": "pawflow.sendFileToChat", "group": "pawflow" }
+        {
+          "command": "pawflow.sendFileToChat",
+          "group": "pawflow"
+        }
       ]
     },
     "keybindings": [
-      { "command": "pawflow.askAboutSelection", "key": "ctrl+shift+a", "mac": "cmd+shift+a", "when": "editorHasSelection" }
+      {
+        "command": "pawflow.askAboutSelection",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorHasSelection"
+      }
     ],
     "configuration": {
       "title": "PawFlow",
@@ -93,15 +177,17 @@
     "lint": "eslint src --ext ts"
   },
   "devDependencies": {
-    "@types/vscode": "^1.85.0",
+    "@types/diff-match-patch": "^1.0.36",
     "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^2.24.0",
+    "ts-loader": "^9.5.0",
     "typescript": "^5.4.0",
     "webpack": "^5.90.0",
-    "webpack-cli": "^5.1.0",
-    "ts-loader": "^9.5.0",
-    "@vscode/vsce": "^2.24.0"
+    "webpack-cli": "^5.1.0"
   },
   "dependencies": {
+    "diff-match-patch": "^1.0.5",
     "marked": "^12.0.0"
   }
 }

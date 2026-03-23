@@ -350,26 +350,28 @@ def _action_edit(handler, path, req):
         raise ValueError("Missing 'old_string' (or use start_line/end_line)")
     count = text.count(old_string)
     if count == 0:
-        # Fuzzy retry: normalize whitespace and try again
-        import re as _re_ws
-        _norm = lambda s: _re_ws.sub(r'[ \t]+', ' ', s).replace('\r\n', '\n')
-        if _norm(old_string) in _norm(text):
-            old_lines = [l.strip() for l in old_string.split("\n")]
-            text_lines = text.split("\n")
-            for i in range(len(text_lines) - len(old_lines) + 1):
-                if all(text_lines[i + j].strip() == old_lines[j] for j in range(len(old_lines))):
-                    new_lines = new_string.split("\n")
-                    text_lines[i:i + len(old_lines)] = new_lines
-                    p.write_text("\n".join(text_lines), encoding="utf-8")
-                    return {"replacements": 1, "fuzzy": True, "line": i + 1, "path": rel}
+        # Fuzzy match via diff-match-patch
+        try:
+            import diff_match_patch as _dmp_mod
+            dmp = _dmp_mod.diff_match_patch()
+            dmp.Match_Threshold = 0.4
+            dmp.Patch_DeleteThreshold = 0.4
+            patches = dmp.patch_make(old_string, new_string)
+            patched, results = dmp.patch_apply(patches, text)
+            applied = sum(1 for r in results if r)
+            if applied > 0:
+                p.write_text(patched, encoding="utf-8")
+                return {"replacements": applied, "fuzzy": True, "path": rel}
+        except ImportError:
+            pass  # diff-match-patch not installed, fall through to hint
         # Still not found — helpful hint
         lines = text.split("\n")
         needle = old_string.split("\n")[0].strip()
         best_line, best_score = -1, 0
         for li, line in enumerate(lines):
             lt = line.strip()
-            if lt and (needle[:30] in lt or lt[:30] in needle):
-                score = min(len(lt), len(needle))
+            if lt and needle and needle[:30] in lt:
+                score = len(lt)
                 if score > best_score:
                     best_score = score
                     best_line = li + 1

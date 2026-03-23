@@ -6,6 +6,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as cp from 'child_process';
+import { diff_match_patch } from 'diff-match-patch';
 
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
 const MAX_EXEC_OUTPUT = 10 * 1024 * 1024;
@@ -217,38 +218,28 @@ export function executeAction(
         if (!oldString) { return { ok: false, error: 'Missing old_string (or use start_line/end_line)' }; }
         let count = text.split(oldString).length - 1;
 
-        // Fuzzy retry: if exact match fails, try normalized whitespace
+        // Fuzzy match via diff-match-patch when exact match fails
         if (count === 0) {
-          const normWs = (s: string) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
-          const normText = normWs(text);
-          const normOld = normWs(oldString);
-          if (normText.includes(normOld)) {
-            // Find the actual position in original text by matching line-by-line
-            const oldLines = oldString.split('\n').map((l: string) => l.trim());
-            const textLines = text.split('\n');
-            for (let i = 0; i <= textLines.length - oldLines.length; i++) {
-              let match = true;
-              for (let j = 0; j < oldLines.length; j++) {
-                if (textLines[i + j].trim() !== oldLines[j]) { match = false; break; }
-              }
-              if (match) {
-                // Found fuzzy match — do line-based replacement
-                const newLines = newString.split('\n');
-                textLines.splice(i, oldLines.length, ...newLines);
-                text = textLines.join('\n');
-                fs.writeFileSync(absPath, text, 'utf-8');
-                return { ok: true, data: { replacements: 1, fuzzy: true, line: i + 1, path: rel(absPath, rootDir) } };
-              }
-            }
+          const dmp = new diff_match_patch();
+          // Create a patch from old_string → new_string
+          const patches = dmp.patch_make(oldString, newString);
+          // Apply with fuzzy matching (Match_Threshold controls tolerance)
+          dmp.Match_Threshold = 0.4;  // fairly tolerant
+          dmp.Patch_DeleteThreshold = 0.4;
+          const [patched, results] = dmp.patch_apply(patches, text);
+          const applied = results.filter((r: boolean) => r).length;
+          if (applied > 0) {
+            fs.writeFileSync(absPath, patched, 'utf-8');
+            return { ok: true, data: { replacements: applied, fuzzy: true, path: rel(absPath, rootDir) } };
           }
-          // Still not found — give helpful hint
+          // Fuzzy failed — give helpful hint
           const lines = text.split('\n');
           const needle = oldString.split('\n')[0].trim();
           let bestLine = -1, bestScore = 0;
           for (let li = 0; li < lines.length; li++) {
             const line = lines[li].trim();
-            if (line.includes(needle.slice(0, 30)) || needle.includes(line.slice(0, 30))) {
-              const score = Math.min(line.length, needle.length);
+            if (needle && line.includes(needle.slice(0, 30))) {
+              const score = line.length;
               if (score > bestScore) { bestScore = score; bestLine = li + 1; }
             }
           }
@@ -265,6 +256,22 @@ export function executeAction(
         }
         fs.writeFileSync(absPath, text, 'utf-8');
         return { ok: true, data: { replacements: replaceAll ? count : 1, path: rel(absPath, rootDir) } };
+      }
+
+      case 'apply_patch': {
+        const patchText = req.patch || '';
+        if (!patchText) { return { ok: false, error: 'Missing patch content' }; }
+        const dmp = new diff_match_patch();
+        const patches = dmp.patch_fromText(patchText);
+        let text = fs.readFileSync(absPath, 'utf-8');
+        dmp.Match_Threshold = 0.4;
+        dmp.Patch_DeleteThreshold = 0.4;
+        const [patched, results] = dmp.patch_apply(patches, text);
+        const applied = results.filter((r: boolean) => r).length;
+        const failed = results.length - applied;
+        if (applied === 0) { return { ok: false, error: 'No hunks applied' }; }
+        fs.writeFileSync(absPath, patched, 'utf-8');
+        return { ok: true, data: { hunks_applied: applied, hunks_failed: failed, path: rel(absPath, rootDir) } };
       }
 
       case 'batch_edit': {

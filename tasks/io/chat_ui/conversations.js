@@ -237,7 +237,11 @@ async function _recoverConversation(cid) {
         const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
         if (lastUserEl) {
           const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
-          const stripDeflated = (s) => s.replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '').trim();
+          const stripDeflated = (s) => s
+            .replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '')
+            .replace(/\n?\[\d+ image\(s\) — saved to FileStore:[\s\S]*?Use show_file to view again\]/g, '')
+            .replace(/\n?\[images deflated\]/g, '')
+            .trim();
           const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
           const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
           if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) {

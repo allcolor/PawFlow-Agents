@@ -240,12 +240,6 @@ class PixazoImageService(BaseImageGenerationService):
                 "description": "Custom polling endpoint (empty = sync mode). Only used when model='custom'.",
                 "show_when": {"model": ["custom"]},
             },
-            "timeout": {
-                "type": "integer",
-                "required": False,
-                "default": 600,
-                "description": "Max wait time for image generation in seconds",
-            },
             "poll_interval": {
                 "type": "integer",
                 "required": False,
@@ -365,9 +359,10 @@ class PixazoImageService(BaseImageGenerationService):
         return ""
 
     def _poll_for_result(self, request_id) -> str:
-        """Poll async endpoint until image URL is available. Returns URL."""
-        deadline = time.time() + self.timeout
-        while time.time() < deadline:
+        """Poll async endpoint until image URL is available. No timeout — waits forever.
+        Cancel via agent interrupt (/stop) which raises AgentCancelled."""
+        start = time.time()
+        while True:
             time.sleep(self.poll_interval)
             data = self._post(self._poll_endpoint, {
                 self._id_field: request_id,
@@ -375,7 +370,7 @@ class PixazoImageService(BaseImageGenerationService):
                 "requestId": request_id,
             })
             status = (data.get("status", "") or "").lower()
-            elapsed = int(time.time() - (deadline - self.timeout))
+            elapsed = int(time.time() - start)
             logger.info("[PIXAZO] Poll %s (%ds): status=%s, keys=%s",
                         self._poll_endpoint, elapsed, status,
                         list(data.keys()) if isinstance(data, dict) else type(data).__name__)
@@ -387,8 +382,6 @@ class PixazoImageService(BaseImageGenerationService):
             if status in ("failed", "error"):
                 msg = data.get("message", "") or data.get("error", "") or str(data)[:200]
                 raise ServiceError(f"Pixazo generation failed: {msg}")
-
-        raise ServiceError(f"Pixazo polling timeout after {self.timeout}s")
 
     def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
                  steps=20, **kwargs) -> dict:

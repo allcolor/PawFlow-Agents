@@ -201,10 +201,6 @@ class PixazoVideoService(BaseVideoGenerationService):
                 "description": "Custom poll endpoint (only when model='custom')",
                 "show_when": {"model": ["custom"]},
             },
-            "timeout": {
-                "type": "integer", "required": False, "default": 1800,
-                "description": "Max wait time for video generation (seconds, default 30min)",
-            },
             "poll_interval": {
                 "type": "integer", "required": False, "default": 10,
                 "description": "Seconds between status polls",
@@ -303,13 +299,17 @@ class PixazoVideoService(BaseVideoGenerationService):
         if not req_id:
             raise ServiceError(f"No request ID in Pixazo response: {json.dumps(result)[:300]}")
 
-        # Poll for completion
-        deadline = time.time() + self.timeout
-        while time.time() < deadline:
+        # Poll for completion — no timeout, waits forever.
+        # Cancel via agent interrupt (/stop) which raises AgentCancelled.
+        start = time.time()
+        while True:
             time.sleep(self.poll_interval)
             poll_body = {self._poll_id_field: req_id, "request_id": req_id, "video_id": req_id}
             status = self._gateway_post(self._poll_endpoint, poll_body)
             state = (status.get("status") or "").lower()
+            elapsed = int(time.time() - start)
+            logger.info("[PIXAZO-VIDEO] Poll %s (%ds): status=%s",
+                        req_id[:16], elapsed, state)
 
             if state in ("completed", "done", "success", "ready"):
                 video_url = (status.get("video_url", "")
@@ -325,10 +325,6 @@ class PixazoVideoService(BaseVideoGenerationService):
             if state in ("failed", "error"):
                 raise ServiceError(f"Pixazo video generation failed: "
                                    f"{status.get('message', state)}")
-
-            logger.debug("[PIXAZO-VIDEO] Polling %s: status=%s", req_id[:16], state)
-
-        raise ServiceError(f"Pixazo video generation timed out after {self.timeout}s")
 
     def _download_video(self, url: str) -> dict:
         req = urllib.request.Request(url, headers={"User-Agent": "PawFlow-Agent/1.0"})

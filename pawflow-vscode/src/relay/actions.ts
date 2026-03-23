@@ -262,9 +262,18 @@ export function executeAction(
         const command = req.command || '';
         const timeout = Math.min((req.timeout || 30) * 1000, 120000);
         if (!command) { return { ok: false, error: 'Missing command' }; }
+        // Use bash on Windows — cmd.exe breaks python -c with nested quotes.
+        // Try Git Bash first (native FS access), then WSL bash, then cmd.exe.
+        let shellOpt: Record<string, any> = {};
+        if (process.platform === 'win32') {
+          const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+          const wslBash = 'C:\\Windows\\System32\\bash.exe';
+          if (fs.existsSync(gitBash)) { shellOpt = { shell: gitBash }; }
+          else if (fs.existsSync(wslBash)) { shellOpt = { shell: wslBash }; }
+        }
         try {
           const result = cp.execSync(command, {
-            cwd: rootDir, timeout, encoding: 'utf-8',
+            cwd: rootDir, timeout, encoding: 'utf-8', ...shellOpt,
             maxBuffer: MAX_EXEC_OUTPUT,
             env: { ...process.env, PYTHONIOENCODING: 'utf-8', PAWFLOW_FS_ROOT: rootDir },
           });

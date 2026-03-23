@@ -702,19 +702,52 @@ class ContinuousFlowExecutor:
             # Task stays RUNNING (failure was handled)
             return
 
-        # No failure connection — classic rollback
-        self._task_states.set_error(task_id, error_msg)
+        # No failure connection — dequeue the bad FlowFile and try to
+        # send an error response if it's an HTTP request. The task stays
+        # RUNNING so other FlowFiles can still be processed.
+        incoming = self._connections.get_incoming(task_id)
+        for conn in incoming:
+            ff = conn.peek()
+            if ff is input_ff:
+                conn.dequeue()
+                break
+
+        # If this is an HTTP request, send error response so client doesn't hang
+        req_id = input_ff.get_attribute("http.request.id") if input_ff else None
+        if req_id:
+            input_ff.set_attribute("http.response.status", "500")
+            input_ff.set_attribute("http.response.header.Content-Type", "application/json")
+            import json as _json
+            input_ff.set_content(_json.dumps({"error": error_msg}).encode("utf-8"))
+            # Route to send_response if it exists
+            outgoing = self._connections.get_outgoing(task_id)
+            response_conns = [c for c in outgoing if c.relationship == "success"]
+            for rc in response_conns:
+                rc.enqueue(input_ff)
+                break
+
+        self._task_retry_counts.setdefault(task_id, 0)
+        self._task_retry_counts[task_id] += 1
+        consecutive = self._task_retry_counts[task_id]
 
         BulletinBoard.get_instance().post(
             "ERROR", task_id,
-            f"Task failed after {self._max_retries} retries: {error_msg}"
+            f"FlowFile discarded after {self._max_retries} retries: {error_msg}"
         )
 
-        logger.error(
-            f"Task '{task_id}' ROLLBACK: FlowFile stays in queue. "
-            f"Error: {error_msg}. "
-            f"Fix the problem then call restart_task('{task_id}')"
-        )
+        if consecutive >= 5:
+            # 5 consecutive failures → systemic problem, stop the task
+            self._task_states.set_error(task_id, error_msg)
+            logger.error(
+                f"Task '{task_id}' ERROR: {consecutive} consecutive failures. "
+                f"Last error: {error_msg}. "
+                f"Fix the problem then call restart_task('{task_id}')"
+            )
+        else:
+            logger.warning(
+                f"Task '{task_id}' discarded failed FlowFile ({consecutive}/5 consecutive). "
+                f"Error: {error_msg}. Task continues processing."
+            )
 
     # -- Task management --
 

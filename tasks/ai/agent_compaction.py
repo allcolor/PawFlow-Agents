@@ -24,6 +24,100 @@ logger = logging.getLogger(__name__)
 class AgentCompactionMixin:
     """Methods extracted from AgentLoopTask."""
 
+    @staticmethod
+    def _compact_tool_chains(messages: List[LLMMessage], keep_recent: int = 4):
+        """Compact old tool call chains into summaries.
+
+        Replaces sequences of [assistant(tool_calls), tool, tool, ..., tool]
+        with a single assistant message summarizing what was done.
+        Only compacts chains that are NOT in the last `keep_recent` messages.
+
+        This is called BEFORE _compact_if_needed to reduce token count
+        without needing an LLM summarization call.
+        """
+        if len(messages) <= keep_recent + 2:
+            return messages  # too few to compact
+
+        # Find the boundary: don't touch system prompt (idx 0)
+        # and last keep_recent messages
+        safe_end = len(messages) - keep_recent
+
+        # Scan for tool chains in the compactable region
+        result = [messages[0]]  # system prompt
+        i = 1
+        while i < len(messages):
+            m = messages[i]
+            # If we're past the safe zone, keep as-is
+            if i >= safe_end:
+                result.append(m)
+                i += 1
+                continue
+
+            # Detect tool chain: assistant with tool_calls followed by tool results
+            if m.role == "assistant" and m.tool_calls:
+                chain_tools = []
+                chain_results = []
+                # Collect the assistant tool_calls
+                for tc in m.tool_calls:
+                    chain_tools.append(tc)
+                # Collect subsequent tool result messages
+                j = i + 1
+                while j < safe_end and j < len(messages) and messages[j].role == "tool":
+                    chain_results.append(messages[j])
+                    j += 1
+
+                if chain_tools and chain_results:
+                    # Build compact summary
+                    tool_counts = {}
+                    for tc in chain_tools:
+                        tool_counts[tc.name] = tool_counts.get(tc.name, 0) + 1
+                    parts = []
+                    for name, count in tool_counts.items():
+                        if count > 1:
+                            parts.append(f"{name} x{count}")
+                        else:
+                            # Include first arg hint
+                            tc0 = next(tc for tc in chain_tools if tc.name == name)
+                            _hint = ""
+                            for k in ("path", "prompt", "command", "query"):
+                                v = tc0.arguments.get(k, "")
+                                if v:
+                                    _hint = f"({str(v)[:40]})"
+                                    break
+                            parts.append(f"{name}{_hint}")
+
+                    # Collect short result summaries
+                    result_hints = []
+                    for tr in chain_results[:3]:
+                        _rc = tr.content if isinstance(tr.content, str) else str(tr.content)
+                        # Strip TOOL OUTPUT wrapper
+                        if "[TOOL OUTPUT" in _rc:
+                            _rc = _rc.split("\n", 1)[-1] if "\n" in _rc else _rc
+                        if "[/TOOL OUTPUT]" in _rc:
+                            _rc = _rc.replace("[/TOOL OUTPUT]", "").strip()
+                        result_hints.append(_rc[:60])
+                    if len(chain_results) > 3:
+                        result_hints.append(f"... +{len(chain_results) - 3} more")
+
+                    summary = f"[Used {len(chain_tools)} tool(s): {', '.join(parts)}]"
+                    if result_hints:
+                        summary += "\n[Results: " + " | ".join(result_hints) + "]"
+
+                    # Replace the chain with a single assistant message
+                    result.append(LLMMessage(
+                        role="assistant", content=summary,
+                        source=getattr(m, 'source', None),
+                    ))
+                    i = j  # skip past the tool results
+                    continue
+
+                # assistant with tool_calls but no results yet → keep as-is
+                # (shouldn't happen in compactable region but be safe)
+
+            result.append(m)
+            i += 1
+
+        return result
 
     def _force_synthesis(self, messages, client, ctx, *, prompt: str,
                          compact_client=None, use_streaming: bool = False,
@@ -192,6 +286,13 @@ class AgentCompactionMixin:
         """
         # Ensure no display-only messages leak into compaction
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+
+        # Compact old tool chains first (cheap, no LLM call)
+        _pre_compact = len(messages)
+        messages = self._compact_tool_chains(messages, keep_recent=keep_recent)
+        if len(messages) < _pre_compact:
+            logger.info("[compact] Tool chains: %d → %d messages",
+                        _pre_compact, len(messages))
 
         # Deflate old images before estimating — but keep the last one
         # (the LLM hasn't seen it yet in this iteration)

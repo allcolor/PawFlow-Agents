@@ -1051,10 +1051,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "total_tools": len(tools_called),
                         })
 
-                    # Drain pending user messages after tool batch —
-                    # user messages sent during long tool calls (generate_image
-                    # polling) are picked up here instead of waiting for next iter
+                    # Drain pending user messages after tool batch
                     _do_drain()
+
+                    # Compact old tool chains to reduce context size
+                    # (keeps last 6 messages intact, compacts older chains)
+                    if len(messages) > 20:
+                        messages[:] = self._compact_tool_chains(messages, keep_recent=6)
 
                     # Check cancellation after tool execution
                     if not self._is_current_generation(gen_key, my_generation):

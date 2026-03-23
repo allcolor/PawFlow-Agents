@@ -485,7 +485,8 @@ class AgentUtilsMixin:
         except Exception:
             pass
         # Fallback to character estimation
-        cpt = chars_per_token if chars_per_token > 0 else 2.0
+        # Modern tokenizers average ~3.5 chars/token (was 2.0, too conservative)
+        cpt = chars_per_token if chars_per_token > 0 else 3.5
         total_chars = 0
         for m in messages:
             total_chars += 12  # message overhead (role, separators)

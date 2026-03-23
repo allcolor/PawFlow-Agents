@@ -226,8 +226,8 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if not key:
             flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
             return [flowfile]
-        from core.secrets import SecretsManager
-        sm = SecretsManager.get_instance()
+        from core.secrets import get_secrets_manager
+        sm = get_secrets_manager()
         if scope == "global":
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath

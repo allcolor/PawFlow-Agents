@@ -94,11 +94,14 @@ class AgentToolExecMixin:
                         if candidates:
                             hint = ", ".join(candidates[:3])
                             result += f"\n[Related tests may exist: {hint} — use run_tests to verify]"
-                # ── Truncate large tool results (à la Claude Code) ────
-                # Large results are stored in FileStore; only a reference
-                # stays in the context.  The LLM can use show_file to
-                # retrieve the full content on demand.
-                if isinstance(result, str):
+                # ── Truncate large tool results ────
+                # Skip truncation if the LLM explicitly requested pagination
+                # (offset/limit/max_output) — it asked for this size.
+                _explicit_size = (
+                    tc.arguments.get("offset") or tc.arguments.get("limit")
+                    or tc.arguments.get("max_output")
+                )
+                if isinstance(result, str) and not _explicit_size:
                     result = self._truncate_tool_result(
                         result, tc.name, conversation_id, user_id)
                 # Wrap tool output so the LLM treats it as data, not instructions

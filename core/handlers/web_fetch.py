@@ -194,6 +194,14 @@ class ReadFileHandler(ToolHandler):
                     "type": "string",
                     "description": "Where to read from: 'filestore' (default) or filesystem service name (e.g. 'fs:workspace')",
                 },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start line (1-based) for pagination",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max lines to read (default: all if < 4000 chars, else 100)",
+                },
             },
             "required": ["path"],
         }
@@ -204,6 +212,8 @@ class ReadFileHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         path = arguments.get("path", "")
         source = arguments.get("source", "filestore")
+        _offset = int(arguments.get("offset", 0) or 0)
+        _limit = int(arguments.get("limit", 0) or 0)
         if not path:
             return "Error: no path provided"
 
@@ -212,9 +222,28 @@ class ReadFileHandler(ToolHandler):
         try:
             data, _ = resolver.read(source, path)
             content = data.decode("utf-8", errors="replace")
-            if len(content) > 10000:
-                content = content[:10000] + "\n... (truncated)"
-            return content
+
+            # Apply pagination if requested or if content is large
+            lines = content.split("\n")
+            total_lines = len(lines)
+            total_chars = len(content)
+
+            if not _offset and not _limit and total_chars <= 4000:
+                return content  # small file, return in full
+
+            # Auto-paginate large files
+            if not _offset and not _limit:
+                _limit = 100
+
+            start = max(0, _offset - 1) if _offset > 0 else 0
+            end = start + _limit if _limit else total_lines
+            selected = lines[start:end]
+            numbered = [f"{start + i + 1:4d}\t{ln}" for i, ln in enumerate(selected)]
+            header = f"[{path}: {total_lines} lines, {total_chars} chars"
+            if start > 0 or end < total_lines:
+                header += f", showing lines {start+1}-{min(end, total_lines)}"
+            header += "]"
+            return header + "\n" + "\n".join(numbered)
         except FileNotFoundError:
             return f"Error: file '{path}' not found (source={source})"
         except Exception as e:

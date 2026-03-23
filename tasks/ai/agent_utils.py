@@ -395,12 +395,24 @@ class AgentUtilsMixin:
 
     @staticmethod
     def _detect_base64_blob(text: str) -> bool:
-        """Check if text contains a large base64 blob (data URI or raw)."""
+        """Check if text contains a large base64 blob (data URI or raw).
+
+        Avoids false positives on minified code which also has long
+        alphanumeric stretches but contains (){}[].:; characters.
+        """
         if "data:" in text and ";base64," in text:
             return True
-        # Raw base64: long stretch of [A-Za-z0-9+/=] without spaces
+        # Raw base64: 1000+ chars of base64 alphabet WITHOUT code punctuation
         import re
-        return bool(re.search(r'[A-Za-z0-9+/=]{1000,}', text))
+        match = re.search(r'[A-Za-z0-9+/=]{1000,}', text)
+        if not match:
+            return False
+        # Verify it's actual base64 (no code-like chars mixed in)
+        blob = match.group(0)
+        # Real base64 has very few + and / relative to alphanumerics
+        # and NEVER has (){}[].;: inside it
+        code_chars = sum(1 for c in blob if c in '(){}[].:;,!@#$%^&*<>?~`')
+        return code_chars == 0
 
 
     def _truncate_tool_result(self, result: str, tool_name: str,

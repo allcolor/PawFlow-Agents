@@ -236,12 +236,12 @@ async function _recoverConversation(cid) {
         const existing = msgContainer.querySelectorAll('.msg.user');
         const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
         if (lastUserEl) {
-          // Compare raw text (without badges/prefixes) for dedup
           const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
-          const localRaw = stripPrefix(lastUserEl.dataset.rawText || lastUserEl.textContent.trim());
-          const serverRaw = stripPrefix((m.content || '').trim());
-          if (localRaw === serverRaw) {
-            console.log('[poll] skipping duplicate user message');
+          const stripDeflated = (s) => s.replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '').trim();
+          const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
+          const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
+          if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) {
+            console.log('[poll] skipping duplicate user message (dedup match)');
             continue;
           }
         }

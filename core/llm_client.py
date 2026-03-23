@@ -152,8 +152,8 @@ class LLMClient(
         fallback_model: str = "",
     ):
         self.provider = provider
-        self.api_key = api_key
-        self.base_url = base_url or self.DEFAULT_URLS.get(provider, "")
+        self._api_key = api_key
+        self._base_url = base_url
         self.default_model = default_model or self.DEFAULT_MODELS.get(provider, "")
         self.timeout = timeout
         self.max_retries = max_retries
@@ -166,6 +166,25 @@ class LLMClient(
         self._token_lock = threading.Lock() if refresh_token else None
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None  # callable(tokens_in, tokens_out, model)
+        # If created via from_config, _config_ref holds the lazy dict
+        self._config_ref = None  # set by from_config
+
+    @property
+    def api_key(self):
+        if self._config_ref:
+            return self._config_ref.get("api_key", "") or self._api_key
+        return self._api_key
+
+    @api_key.setter
+    def api_key(self, val):
+        self._api_key = val
+
+    @property
+    def base_url(self):
+        if self._config_ref:
+            v = self._config_ref.get("base_url", "")
+            return v or self.DEFAULT_URLS.get(self.provider, "")
+        return self._base_url or self.DEFAULT_URLS.get(self.provider, "")
 
     @staticmethod
     def _parse_retry_after(error_text: str) -> float:
@@ -203,8 +222,13 @@ class LLMClient(
 
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
-        """Create from a flat config dict."""
-        return cls(
+        """Create from a config dict (may be LazyResolveDict).
+
+        The config ref is kept so api_key/base_url resolve lazily
+        on every access — changes to global params/secrets take
+        effect immediately.
+        """
+        client = cls(
             provider=config.get("provider", "openai"),
             api_key=config.get("api_key", ""),
             base_url=config.get("base_url", ""),
@@ -218,6 +242,8 @@ class LLMClient(
             token_url=config.get("token_url", ""),
             fallback_model=config.get("fallback_model", ""),
         )
+        client._config_ref = config
+        return client
 
     def complete(
         self,

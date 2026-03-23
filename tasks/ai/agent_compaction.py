@@ -120,15 +120,15 @@ class AgentCompactionMixin:
 
             # Detect tool chain: assistant with tool_calls followed by tool results
             if m.role == "assistant" and m.tool_calls:
-                chain_tools = []
+                chain_tools = list(m.tool_calls)
                 chain_results = []
-                # Collect the assistant tool_calls
-                for tc in m.tool_calls:
-                    chain_tools.append(tc)
-                # Collect subsequent tool result messages
+                # Collect ALL subsequent tool result messages (even past safe_end)
+                # The chain is atomic — can't separate assistant from its results
+                _tc_ids = {tc.id for tc in chain_tools}
                 j = i + 1
-                while j < safe_end and j < len(messages) and messages[j].role == "tool":
-                    chain_results.append(messages[j])
+                while j < len(messages) and messages[j].role == "tool":
+                    if getattr(messages[j], 'tool_call_id', '') in _tc_ids:
+                        chain_results.append(messages[j])
                     j += 1
 
                 if chain_tools and chain_results:
@@ -181,6 +181,17 @@ class AgentCompactionMixin:
 
             result.append(m)
             i += 1
+
+        # Safety: remove orphan tool results (no matching tool_use)
+        _valid_tc_ids = set()
+        for m in result:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    _valid_tc_ids.add(tc.id)
+        result = [
+            m for m in result
+            if m.role != "tool" or getattr(m, 'tool_call_id', '') in _valid_tc_ids
+        ]
 
         return result
 

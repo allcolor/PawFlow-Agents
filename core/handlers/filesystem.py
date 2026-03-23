@@ -35,7 +35,7 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files and run commands on the user's filesystem through a configured service. "
-            "Actions: list_dir, read_file, read_pdf, read_notebook (.ipynb), edit_notebook (edit/insert/delete cells), "
+            "Actions: list_dir, read_file (supports offset/limit for pagination), read_pdf, read_notebook (.ipynb), edit_notebook (edit/insert/delete cells), "
             "write_file (use content for text OR file_id to copy a server file like generated images), "
             "edit (exact string replace), batch_edit (atomic multi-file edit), apply_patch (unified diff), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
@@ -261,6 +261,18 @@ class FilesystemToolHandler(ToolHandler):
                     "type": "string",
                     "description": "Destination file path for copy_between",
                 },
+                "offset": {
+                    "type": "integer",
+                    "description": "Start line (1-based) for read_file. Use with limit to read large files in chunks.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Max lines to read for read_file (default: all if file < 4000 chars, else 100 lines). Also limits grep/git_log output lines.",
+                },
+                "max_output": {
+                    "type": "integer",
+                    "description": "Max output chars for exec (default: 4000). Set higher only if you need the full output.",
+                },
             },
             "required": ["action"],
         }
@@ -443,12 +455,30 @@ class FilesystemToolHandler(ToolHandler):
                                 lines.append(f"Output:\n```\n{c['output']}\n```")
                         return "\n".join(lines)
                     return json.dumps(result)
-                # Text files
+                # Text files — support offset/limit for large files
                 try:
-                    return data.decode("utf-8")
+                    text = data.decode("utf-8")
                 except UnicodeDecodeError:
-                    import base64 as _b64
                     return f"(binary file, {len(data)} bytes)"
+                _offset = int(arguments.get("offset", 0) or 0)
+                _limit = int(arguments.get("limit", 0) or 0)
+                lines = text.split("\n")
+                total_lines = len(lines)
+                total_chars = len(text)
+                # Auto-paginate: if file > 4000 chars and no explicit offset/limit, truncate
+                if total_chars > 4000 and not _offset and not _limit:
+                    _limit = 100
+                if _offset or _limit:
+                    start = max(0, _offset - 1) if _offset > 0 else 0
+                    end = start + _limit if _limit else total_lines
+                    selected = lines[start:end]
+                    numbered = [f"{start + i + 1:4d}\t{ln}" for i, ln in enumerate(selected)]
+                    header = f"[{fname}: {total_lines} lines, {total_chars} chars"
+                    if start > 0 or end < total_lines:
+                        header += f", showing lines {start+1}-{min(end, total_lines)}"
+                    header += "]"
+                    return header + "\n" + "\n".join(numbered)
+                return text
 
             elif action == "read_pdf":
                 max_pages = arguments.get("max_pages", 50)
@@ -534,11 +564,12 @@ class FilesystemToolHandler(ToolHandler):
             elif action == "grep":
                 regex = arguments.get("regex", "")
                 recursive = arguments.get("recursive", True)
+                _glimit = int(arguments.get("limit", 50) or 50)
                 results = svc.grep(path, regex, recursive)
-                lines = [f"{r['path']}:{r['line_number']}: {r['line']}" for r in results[:50]]
+                lines = [f"{r['path']}:{r['line_number']}: {r['line']}" for r in results[:_glimit]]
                 total = len(results)
-                if total > 50:
-                    lines.append(f"... and {total - 50} more matches")
+                if total > _glimit:
+                    lines.append(f"... and {total - _glimit} more matches (use limit to see more)")
                 return "\n".join(lines) if lines else "(no matches)"
 
             elif action == "find_replace":
@@ -566,13 +597,18 @@ class FilesystemToolHandler(ToolHandler):
             elif action == "exec":
                 command = arguments.get("command", "")
                 timeout = arguments.get("timeout", 30)
+                _max_out = int(arguments.get("max_output", 4000) or 4000)
                 result = svc.exec(path, command, timeout)
                 output = result.get("stdout", "")
                 if result.get("stderr"):
                     output += "\nSTDERR:\n" + result["stderr"]
                 if result.get("returncode", 0) != 0:
                     output += f"\n(exit code: {result['returncode']})"
-                return output or "(no output)"
+                if not output:
+                    return "(no output)"
+                if len(output) > _max_out:
+                    output = output[:_max_out] + f"\n\n... [{len(output) - _max_out} chars truncated — use max_output to see more]"
+                return output
 
             # Git operations
             elif action == "git_status":
@@ -580,14 +616,18 @@ class FilesystemToolHandler(ToolHandler):
                 return json.dumps(result, indent=2)
 
             elif action == "git_log":
-                count = arguments.get("count", 10)
+                count = int(arguments.get("count", 0) or arguments.get("limit", 10) or 10)
                 result = svc.git_log(path, count)
                 lines = [f"{e['hash'][:8]} {e['date']} {e['message']}" for e in result]
                 return "\n".join(lines) if lines else "(no commits)"
 
             elif action == "git_diff":
                 ref = arguments.get("ref", "")
-                return svc.git_diff(path, ref) or "(no changes)"
+                _max_out = int(arguments.get("max_output", 8000) or 8000)
+                diff = svc.git_diff(path, ref) or "(no changes)"
+                if len(diff) > _max_out:
+                    diff = diff[:_max_out] + f"\n\n... [{len(diff) - _max_out} chars truncated]"
+                return diff
 
             elif action == "git_commit":
                 message = arguments.get("message", "")

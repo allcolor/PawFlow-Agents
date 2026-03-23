@@ -72,6 +72,10 @@ class ExecuteScriptHandler(ToolHandler):
                         "filesystem service name (e.g. 'fs:workspace') to run via relay"
                     ),
                 },
+                "max_output": {
+                    "type": "integer",
+                    "description": "Max output chars (default: 4000). Large outputs are auto-saved to FileStore.",
+                },
             },
             "required": ["code"],
         }

@@ -386,7 +386,7 @@ class AgentUtilsMixin:
     # ── Tool result size management ──────────────────────────────────
 
     # Tool result max size in context (chars). Anything over → FileStore.
-    _TOOL_RESULT_MAX = 800
+    _TOOL_RESULT_MAX = 400
 
 
     @staticmethod

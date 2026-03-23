@@ -414,6 +414,7 @@ class PixazoImageService(BaseImageGenerationService):
         body["guidance_scale"] = kwargs.get("guidance_scale", 5)
         body["seed"] = kwargs.get("seed", int(time.time()) % 1000000)
         body["num_images"] = 1
+        body["output_format"] = kwargs.get("output_format", "png")
         # Pass through any extra kwargs (aspect_ratio, style, output_format, etc.)
         for k, v in kwargs.items():
             if k not in body and k not in ("destination", "path", "service"):

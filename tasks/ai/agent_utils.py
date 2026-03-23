@@ -372,16 +372,43 @@ class AgentUtilsMixin:
                 continue
             if keep_last and idx == last_img_idx:
                 continue
-            # Keep text parts, replace images with a reference
+            # Keep text parts, save images to FileStore and keep references
             text_parts = []
-            img_count = 0
+            img_refs = []
             for part in m.content:
                 if part.get("type") == "text":
                     text_parts.append(part["text"])
                 elif part.get("type") == "image_url":
-                    img_count += 1
+                    url = (part.get("image_url", {}).get("url", "") or "")
+                    if url.startswith("data:"):
+                        # Save base64 data URI to FileStore
+                        try:
+                            import base64 as _b64d, re as _re_d
+                            _m = _re_d.match(r'data:([^;]+);base64,(.+)', url)
+                            if _m:
+                                mime, b64 = _m.group(1), _m.group(2)
+                                ext = {"image/png": "png", "image/jpeg": "jpg",
+                                       "image/webp": "webp", "image/gif": "gif"}.get(mime, "png")
+                                from core.file_store import FileStore
+                                import time as _t
+                                fname = f"image_{int(_t.time())}_{len(img_refs)}.{ext}"
+                                fid = FileStore.instance().store(
+                                    fname, _b64d.b64decode(b64), mime)
+                                _base = FileStore.instance().get_base_url() if hasattr(FileStore.instance(), 'get_base_url') else ""
+                                img_url = f"{_base}/files/{fid}/{fname}" if _base else f"/files/{fid}/{fname}"
+                                img_refs.append(img_url)
+                        except Exception:
+                            img_refs.append("(image)")
+                    elif "/files/" in url:
+                        img_refs.append(url)
+                    else:
+                        img_refs.append(url[:100] if url else "(image)")
             text = "\n".join(text_parts)
-            m.content = f"{text}\n[{img_count} image(s) were shown — use show_file or view_image to see again]"
+            if img_refs:
+                refs_text = "\n".join(f"  - {ref}" for ref in img_refs)
+                m.content = f"{text}\n[{len(img_refs)} image(s) — saved to FileStore:\n{refs_text}\n  Use show_file to view again]"
+            else:
+                m.content = f"{text}\n[images deflated]"
 
     # ── Tool result size management ──────────────────────────────────
 

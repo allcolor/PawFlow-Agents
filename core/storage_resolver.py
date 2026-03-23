@@ -97,20 +97,33 @@ class StorageResolver:
 
     def _read_filestore(self, path: str) -> Tuple[bytes, str]:
         """Read from FileStore by file_id or filename."""
-        import os
+        import os, re
         from core.file_store import FileStore
         store = FileStore.instance()
-        name = os.path.basename(path) or path
 
-        # Try direct file_id lookup
+        # Extract file_id from /files/{file_id}/filename paths
+        _fid_match = re.search(r'/files/([a-f0-9]{12})/', path)
+        if _fid_match:
+            fid = _fid_match.group(1)
+            result = store.get(fid, user_id=self._user_id)
+            if result:
+                return result[1], result[2] if len(result) > 2 else ""
+
+        # Try path as direct file_id
+        name = os.path.basename(path) or path
         result = store.get(name, user_id=self._user_id)
         if result:
             return result[1], result[2] if len(result) > 2 else ""
 
-        # Try filename match
-        for f in store.list_files():
+        # Try path as file_id (without basename extraction)
+        result = store.get(path, user_id=self._user_id)
+        if result:
+            return result[1], result[2] if len(result) > 2 else ""
+
+        # Last resort: filename match (returns first match — ambiguous)
+        for f in store.list_files(user_id=self._user_id):
             if f.get("filename") == name:
-                result = store.get(f["file_id"])
+                result = store.get(f["file_id"], user_id=self._user_id)
                 if result:
                     return result[1], result[2] if len(result) > 2 else ""
 

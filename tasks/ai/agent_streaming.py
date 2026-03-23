@@ -112,10 +112,13 @@ def _call_narrator(svc_name: str, tool_calls: List[LLMToolCall],
         if not svc:
             return ""
 
-        # Build a minimal prompt
+        # Build prompt with enough context
+        _KEY_LIMITS = {"command": 300, "code": 300, "prompt": 150}
+        def _fmt(args):
+            return ", ".join(f"{k}={str(v)[:_KEY_LIMITS.get(k, 50)]}" for k, v in args.items())
         tools_desc = "; ".join(
-            f"{tc.name}({', '.join(f'{k}={str(v)[:40]}' for k, v in tc.arguments.items())})"
-            for tc in tool_calls[:5]  # max 5 to keep it short
+            f"{tc.name}({_fmt(tc.arguments)})"
+            for tc in tool_calls[:5]
         )
         if len(tool_calls) > 5:
             tools_desc += f"; ... +{len(tool_calls) - 5} more"
@@ -123,6 +126,7 @@ def _call_narrator(svc_name: str, tool_calls: List[LLMToolCall],
         prompt = (
             f"The AI agent is about to call these tools: {tools_desc}\n"
             f"Write ONE short sentence (max 15 words) describing what it's doing. "
+            f"Be specific about the actual action, not generic. "
             f"Write only the sentence, nothing else."
         )
 
@@ -143,8 +147,17 @@ def _call_narrator_with_client(client, tool_calls: List[LLMToolCall]) -> str:
     if not client:
         return ""
     try:
+        # Build description with enough context for meaningful narration
+        _KEY_LIMITS = {"command": 300, "code": 300, "prompt": 150}
+        def _fmt_args(args):
+            parts = []
+            for k, v in args.items():
+                limit = _KEY_LIMITS.get(k, 50)
+                parts.append(f"{k}={str(v)[:limit]}")
+            return ", ".join(parts)
+
         tools_desc = "; ".join(
-            f"{tc.name}({', '.join(f'{k}={str(v)[:40]}' for k, v in tc.arguments.items())})"
+            f"{tc.name}({_fmt_args(tc.arguments)})"
             for tc in tool_calls[:5]
         )
         if len(tool_calls) > 5:
@@ -153,6 +166,7 @@ def _call_narrator_with_client(client, tool_calls: List[LLMToolCall]) -> str:
         prompt = (
             f"The AI agent is about to call these tools: {tools_desc}\n"
             f"Write ONE short sentence (max 15 words) describing what it's doing. "
+            f"Be specific about the actual action, not generic. "
             f"Write only the sentence, nothing else."
         )
 

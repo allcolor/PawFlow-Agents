@@ -79,15 +79,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "service_install":
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            registry = UserServiceRegistry.get_instance()
             svc_type = body.get("service_type", "")
             svc_name = body.get("service_name", "")
             config_str = body.get("config_str", "")
+            scope = body.get("scope", "user")
             if not svc_type or not svc_name:
                 flowfile.set_content(json.dumps({
                     "error": "Usage: /service install <type> <name> [key=val,...]",
                 }).encode())
+                return [flowfile]
+            if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+                flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
                 return [flowfile]
             # Accept config as dict or as "key=val,key2=val2" string
             config = body.get("config", {})
@@ -98,13 +101,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         k, v = pair.split("=", 1)
                         config[k.strip()] = v.strip()
             description = body.get("description", "")
-            sdef = registry.install(
-                user_id=user_id,
-                service_id=svc_name,
-                service_type=svc_type,
-                config=config,
-                description=description,
-            )
+            if scope == "global":
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                gsvc = GlobalServiceRegistry.get_instance()
+                gsvc.install(service_id=svc_name, service_type=svc_type,
+                             config=config, description=description)
+            else:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                registry.install(user_id=user_id, service_id=svc_name,
+                                 service_type=svc_type, config=config,
+                                 description=description)
             flowfile.set_content(json.dumps({
                 "installed": True, "id": svc_name, "type": svc_type,
             }, ensure_ascii=False).encode())
@@ -114,15 +121,27 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "service_uninstall":
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            registry = UserServiceRegistry.get_instance()
             svc_id = body.get("service_id", "")
-            if not registry.get_definition(user_id, svc_id):
-                flowfile.set_content(json.dumps({
-                    "error": f"Service '{svc_id}' not found.",
-                }).encode())
+            scope = body.get("scope", "")
+            if not svc_id:
+                flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
                 return [flowfile]
-            registry.uninstall(user_id, svc_id)
+            # Try global first if scope says so, or auto-detect
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            gsvc = GlobalServiceRegistry.get_instance()
+            if scope == "global" or (not scope and gsvc.get_definition(svc_id)):
+                if "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+                    flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                gsvc.uninstall(svc_id)
+            else:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                if not registry.get_definition(user_id, svc_id):
+                    flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found."}).encode())
+                    return [flowfile]
+                registry.uninstall(user_id, svc_id)
             flowfile.set_content(json.dumps({
                 "uninstalled": True, "id": svc_id,
             }, ensure_ascii=False).encode())
@@ -225,10 +244,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         sid = body.get("service_id", "")
         enabled = body.get("enabled", True)
         try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            ureg = UserServiceRegistry.get_instance()
-            uid = user_id or "anonymous"
-            ureg.set_enabled(uid, sid, enabled)
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            gsvc = GlobalServiceRegistry.get_instance()
+            if gsvc.get_definition(sid):
+                # Global service
+                if "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+                    flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                if enabled:
+                    gsvc.enable(sid)
+                else:
+                    gsvc.disable(sid)
+            else:
+                # User service
+                from gui.services.user_service_registry import UserServiceRegistry
+                ureg = UserServiceRegistry.get_instance()
+                uid = user_id or "anonymous"
+                ureg.set_enabled(uid, sid, enabled)
             flowfile.set_content(json.dumps({"ok": True, "enabled": enabled}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

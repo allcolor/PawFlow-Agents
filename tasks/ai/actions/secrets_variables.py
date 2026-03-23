@@ -157,7 +157,15 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if not key:
             flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
             return [flowfile]
-        if scope == "conversation" and conv_id:
+        if scope == "global":
+            from core.config_store import ConfigStore
+            from pathlib import Path as _CfgPath
+            path = _CfgPath("config/parameters.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = ConfigStore.load_params(path)
+            data[key] = value
+            ConfigStore.save_params(path, data)
+        elif scope == "conversation" and conv_id:
             cp = store.get_extra(conv_id, "conv_parameters") or {}
             cp[key] = value
             store.set_extra(conv_id, "conv_parameters", cp)
@@ -184,7 +192,14 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if not key:
             flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
             return [flowfile]
-        if scope == "conversation" and conv_id:
+        if scope == "global":
+            from core.config_store import ConfigStore
+            from pathlib import Path as _CfgPath
+            path = _CfgPath("config/parameters.json")
+            data = ConfigStore.load_params(path)
+            data.pop(key, None)
+            ConfigStore.save_params(path, data)
+        elif scope == "conversation" and conv_id:
             cp = store.get_extra(conv_id, "conv_parameters") or {}
             cp.pop(key, None)
             store.set_extra(conv_id, "conv_parameters", cp)
@@ -213,7 +228,15 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.secrets import SecretsManager
         sm = SecretsManager.get_instance()
-        if scope == "conversation" and conv_id:
+        if scope == "global":
+            from core.config_store import ConfigStore
+            from pathlib import Path as _CfgPath
+            path = _CfgPath("config/secrets.json")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            data = ConfigStore.load_secrets(path)
+            data[key] = value
+            ConfigStore.save_secrets(path, data)
+        elif scope == "conversation" and conv_id:
             cs = store.get_extra(conv_id, "conv_secrets") or {}
             cs[key] = sm.encrypt(value)
             store.set_extra(conv_id, "conv_secrets", cs)
@@ -224,7 +247,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             path = _CfgPath(f"config/users/{uid}/secrets.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
-            data[key] = value  # ConfigStore.save_secrets encrypts
+            data[key] = value
             ConfigStore.save_secrets(path, data)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -240,7 +263,14 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if not key:
             flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
             return [flowfile]
-        if scope == "conversation" and conv_id:
+        if scope == "global":
+            from core.config_store import ConfigStore
+            from pathlib import Path as _CfgPath
+            path = _CfgPath("config/secrets.json")
+            data = ConfigStore.load_secrets(path)
+            data.pop(key, None)
+            ConfigStore.save_secrets(path, data)
+        elif scope == "conversation" and conv_id:
             cs = store.get_extra(conv_id, "conv_secrets") or {}
             cs.pop(key, None)
             store.set_extra(conv_id, "conv_secrets", cs)

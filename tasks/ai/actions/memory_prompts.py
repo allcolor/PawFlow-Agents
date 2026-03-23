@@ -75,6 +75,10 @@ def _handle_memory_prompts(self, action, body, store, user_id, flowfile):
         agent = body.get("agent", "")
         conv_id = body.get("conversation_id", "")
         scope = body.get("scope", "agent")  # global/agent/conversation/private
+        if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
+            flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
+            flowfile.set_attribute("http.response.status", "403")
+            return [flowfile]
         # Resolve scope
         if scope == "global":
             agent, conv_id = "", ""

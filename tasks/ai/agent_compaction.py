@@ -168,6 +168,11 @@ class AgentCompactionMixin:
                     if result_hints:
                         summary += "\n[Results: " + " | ".join(result_hints) + "]"
 
+                    # Preserve the LLM's own text/reasoning if present
+                    _llm_text = m.content if isinstance(m.content, str) else ""
+                    if _llm_text:
+                        summary = _llm_text + "\n" + summary
+
                     # Replace the chain with a single assistant message
                     result.append(LLMMessage(
                         role="assistant", content=summary,

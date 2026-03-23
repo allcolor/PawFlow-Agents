@@ -415,6 +415,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["flows"] = flows
         except Exception:
             result["flows"] = []
+        # Include user role so frontend can enable admin features
+        _user_role = flowfile.get_attribute("http.auth.roles") or "viewer"
+        result["user_role"] = _user_role
+
         flowfile.set_content(json.dumps(result, ensure_ascii=False).encode())
         return [flowfile]
 

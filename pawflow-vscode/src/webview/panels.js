@@ -20,7 +20,7 @@ function closePanel() {
 var _resMenuRtype = '';
 var _resMenuName = '';
 
-function showResMenu(e, rtype, name) {
+function showResMenu(e, rtype, name, scope) {
   e.preventDefault();
   e.stopPropagation();
   var old = document.querySelector('.res-ctx');
@@ -28,6 +28,8 @@ function showResMenu(e, rtype, name) {
 
   _resMenuRtype = rtype;
   _resMenuName = name;
+  scope = scope || '';
+  var canEdit = scope !== 'global' || (window._userRole === 'admin');
 
   var menu = document.createElement('div');
   menu.className = 'res-ctx';
@@ -45,7 +47,9 @@ function showResMenu(e, rtype, name) {
     menu.appendChild(hr);
   }
 
-  if (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts' || rtype === 'task_defs') {
+  // View — always available
+  addItem('View...', 'edit_resource');
+  if (canEdit && (rtype === 'agents' || rtype === 'skills' || rtype === 'mcp' || rtype === 'prompts' || rtype === 'task_defs')) {
     addItem('Edit...', 'edit_resource');
     addSep();
   }
@@ -90,7 +94,7 @@ function showResMenu(e, rtype, name) {
     addSep();
     addItem('\ud83d\uddd1 Undeploy', 'flow_undeploy');
   }
-  if (rtype !== 'flows') {
+  if (canEdit && rtype !== 'flows') {
     addSep();
     if (rtype === 'services') addItem('Uninstall', 'svc_uninstall');
     else if (rtype === 'parameters' || rtype === 'secrets') addItem('Delete', 'del_param');
@@ -254,6 +258,7 @@ function renderPanelResult(action, data) {
 
   if (action === 'list_resources' && _pendingPanel === 'resources') {
     _resData = data;
+    window._userRole = data.user_role || '';
     var html = '<div class="panel-header"><h4>Resources</h4><button class="panel-close" onclick="closePanel()">\u2715</button></div>';
 
     var sectionOrder = ['agents','skills','mcp','prompts','task_defs','flows','services','parameters','secrets'];
@@ -307,7 +312,7 @@ function renderPanelResult(action, data) {
         if (desc.length > 60) desc = desc.slice(0, 60) + '...';
         var statusBadge = active || enabled || connected;
 
-        var ctxAttr = scope !== 'global' ? 'oncontextmenu="showResMenu(event,\'' + esc(rtype) + '\',\'' + esc(itemName).replace(/'/g, "\\'") + '\')"' : '';
+        var ctxAttr = 'oncontextmenu="showResMenu(event,\'' + esc(rtype) + '\',\'' + esc(itemName).replace(/'/g, "\\'") + '\',\'' + esc(scope) + '\')"';
         html += '<div class="panel-item" ' + ctxAttr + '>'
           + '<span style="font-weight:500">' + esc(itemName) + '</span>' + scopeBadge + statusBadge
           + (desc ? '<br><span style="color:var(--vscode-descriptionForeground);font-size:10px">' + esc(desc) + '</span>' : '')

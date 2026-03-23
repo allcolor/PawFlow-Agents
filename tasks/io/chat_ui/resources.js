@@ -146,6 +146,8 @@ async function loadResources() {
     });
     const data = await resp.json();
     if (data.error) { console.warn('[loadResources] error:', data.error); return; }
+    // Store user role for permission checks (admin can edit globals)
+    window._userRole = data.user_role || 'viewer';
     const el = document.getElementById('resourcesContent');
     let html = '';
     // Agents
@@ -209,7 +211,7 @@ async function loadResources() {
     if (data.services && data.services.length) {
       data.services.forEach(s => {
         const statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}';
-        const svcCtx = s.scope !== 'global' ? ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"` : '';
+        const svcCtx = ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"`;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
           ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span></span>
         </div>`;
@@ -224,7 +226,7 @@ async function loadResources() {
       data.flows.forEach(f => {
         const statusIcon = f.status === 'running' ? '\u25B6' : f.status === 'stopped' ? '\u23F9' : '\u26A0';
         const statusColor = f.status === 'running' ? '#4ecdc4' : f.status === 'stopped' ? '#666' : '#e94560';
-        const flowCtx = f.scope !== 'global' ? ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"` : '';
+        const flowCtx = ` oncontextmenu="showFlowInstanceMenu(event,'${f.instance_id}','${f.status}','${f.scope}');return false;"`;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${flowCtx}>
           ${_scopeBadge(f.scope)}<span style="color:${statusColor};font-size:11px;">${statusIcon} ${f.flow_name || f.instance_id}</span>
         </div>`;
@@ -334,8 +336,10 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     menu.appendChild(s);
   };
 
-  // Global resources: readonly — only view, no edit/delete
-  if (scope !== 'global') {
+  // View config — always available (read-only for non-admin on globals)
+  item('\u{1F441} View...', () => showResourceEditor(rtype, name, !_canEditScope(scope)));
+  // Edit — admin can edit globals, owners can edit their own
+  if (_canEditScope(scope)) {
     item('\u270F Edit...', () => showResourceEditor(rtype, name));
   }
   if (rtype === 'agent') {
@@ -366,10 +370,11 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
   }
   sep();
-  // Copy to Global is admin-only (GUI Runtime tab), not from chat
+  // Copy between scopes
+  if (_isAdmin()) item('\u2191 Copy to Global', () => _copyResource(rtype, name, 'global'));
   if (scope !== 'user') item('\u2191 Copy to User', () => _copyResource(rtype, name, 'user'));
   if (scope !== 'conversation') item('\u2191 Copy to Conversation', () => _copyResource(rtype, name, 'conversation'));
-  if (scope !== 'global') {
+  if (_canEditScope(scope)) {
     sep();
     item('\u{1F5D1} Delete', () => _deleteResource(rtype, name, scope), true);
   }
@@ -727,7 +732,8 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     d.onclick = () => { menu.remove(); fn(); };
     menu.appendChild(d);
   };
-  if (scope !== 'global') {
+  item('\u{1F441} View config...', () => showServiceEditForm(serviceId, scope, !_canEditScope(scope)));
+  if (_canEditScope(scope)) {
     item('\u270F Edit...', () => showServiceEditForm(serviceId, scope));
   }
   item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
@@ -738,7 +744,7 @@ function showServiceMenu(e, serviceId, scope, enabled) {
       else loadResources();
     }).catch(e => addMsg('error', e.message));
   });
-  if (scope !== 'global') {
+  if (_canEditScope(scope)) {
     const sep = document.createElement('div');
     sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
     menu.appendChild(sep);

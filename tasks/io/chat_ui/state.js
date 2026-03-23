@@ -1,3 +1,13 @@
+// ── Permission helpers ──
+// window._userRole is set by loadResources() from the server response
+function _isAdmin() { return (window._userRole || '') === 'admin'; }
+function _canEditScope(scope) {
+  // Non-global scopes: always editable by the owner
+  if (scope !== 'global') return true;
+  // Global scope: only admin can edit
+  return _isAdmin();
+}
+
 // Per-agent streaming state — prevents cross-agent clobbering when multiple
 // agents (random thoughts, sub-agents) stream concurrently.
 let streams = {};  // agentName → { el, text, chunks }

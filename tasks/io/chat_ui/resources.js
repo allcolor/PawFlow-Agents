@@ -505,7 +505,9 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
   let html = '';
   if (isNew) {
     html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
-    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"><option value="user">User</option><option value="conversation">Conversation</option></select></div>';
+    html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Scope</label><select id="res-scope" style="background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;">'
+      + (_isAdmin() ? '<option value="global">Global</option>' : '')
+      + '<option value="user">User</option><option value="conversation">Conversation</option></select></div>';
   }
   for (const [key, type] of fields) {
     const val = (data && data[key] != null) ? data[key] : '';
@@ -904,7 +906,9 @@ async function showServiceInstallForm() {
     + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Description</label>'
     + '<input id="svc-install-desc" style="' + _svcInputStyle + '" placeholder="Optional description"/></div>'
     + '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Scope</label>'
-    + '<select id="svc-install-scope" style="' + _svcInputStyle + '"><option value="user">User</option><option value="global">Global</option></select></div>'
+    + '<select id="svc-install-scope" style="' + _svcInputStyle + '">'
+    + (_isAdmin() ? '<option value="global">Global</option>' : '')
+    + '<option value="user">User</option></select></div>'
     + '<div id="svc-install-params" style="border-top:1px solid #333;padding-top:8px;margin-top:8px;"></div>'
     + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
     + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'

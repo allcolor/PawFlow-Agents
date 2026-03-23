@@ -4,6 +4,14 @@ var _cfInputStyle = 'width:100%;background:var(--vscode-input-background);color:
 var _cfTextareaStyle = 'width:100%;min-height:60px;background:var(--vscode-input-background);color:var(--vscode-input-foreground);border:1px solid var(--vscode-input-border);padding:4px 6px;border-radius:3px;margin:2px 0 8px;font-size:12px;font-family:var(--vscode-editor-font-family);resize:vertical';
 var _cfLabelStyle = 'font-size:11px;color:var(--vscode-descriptionForeground)';
 
+function _scopeSelect() {
+  var globalOpt = (window._userRole === 'admin') ? '<option value="global">Global</option>' : '';
+  return '<label style="' + _cfLabelStyle + '">Scope</label>'
+    + '<select id="cf-scope" style="' + _cfInputStyle + '">'
+    + globalOpt
+    + '<option value="user">User</option><option value="conversation">Conversation</option></select>';
+}
+
 // ── Resource Edit Form ──
 var _resFieldDefs = {
   agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
@@ -269,14 +277,14 @@ function showCreateForm(rtype) {
       + '<label style="' + _cfLabelStyle + '">Value</label>'
       + '<input id="cf-value" style="' + _cfInputStyle + '">'
       + '<label style="' + _cfLabelStyle + '">Scope</label>'
-      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>';
+      + _scopeSelect();
   } else if (rtype === 'secrets') {
     fields = '<label style="' + _cfLabelStyle + '">Key</label>'
       + '<input id="cf-key" style="' + _cfInputStyle + '" placeholder="my_secret">'
       + '<label style="' + _cfLabelStyle + '">Value</label>'
       + '<input id="cf-value" type="password" style="' + _cfInputStyle + '">'
       + '<label style="' + _cfLabelStyle + '">Scope</label>'
-      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>';
+      + _scopeSelect();
   } else if (rtype === 'services') {
     title = 'Install Service';
     fields = '<label style="' + _cfLabelStyle + '">Service type (loading...)</label>'
@@ -294,7 +302,7 @@ function showCreateForm(rtype) {
     fields = '<label style="' + _cfLabelStyle + '">Template (loading...)</label>'
       + '<select id="cf-template" style="' + _cfInputStyle + '"><option>Loading...</option></select>'
       + '<label style="' + _cfLabelStyle + '">Scope</label>'
-      + '<select id="cf-scope" style="' + _cfInputStyle + '"><option value="user">User</option><option value="conversation">Conversation</option></select>'
+      + _scopeSelect()
       + '<label style="' + _cfLabelStyle + '">Parameters (JSON, optional)</label>'
       + '<textarea id="cf-params" style="' + _cfTextareaStyle + '" placeholder=\'{"key": "value"}\'></textarea>';
     setTimeout(function() {

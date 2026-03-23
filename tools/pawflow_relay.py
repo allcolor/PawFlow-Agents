@@ -413,19 +413,26 @@ def _action_exec(handler, path, req):
         raise ValueError("Missing 'command' parameter")
 
     # On Windows, use bash (Git Bash or WSL) — cmd.exe breaks python -c
-    # with nested quotes. Try Git Bash first (native FS), then WSL.
-    import sys
+    # with nested quotes. Convert C:\path to /c/path for bash.
+    import sys, re as _re_path
     shell_args = {}
+    exec_cmd = command
     if sys.platform == "win32":
         _git_bash = Path("C:/Program Files/Git/bin/bash.exe")
         _wsl_bash = Path("C:/Windows/System32/bash.exe")
         if _git_bash.exists():
             shell_args = {"executable": str(_git_bash)}
+            # Convert Windows paths: C:\x\y → /c/x/y
+            exec_cmd = _re_path.sub(
+                r'([A-Za-z]):\\([^ "\']*)',
+                lambda m: '/' + m.group(1).lower() + '/' + m.group(2).replace('\\', '/'),
+                command,
+            )
         elif _wsl_bash.exists():
             shell_args = {"executable": str(_wsl_bash)}
 
     result = subprocess.run(
-        command, shell=True,
+        exec_cmd, shell=True,
         capture_output=True, text=True,
         timeout=timeout,
         cwd=handler.root_dir,

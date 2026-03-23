@@ -677,6 +677,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "channel": channel,
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
+            "narrator_service": self.config.get("narrator_service", ""),
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
             "summarizer": self._get_summarizer_client(user_id),

@@ -13,6 +13,40 @@ var activeAgents = {};
 var _resData = null;
 var _replyTo = null; // {raw_index, role, agent, text_preview}
 var _msgRawIndex = 0; // tracks raw message index for reply-to
+var thinkingBlocks = {}; // agentKey → {el, content, summary, text, start}
+var streamEls = {};      // agentKey → live stream element
+
+function finalizeThinking(agentName) {
+  var aKey = (agentName || '').toLowerCase();
+  var tb = thinkingBlocks[aKey];
+  if (tb) {
+    var elapsed = ((Date.now() - tb.start) / 1000).toFixed(1);
+    tb.summary.textContent = 'Thought for ' + elapsed + 's';
+    tb.el.removeAttribute('open');
+    delete thinkingBlocks[aKey];
+  }
+}
+
+function getOrCreateStream(agentName) {
+  var aKey = (agentName || '').toLowerCase();
+  if (!streamEls[aKey]) {
+    var el = document.createElement('div');
+    el.className = 'msg assistant streaming-live';
+    el.style.cssText = 'white-space:pre-wrap;opacity:0.85;';
+    messagesEl.appendChild(el);
+    streamEls[aKey] = el;
+  }
+  return streamEls[aKey];
+}
+
+function removeStreamEl(agentName) {
+  var aKey = (agentName || '').toLowerCase();
+  var el = streamEls[aKey];
+  if (el) {
+    el.remove();
+    delete streamEls[aKey];
+  }
+}
 
 function setReplyTo(btn) {
   var msgEl = btn.closest('.msg');
@@ -333,18 +367,52 @@ function handleSSE(event) {
 
   switch (evType) {
     case 'thinking':
-    case 'thinking_content':
       statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
       updateActiveAgents(agent, 'thinking');
       break;
 
+    case 'thinking_content':
+      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
+      updateActiveAgents(agent, 'thinking');
+      // Display reasoning content in a collapsible block
+      if (data.text) {
+        var aKey = (agent || '').toLowerCase();
+        if (!thinkingBlocks[aKey]) {
+          var details = document.createElement('details');
+          details.className = 'msg thinking-block';
+          details.setAttribute('open', '');
+          var summary = document.createElement('summary');
+          summary.textContent = (agent || 'Agent') + ' thinking...';
+          summary.style.cssText = 'cursor:pointer;font-size:11px;color:var(--vscode-descriptionForeground);';
+          details.appendChild(summary);
+          var content = document.createElement('pre');
+          content.style.cssText = 'font-size:11px;color:var(--vscode-descriptionForeground);font-style:italic;white-space:pre-wrap;max-height:200px;overflow-y:auto;margin:2px 0;';
+          details.appendChild(content);
+          messagesEl.appendChild(details);
+          thinkingBlocks[aKey] = {el: details, content: content, summary: summary, text: '', start: Date.now()};
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        }
+        var tb = thinkingBlocks[aKey];
+        tb.text += data.text;
+        tb.content.textContent = tb.text;
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+      break;
+
     case 'token':
+      // Finalize any thinking block for this agent
+      finalizeThinking(agent);
       streaming[agent] = (streaming[agent] || '') + (data.text || '');
-      statusEl.textContent = agent + ' writing... (' + streaming[agent].split(' ').length + 'w)';
+      // Live-render streaming tokens
+      var streamEl = getOrCreateStream(agent);
+      streamEl.textContent = streaming[agent];
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      statusEl.textContent = agent + ' writing...';
       updateActiveAgents(agent, 'writing');
       break;
 
     case 'tool_call':
+      finalizeThinking(agent);
       _lastToolCall = agent + ' ' + (data.tool || '') + '(' +
         JSON.stringify(data.arguments || {}).slice(0, 100) + ')';
       addMsg('tool_call', _lastToolCall, data);
@@ -357,6 +425,8 @@ function handleSSE(event) {
       break;
 
     case 'done': {
+      finalizeThinking(agent);
+      removeStreamEl(agent);
       var text = data.response || streaming[agent] || '';
       if (text) addMsg('assistant', text, data);
       streaming[agent] = '';

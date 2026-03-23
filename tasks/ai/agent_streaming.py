@@ -72,6 +72,70 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
         return ""
     return ", ".join(parts) + ".\n"
 
+
+def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id,
+                         agent_name, source):
+    """Narration cascade for tool_calls without LLM text or thinking.
+
+    1. Try narrator LLM service (small fast model) for contextual narration
+    2. Fallback to static synthesis
+    Publishes the narration as a SSE token event.
+    """
+    narration = ""
+
+    # Try narrator service if configured
+    narrator_svc_name = ctx.get("narrator_service", "")
+    if narrator_svc_name:
+        narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
+
+    # Fallback: static synthesis
+    if not narration:
+        narration = _synthesize_narration(tool_calls)
+
+    if narration:
+        bus.publish_event(conversation_id, "token", {
+            "text": narration,
+            "agent_name": agent_name,
+            "source": source,
+            "synthetic": True,
+        })
+    return narration
+
+
+def _call_narrator(svc_name: str, tool_calls: List[LLMToolCall],
+                    ctx: dict) -> str:
+    """Call a small LLM to narrate tool_calls in one sentence."""
+    try:
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
+        if not svc:
+            return ""
+
+        # Build a minimal prompt
+        tools_desc = "; ".join(
+            f"{tc.name}({', '.join(f'{k}={str(v)[:40]}' for k, v in tc.arguments.items())})"
+            for tc in tool_calls[:5]  # max 5 to keep it short
+        )
+        if len(tool_calls) > 5:
+            tools_desc += f"; ... +{len(tool_calls) - 5} more"
+
+        prompt = (
+            f"The AI agent is about to call these tools: {tools_desc}\n"
+            f"Write ONE short sentence (max 15 words) describing what it's doing. "
+            f"Write only the sentence, nothing else."
+        )
+
+        from core.llm_client import LLMMessage
+        messages = [LLMMessage(role="user", content=prompt)]
+        resp = svc.complete(messages, max_tokens=50, temperature=0.3)
+        text = (resp.content or "").strip()
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text
+    except Exception as e:
+        logger.debug("Narrator service '%s' failed: %s", svc_name, e)
+        return ""
+
 logger = logging.getLogger(__name__)
 
 
@@ -789,18 +853,17 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "agent_name": _agent_name or "",
                         })
 
-                    # Synthetic narration: if the LLM sent tool_calls
-                    # without any text, generate a brief summary so the
-                    # user sees what the agent is about to do.
-                    if not _rc and response.tool_calls:
-                        _narr = _synthesize_narration(response.tool_calls)
-                        if _narr:
-                            bus.publish_event(conversation_id, "token", {
-                                "text": _narr,
-                                "agent_name": _agent_name or "",
-                                "source": _agent_source(),
-                                "synthetic": True,
-                            })
+                    # Narration cascade: ensure the user sees what the agent
+                    # is about to do before tool_calls execute.
+                    # 1. LLM provided text → already streamed via on_token
+                    # 2. LLM provided thinking → already streamed via on_thinking
+                    # 3. Neither → try narrator LLM service for contextual one-liner
+                    # 4. No narrator → static synthesis from tool_call names
+                    if not _rc and not (response.thinking or "") and response.tool_calls:
+                        _narr = _narrate_tool_calls(
+                            response.tool_calls, ctx, bus, conversation_id,
+                            _agent_name or "", _agent_source(),
+                        )
 
                     # Publish all tool_call events upfront
                     _sub_count = bus.subscriber_count(conversation_id)

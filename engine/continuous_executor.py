@@ -536,6 +536,23 @@ class ContinuousFlowExecutor:
             last_error = None
             result = None
 
+            # Expose queue drain callback so long-running tasks (like agentLoop)
+            # can pull pending user messages mid-execution
+            if hasattr(task, '_drain_pending'):
+                _incoming = self._connections.get_incoming(task_id)
+                def _drain_fn():
+                    """Dequeue and return all pending FlowFiles from input queue."""
+                    drained = []
+                    for conn in (_incoming or []):
+                        while True:
+                            ff = conn.peek()
+                            if ff is None:
+                                break
+                            conn.dequeue()
+                            drained.append(ff)
+                    return drained
+                task._drain_pending = _drain_fn
+
             for attempt in range(1, self._max_retries + 1):
                 try:
                     start = time.time()

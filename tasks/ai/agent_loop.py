@@ -91,6 +91,9 @@ class AgentLoopTask(
         self._poller_started = False
         self._poller_stop = threading.Event()
         self._active_conversations: Dict[str, int] = {}  # conv_id -> refcount
+        # Set by ContinuousFlowExecutor before execute() — callable that
+        # dequeues and returns all pending FlowFiles from input queue
+        self._drain_pending = None  # type: Optional[Callable[[], List[FlowFile]]]
         self._user_active_conversations: set = set()  # convs with active USER interaction
         self._active_thoughts: set = set()  # active thought keys (conv_id::thought::agent)
         self._active_lock = threading.Lock()

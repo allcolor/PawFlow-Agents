@@ -66,6 +66,26 @@ class ImageGenerationHandler(ToolHandler):
                     "type": "string",
                     "description": "File path when destination is a filesystem service (e.g. 'assets/hero.png')",
                 },
+                "output_format": {
+                    "type": "string",
+                    "description": "Image format: 'png' (default, supports transparency), 'jpeg', or 'webp'",
+                },
+                "aspect_ratio": {
+                    "type": "string",
+                    "description": "Aspect ratio (e.g. '1:1', '16:9', '9:16', '4:3', '3:2'). Alternative to width/height.",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Style preset name (model-dependent, e.g. 'Recraft V3 Raw')",
+                },
+                "num_inference_steps": {
+                    "type": "integer",
+                    "description": "Number of inference steps (higher = better quality but slower, default varies by model)",
+                },
+                "guidance_scale": {
+                    "type": "number",
+                    "description": "Guidance scale / CFG (higher = more prompt adherence, default 5)",
+                },
             },
             "required": ["prompt"],
         }

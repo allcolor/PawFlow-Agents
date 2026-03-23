@@ -243,8 +243,8 @@ class PixazoImageService(BaseImageGenerationService):
             "timeout": {
                 "type": "integer",
                 "required": False,
-                "default": 120,
-                "description": "HTTP request timeout in seconds",
+                "default": 600,
+                "description": "Max wait time for image generation in seconds",
             },
             "poll_interval": {
                 "type": "integer",
@@ -263,7 +263,7 @@ class PixazoImageService(BaseImageGenerationService):
     def __init__(self, config):
         super().__init__(config)
         self.api_key = self.config.get("api_key", "")
-        self.timeout = int(self.config.get("timeout", 120))
+        self.timeout = int(self.config.get("timeout", 600))
         self.poll_interval = int(self.config.get("poll_interval", 5))
         self.max_retries = int(self.config.get("max_retries", 5))
 
@@ -375,6 +375,10 @@ class PixazoImageService(BaseImageGenerationService):
                 "requestId": request_id,
             })
             status = (data.get("status", "") or "").lower()
+            elapsed = int(time.time() - (deadline - self.timeout))
+            logger.info("[PIXAZO] Poll %s (%ds): status=%s, keys=%s",
+                        self._poll_endpoint, elapsed, status,
+                        list(data.keys()) if isinstance(data, dict) else type(data).__name__)
             if status in ("completed", "done", "success", "ready"):
                 url = self._extract_image_url(data)
                 if url:
@@ -383,7 +387,6 @@ class PixazoImageService(BaseImageGenerationService):
             if status in ("failed", "error"):
                 msg = data.get("message", "") or data.get("error", "") or str(data)[:200]
                 raise ServiceError(f"Pixazo generation failed: {msg}")
-            logger.debug("[PIXAZO] Polling %s: status=%s", self._poll_endpoint, status)
 
         raise ServiceError(f"Pixazo polling timeout after {self.timeout}s")
 
@@ -421,6 +424,7 @@ class PixazoImageService(BaseImageGenerationService):
                      self._mode, prompt[:80], self._endpoint)
 
         data = self._post(self._endpoint, body)
+        logger.info("[PIXAZO] Generate response: %s", json.dumps(data)[:300])
 
         if self._mode == "sync":
             # Sync: response contains the image URL directly

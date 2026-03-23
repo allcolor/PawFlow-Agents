@@ -202,8 +202,8 @@ class PixazoVideoService(BaseVideoGenerationService):
                 "show_when": {"model": ["custom"]},
             },
             "timeout": {
-                "type": "integer", "required": False, "default": 600,
-                "description": "Max wait time for video generation (seconds)",
+                "type": "integer", "required": False, "default": 1800,
+                "description": "Max wait time for video generation (seconds, default 30min)",
             },
             "poll_interval": {
                 "type": "integer", "required": False, "default": 10,

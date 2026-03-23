@@ -18,6 +18,60 @@ from core.llm_client import (
 from core.tool_registry import ToolRegistry, create_default_registry, load_agent_tools
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
+
+def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
+    """Build a short narration string from tool_calls when the LLM didn't provide text.
+
+    Groups calls by tool name and produces a one-liner like:
+      "Generating 5 images and creating 2 files."
+    """
+    if not tool_calls:
+        return ""
+
+    _VERBS = {
+        "generate_image": ("Generating", "image"),
+        "filesystem": None,  # special handling
+        "web_search": ("Searching the web", None),
+        "scrape_url": ("Scraping", "page"),
+        "execute_script": ("Running", "script"),
+        "create_file": ("Creating", "file"),
+        "read_file": ("Reading", "file"),
+        "schedule_continuation": ("Scheduling continuation", None),
+        "spawn_agents": ("Spawning", "agent"),
+    }
+
+    counts = {}
+    for tc in tool_calls:
+        counts[tc.name] = counts.get(tc.name, 0) + 1
+
+    parts = []
+    for name, count in counts.items():
+        if name == "filesystem":
+            # Group by action
+            actions = {}
+            for tc in tool_calls:
+                if tc.name == "filesystem":
+                    a = tc.arguments.get("action", "filesystem op")
+                    actions[a] = actions.get(a, 0) + 1
+            for a, c in actions.items():
+                label = a.replace("_", " ")
+                parts.append(f"{label} ({c})" if c > 1 else label)
+        elif name in _VERBS:
+            v = _VERBS[name]
+            if v is None:
+                continue
+            verb, noun = v
+            if noun and count > 1:
+                parts.append(f"{verb} {count} {noun}s")
+            else:
+                parts.append(verb)
+        else:
+            parts.append(f"{name} ({count})" if count > 1 else name)
+
+    if not parts:
+        return ""
+    return ", ".join(parts) + ".\n"
+
 logger = logging.getLogger(__name__)
 
 
@@ -694,10 +748,16 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         ctx["chars_per_token"] = self._get_cpt(
                             _svc_id, ctx.get("chars_per_token", 0))
 
+                    _rc = response.content or ""
+                    _rtc = len(response.tool_calls) if response.tool_calls else 0
                     logger.info(f"[agent:{conversation_id[:8]}] LLM responded: "
                                 f"tokens_in={response.tokens_in}, tokens_out={response.tokens_out}, "
-                                f"tool_calls={len(response.tool_calls) if response.tool_calls else 0}, "
-                                f"finish={finish_reason}, content_len={len(response.content or '')}")
+                                f"tool_calls={_rtc}, "
+                                f"finish={finish_reason}, content_len={len(_rc)}")
+                    if _rtc > 0 and _rc:
+                        logger.info(f"[agent:{conversation_id[:8]}] narration with tools: {_rc[:200]!r}")
+                    elif _rtc > 0 and not _rc:
+                        logger.info(f"[agent:{conversation_id[:8]}] NO narration — tools called without text")
 
                     if not response.tool_calls:
                         action, msgs, final, _need_more_retried = self._handle_response_no_tools(
@@ -728,6 +788,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             "iteration": iteration, "round": current_round,
                             "agent_name": _agent_name or "",
                         })
+
+                    # Synthetic narration: if the LLM sent tool_calls
+                    # without any text, generate a brief summary so the
+                    # user sees what the agent is about to do.
+                    if not _rc and response.tool_calls:
+                        _narr = _synthesize_narration(response.tool_calls)
+                        if _narr:
+                            bus.publish_event(conversation_id, "token", {
+                                "text": _narr,
+                                "agent_name": _agent_name or "",
+                                "source": _agent_source(),
+                                "synthetic": True,
+                            })
 
                     # Publish all tool_call events upfront
                     _sub_count = bus.subscriber_count(conversation_id)

@@ -175,8 +175,9 @@ class ExecutorRegistry:
         if legacy.exists():
             legacy.unlink(missing_ok=True)
 
-        # Auto-restart flows when source files change
-        self.start_hot_reload()
+        # Hot-reload disabled — causes broken sockets and zombie processes on Windows.
+        # Restart the server manually after code changes.
+        # self.start_hot_reload()
 
 
     def _restore_instance(self, instance_id: str, flow_path: str,

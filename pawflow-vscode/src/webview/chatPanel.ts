@@ -527,22 +527,24 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   private getHtml(): string {
     const webview = this.view!.webview;
     const extensionUri = this.context.extensionUri;
+    // Cache-buster forces service worker to re-fetch on each reload (dev mode)
+    const v = `?v=${Date.now()}`;
 
     const styleUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'styles.css')
-    );
+    ) + v;
     const chatUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'chat.js')
-    );
+    ) + v;
     const commandsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'commands.js')
-    );
+    ) + v;
     const panelsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'panels.js')
-    );
+    ) + v;
     const formsUri = webview.asWebviewUri(
       vscode.Uri.joinPath(extensionUri, 'src', 'webview', 'forms.js')
-    );
+    ) + v;
 
     return `<!DOCTYPE html>
 <html lang="en">

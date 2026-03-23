@@ -86,10 +86,18 @@ def handle_agent_commands(app, cmd, arg, text):
 
     if cmd == "/btw":
         parts = arg.split(None, 1)
-        if len(parts) < 2:
-            app.renderer.print_error("Usage: /btw <agent|ALL> <question>")
+        if len(parts) < 1 or not arg.strip():
+            app.renderer.print_error("Usage: /btw [agent] <question> (defaults to selected agent)")
             return True
-        target, question = parts
+        if len(parts) < 2:
+            # No agent specified — use selected agent
+            target = app.selected_agent or ""
+            question = arg
+        else:
+            target, question = parts
+        if not target:
+            app.renderer.print_error("No agent selected. Use /btw <agent> <question>")
+            return True
         try:
             app.api.send_action("btw", conversation_id=app.conversation_id, message=question, agent_name=target)
             app.renderer.print_system(f"Side question sent to {target}")

@@ -190,7 +190,11 @@ function msgParser(parts, text) {
   return { _sendMessage: true, target: target, text: msg };
 }
 function btwParser(parts, text) {
-  if (parts.length < 3) { addMsg('system', 'Usage: /btw <agent|ALL> <text>'); return null; }
+  if (parts.length < 2) { addMsg('system', 'Usage: /btw [agent] <text> (defaults to selected agent)'); return null; }
+  if (parts.length < 3) {
+    // No agent specified — use selected agent, entire text is the message
+    return { _action: 'btw', agent_name: '', message: parts.slice(1).join(' ') };
+  }
   return { _action: 'btw', agent_name: parts[1], message: parts.slice(2).join(' ') };
 }
 function stopParser(parts, text) {

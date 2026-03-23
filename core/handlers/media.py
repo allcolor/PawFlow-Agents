@@ -32,9 +32,14 @@ class ImageGenerationHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Generate an image from a text prompt. "
-            "Returns a download URL for the generated image. "
-            "Be descriptive in your prompt for best results. "
-            "You can also provide a negative_prompt to exclude unwanted elements."
+            "PREFER writing directly to the user's filesystem: set destination to "
+            "the filesystem service name and path to the target file "
+            "(e.g. destination='fs_xxx', path='assets/player.png'). "
+            "This avoids extra copy steps. Use 'filestore' only when you need a "
+            "temporary download URL. "
+            "To move a filestore file to the filesystem later, use filesystem "
+            "copy_between (source_service='FileStore', dest_service='fs_xxx'). "
+            "NEVER use execute_script to download from filestore URLs — they require auth."
         )
 
     @property

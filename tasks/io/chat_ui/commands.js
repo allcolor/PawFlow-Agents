@@ -820,9 +820,14 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/msg') {
     const margs = parseQuotedArgs(text);
-    const target = resolveAgentName(margs[1] || '');
-    const msgText = margs.slice(2).join(' ');
-    if (!target) { addMsg('system', 'Usage: /msg <name|ALL> <message>'); }
+    let target = resolveAgentName(margs[1] || '');
+    let msgText = margs.slice(2).join(' ');
+    // If target not found, treat it as message to selected agent
+    if (!target && margs[1] && selectedAgent) {
+      target = selectedAgent;
+      msgText = margs.slice(1).join(' ');
+    }
+    if (!target) { addMsg('system', 'Usage: /msg [agent] <message> (defaults to selected agent)'); }
     else if (!msgText) { addMsg('system', 'Usage: /msg ' + target + ' <message>'); }
     else if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(msgText); }
     else { await cmdAgentMsg(target, msgText); }
@@ -831,9 +836,14 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/btw') {
     const bargs = parseQuotedArgs(text);
-    const target = resolveAgentName(bargs[1] || '');
-    const btwText = bargs.slice(2).join(' ');
-    if (!btwText && !target) { addMsg('system', 'Usage: /btw <name|ALL> <question>'); }
+    let target = resolveAgentName(bargs[1] || '');
+    let btwText = bargs.slice(2).join(' ');
+    // If target not found, treat it as message to selected agent
+    if (!target && bargs[1] && selectedAgent) {
+      target = selectedAgent;
+      btwText = bargs.slice(1).join(' ');
+    }
+    if (!btwText && !target) { addMsg('system', 'Usage: /btw [agent] <question> (defaults to selected agent)'); }
     else if (!btwText) {
       await cmdAgentBtw('', target + ' ' + bargs.slice(2).join(' '));
     } else {

@@ -233,8 +233,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         if _already_active:
             logger.info(f"[agent:{conversation_id[:8]}] agent already active — "
                         f"queueing message instead of spawning new thread")
-            # Messages are already persisted in ConversationStore (done in execute())
-            # Publish event so the running thread knows to check for new messages
+            # Store the message text in a shared queue so the active agent
+            # thread can pick it up via _do_drain (not just store count)
+            _queued_key = f"_queued_msgs:{conversation_id}"
+            if not hasattr(self, '_pending_user_msgs'):
+                self._pending_user_msgs = {}
+            self._pending_user_msgs.setdefault(_queued_key, []).append(ctx)
             bus.publish_event(conversation_id, "message_queued", {
                 "conversation_id": conversation_id,
             })
@@ -537,58 +541,77 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _max_consec_s = ctx.get("max_consecutive_tool_calls", 100)
 
         def _do_drain():
-            """Drain pending user messages from input queue into context."""
-            if not (hasattr(self, '_drain_pending') and self._drain_pending):
+            """Drain pending user messages into context from two sources:
+            1. Executor input queue (FlowFiles from different conversations)
+            2. Internal queue (messages from "agent already active" path)
+            """
+            # Source 1: executor queue
+            if hasattr(self, '_drain_pending') and self._drain_pending:
+                try:
+                    for _pff in self._drain_pending():
+                        _pbody = _pff.get_content()
+                        if isinstance(_pbody, bytes):
+                            _pbody = _pbody.decode("utf-8", errors="replace")
+                        _ptext = _pbody
+                        try:
+                            _pjson = json.loads(_pbody)
+                            if isinstance(_pjson, dict) and "message" in _pjson:
+                                _ptext = _pjson["message"]
+                                _pconv = _pjson.get("conversation_id")
+                                if _pjson.get("action"):
+                                    continue
+                                if _pconv and _pconv != conversation_id:
+                                    continue
+                        except (json.JSONDecodeError, ValueError):
+                            pass
+                        if _ptext and _ptext.strip():
+                            _inject_user_msg(_ptext, _pff.get_attribute("http.auth.principal"))
+                            _respond_http(_pff)
+                except Exception as _e:
+                    logger.debug(f"Queue drain failed: {_e}")
+
+            # Source 2: internal "already active" queue
+            _queued_key = f"_queued_msgs:{conversation_id}"
+            if hasattr(self, '_pending_user_msgs') and _queued_key in self._pending_user_msgs:
+                _queued = self._pending_user_msgs.pop(_queued_key, [])
+                for _qctx in _queued:
+                    _qmsgs = _qctx.get("messages", [])
+                    # Last message should be the user message
+                    for _qm in reversed(_qmsgs):
+                        if _qm.role == "user":
+                            _text = _qm.content if isinstance(_qm.content, str) else str(_qm.content)
+                            _inject_user_msg(_text, _qctx.get("user_id", ""))
+                            break
+
+        def _inject_user_msg(text, uid_attr):
+            """Inject a user message into the LLM context."""
+            _uid = uid_attr or user_id
+            _append(LLMMessage(
+                role="user", content=text,
+                source={"type": "user", "name": _uid},
+            ))
+            logger.info(f"[agent:{conversation_id[:8]}] injected pending "
+                        f"user message: {text[:80]!r}")
+
+        def _respond_http(ff):
+            """Send HTTP response for a drained FlowFile."""
+            _req_id = ff.get_attribute("http.request.id")
+            if not _req_id:
                 return
             try:
-                _pending = self._drain_pending()
-                for _pff in _pending:
-                    _pbody = _pff.get_content()
-                    if isinstance(_pbody, bytes):
-                        _pbody = _pbody.decode("utf-8", errors="replace")
-                    _pconv = None
-                    _ptext = _pbody
-                    try:
-                        _pjson = json.loads(_pbody)
-                        if isinstance(_pjson, dict) and "message" in _pjson:
-                            _ptext = _pjson["message"]
-                            _pconv = _pjson.get("conversation_id")
-                            if _pjson.get("action"):
-                                continue
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                    if _pconv and _pconv != conversation_id:
-                        continue
-                    if _ptext and _ptext.strip():
-                        _uid = _pff.get_attribute("http.auth.principal") or user_id
-                        _append(LLMMessage(
-                            role="user", content=_ptext,
-                            source={"type": "user", "name": _uid},
-                        ))
-                        logger.info(
-                            f"[agent:{conversation_id[:8]}] injected pending "
-                            f"user message: {_ptext[:80]!r}")
-                        _req_id = _pff.get_attribute("http.request.id")
-                        if _req_id:
-                            _pff.set_content(json.dumps({
-                                "status": "accepted",
-                                "conversation_id": conversation_id,
-                                "injected": True,
-                            }).encode("utf-8"))
-                            try:
-                                from services.http_listener_service import _instances
-                                for _port, _svc in _instances.items():
-                                    if _svc._server and _req_id in _svc._server._pending_requests:
-                                        _svc.complete_response(
-                                            _req_id, 200,
-                                            {"Content-Type": "application/json"},
-                                            _pff.get_content()
-                                        )
-                                        break
-                            except Exception:
-                                pass
-            except Exception as _drain_err:
-                logger.debug(f"Queue drain failed: {_drain_err}")
+                from services.http_listener_service import _instances
+                for _port, _svc in _instances.items():
+                    if _svc._server and _req_id in _svc._server._pending_requests:
+                        _svc.complete_response(
+                            _req_id, 200,
+                            {"Content-Type": "application/json"},
+                            json.dumps({"status": "accepted",
+                                        "conversation_id": conversation_id,
+                                        "injected": True}).encode()
+                        )
+                        break
+            except Exception:
+                pass
 
         _fatal_error = False
         try:

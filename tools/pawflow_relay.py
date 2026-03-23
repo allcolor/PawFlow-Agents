@@ -357,16 +357,22 @@ def _action_edit(handler, path, req):
             dmp.Match_Threshold = 0.5
             dmp.Match_Distance = 2000
 
-            # Strategy 1: fuzzy find old_string in text, then replace
-            loc = dmp.match_main(text, old_string[:64], 0)
+            # Strategy 1: fuzzy find via first/last line (32 chars max for match_main)
+            _first = old_string.split("\n")[0].strip()[:32]
+            _last = old_string.split("\n")[-1].strip()[:32]
+            if len(_first) >= 8:
+                loc = dmp.match_main(text, _first, 0)
+            else:
+                loc = -1
             if loc != -1:
-                end_loc = dmp.match_main(text, old_string[-64:], loc + len(old_string) - 100)
-                actual_end = (end_loc + 64) if end_loc != -1 else (loc + len(old_string))
+                _search_from = max(0, loc + len(old_string) - 200)
+                end_loc = dmp.match_main(text, _last, _search_from) if len(_last) >= 8 else -1
+                actual_end = (end_loc + len(_last)) if end_loc != -1 else (loc + len(old_string))
                 new_text = text[:loc] + new_string + text[actual_end:]
                 p.write_text(new_text, encoding="utf-8")
                 return {"replacements": 1, "fuzzy": True, "match_offset": loc, "path": rel}
-        except ImportError:
-            pass
+        except Exception:
+            pass  # diff-match-patch not installed or match error
 
         # Strategy 2: line-by-line trimmed match
         old_lines = [l.strip() for l in old_string.split("\n")]

@@ -524,7 +524,9 @@ class AgentUtilsMixin:
                     elif part.get("type") == "document":
                         total_chars += len(part.get("text", ""))
                     elif part.get("type") == "image_url":
-                        total_chars += 1000
+                        # Images are handled separately by the API (not counted as text tokens).
+                        # Don't count them — they inflate the estimate and trigger unnecessary compaction.
+                        total_chars += 85  # ~85 tokens per image tile in OpenAI/Anthropic
             if m.tool_calls:
                 for tc in m.tool_calls:
                     total_chars += len(tc.name) + len(json.dumps(tc.arguments))

@@ -1007,6 +1007,6 @@ async function _submitServiceEdit(serviceId, scope) {
   btn.disabled = true; btn.textContent = 'Saving...';
   try {
     const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'service_update_config', service_id: serviceId, scope, config, conversation_id: conversationId }),
+      body: JSON.stringify({ action: 'update_service', service_id: serviceId, scope, config, conversation_id: conversationId }),
     });
     const data = await resp.json();

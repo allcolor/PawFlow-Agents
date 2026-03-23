@@ -1088,10 +1088,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     # Drain pending user messages after tool batch
                     _do_drain()
 
-                    # Compact old tool chains to reduce context size
-                    # (keeps last 6 messages intact, compacts older chains)
-                    if len(messages) > 20:
-                        messages[:] = self._compact_tool_chains(messages, keep_recent=6)
+                    # Tool chain compaction is handled by _compact_if_needed
+                    # (called before each LLM call). Don't compact here —
+                    # it corrupts the SSE display of current tool calls.
 
                     # Check cancellation after tool execution
                     if not self._is_current_generation(gen_key, my_generation):

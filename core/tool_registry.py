@@ -50,6 +50,7 @@ from core.handlers import (  # noqa: F401
     GitHubHandler,
     HTTPToolHandler,
     ImageGenerationHandler,
+    ImageModelInfoHandler,
     LinkIdentityHandler,
     ListSecretsHandler,
     LocalFilesHandler,
@@ -258,6 +259,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(LocalFilesHandler())
     registry.register(RemoteExecutorHandler())
     registry.register(ImageGenerationHandler())
+    registry.register(ImageModelInfoHandler())
     registry.register(VideoGenerationHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())

@@ -252,3 +252,40 @@ class VideoGenerationHandler(ToolHandler):
 
         except Exception as e:
             return f"Error generating video: {e}"
+
+
+class ImageModelInfoHandler(ToolHandler):
+    """Return info about the active image generation model and its parameters."""
+
+    _service_resolver = None
+
+    @property
+    def name(self) -> str:
+        return "get_image_model_info"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get information about the active image generation model: "
+            "model name, supported parameters, available models. "
+            "Call this before generate_image if you need to know what "
+            "parameters the current model supports (aspect_ratio, style, etc.)."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    def set_service_resolver(self, resolver):
+        self._service_resolver = resolver
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        if not self._service_resolver:
+            return "Error: no image service resolver configured"
+        service, error = self._service_resolver()
+        if not service:
+            return f"Error: {error or 'no image generation service available'}"
+        if hasattr(service, 'get_model_info'):
+            info = service.get_model_info()
+            return json.dumps(info, indent=2)
+        return json.dumps({"model": "unknown", "model_params": {}})

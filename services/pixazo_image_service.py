@@ -23,8 +23,15 @@ PIXAZO_MODELS = {
     "sdxl": {
         "label": "SDXL (Stability AI)",
         "endpoint": "/getImage/v1/getSDXLImage",
-        "mode": "sync",  # response has imageUrl directly
+        "mode": "sync",
         "url_field": "imageUrl",
+        "params": {
+            "width": "256-1024 (default 1024)",
+            "height": "256-1024 (default 1024)",
+            "num_steps": "1-20 (default 20)",
+            "guidance_scale": "1-20 (default 5)",
+            "negative_prompt": "text to avoid",
+        },
     },
     "flux-dev": {
         "label": "Flux Dev (Black Forest Labs)",
@@ -32,6 +39,13 @@ PIXAZO_MODELS = {
         "poll_endpoint": "/flux-dev-polling/dev/getFluxDevStatus",
         "mode": "async",
         "id_field": "requestId",
+        "params": {
+            "image_size": "e.g. 'landscape_4_3', 'square_hd', 'portrait_4_3'",
+            "num_inference_steps": "1-50 (default 28)",
+            "guidance_scale": "1-20 (default 3.5)",
+            "output_format": "jpeg, png, webp",
+            "num_images": "1-4",
+        },
     },
     "nano-banana": {
         "label": "Nano Banana (Google)",
@@ -39,12 +53,23 @@ PIXAZO_MODELS = {
         "poll_endpoint": "/nano-banana-polling/nano-banana/getStatus",
         "mode": "async",
         "id_field": "request_id",
+        "params": {
+            "aspect_ratio": "1:1, 4:3, 3:2, 16:9, 9:16, 21:9, 2:3, 3:4, 4:5, 5:4",
+            "output_format": "jpeg, png, webp",
+            "num_images": "1-4",
+        },
     },
     "recraft-v3": {
         "label": "Recraft V3",
         "endpoint": "/recraft/v3/generate",
         "mode": "sync",
         "url_field": "output",
+        "params": {
+            "style": "style preset (default 'Recraft V3 Raw')",
+            "size": "e.g. '1024x1024', '1365x1024', '1024x1365'",
+            "n": "1-6 images",
+            "negative_prompt": "text to avoid",
+        },
     },
     "recraft-v4": {
         "label": "Recraft V4",
@@ -282,6 +307,18 @@ class PixazoImageService(BaseImageGenerationService):
             self._mode = "sync"
             self._id_field = ""
             self._url_field = "imageUrl"
+
+    def get_model_info(self) -> dict:
+        """Return info about the active model and its specific parameters."""
+        model_key = self.config.get("model", "sdxl")
+        m = PIXAZO_MODELS.get(model_key, {})
+        return {
+            "model": model_key,
+            "label": m.get("label", model_key),
+            "mode": self._mode,
+            "model_params": m.get("params", {}),
+            "all_models": {k: v.get("label", k) for k, v in PIXAZO_MODELS.items()},
+        }
 
     def _create_connection(self):
         if not self.api_key:

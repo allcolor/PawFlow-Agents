@@ -43,6 +43,7 @@ from core.handlers.help_secrets import (  # noqa: F401
 )
 from core.handlers.media import (  # noqa: F401
     ImageGenerationHandler,
+    ImageModelInfoHandler,
     VideoGenerationHandler,
 )
 from core.handlers.memory import (  # noqa: F401

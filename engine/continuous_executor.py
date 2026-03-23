@@ -511,6 +511,26 @@ class ContinuousFlowExecutor:
                 if self._debugger._action == DebugAction.STOP:
                     self._debugger = None
 
+            # Discard stale HTTP FlowFiles (request already timed out / responded)
+            if peeked_ff and peeked_ff.get_attribute("http.request.id"):
+                _req_id = peeked_ff.get_attribute("http.request.id")
+                _svc_id = peeked_ff.get_attribute("http.listener.service_id") or ""
+                _still_valid = False
+                try:
+                    from services.http_listener_service import HTTPListenerService, _instances
+                    for _port, _svc in _instances.items():
+                        if _svc._server and _req_id in _svc._server._pending_requests:
+                            _still_valid = True
+                            break
+                except Exception:
+                    _still_valid = True  # can't check → assume valid
+                if not _still_valid:
+                    # Request expired — silently discard
+                    if source_conn:
+                        source_conn.dequeue()
+                    self._task_states.record_run(task_id, "unknown", 0, True, 0, 0)
+                    return
+
             # Attempt execution with retries
             task_type = task.TYPE if hasattr(task, 'TYPE') else 'unknown'
             last_error = None

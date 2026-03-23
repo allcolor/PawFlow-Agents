@@ -385,12 +385,11 @@ class AgentUtilsMixin:
 
     # ── Tool result size management ──────────────────────────────────
 
-    # Tool result inline threshold (chars). Results over this are saved to
-    # FileStore with a preview in context. Old results are progressively
-    # cleared during compaction (oldest first).
-    _TOOL_RESULT_MAX = 1500
     # TTL for tool result files in FileStore (seconds). Default 1h.
     _TOOL_RESULT_TTL = 3600
+    # Threshold for clearing tool results (chars). Results over this get
+    # saved to FileStore and replaced with a reference after the LLM has seen them.
+    _TOOL_RESULT_CLEAR_THRESHOLD = 500
 
 
     @staticmethod
@@ -415,73 +414,69 @@ class AgentUtilsMixin:
         return code_chars == 0
 
 
-    def _truncate_tool_result(self, result: str, tool_name: str,
-                               conversation_id: str = "",
-                               user_id: str = "") -> str:
-        """Truncate tool results — store full content in FileStore if large.
+    def _clear_seen_tool_results(self, messages, keep_recent: int = 4,
+                                  conversation_id: str = "",
+                                  user_id: str = ""):
+        """Clear old tool results that the LLM has already seen.
 
-        The LLM gets a short preview + file reference. It can use
-        read_file with offset/limit to inspect specific parts on demand.
+        Called AFTER the LLM has responded. Saves large results to FileStore
+        and replaces them with a short reference in the context.
+
+        Only clears results NOT in the last `keep_recent` messages.
+        The LLM can use read_file to retrieve them if needed.
         """
-        if not result:
-            return result
-
-        result_len = len(result)
-        has_base64 = self._detect_base64_blob(result)
-
-        # Small result without base64 → pass through
-        if result_len <= self._TOOL_RESULT_MAX and not has_base64:
-            return result
-
-        # If the result already references a FileStore file, don't re-save.
         import re as _re_fs
         _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
-        if "[Full result" in result and _FS_REF.search(result):
-            return result  # already truncated with FileStore ref
-        if result.startswith("[") and "lines," in result and "chars" in result:
-            # Paginated read_file output — already controlled by offset/limit
-            # Truncate for context but don't duplicate to FileStore
-            if result_len > self._TOOL_RESULT_MAX:
-                return (
-                    result[:self._TOOL_RESULT_MAX // 2]
-                    + f"\n\n... [{result_len - self._TOOL_RESULT_MAX // 2:,} chars omitted"
-                    + " — use offset/limit to read specific sections]"
-                )
-            return result
+        safe_end = max(1, len(messages) - keep_recent)
+        cleared = 0
 
-        # Store full result in FileStore, return preview + reference
-        try:
-            from core.file_store import FileStore
-            store = FileStore.instance()
-            fname = f"tool_result_{tool_name}.txt"
-            fid = store.store(
-                fname, result.encode("utf-8"),
-                conversation_id=conversation_id,
-                user_id=user_id,
-                ttl=self._TOOL_RESULT_TTL,
-            )
-            url = f"/files/{fid}/{fname}"
-            # Build a clean preview
-            preview = result[:self._TOOL_RESULT_MAX // 2]
-            import re
-            preview = re.sub(
-                r'data:[^;]+;base64,[A-Za-z0-9+/=]+',
-                '[base64 data]',
-                preview,
-            )
-            preview = re.sub(r'[A-Za-z0-9+/=]{200,}', '[...base64...]', preview)
-            return (
-                f"{preview}\n\n"
-                f"[Full result ({result_len:,} chars) saved to: {url} — "
-                f"use read_file(path=\"{url}\") to inspect details]"
-            )
-        except Exception as e:
-            logger.warning(f"[truncate] Failed to store in FileStore: {e}")
-            # Fallback: hard truncate
-            return (
-                result[:self._TOOL_RESULT_MAX // 2]
-                + f"\n\n... [{result_len - self._TOOL_RESULT_MAX // 2:,} chars truncated]"
-            )
+        for i in range(1, safe_end):
+            m = messages[i]
+            if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            content = m.content
+            content_len = len(content)
+
+            # Skip small results
+            if content_len <= self._TOOL_RESULT_CLEAR_THRESHOLD:
+                continue
+            # Skip already cleared
+            if "[Result cleared" in content or ("[Full result" in content and _FS_REF.search(content)):
+                continue
+
+            # Strip TOOL OUTPUT wrapper for storage
+            _inner = content
+            if _inner.startswith("[TOOL OUTPUT"):
+                _nl = _inner.find("\n")
+                if _nl >= 0:
+                    _inner = _inner[_nl + 1:]
+                if _inner.endswith("[/TOOL OUTPUT]"):
+                    _inner = _inner[:-len("[/TOOL OUTPUT]")].rstrip()
+
+            # Save to FileStore
+            try:
+                from core.file_store import FileStore
+                store = FileStore.instance()
+                fname = f"tool_result_{cleared}.txt"
+                fid = store.store(
+                    fname, _inner.encode("utf-8"),
+                    conversation_id=conversation_id,
+                    user_id=user_id,
+                    ttl=self._TOOL_RESULT_TTL,
+                )
+                url = f"/files/{fid}/{fname}"
+                m.content = (
+                    f"[Result cleared — {content_len:,} chars saved to: {url}. "
+                    f"Use read_file(path=\"{url}\") to retrieve.]"
+                )
+                cleared += 1
+            except Exception:
+                # Fallback: just truncate
+                m.content = content[:200] + f"\n[...{content_len - 200:,} chars cleared]"
+                cleared += 1
+
+        if cleared:
+            logger.info(f"[clear_tool_results] Cleared {cleared} old tool result(s)")
 
 
     @staticmethod

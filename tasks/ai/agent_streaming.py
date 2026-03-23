@@ -956,6 +956,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     # Deflate images: LLM has seen them, replace base64 with refs
                     self._deflate_image_messages(messages)
 
+                    # Clear old tool results the LLM has already seen
+                    self._clear_seen_tool_results(
+                        messages, keep_recent=6,
+                        conversation_id=conversation_id,
+                        user_id=ctx.get("user_id", ""),
+                    )
+
                     # Calibrate chars_per_token from actual usage
                     # Use _estimate_tokens(cpt=1) to get raw char count (same formula)
                     if response.tokens_in > 0:

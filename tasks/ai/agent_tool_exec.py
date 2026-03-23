@@ -94,22 +94,9 @@ class AgentToolExecMixin:
                         if candidates:
                             hint = ", ".join(candidates[:3])
                             result += f"\n[Related tests may exist: {hint} — use run_tests to verify]"
-                # ── Truncate large tool results ────
-                # Skip truncation when the LLM explicitly requested content:
-                # - pagination params (offset/limit/max_output)
-                # - reading a FileStore file by ID (explicit retrieval)
-                import re as _re_tc
-                _explicit_read = (
-                    tc.arguments.get("offset") or tc.arguments.get("limit")
-                    or tc.arguments.get("max_output")
-                    or (tc.name == "read_file" and _re_tc.search(
-                        r'/files/[a-f0-9]{12}/', tc.arguments.get("path", "")))
-                    or (tc.name == "filesystem" and tc.arguments.get("action") == "read_file"
-                        and tc.arguments.get("offset"))
-                )
-                if isinstance(result, str) and not _explicit_read:
-                    result = self._truncate_tool_result(
-                        result, tc.name, conversation_id, user_id)
+                # No truncation at execution time — the LLM needs the full result.
+                # Old results are cleared AFTER the LLM has seen them (in the
+                # streaming loop, between iterations) via _clear_seen_tool_results.
                 # Wrap tool output so the LLM treats it as data, not instructions
                 if result and tc.name not in ("complete_task", "assign_task"):
                     result = (

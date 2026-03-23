@@ -481,6 +481,11 @@ def _action_exec(handler, path, req):
                 lambda m: m.group(1) + '/' + m.group(2).lower() + '/' + m.group(3).replace('\\', '/'),
                 command,
             )
+        else:
+            # Fallback: PowerShell (handles quotes better than cmd.exe)
+            _pwsh = Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
+            if _pwsh.exists():
+                shell_args = {"executable": str(_pwsh)}
 
     result = subprocess.run(
         exec_cmd, shell=True,

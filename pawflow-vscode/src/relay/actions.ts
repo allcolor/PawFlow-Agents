@@ -364,6 +364,11 @@ export function executeAction(
               (_m: string, cd: string, drive: string, rest: string) =>
                 cd + '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/')
             );
+          } else {
+            // Fallback: PowerShell (handles quotes better than cmd.exe)
+            const pwsh = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+            if (fs.existsSync(pwsh)) { shellOpt = { shell: pwsh }; }
+            // else: default cmd.exe
           }
         }
         try {

@@ -428,6 +428,196 @@ export function executeAction(
         return { ok: true, data: { root: rootDir, files: entries, project_types: types } };
       }
 
+      // ── Missing git actions ──
+
+      case 'git_add': {
+        const files = req.files || [];
+        if (!files.length) { return { ok: false, error: 'Missing files' }; }
+        const r = gitRun(absPath, ['add', '--', ...files]);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_reset': {
+        const mode = req.mode || 'mixed';
+        const ref = req.ref || 'HEAD';
+        const files = req.files || [];
+        const args = files.length ? ['reset', '--', ...files] : ['reset', `--${mode}`, ref];
+        const r = gitRun(absPath, args);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_stash': {
+        const sub = (req.sub || 'push').toLowerCase();
+        const idx = req.index || 0;
+        let args: string[];
+        if (sub === 'list') args = ['stash', 'list'];
+        else if (sub === 'pop') args = ['stash', 'pop'];
+        else if (sub === 'drop') args = ['stash', 'drop', String(idx)];
+        else if (sub === 'apply') args = ['stash', 'apply', String(idx)];
+        else args = ['stash', 'push', '-m', req.message || 'stash'];
+        const r = gitRun(absPath, args);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_branch': {
+        const branch = req.branch || '';
+        const del = req.delete || false;
+        const force = req.force || false;
+        const base = req.base || '';
+        if (!branch) {
+          const r = gitRun(absPath, ['branch', '-a']);
+          return { ok: true, data: { branches: r.stdout.trim().split('\n') } };
+        }
+        if (del) {
+          const r = gitRun(absPath, ['branch', force ? '-D' : '-d', branch]);
+          return { ok: true, data: { output: r.stdout, error: r.stderr } };
+        }
+        const args = base ? ['branch', branch, base] : ['branch', branch];
+        const r = gitRun(absPath, args);
+        return { ok: true, data: { output: r.stdout, branch } };
+      }
+
+      case 'git_merge': {
+        const branch = req.branch || req.ref || '';
+        if (!branch) { return { ok: false, error: 'Missing branch' }; }
+        const args = req.no_ff ? ['merge', '--no-ff', branch] : ['merge', branch];
+        const r = gitRun(absPath, args, 60000);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_rebase': {
+        const onto = req.onto || req.ref || '';
+        if (!onto) { return { ok: false, error: 'Missing onto' }; }
+        const r = gitRun(absPath, ['rebase', onto], 60000);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_cherry_pick': {
+        const commits = req.commits || [];
+        if (!commits.length) { return { ok: false, error: 'Missing commits' }; }
+        const r = gitRun(absPath, ['cherry-pick', ...commits], 60000);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_tag': {
+        const tag = req.tag || '';
+        if (!tag) {
+          const r = gitRun(absPath, ['tag', '-l']);
+          return { ok: true, data: { tags: r.stdout.trim().split('\n').filter(Boolean) } };
+        }
+        const message = req.message || '';
+        const args = message ? ['tag', '-a', tag, '-m', message] : ['tag', tag];
+        const r = gitRun(absPath, args);
+        return { ok: true, data: { output: r.stdout, tag } };
+      }
+
+      case 'git_blame': {
+        const file = req.file || relPath;
+        const startLine = req.start_line || 0;
+        const endLine = req.end_line || 0;
+        const args = ['blame', '--porcelain'];
+        if (startLine && endLine) args.push(`-L${startLine},${endLine}`);
+        const rPath = resolvePath(rootDir, file);
+        if (!rPath) { return { ok: false, error: 'Invalid file path' }; }
+        args.push(rPath);
+        const r = gitRun(rootDir, args);
+        return { ok: true, data: { output: r.stdout.slice(0, 20000) } };
+      }
+
+      case 'git_worktree_list': {
+        const r = gitRun(absPath, ['worktree', 'list', '--porcelain']);
+        return { ok: true, data: { output: r.stdout } };
+      }
+
+      case 'git_worktree_add': {
+        const wPath = req.worktree_path || '';
+        const branch = req.branch || '';
+        if (!wPath) { return { ok: false, error: 'Missing worktree_path' }; }
+        const args = ['worktree', 'add'];
+        if (req.create_new_branch) args.push('-b', branch || 'new-branch');
+        args.push(wPath);
+        if (branch && !req.create_new_branch) args.push(branch);
+        const r = gitRun(absPath, args);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      case 'git_worktree_remove': {
+        const wPath = req.worktree_path || '';
+        if (!wPath) { return { ok: false, error: 'Missing worktree_path' }; }
+        const r = gitRun(absPath, ['worktree', 'remove', wPath]);
+        return { ok: true, data: { output: r.stdout, error: r.stderr } };
+      }
+
+      // ── File format actions ──
+
+      case 'find_replace': {
+        const pattern = req.pattern || '';
+        const replacement = req.replacement || '';
+        if (!pattern) { return { ok: false, error: 'Missing pattern' }; }
+        let text = fs.readFileSync(absPath, 'utf-8');
+        const regex = new RegExp(pattern, 'g');
+        const matches = (text.match(regex) || []).length;
+        if (matches === 0) { return { ok: true, data: { replacements: 0 } }; }
+        text = text.replace(regex, replacement);
+        fs.writeFileSync(absPath, text, 'utf-8');
+        return { ok: true, data: { replacements: matches, path: rel(absPath, rootDir) } };
+      }
+
+      case 'read_pdf': {
+        // PDFs can't be read natively in Node — return error suggesting exec
+        return { ok: false, error: 'read_pdf not supported in relay. Use exec with python: python -c "import fitz; ..."' };
+      }
+
+      case 'read_notebook': {
+        try {
+          const raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+          const cells = (raw.cells || []).map((c: any, i: number) => ({
+            index: i, type: c.cell_type || 'code',
+            source: (c.source || []).join(''),
+            output: (c.outputs || []).map((o: any) => (o.text || []).join('')).join('\n').slice(0, 500),
+          }));
+          return { ok: true, data: { total_cells: cells.length, kernel: raw.metadata?.kernelspec?.display_name || '?', cells } };
+        } catch (e: any) { return { ok: false, error: e.message }; }
+      }
+
+      case 'edit_notebook': {
+        const cellIndex = req.cell_index ?? -1;
+        const op = req.operation || 'edit';
+        try {
+          const raw = JSON.parse(fs.readFileSync(absPath, 'utf-8'));
+          if (op === 'edit' && cellIndex >= 0 && cellIndex < raw.cells.length) {
+            raw.cells[cellIndex].source = (req.new_source || '').split('\n').map((l: string) => l + '\n');
+            if (req.cell_type) raw.cells[cellIndex].cell_type = req.cell_type;
+          } else if (op === 'insert') {
+            raw.cells.splice(cellIndex >= 0 ? cellIndex : raw.cells.length, 0, {
+              cell_type: req.cell_type || 'code', source: (req.new_source || '').split('\n').map((l: string) => l + '\n'),
+              metadata: {}, outputs: [],
+            });
+          } else if (op === 'delete' && cellIndex >= 0) {
+            raw.cells.splice(cellIndex, 1);
+          }
+          fs.writeFileSync(absPath, JSON.stringify(raw, null, 1), 'utf-8');
+          return { ok: true, data: { cells: raw.cells.length, operation: op } };
+        } catch (e: any) { return { ok: false, error: e.message }; }
+      }
+
+      // ── Store operations (server-side, relay returns error) ──
+
+      case 'copy_between':
+      case 'copy_to_store':
+      case 'list_store':
+      case 'delete_from_store': {
+        return { ok: false, error: `${action} is a server-side operation. Use the filesystem service on the server.` };
+      }
+
+      case 'project_init': {
+        // Generate a basic .pawflow.md
+        const mdPath = path.join(rootDir, '.pawflow.md');
+        const content = `# PawFlow Project\n\nRoot: ${rootDir}\nGenerated: ${new Date().toISOString()}\n`;
+        fs.writeFileSync(mdPath, content, 'utf-8');
+        return { ok: true, data: { path: '.pawflow.md', size: content.length } };
+      }
+
       default:
         return { ok: false, error: `Unknown action: ${action}` };
     }

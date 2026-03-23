@@ -498,8 +498,10 @@ const _RESOURCE_FIELDS = {
   prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
 };
 
-function _buildResourceForm(rtype, data, isNew) {
+function _buildResourceForm(rtype, data, isNew, readonly) {
   const fields = _RESOURCE_FIELDS[rtype] || [];
+  const dis = readonly ? ' disabled' : '';
+  const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   let html = '';
   if (isNew) {
     html += '<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Name</label><input id="res-name" value="" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>';
@@ -510,18 +512,18 @@ function _buildResourceForm(rtype, data, isNew) {
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
-      html += `<textarea id="res-${key}" style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;">${escaped}</textarea>`;
+      html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
     } else if (type === 'number') {
-      html += `<input id="res-${key}" type="number" value="${escaped}" style="width:80px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>`;
+      html += `<input id="res-${key}" type="number" value="${escaped}"${dis} style="width:80px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
     } else {
-      html += `<input id="res-${key}" value="${escaped}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/>`;
+      html += `<input id="res-${key}" value="${escaped}"${dis} style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
     }
     html += '</div>';
   }
   return html;
 }
 
-async function showResourceEditor(rtype, name) {
+async function showResourceEditor(rtype, name, readonly) {
   // Fetch current data
   let data = {};
   try {
@@ -533,6 +535,7 @@ async function showResourceEditor(rtype, name) {
   } catch (e) { addMsg('error', e.message); return; }
 
   const scope = data._scope || 'user';
+  const ro = !!readonly;
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -540,14 +543,22 @@ async function showResourceEditor(rtype, name) {
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
   const panel = document.createElement('div');
   panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:500px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
-  panel.innerHTML = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">Edit ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
+  const title = ro ? 'View' : 'Edit';
+  let html = `<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <h3 style="margin:0;color:#e0e0e0;font-size:14px;">${title} ${rtype}: ${name} ${_scopeBadge(scope)}</h3>
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>
-  </div>` + _buildResourceForm(rtype, data, false)
-    + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+  </div>` + _buildResourceForm(rtype, data, false, ro);
+  if (ro) {
+    html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+    <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>
+    </div>`;
+  } else {
+    html += `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
     <button onclick="_saveResourceEdit('${rtype}','${name}','${scope}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>
-  </div>`;
+    </div>`;
+  }
+  panel.innerHTML = html;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
 }
@@ -766,10 +777,12 @@ const _svcInputStyle = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px s
 const _svcLabelStyle = 'color:#aaa;font-size:11px;';
 const _svcDescStyle = 'color:#666;font-size:10px;margin-top:1px;';
 
-function _renderSchemaFields(schema, values) {
+function _renderSchemaFields(schema, values, readonly) {
   let html = '';
+  const dis = readonly ? ' disabled' : '';
+  const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   for (const [pname, pdef] of Object.entries(schema)) {
-    const req = pdef.required ? ' <span style="color:#e94560;">*</span>' : '';
+    const req = pdef.required && !readonly ? ' <span style="color:#e94560;">*</span>' : '';
     const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
     const showWhen = pdef.show_when ? ` data-show-when="${pdef.show_when.field}" data-show-value="${pdef.show_when.value}"` : '';
@@ -778,21 +791,21 @@ function _renderSchemaFields(schema, values) {
     if (pdef.description) html += '<div style="' + _svcDescStyle + '">' + pdef.description + '</div>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
-      html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + ' style="accent-color:#6c5ce7;"/> <span style="color:#e0e0e0;font-size:12px;">Enabled</span></label>';
+      html += '<label style="display:flex;align-items:center;gap:6px;margin-top:4px;cursor:pointer;"><input id="svc-p-' + pname + '" type="checkbox"' + (val ? ' checked' : '') + dis + ' style="accent-color:#6c5ce7;"/> <span style="color:#e0e0e0;font-size:12px;">Enabled</span></label>';
     } else if (ptype === 'select' && pdef.options) {
-      html += '<select id="svc-p-' + pname + '" style="' + _svcInputStyle + '">';
+      html += '<select id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + '">';
       for (const opt of pdef.options) {
         html += '<option value="' + opt + '"' + (String(val) === String(opt) ? ' selected' : '') + '>' + opt + '</option>';
       }
       html += '</select>';
     } else if (ptype === 'textarea' || ptype === 'map' || ptype === 'object') {
       const tval = (ptype === 'map' || ptype === 'object') && typeof val === 'object' ? JSON.stringify(val, null, 2) : escaped;
-      html += '<textarea id="svc-p-' + pname + '" style="' + _svcInputStyle + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
+      html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
     } else if (ptype === 'integer' || ptype === 'float') {
-      html += '<input id="svc-p-' + pname + '" type="number"' + (ptype === 'float' ? ' step="any"' : '') + ' value="' + escaped + '" style="' + _svcInputStyle + 'width:120px;"/>';
+      html += '<input id="svc-p-' + pname + '" type="number"' + (ptype === 'float' ? ' step="any"' : '') + ' value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'width:120px;"/>';
     } else {
       const inputType = pdef.sensitive ? 'password' : 'text';
-      html += '<input id="svc-p-' + pname + '" type="' + inputType + '" value="' + escaped + '" style="' + _svcInputStyle + '"/>';
+      html += '<input id="svc-p-' + pname + '" type="' + inputType + '" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
     }
     html += '</div>';
   }
@@ -941,7 +954,7 @@ async function _submitServiceInstall() {
   } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = 'Install'; }
 }
 
-async function showServiceEditForm(serviceId, scope) {
+async function showServiceEditForm(serviceId, scope, readonly) {
   try {
     const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({ action: 'get_service_detail', service_id: serviceId, scope }),
@@ -952,6 +965,9 @@ async function showServiceEditForm(serviceId, scope) {
     const svcType = data.service_type || '';
     const config = data.config || {};
     const schema = await _fetchServiceSchema(svcType);
+    const ro = !!readonly;
+    const disabledAttr = ro ? ' disabled' : '';
+    const roStyle = ro ? 'opacity:0.7;cursor:not-allowed;' : '';
 
     let overlay = document.getElementById('resourceEditorOverlay');
     if (overlay) overlay.remove();
@@ -961,8 +977,9 @@ async function showServiceEditForm(serviceId, scope) {
     const panel = document.createElement('div');
     panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:540px;max-height:85vh;overflow-y:auto;border:1px solid #333;';
 
+    const title = ro ? 'View Service: ' : 'Edit Service: ';
     let formHtml = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
-      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">Edit Service: ' + serviceId + ' ' + _scopeBadge(scope) + '</h3>'
+      + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">' + title + serviceId + ' ' + _scopeBadge(scope) + '</h3>'
       + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:none;border:none;color:#888;cursor:pointer;font-size:18px;">&times;</button>'
       + '</div>';
     formHtml += '<div style="margin-bottom:8px;"><label style="' + _svcLabelStyle + '">Type</label>'
@@ -971,24 +988,29 @@ async function showServiceEditForm(serviceId, scope) {
     if (Object.keys(schema).length > 0) {
       formHtml += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
         + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
-        + _renderSchemaFields(schema, config)
+        + _renderSchemaFields(schema, config, ro)
         + '</div>';
     } else {
-      // Fallback: render raw config keys as text/password inputs
       for (const [k, v] of Object.entries(config)) {
         const isSecret = k.toLowerCase().includes('key') || k.toLowerCase().includes('secret') || k.toLowerCase().includes('token');
         const inputType = isSecret ? 'password' : 'text';
         const val = String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
         formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
-          + '<input id="svc-p-' + k + '" type="' + inputType + '" value="' + val + '" style="' + _svcInputStyle + '"/></div>';
+          + '<input id="svc-p-' + k + '" type="' + inputType + '" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + '"/></div>';
       }
     }
 
-    formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
-      + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
-      + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
-      + '</div>';
-    formHtml = formHtml.replace('_SVC_ID_', serviceId).replace('_SVC_SCOPE_', scope);
+    if (!ro) {
+      formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+        + '<button id="svc-save-btn" onclick="_submitServiceEdit(\'_SVC_ID_\',\'_SVC_SCOPE_\')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+        + '</div>';
+      formHtml = formHtml.replace('_SVC_ID_', serviceId).replace('_SVC_SCOPE_', scope);
+    } else {
+      formHtml += '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+        + '<button onclick="document.getElementById(\'resourceEditorOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Close</button>'
+        + '</div>';
+    }
 
     panel.innerHTML = formHtml;
     const effectiveSchema = Object.keys(schema).length > 0 ? schema : Object.fromEntries(Object.keys(config).map(k => [k, {type: 'string'}]));

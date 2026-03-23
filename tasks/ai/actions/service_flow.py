@@ -201,6 +201,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not sid:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
+        # Admin check for global services
+        if scope == "global":
+            _role = flowfile.get_attribute("http.auth.roles") or ""
+            if _role != "admin":
+                flowfile.set_content(json.dumps({"error": "Only admin can modify global services"}).encode())
+                flowfile.set_attribute("http.response.status", "403")
+                return [flowfile]
         try:
             if scope == "user" and user_id:
                 from gui.services.user_service_registry import UserServiceRegistry

@@ -25,6 +25,71 @@ class AgentCompactionMixin:
     """Methods extracted from AgentLoopTask."""
 
     @staticmethod
+    def _progressive_clear_tool_results(messages: List[LLMMessage],
+                                          target_tokens: int,
+                                          current_tokens: int,
+                                          keep_recent: int = 6,
+                                          chars_per_token: float = 3.5):
+        """Progressively shrink old tool results until under target_tokens.
+
+        Strategy (oldest first, in passes):
+        - Pass 1: truncate tool results > 500 chars → 200 chars
+        - Pass 2: truncate tool results > 100 chars → 50 chars summary
+        - Pass 3: replace all old tool results with "[result cleared]"
+
+        Never touches the last `keep_recent` messages.
+        Returns the estimated new token count.
+        """
+        if current_tokens <= target_tokens:
+            return current_tokens
+
+        safe_end = max(1, len(messages) - keep_recent)
+
+        # Pass 1: truncate long tool results to 200 chars
+        for i in range(1, safe_end):
+            if current_tokens <= target_tokens:
+                break
+            m = messages[i]
+            if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            if len(m.content) > 500:
+                _saved = len(m.content) - 200
+                m.content = m.content[:200] + "\n[...truncated]"
+                current_tokens -= int(_saved / chars_per_token)
+
+        if current_tokens <= target_tokens:
+            return current_tokens
+
+        # Pass 2: shrink to 50 chars
+        for i in range(1, safe_end):
+            if current_tokens <= target_tokens:
+                break
+            m = messages[i]
+            if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            if len(m.content) > 100:
+                _saved = len(m.content) - 50
+                m.content = m.content[:50] + "\n[...cleared]"
+                current_tokens -= int(_saved / chars_per_token)
+
+        if current_tokens <= target_tokens:
+            return current_tokens
+
+        # Pass 3: clear all old tool results
+        for i in range(1, safe_end):
+            if current_tokens <= target_tokens:
+                break
+            m = messages[i]
+            if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            if len(m.content) > 20:
+                _saved = len(m.content) - 15
+                m.content = "[result cleared]"
+                current_tokens -= int(_saved / chars_per_token)
+
+        return current_tokens
+
+    @staticmethod
     def _compact_tool_chains(messages: List[LLMMessage], keep_recent: int = 4):
         """Compact old tool call chains into summaries.
 
@@ -330,26 +395,15 @@ class AgentCompactionMixin:
 
         print(f"[COMPACT] TRIGGERED: {estimated} > {limit}, compacting...", flush=True)
 
-        # Pass 1: Aggressively truncate tool results and multimodal content
-        truncated = False
-        for m in messages:
-            if m.role == "tool":
-                if isinstance(m.content, str) and len(m.content) > 500:
-                    m.content = m.content[:200] + "\n...[truncated]..."
-                    truncated = True
-                elif isinstance(m.content, list):
-                    # Multimodal: keep only text parts, drop images
-                    text_parts = [p for p in m.content if p.get("type") == "text"]
-                    text = " ".join(p.get("text", "") for p in text_parts)
-                    m.content = text[:200] + "\n...[truncated]..." if len(text) > 500 else text
-                    truncated = True
-
-        if truncated:
-            estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
-                                              chars_per_token=chars_per_token)
-            if estimated <= limit:
-                logger.info(f"[compact] Pass 1 (truncate tool results) sufficient: {estimated} tokens")
-                return messages
+        # Pass 1: Progressive clearing of old tool results (oldest first)
+        estimated = self._progressive_clear_tool_results(
+            messages, limit, estimated,
+            keep_recent=keep_recent,
+            chars_per_token=cpt,
+        )
+        if estimated <= limit:
+            logger.info(f"[compact] Pass 1 (progressive clear) sufficient: ~{estimated} tokens")
+            return messages
 
         # Pass 1b: If still way over, truncate ALL non-recent messages aggressively
         if estimated > limit * 2:

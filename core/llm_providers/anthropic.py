@@ -35,10 +35,14 @@ class LLMAnthropicMixin:
         if system_text:
             body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
         if tools:
-            body["tools"] = [
+            _tool_list = [
                 {"name": t.name, "description": t.description, "input_schema": t.parameters}
                 for t in tools
             ]
+            # Cache breakpoint on last tool for prompt caching
+            if _tool_list:
+                _tool_list[-1]["cache_control"] = {"type": "ephemeral"}
+            body["tools"] = _tool_list
 
         _base = self.base_url or "https://api.anthropic.com"
         parsed = urlparse(_base)
@@ -312,7 +316,7 @@ class LLMAnthropicMixin:
         if system_text:
             body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
         if tools:
-            body["tools"] = [
+            _tool_list = [
                 {
                     "name": t.name,
                     "description": t.description,
@@ -320,6 +324,9 @@ class LLMAnthropicMixin:
                 }
                 for t in tools
             ]
+            if _tool_list:
+                _tool_list[-1]["cache_control"] = {"type": "ephemeral"}
+            body["tools"] = _tool_list
 
         data = self._http_post(
             "/v1/messages",

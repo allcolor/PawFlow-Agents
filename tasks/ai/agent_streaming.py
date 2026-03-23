@@ -775,6 +775,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     llm_context = self._inject_identity(llm_context, _id_nicks)
                     llm_context = self._apply_identity_suffix(llm_context, ctx.get("_identity_suffix", ""))
 
+                    # Inject token budget awareness (like Claude Code)
+                    _max_ctx = ctx.get("max_context_size", 200000)
+                    _est_used = self._estimate_tokens(
+                        llm_context, tool_defs=tool_defs,
+                        chars_per_token=ctx.get("chars_per_token", 0))
+                    _remaining = max(0, _max_ctx - _est_used)
+                    if llm_context and llm_context[0].role == "system":
+                        _budget_note = f"\n\n[Context: ~{_est_used} of {_max_ctx} tokens used, ~{_remaining} remaining]"
+                        llm_context[0] = LLMMessage(
+                            role="system",
+                            content=(llm_context[0].content or "") + _budget_note,
+                        )
+
                     # Check cancellation before LLM call
                     if not self._is_current_generation(gen_key, my_generation):
                         raise AgentCancelled()

@@ -695,7 +695,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Per-agent: use service max_tokens (= context window size)
                 _resolved_max_ctx
             ),
-            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
+            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.75)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "chars_per_token": float(
                 (getattr(resolved_svc, 'config', {}) or {}).get("chars_per_token", 0)

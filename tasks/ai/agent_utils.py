@@ -385,8 +385,10 @@ class AgentUtilsMixin:
 
     # ── Tool result size management ──────────────────────────────────
 
-    # Tool result max size in context (chars). Anything over → FileStore.
-    _TOOL_RESULT_MAX = 400
+    # Tool result inline threshold (chars). Results over this are saved to
+    # FileStore with a preview in context. Old results are progressively
+    # cleared during compaction (oldest first).
+    _TOOL_RESULT_MAX = 1500
     # TTL for tool result files in FileStore (seconds). Default 1h.
     _TOOL_RESULT_TTL = 3600
 

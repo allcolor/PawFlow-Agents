@@ -221,18 +221,39 @@ export function executeAction(
         // Fuzzy match via diff-match-patch when exact match fails
         if (count === 0) {
           const dmp = new diff_match_patch();
-          // Create a patch from old_string → new_string
-          const patches = dmp.patch_make(oldString, newString);
-          // Apply with fuzzy matching (Match_Threshold controls tolerance)
-          dmp.Match_Threshold = 0.4;  // fairly tolerant
-          dmp.Patch_DeleteThreshold = 0.4;
-          const [patched, results] = dmp.patch_apply(patches, text);
-          const applied = results.filter((r: boolean) => r).length;
-          if (applied > 0) {
-            fs.writeFileSync(absPath, patched, 'utf-8');
-            return { ok: true, data: { replacements: applied, fuzzy: true, path: rel(absPath, rootDir) } };
+          dmp.Match_Threshold = 0.5;
+          dmp.Match_Distance = 2000;
+
+          // Strategy 1: find old_string fuzzily in text, then replace
+          const loc = dmp.match_main(text, oldString.slice(0, 64), 0);
+          if (loc !== -1) {
+            // Found approximate location — find the best end boundary
+            const endLoc = dmp.match_main(text, oldString.slice(-64), loc + oldString.length - 100);
+            const actualEnd = endLoc !== -1 ? endLoc + 64 : loc + oldString.length;
+            // Replace the fuzzy-matched region
+            text = text.slice(0, loc) + newString + text.slice(actualEnd);
+            fs.writeFileSync(absPath, text, 'utf-8');
+            return { ok: true, data: { replacements: 1, fuzzy: true, match_offset: loc, path: rel(absPath, rootDir) } };
           }
-          // Fuzzy failed — give helpful hint
+
+          // Strategy 2: line-by-line trimmed match (whitespace tolerance)
+          const oldLines = oldString.split('\n').map((l: string) => l.trim());
+          const textLines = text.split('\n');
+          for (let i = 0; i <= textLines.length - oldLines.length; i++) {
+            let match = true;
+            for (let j = 0; j < oldLines.length; j++) {
+              if (textLines[i + j].trim() !== oldLines[j]) { match = false; break; }
+            }
+            if (match) {
+              const newLines = newString.split('\n');
+              textLines.splice(i, oldLines.length, ...newLines);
+              text = textLines.join('\n');
+              fs.writeFileSync(absPath, text, 'utf-8');
+              return { ok: true, data: { replacements: 1, fuzzy: true, line: i + 1, path: rel(absPath, rootDir) } };
+            }
+          }
+
+          // All fuzzy strategies failed — give helpful hint
           const lines = text.split('\n');
           const needle = oldString.split('\n')[0].trim();
           let bestLine = -1, bestScore = 0;

@@ -354,16 +354,29 @@ def _action_edit(handler, path, req):
         try:
             import diff_match_patch as _dmp_mod
             dmp = _dmp_mod.diff_match_patch()
-            dmp.Match_Threshold = 0.4
-            dmp.Patch_DeleteThreshold = 0.4
-            patches = dmp.patch_make(old_string, new_string)
-            patched, results = dmp.patch_apply(patches, text)
-            applied = sum(1 for r in results if r)
-            if applied > 0:
-                p.write_text(patched, encoding="utf-8")
-                return {"replacements": applied, "fuzzy": True, "path": rel}
+            dmp.Match_Threshold = 0.5
+            dmp.Match_Distance = 2000
+
+            # Strategy 1: fuzzy find old_string in text, then replace
+            loc = dmp.match_main(text, old_string[:64], 0)
+            if loc != -1:
+                end_loc = dmp.match_main(text, old_string[-64:], loc + len(old_string) - 100)
+                actual_end = (end_loc + 64) if end_loc != -1 else (loc + len(old_string))
+                new_text = text[:loc] + new_string + text[actual_end:]
+                p.write_text(new_text, encoding="utf-8")
+                return {"replacements": 1, "fuzzy": True, "match_offset": loc, "path": rel}
         except ImportError:
-            pass  # diff-match-patch not installed, fall through to hint
+            pass
+
+        # Strategy 2: line-by-line trimmed match
+        old_lines = [l.strip() for l in old_string.split("\n")]
+        text_lines = text.split("\n")
+        for i in range(len(text_lines) - len(old_lines) + 1):
+            if all(text_lines[i + j].strip() == old_lines[j] for j in range(len(old_lines))):
+                new_lines = new_string.split("\n")
+                text_lines[i:i + len(old_lines)] = new_lines
+                p.write_text("\n".join(text_lines), encoding="utf-8")
+                return {"replacements": 1, "fuzzy": True, "line": i + 1, "path": rel}
         # Still not found — helpful hint
         lines = text.split("\n")
         needle = old_string.split("\n")[0].strip()

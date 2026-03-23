@@ -237,7 +237,7 @@ export class RelayManager implements vscode.Disposable {
     const relPath = msg.path || '.';
     const requestId = msg.request_id || '';
 
-    const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec);
+    const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec, this.relayId);
 
     const response = JSON.stringify({
       type: 'result',

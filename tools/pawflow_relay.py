@@ -95,15 +95,23 @@ class FSRelayHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _resolve_fs_url(self, value: str) -> str:
+        """Resolve fs://relay_id/path → relative path."""
+        if not value or not value.startswith("fs://"):
+            return value
+        # fs://any_relay_id/some/path → some/path
+        import re as _re_fs
+        m = _re_fs.match(r'fs://[^/]+/(.*)', value)
+        return m.group(1) if m else value
+
     def _resolve(self, rel_path: str):
         """Resolve relative path to absolute, checking traversal.
 
         Returns absolute path string or None if blocked.
         """
+        rel_path = self._resolve_fs_url(rel_path)
         root = Path(self.root_dir).resolve()
-        # Join with root, then resolve to handle .. etc.
         target = (root / rel_path).resolve()
-        # Must be under root
         try:
             target.relative_to(root)
         except ValueError:
@@ -131,7 +139,11 @@ class FSRelayHandler(BaseHTTPRequestHandler):
             return
 
         action = req.get("action", "")
-        rel_path = req.get("path", ".")
+        rel_path = self._resolve_fs_url(req.get("path", "."))
+        # Also resolve fs:// in other path-like fields
+        for _fk in ("source_path", "dest_path"):
+            if _fk in req and isinstance(req[_fk], str):
+                req[_fk] = self._resolve_fs_url(req[_fk])
 
         # Readonly check
         from fs_actions import WRITE_ACTIONS
@@ -338,7 +350,19 @@ def _action_edit(handler, path, req):
         raise ValueError("Missing 'old_string' (or use start_line/end_line)")
     count = text.count(old_string)
     if count == 0:
-        # Find closest match to help the LLM
+        # Fuzzy retry: normalize whitespace and try again
+        import re as _re_ws
+        _norm = lambda s: _re_ws.sub(r'[ \t]+', ' ', s).replace('\r\n', '\n')
+        if _norm(old_string) in _norm(text):
+            old_lines = [l.strip() for l in old_string.split("\n")]
+            text_lines = text.split("\n")
+            for i in range(len(text_lines) - len(old_lines) + 1):
+                if all(text_lines[i + j].strip() == old_lines[j] for j in range(len(old_lines))):
+                    new_lines = new_string.split("\n")
+                    text_lines[i:i + len(old_lines)] = new_lines
+                    p.write_text("\n".join(text_lines), encoding="utf-8")
+                    return {"replacements": 1, "fuzzy": True, "line": i + 1, "path": rel}
+        # Still not found — helpful hint
         lines = text.split("\n")
         needle = old_string.split("\n")[0].strip()
         best_line, best_score = -1, 0

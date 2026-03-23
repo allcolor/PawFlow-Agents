@@ -17,6 +17,25 @@ const WRITE_ACTIONS = new Set([
   'git_merge', 'git_rebase', 'git_cherry_pick', 'git_tag', 'project_init',
 ]);
 
+// Resolve fs://service_id/path → real filesystem path
+function resolveFsUrl(fsUrl: string, relayId: string, rootDir: string): string {
+  const prefix = `fs://${relayId}/`;
+  if (fsUrl.startsWith(prefix)) {
+    return fsUrl.slice(prefix.length);
+  }
+  // Also handle generic fs://xxx/ where xxx is any relay
+  const m = fsUrl.match(/^fs:\/\/[^/]+\/(.*)$/);
+  if (m) { return m[1]; }
+  return fsUrl;
+}
+
+// Convert absolute paths in text to fs:// URLs
+function pathToFsUrl(text: string, relayId: string, rootDir: string): string {
+  const root = path.resolve(rootDir).replace(/\\/g, '/');
+  return text.replace(new RegExp(root.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '/?', 'gi'),
+    `fs://${relayId}/`);
+}
+
 function resolvePath(rootDir: string, relPath: string): string | null {
   const root = path.resolve(rootDir);
   const target = path.resolve(root, relPath);
@@ -43,8 +62,14 @@ function gitRun(cwd: string, args: string[], timeout = 30000): { stdout: string;
 
 export function executeAction(
   rootDir: string, action: string, relPath: string, req: Record<string, any>,
-  readonly: boolean, allowExec: boolean,
+  readonly: boolean, allowExec: boolean, relayId: string = '',
 ): { ok: boolean; data?: any; error?: string } {
+
+  // Resolve fs:// URLs in path and all string fields
+  const _resolveFs = (s: string) => resolveFsUrl(s, relayId, rootDir);
+  relPath = _resolveFs(relPath);
+  if (req.source_path) req.source_path = _resolveFs(req.source_path);
+  if (req.dest_path) req.dest_path = _resolveFs(req.dest_path);
 
   if (readonly && WRITE_ACTIONS.has(action)) {
     return { ok: false, error: 'Operation not allowed in readonly mode' };
@@ -190,9 +215,33 @@ export function executeAction(
         }
 
         if (!oldString) { return { ok: false, error: 'Missing old_string (or use start_line/end_line)' }; }
-        const count = text.split(oldString).length - 1;
+        let count = text.split(oldString).length - 1;
+
+        // Fuzzy retry: if exact match fails, try normalized whitespace
         if (count === 0) {
-          // Find closest match to help the LLM
+          const normWs = (s: string) => s.replace(/[ \t]+/g, ' ').replace(/\r\n/g, '\n');
+          const normText = normWs(text);
+          const normOld = normWs(oldString);
+          if (normText.includes(normOld)) {
+            // Find the actual position in original text by matching line-by-line
+            const oldLines = oldString.split('\n').map((l: string) => l.trim());
+            const textLines = text.split('\n');
+            for (let i = 0; i <= textLines.length - oldLines.length; i++) {
+              let match = true;
+              for (let j = 0; j < oldLines.length; j++) {
+                if (textLines[i + j].trim() !== oldLines[j]) { match = false; break; }
+              }
+              if (match) {
+                // Found fuzzy match — do line-based replacement
+                const newLines = newString.split('\n');
+                textLines.splice(i, oldLines.length, ...newLines);
+                text = textLines.join('\n');
+                fs.writeFileSync(absPath, text, 'utf-8');
+                return { ok: true, data: { replacements: 1, fuzzy: true, line: i + 1, path: rel(absPath, rootDir) } };
+              }
+            }
+          }
+          // Still not found — give helpful hint
           const lines = text.split('\n');
           const needle = oldString.split('\n')[0].trim();
           let bestLine = -1, bestScore = 0;

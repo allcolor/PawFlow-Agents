@@ -575,10 +575,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                                     continue
                                 if _ptext and _ptext.strip():
                                     _uid = _pff.get_attribute("http.auth.principal") or user_id
-                                    messages.append(LLMMessage(
-                                        role="user", content=_ptext,
-                                        source={"type": "user", "name": _uid},
-                                    ))
                                     _append(LLMMessage(
                                         role="user", content=_ptext,
                                         source={"type": "user", "name": _uid},

@@ -382,6 +382,12 @@ class PixazoImageService(BaseImageGenerationService):
             if status in ("failed", "error"):
                 msg = data.get("message", "") or data.get("error", "") or str(data)[:200]
                 raise ServiceError(f"Pixazo generation failed: {msg}")
+            # Some models return images without a status field
+            if not status:
+                url = self._extract_image_url(data)
+                if url:
+                    logger.info("[PIXAZO] Got image URL without status field (%ds)", elapsed)
+                    return url
 
     def generate(self, prompt="", negative_prompt="", width=1024, height=1024,
                  steps=20, **kwargs) -> dict:

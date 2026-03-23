@@ -28,7 +28,7 @@ class LLMCliSharedMixin:
 
     def _http_post(self, path: str, body: dict, headers: dict) -> dict:
         """Send POST and return parsed JSON."""
-        parsed = urlparse(self.base_url)
+        parsed = urlparse(self.base_url or "https://api.openai.com")
         host = parsed.hostname
         port = parsed.port
         scheme = parsed.scheme

@@ -40,7 +40,8 @@ class LLMAnthropicMixin:
                 for t in tools
             ]
 
-        parsed = urlparse(self.base_url)
+        _base = self.base_url or "https://api.anthropic.com"
+        parsed = urlparse(_base)
         host = parsed.hostname
         port = parsed.port
         full_path = (parsed.path.rstrip("/") + "/v1/messages").replace("//", "/")

@@ -314,15 +314,11 @@ class UserServiceRegistry:
             from tasks import _register_all_services
             _register_all_services()
             svc_class = ServiceFactory.get(svc_def.service_type)
-            # Resolve expressions in config values
-            resolved_config = {}
-            for k, v in svc_def.config.items():
-                if isinstance(v, str) and "${" in v:
-                    resolved_config[k] = resolve_expression(v, owner=user_id)
-                else:
-                    resolved_config[k] = v
-            resolved_config["_service_id"] = service_id
-            svc_instance = svc_class(resolved_config)
+            # Wrap config with lazy expression resolution
+            from core.expression import LazyResolveDict
+            lazy_config = LazyResolveDict(svc_def.config)
+            lazy_config["_service_id"] = service_id
+            svc_instance = svc_class(lazy_config)
             svc_instance.connect()
             with self._data_lock:
                 self._live_instances.setdefault(user_id, {})[service_id] = svc_instance

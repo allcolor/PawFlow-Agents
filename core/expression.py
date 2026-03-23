@@ -105,6 +105,35 @@ def _substitute_expressions(template: str, resolver_fn) -> str:
     return "".join(result)
 
 
+class LazyResolveDict(dict):
+    """Dict wrapper that resolves ${...} expressions on every .get() call.
+
+    Use this anywhere config values may contain expressions. Values are
+    resolved fresh each time — never cached. Changes to global parameters
+    or secrets are picked up immediately.
+    """
+
+    def __getitem__(self, key):
+        val = super().__getitem__(key)
+        return self._resolve(val)
+
+    def get(self, key, default=None):
+        try:
+            val = super().__getitem__(key)
+            return self._resolve(val)
+        except KeyError:
+            return default
+
+    @staticmethod
+    def _resolve(val):
+        if isinstance(val, str) and "${" in val:
+            try:
+                return resolve_expression(val)
+            except Exception:
+                return val
+        return val
+
+
 def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = None,
                        parameters: Optional[Dict[str, Any]] = None,
                        owner: Optional[str] = None,

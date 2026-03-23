@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 GLOBAL_SERVICES_FILE = Path("config/global_services.json")
 
 
+
+
 @dataclass
 class GlobalServiceDef:
     """Definition of a global service."""
@@ -279,18 +281,14 @@ class GlobalServiceRegistry:
                 return
 
         try:
-            from core.expression import resolve_expression
             from tasks import _register_all_services
             _register_all_services()
             svc_class = ServiceFactory.get(svc_def.service_type)
-            # Resolve expressions in config values
-            resolved_config = {}
-            for k, v in svc_def.config.items():
-                if isinstance(v, str) and "${" in v:
-                    resolved_config[k] = resolve_expression(v)
-                else:
-                    resolved_config[k] = v
-            svc_instance = svc_class(resolved_config)
+            # Wrap config with lazy expression resolution —
+            # expressions are resolved at each .get() call, not cached.
+            from core.expression import LazyResolveDict
+            lazy_config = LazyResolveDict(svc_def.config)
+            svc_instance = svc_class(lazy_config)
             svc_instance.connect()
             with self._data_lock:
                 self._live_instances[service_id] = svc_instance

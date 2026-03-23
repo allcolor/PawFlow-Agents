@@ -411,10 +411,11 @@ class AgentCompactionMixin:
         print(f"[COMPACT] TRIGGERED: {estimated} > {limit}, compacting...", flush=True)
 
         # Pass 1: Progressive clearing of old tool results (oldest first)
+        _cpt = chars_per_token if chars_per_token > 0 else 3.5
         estimated = self._progressive_clear_tool_results(
             messages, limit, estimated,
             keep_recent=keep_recent,
-            chars_per_token=cpt,
+            chars_per_token=_cpt,
         )
         if estimated <= limit:
             logger.info(f"[compact] Pass 1 (progressive clear) sufficient: ~{estimated} tokens")

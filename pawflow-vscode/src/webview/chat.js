@@ -555,6 +555,41 @@ function updateRelayStatus(status) {
   }
 }
 
+function relayContextMenu(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  // Remove any existing context menu
+  var old = document.getElementById('relayCtxMenu');
+  if (old) old.remove();
+
+  var dot = document.getElementById('relayDot');
+  var isOn = dot && dot.classList.contains('on');
+
+  var menu = document.createElement('div');
+  menu.id = 'relayCtxMenu';
+  menu.className = 'ctx-menu';
+  menu.style.position = 'fixed';
+  menu.style.left = e.clientX + 'px';
+  menu.style.top = e.clientY + 'px';
+
+  var item = document.createElement('div');
+  item.className = 'ctx-menu-item';
+  item.textContent = isOn ? 'Disconnect relay' : 'Reconnect relay';
+  item.onclick = function() {
+    menu.remove();
+    vscode.postMessage({ type: 'reconnectRelay' });
+  };
+  menu.appendChild(item);
+
+  document.body.appendChild(menu);
+  setTimeout(function() {
+    document.addEventListener('click', function removeCtx() {
+      menu.remove();
+      document.removeEventListener('click', removeCtx);
+    });
+  }, 0);
+}
+
 // Auto-resize textarea
 inputEl.addEventListener('input', function() {
   inputEl.style.height = '36px';

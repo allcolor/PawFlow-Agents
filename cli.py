@@ -241,17 +241,13 @@ def cmd_serve(args):
 
 
 def cmd_gui(args):
-    """Start PawFlow server with optional Streamlit GUI.
+    """Start PawFlow server with native admin GUI.
 
     The PawFlow server (HTTP :9090, chat, agents) runs in the main process.
-    Streamlit admin GUI is launched as an optional subprocess — if it fails
-    or is unavailable, the server continues running.
+    Admin GUI is served natively at /admin via the pawflow-admin flow.
+    Streamlit is no longer launched (gui/ code kept for future migration).
     """
     import signal
-    import subprocess
-    import threading
-
-    project_root = os.path.dirname(os.path.abspath(__file__))
 
     # Configure logging
     logging.basicConfig(
@@ -271,47 +267,17 @@ def cmd_gui(args):
     er = ExecutorRegistry.get_instance()
     er.restore_from_disk()
     n = er.count()
-    logger.info(f"PawFlow server ready — {n} flow(s) restored, chat at http://{args.host}:{args.port}/chat")
+    logger.info(f"PawFlow server ready — {n} flow(s) restored")
+    logger.info(f"  Chat:  http://{args.host}:{args.port}/chat")
+    logger.info(f"  Admin: http://{args.host}:{args.port}/admin")
 
-    # 2. Launch Streamlit as optional subprocess (non-blocking)
-    streamlit_proc = None
-    st_port = int(args.port) + 1  # Streamlit on port+1 (e.g. 9091)
-
-    def _launch_streamlit():
-        nonlocal streamlit_proc
-        try:
-            env = os.environ.copy()
-            pythonpath = env.get("PYTHONPATH", "")
-            if project_root not in pythonpath.split(os.pathsep):
-                env["PYTHONPATH"] = project_root + (os.pathsep + pythonpath if pythonpath else "")
-
-            st_argv = [
-                sys.executable, "-m", "streamlit", "run", "gui/main.py",
-                f"--server.port={st_port}", f"--server.address={args.host}",
-                "--server.headless=true",
-            ]
-            streamlit_proc = subprocess.Popen(
-                st_argv, env=env, cwd=project_root,
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-            logger.info(f"Streamlit admin GUI at http://{args.host}:{st_port}")
-        except Exception as e:
-            logger.warning(f"Streamlit not available (server continues without admin GUI): {e}")
-
-    if not args.headless:
-        threading.Thread(target=_launch_streamlit, daemon=True).start()
-
-    # 3. Keep main thread alive, handle Ctrl+C gracefully
+    # 2. Keep main thread alive, handle Ctrl+C gracefully
     def _shutdown(sig, frame):
         logger.info("Shutting down...")
-        if streamlit_proc:
-            try:
-                streamlit_proc.terminate()
-            except Exception:
-                pass
-        # Stop all executors
+        # Prevent hot-reload from restarting the process
         try:
             reg = ExecutorRegistry.get_instance()
+            reg.request_shutdown()
             for eid in list(reg._executors.keys()):
                 try:
                     reg._executors[eid].stop()
@@ -319,7 +285,7 @@ def cmd_gui(args):
                     pass
         except Exception:
             pass
-        sys.exit(0)
+        os._exit(0)
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
@@ -690,10 +656,9 @@ def main():
     serve_parser.add_argument('--reload', action='store_true', help='Enable auto-reload')
 
     # gui
-    gui_parser = subparsers.add_parser('gui', help='Start the PawFlow Streamlit GUI')
+    gui_parser = subparsers.add_parser('gui', help='Start PawFlow server with native admin GUI')
     gui_parser.add_argument('--host', default='localhost', help='Host (default: localhost)')
-    gui_parser.add_argument('--port', type=int, default=8501, help='Port (default: 8501)')
-    gui_parser.add_argument('--headless', action='store_true', help='Run in headless mode')
+    gui_parser.add_argument('--port', type=int, default=9090, help='Port (default: 9090)')
 
     # plugins
     plugins_parser = subparsers.add_parser('plugins', help='Manage plugins')

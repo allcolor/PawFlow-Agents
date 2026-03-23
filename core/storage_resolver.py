@@ -152,11 +152,44 @@ class StorageResolver:
             return result["content"].encode("utf-8"), "text/plain"
         raise FileNotFoundError(f"Not found on '{service_name}': {path}")
 
+    # Aliases that auto-resolve to the first available filesystem service
+    _FS_AUTO_ALIASES = {"workspace", "ws", "local"}
+
+    # Filesystem service types (checked in order for auto-detection)
+    _FS_TYPES = ("filesystem", "browserFilesystem", "serverFilesystem",
+                 "googleDrive", "oneDrive")
+
     def _resolve_fs(self, service_name: str):
-        """Resolve a filesystem service by name."""
+        """Resolve a filesystem service by name.
+
+        "workspace", "ws", "local" → auto-detect first available FS.
+        Named service → look up by exact ID.
+        Fallback: if only one FS exists, use it regardless of name.
+        """
+        # Aliases → auto-detect
+        if service_name.lower() in self._FS_AUTO_ALIASES:
+            return self._find_first_fs()
+
+        # Try exact match via resolver or registries
         if self._fs_resolver:
-            return self._fs_resolver(service_name, self._user_id)
-        # Fallback: try registries directly
+            svc = self._fs_resolver(service_name, self._user_id)
+            if svc:
+                return svc
+
+        svc = self._lookup_service(service_name)
+        if svc:
+            return svc
+
+        # Fallback: if the name is unknown but only one FS exists, use it
+        only = self._find_first_fs()
+        if only:
+            logger.info("Service '%s' not found, using only available FS", service_name)
+            return only
+
+        return None
+
+    def _lookup_service(self, service_name: str):
+        """Look up a service by exact ID in registries."""
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             svc = GlobalServiceRegistry.get_instance().get_live_instance(service_name)
@@ -172,4 +205,35 @@ class StorageResolver:
                 return svc
         except Exception:
             pass
+        return None
+
+    def _find_first_fs(self):
+        """Auto-detect the first available filesystem service."""
+        # Global services
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all_definitions().items():
+                if not getattr(sdef, "enabled", True):
+                    continue
+                if getattr(sdef, "service_type", "") in self._FS_TYPES:
+                    svc = greg.get_live_instance(sid)
+                    if svc:
+                        return svc
+        except Exception:
+            pass
+        # User services
+        if self._user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                ureg = UserServiceRegistry.get_instance()
+                for fs_type in self._FS_TYPES:
+                    compatible = ureg.get_compatible(fs_type, self._user_id)
+                    for sdef in compatible:
+                        if sdef.enabled:
+                            svc = ureg.get_live_instance(self._user_id, sdef.service_id)
+                            if svc:
+                                return svc
+            except Exception:
+                pass
         return None

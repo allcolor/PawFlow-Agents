@@ -28,6 +28,8 @@
       { "command": "pawflow.newConversation", "title": "PawFlow: New Conversation" },
       { "command": "pawflow.login", "title": "PawFlow: Login" },
       { "command": "pawflow.toggleRelay", "title": "PawFlow: Toggle Relay" },
+      { "command": "pawflow.connectRelay", "title": "PawFlow: Connect Relay" },
+      { "command": "pawflow.disconnectRelay", "title": "PawFlow: Disconnect Relay" },
       { "command": "pawflow.switchAgent", "title": "PawFlow: Switch Agent" },
       { "command": "pawflow.switchModel", "title": "PawFlow: Switch Model" },
       { "command": "pawflow.compact", "title": "PawFlow: Compact Context" },

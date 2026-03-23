@@ -159,10 +159,12 @@ def register_all_tasks():
     # Scrapling fetch
     from tasks.io.scrapling_fetch import ScraplingFetchTask
 
-    # File serving + Chat UI + Assets
+    # File serving + Chat UI + Assets + Admin UI
     from tasks.io.serve_file import ServeFileTask
     from tasks.io.serve_chat_ui import ServeChatUITask
     from tasks.io.serve_assets import ServeAssetsTask
+    from tasks.io.serve_admin_ui import ServeAdminUITask
+    from tasks.io.admin_actions import AdminActionTask
 
     # Conversation-scoped flow tasks
     from tasks.io.publish_message import PublishMessageTask

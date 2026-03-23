@@ -49,6 +49,15 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'approval':
           await this.handleApproval(msg.requestId, msg.result, msg.approvalType);
           break;
+        case 'reconnectRelay':
+          await vscode.commands.executeCommand('pawflow.toggleRelay');
+          break;
+        case 'relayConnect':
+          await vscode.commands.executeCommand('pawflow.connectRelay', msg.path || '');
+          break;
+        case 'relayDisconnect':
+          await vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
+          break;
         case 'command':
           if (msg.command === 'clipboard_write') {
             await vscode.env.clipboard.writeText(msg.arg || '');
@@ -372,7 +381,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     const action = type === 'exec' ? 'exec_result' : 'tool_approval_result';
     await api.sendAction(action, {
       request_id: requestId,
-      result,
+      result: { choice: result },
       conversation_id: this.conversationId || '',
     });
   }
@@ -555,7 +564,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
   <button onclick="showPanel('tools')" title="Tools">&#128295; Tools</button>
   <button onclick="showPanel('accounts')" title="Linked Accounts">&#128279; Accounts</button>
   <button onclick="showPanel('plans')" title="Plans">&#128203; Plans</button>
-  <span class="relay-badge"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
+  <span class="relay-badge" id="relayBadge" oncontextmenu="relayContextMenu(event)"><span class="relay-dot off" id="relayDot"></span> <span id="relayLabel">Relay</span></span>
 </div>
 <div id="activeAgents" style="display:none;padding:2px 8px;border-bottom:1px solid var(--vscode-panel-border);font-size:10px;color:var(--vscode-descriptionForeground)"></div>
 <div style="position:relative;flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0">

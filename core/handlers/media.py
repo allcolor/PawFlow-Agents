@@ -60,11 +60,11 @@ class ImageGenerationHandler(ToolHandler):
                 },
                 "destination": {
                     "type": "string",
-                    "description": "Where to save: 'filestore' (default) or filesystem service (e.g. 'fs:workspace'). When using a filesystem, also provide 'path'.",
+                    "description": "Where to save: 'filestore' (default, returns a download URL) or the user's filesystem service name (writes directly to their disk). When using a filesystem, also provide 'path'. If only one filesystem service is connected, any name resolves to it.",
                 },
                 "path": {
                     "type": "string",
-                    "description": "File path when destination is a filesystem service (e.g. 'images/hero.png')",
+                    "description": "File path when destination is a filesystem service (e.g. 'assets/hero.png')",
                 },
             },
             "required": ["prompt"],

@@ -80,6 +80,9 @@ var COMMANDS = {
   '/delete-msg':  { parser: 'deleteMsgParser' },
   '/search':      { parser: 'searchParser' },
 
+  '/connect':     { parser: 'connectParser' },
+  '/disconnect':  { handler: 'disconnectRelay' },
+
   '/login':       { handler: 'showLoginMsg' },
   '/quit':        { handler: 'showQuitMsg' },
   '/exit':        { handler: 'showQuitMsg' },
@@ -111,6 +114,16 @@ function pasteClipboard() { vscode.postMessage({ type: 'command', command: 'clip
 function showInstallHelp() { addMsg('system', 'To install a tool, drag & drop a .py file into the chat.'); }
 function showWatchNotAvailable() { addMsg('system', '/watch is not available in VSCode. Use the CLI.'); }
 function clearAttachments() { vscode.postMessage({ type: 'command', command: 'clear_attachments' }); addMsg('system', 'Attachments cleared.'); }
+function disconnectRelay(arg) {
+  vscode.postMessage({ type: 'relayDisconnect', path: arg || '' });
+  addMsg('system', 'Disconnecting relay' + (arg ? ' for ' + arg : '') + '...');
+}
+function connectParser(parts, text) {
+  var path = parts.slice(1).join(' ');
+  vscode.postMessage({ type: 'relayConnect', path: path || '' });
+  addMsg('system', 'Connecting relay' + (path ? ' to ' + path : '') + '...');
+  return null;
+}
 function showLoginMsg() { addMsg('system', 'Use the PawFlow: Login command from the command palette (Ctrl+Shift+P).'); }
 function showQuitMsg() { addMsg('system', '/quit is not applicable in VSCode.'); }
 

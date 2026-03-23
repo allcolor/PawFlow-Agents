@@ -246,11 +246,12 @@ Tools that read/write files support `source` and `destination` params:
 - `"fs:<service>"`: filesystem service (relay to user's machine)
 - `"<service>"`: shorthand for `"fs:<service>"`
 
-Examples:
-- `create_file(filename="report.csv", content="...", destination="fs:workspace")` - write directly to user's workspace
-- `read_file(path="src/main.py", source="fs:workspace")` - read from user's filesystem
-- `generate_image(prompt="...", destination="fs:workspace", path="assets/hero.png")` - render directly to filesystem
-- `execute_script(code="...", destination="fs:workspace")` - execute on user's machine via relay
+Examples (use the actual filesystem service name from the conversation context):
+- `create_file(filename="report.csv", content="...", destination="<fs_service_name>")` - write directly to user's disk
+- `read_file(path="src/main.py", source="<fs_service_name>")` - read from user's filesystem
+- `generate_image(prompt="...", destination="<fs_service_name>", path="assets/hero.png")` - render directly to filesystem
+- `execute_script(code="...", destination="<fs_service_name>")` - execute on user's machine via relay
+If only one filesystem service is connected, any name will resolve to it.
 
 ## Flow Scope (runtime dependencies)
 A flow declares its runtime scope in the JSON: `"scope": "independent" | "user" | "conversation"`

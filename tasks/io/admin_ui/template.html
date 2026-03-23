@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PawFlow Admin</title>
+<style>
+/* CSS_PLACEHOLDER */
+</style>
+</head>
+<body>
+  <header id="topbar">
+    <div class="topbar-left">
+      <span class="topbar-logo">&#9881;</span>
+      <span class="topbar-title">PawFlow Admin</span>
+      <div class="topbar-nav">
+        <button class="topbar-nav-btn active" id="nav-runtime" onclick="showRuntimeView()">Runtime</button>
+        <button class="topbar-nav-btn" id="nav-editor" onclick="showEditorView()">Editor</button>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span id="topbar-user"></span>
+      <button id="btn-refresh" class="topbar-btn" title="Refresh">&#8635;</button>
+    </div>
+  </header>
+
+  <!-- Runtime View -->
+  <div id="runtime-view" style="display:flex;height:calc(100vh - 48px)">
+    <nav id="sidebar">
+      <div id="sidebar-header">
+        <input type="text" id="flow-search" placeholder="Search flows..." autocomplete="off">
+        <button id="btn-deploy" class="btn btn-primary btn-sm">+ Deploy</button>
+      </div>
+      <div id="flow-list"></div>
+    </nav>
+    <main id="content">
+      <div id="empty-state">
+        <div class="empty-icon">&#9881;</div>
+        <h2>PawFlow Admin</h2>
+        <p>Select a flow from the sidebar or deploy a new one.</p>
+      </div>
+      <div id="flow-detail" style="display:none"></div>
+    </main>
+  </div>
+
+  <!-- Editor View -->
+  <div id="editor-view" style="display:none;height:calc(100vh - 48px)">
+    <div id="editor-toolbar">
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="editorNewFlow()" title="New">New</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorLoadFlow()" title="Load">Load</button>
+        <button class="btn btn-primary btn-sm" onclick="editorSaveFlow()" title="Save (Ctrl+S)">Save</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorValidateFlow()" title="Validate">Validate</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="editorAutoLayout()" title="Auto Layout">Layout</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorUndo()" title="Undo (Ctrl+Z)">Undo</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorRedo()" title="Redo (Ctrl+Y)">Redo</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="editorZoomIn()">+</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorZoomOut()">&minus;</button>
+        <button class="btn btn-ghost btn-sm" onclick="editorZoomFit()">Fit</button>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="editorEditMetadata()">Metadata</button>
+        <button class="btn btn-danger btn-sm" onclick="editorDeleteSelected()">Delete</button>
+      </div>
+    </div>
+    <div id="editor-body">
+      <div id="editor-left-panel">
+        <div id="editor-palette"></div>
+        <div id="editor-services" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)"></div>
+      </div>
+      <div id="editor-canvas" ondrop="canvasHandleDrop(event)" ondragover="canvasHandleDragOver(event)"></div>
+      <div id="editor-right-panel">
+        <div id="editor-config"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="modal-overlay" style="display:none">
+    <div id="modal-box"></div>
+  </div>
+  <div id="toast-container"></div>
+  <script>
+  var ADMIN_API = "{{API_PATH}}";
+  var LOGIN_URL = "{{LOGIN_URL}}";
+  /* JS_PLACEHOLDER */
+  document.addEventListener("DOMContentLoaded", function() { adminInit(); });
+  </script>
+</body>
+</html>

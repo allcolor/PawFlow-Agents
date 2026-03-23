@@ -45,7 +45,10 @@ code { font-family: var(--vscode-editor-font-family); }
 .toolbar-row2 button { background: none; color: var(--vscode-descriptionForeground); border: none; padding: 2px 6px; cursor: pointer; font-size: 10px; border-radius: 3px; }
 .toolbar-row2 button:hover { background: var(--vscode-button-secondaryHoverBackground); color: var(--vscode-editor-foreground); }
 .toolbar-row2 .active { color: var(--vscode-textLink-foreground); }
-.relay-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; margin-left: auto; }
+.relay-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; margin-left: auto; cursor: pointer; }
+.ctx-menu { background: var(--vscode-menu-background, var(--vscode-editor-background)); border: 1px solid var(--vscode-menu-border, var(--vscode-panel-border)); border-radius: 4px; padding: 2px 0; z-index: 1000; min-width: 140px; box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+.ctx-menu-item { padding: 4px 12px; cursor: pointer; font-size: 12px; color: var(--vscode-menu-foreground, var(--vscode-editor-foreground)); }
+.ctx-menu-item:hover { background: var(--vscode-menu-selectionBackground, var(--vscode-list-hoverBackground)); color: var(--vscode-menu-selectionForeground, var(--vscode-editor-foreground)); }
 .relay-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
 .relay-dot.on { background: #3fb950; }
 .relay-dot.off { background: #f85149; }

@@ -125,6 +125,35 @@ export async function activate(context: vscode.ExtensionContext) {
       }
     }),
 
+    vscode.commands.registerCommand('pawflow.connectRelay', async (path?: string) => {
+      if (!apiClient) {
+        vscode.window.showWarningMessage('PawFlow: Not logged in');
+        return;
+      }
+      const dir = path || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      if (!dir) {
+        vscode.window.showWarningMessage('PawFlow: No workspace folder and no path specified');
+        return;
+      }
+      try {
+        await relay.start(apiClient, auth.getUsername(), dir,
+                          config.get<boolean>('allowExec', true));
+        vscode.window.showInformationMessage(`PawFlow: Relay connected to ${dir}`);
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`PawFlow relay failed: ${e.message}`);
+      }
+    }),
+
+    vscode.commands.registerCommand('pawflow.disconnectRelay', async (path?: string) => {
+      if (!apiClient) { return; }
+      // If path is specified, only disconnect if current relay matches
+      // For now, we disconnect the current relay regardless
+      if (relay.isRunning) {
+        await relay.stop(apiClient);
+        vscode.window.showInformationMessage('PawFlow: Relay disconnected');
+      }
+    }),
+
     vscode.commands.registerCommand('pawflow.explainSelection', () => {
       sendSelectionToChat('Explain this code in detail:');
     }),

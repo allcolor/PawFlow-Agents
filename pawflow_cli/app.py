@@ -542,7 +542,7 @@ class PawCode:
         try:
             self.api.send_action("tool_approval_result",
                                  request_id=data.get("request_id", ""),
-                                 result=result,
+                                 result={"choice": result},
                                  conversation_id=self.conversation_id)
         except Exception as e:
             self.renderer.print_error(f"Approval error: {e}")
@@ -660,6 +660,8 @@ class PawCode:
                 "- `/plan cancel <id>` — Cancel a plan\n"
                 "- `/plan delete <id>` — Delete a plan\n"
                 "- `/plan <description>` — Ask agent to create a plan\n"
+                "- `/connect [path]` — Connect relay to directory (default: workspace)\n"
+                "- `/disconnect` — Disconnect filesystem relay\n"
                 "- `/run <command>` — Run shell command on relay directly\n"
                 "- `/diff [file|ref]` — Show git diff with colors\n"
                 "- `/watch <file>` — Watch file for changes (poll 3s)\n"

@@ -50,7 +50,7 @@ class FilesystemToolHandler(ToolHandler):
             "Project: project_init (generate .pawflow.md). "
             "Paths support fs:// URLs: fs://service_id/path. "
             "Paths are relative to the service root. "
-            "Aliases: 'workspace', 'ws', 'local' always resolve to the first available filesystem. "
+            "If only one filesystem is connected, any service name resolves to it. Use the 'service' parameter with the exact service name from the conversation context. "
             "Git workflow: use git_tag to create checkpoints before major changes (e.g. 'v33-stable'). "
             "Use git_branch to try alternatives. Use git_stash to save work-in-progress. "
             "Use git_diff to review changes before committing. "

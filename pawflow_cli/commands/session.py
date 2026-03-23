@@ -1,10 +1,18 @@
-"""Session commands: /quit, /login, /clear, /new, /link."""
+"""Session commands: /quit, /login, /clear, /new, /link, /connect, /disconnect."""
 
 import os
 
 
 def handle_session_commands(app, cmd, arg, text):
     """Handle session commands. Returns True if handled, False otherwise."""
+
+    if cmd == "/connect":
+        _connect_relay(app, arg.strip() if arg else "")
+        return True
+
+    if cmd == "/disconnect":
+        _disconnect_relay(app, arg.strip() if arg else "")
+        return True
 
     if cmd in ("/quit", "/exit"):
         app.renderer.print_system("Shutting down...")
@@ -87,3 +95,48 @@ def handle_session_commands(app, cmd, arg, text):
         return True
 
     return False
+
+
+def _connect_relay(app, path: str):
+    """Connect filesystem relay to a directory. Default: current workspace."""
+    from pawflow_cli.relay import RelayThread
+
+    directory = path or app.directory
+    if not directory:
+        app.renderer.print_error("No path specified and no workspace directory set.")
+        return
+
+    directory = os.path.abspath(os.path.expanduser(directory))
+    if not os.path.isdir(directory):
+        app.renderer.print_error(f"Directory not found: {directory}")
+        return
+
+    # Stop existing relay if running
+    if app.relay and app.relay._registered:
+        app.renderer.print_system(f"Stopping current relay ({app.relay.directory})...")
+        app.relay.stop()
+
+    app.renderer.print_system(f"Connecting relay to {directory}...")
+    try:
+        app.relay = RelayThread(
+            app.server_url, app.session_token, app.username,
+            directory, app.allow_exec,
+        )
+        app.relay.start()
+        app.renderer.print_system(f"Relay '{app.relay.relay_id}' connected on port {app.relay.port}")
+    except Exception as e:
+        app.renderer.print_error(f"Relay failed: {e}")
+
+
+def _disconnect_relay(app, path: str):
+    """Disconnect filesystem relay."""
+    if not app.relay or not app.relay._registered:
+        app.renderer.print_system("No relay connected.")
+        return
+
+    app.renderer.print_system(f"Disconnecting relay ({app.relay.directory})...")
+    try:
+        app.relay.stop()
+        app.renderer.print_system("Relay disconnected.")
+    except Exception as e:
+        app.renderer.print_error(f"Error: {e}")

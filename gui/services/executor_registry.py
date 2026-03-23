@@ -56,6 +56,7 @@ class ExecutorRegistry:
         self._executor_lock = threading.Lock()
         self._restored = False
         self._hot_reload_started = False
+        self._shutting_down = False
         self._py_mtimes: Dict[str, float] = {}  # path -> mtime
 
     @classmethod
@@ -280,16 +281,24 @@ class ExecutorRegistry:
                     changed.append(s)
         return changed
 
+    def request_shutdown(self):
+        """Signal that the process is shutting down. Prevents hot-reload restart."""
+        self._shutting_down = True
+
     def _hot_reload_loop(self):
         """Background loop: scan for changes, debounce, restart process."""
-        while True:
+        while not self._shutting_down:
             _time.sleep(_HOT_RELOAD_INTERVAL)
+            if self._shutting_down:
+                return
             try:
                 changed = self._check_changes()
                 if not changed:
                     continue
                 # Debounce: wait, then re-check to catch multi-file saves
                 _time.sleep(_HOT_RELOAD_DEBOUNCE)
+                if self._shutting_down:
+                    return
                 changed = self._check_changes()
                 if not changed:
                     continue
@@ -304,13 +313,14 @@ class ExecutorRegistry:
             except Exception as e:
                 logger.error("Hot-reload error: %s", e)
 
-    @staticmethod
-    def _restart_server():
+    def _restart_server(self):
         """Restart the entire server process.
 
         Gracefully stops all executors, then re-exec's the process with
         the same arguments. Flows auto-restore via restore_from_disk().
         """
+        if self._shutting_down:
+            return
         import sys
         # Stop all running executors gracefully
         try:

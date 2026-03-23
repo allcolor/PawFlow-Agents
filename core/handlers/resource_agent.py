@@ -681,12 +681,23 @@ class ShowFileHandler(ToolHandler):
         self._user_id = user_id
 
     def _find_fs_service(self, service_name: str):
-        """Find a filesystem service by name."""
+        """Find a filesystem service by name (global or user)."""
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
-            return GlobalServiceRegistry.get_instance().get_live_instance(service_name)
+            svc = GlobalServiceRegistry.get_instance().get_live_instance(service_name)
+            if svc:
+                return svc
         except Exception:
             pass
+        if self._user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                svc = UserServiceRegistry.get_instance().get_live_instance(
+                    self._user_id, service_name)
+                if svc:
+                    return svc
+            except Exception:
+                pass
         return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:

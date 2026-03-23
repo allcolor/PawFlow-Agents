@@ -344,20 +344,33 @@ class AgentUtilsMixin:
 
 
     @staticmethod
-    def _deflate_image_messages(messages: List[LLMMessage]):
+    def _deflate_image_messages(messages: List[LLMMessage], keep_last: bool = False):
         """Replace multimodal image content with text-only references in-place.
 
         Called after the LLM has seen the images so base64 data doesn't
         persist in the conversation context.  The LLM can use view_image
         or show_file to re-request an image if needed.
+
+        If keep_last=True, the last message with images is preserved
+        (for pre-send compaction where the LLM hasn't seen them yet).
         """
-        for m in messages:
+        if keep_last:
+            # Find the last message with images and skip it
+            last_img_idx = -1
+            for i, m in enumerate(messages):
+                if isinstance(m.content, list) and any(
+                    p.get("type") == "image_url" for p in m.content
+                ):
+                    last_img_idx = i
+        for idx, m in enumerate(messages):
             if not isinstance(m.content, list):
                 continue
             has_images = any(
                 p.get("type") == "image_url" for p in m.content
             )
             if not has_images:
+                continue
+            if keep_last and idx == last_img_idx:
                 continue
             # Keep text parts, replace images with a reference
             text_parts = []

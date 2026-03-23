@@ -175,6 +175,18 @@ class LLMOpenaiMixin:
 
     def _build_openai_messages(self, messages) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format."""
+        # Log multipart content for debugging
+        _img_count = 0
+        for m in messages:
+            if isinstance(m.content, list):
+                for p in m.content:
+                    if p.get("type") == "image_url":
+                        _img_count += 1
+                        _url = (p.get("image_url", {}).get("url", "") or "")[:60]
+                        logger.debug("build_openai_messages: image_url part in %s msg: %s...", m.role, _url)
+        if _img_count:
+            logger.info("build_openai_messages: %d image part(s) in context", _img_count)
+
         # Sanitize: collect tool_call IDs from assistant messages, drop orphan tool messages
         valid_tc_ids: set = set()
         for m in messages:

@@ -193,8 +193,9 @@ class AgentCompactionMixin:
         # Ensure no display-only messages leak into compaction
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
 
-        # Always deflate any leftover image base64 before estimating
-        self._deflate_image_messages(messages)
+        # Deflate old images before estimating — but keep the last one
+        # (the LLM hasn't seen it yet in this iteration)
+        self._deflate_image_messages(messages, keep_last=True)
         # Strip base64 blobs from ALL messages — images, tool results, user attachments
         import re as _re_b64
         for m in messages:

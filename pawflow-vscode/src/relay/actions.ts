@@ -218,23 +218,29 @@ export function executeAction(
         if (!oldString) { return { ok: false, error: 'Missing old_string (or use start_line/end_line)' }; }
         let count = text.split(oldString).length - 1;
 
-        // Fuzzy match via diff-match-patch when exact match fails
+        // Fuzzy match when exact match fails
         if (count === 0) {
-          const dmp = new diff_match_patch();
-          dmp.Match_Threshold = 0.5;
-          dmp.Match_Distance = 2000;
-
-          // Strategy 1: find old_string fuzzily in text, then replace
-          const loc = dmp.match_main(text, oldString.slice(0, 64), 0);
-          if (loc !== -1) {
-            // Found approximate location — find the best end boundary
-            const endLoc = dmp.match_main(text, oldString.slice(-64), loc + oldString.length - 100);
-            const actualEnd = endLoc !== -1 ? endLoc + 64 : loc + oldString.length;
-            // Replace the fuzzy-matched region
-            text = text.slice(0, loc) + newString + text.slice(actualEnd);
-            fs.writeFileSync(absPath, text, 'utf-8');
-            return { ok: true, data: { replacements: 1, fuzzy: true, match_offset: loc, path: rel(absPath, rootDir) } };
-          }
+          // Strategy 1: diff-match-patch fuzzy find
+          try {
+            const dmp = new diff_match_patch();
+            dmp.Match_Threshold = 0.5;
+            dmp.Match_Distance = 2000;
+            // match_main only handles patterns <= ~32 chars internally
+            const pattern = oldString.split('\n')[0].trim().slice(0, 32);
+            if (pattern.length >= 8) {
+              const loc = dmp.match_main(text, pattern, 0);
+              if (loc !== -1) {
+                // Found start — find end via last line
+                const lastLine = oldString.split('\n').pop()!.trim().slice(0, 32);
+                const searchFrom = Math.max(0, loc + oldString.length - 200);
+                const endLoc = lastLine.length >= 8 ? dmp.match_main(text, lastLine, searchFrom) : -1;
+                const actualEnd = endLoc !== -1 ? endLoc + lastLine.length : loc + oldString.length;
+                text = text.slice(0, loc) + newString + text.slice(actualEnd);
+                fs.writeFileSync(absPath, text, 'utf-8');
+                return { ok: true, data: { replacements: 1, fuzzy: true, match_offset: loc, path: rel(absPath, rootDir) } };
+              }
+            }
+          } catch { /* diff-match-patch error — try next strategy */ }
 
           // Strategy 2: line-by-line trimmed match (whitespace tolerance)
           const oldLines = oldString.split('\n').map((l: string) => l.trim());

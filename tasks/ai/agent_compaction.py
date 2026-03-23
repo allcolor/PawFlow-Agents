@@ -279,8 +279,8 @@ class AgentCompactionMixin:
                 if params:
                     td_tokens += len(json.dumps(params) if isinstance(params, dict) else str(params)) // cpt
 
-        # Target: 70% of max to leave headroom
-        target = int(max_tokens * 0.70) - int(td_tokens)
+        # Target: 25% of max (same as summarization — leave 75% for response)
+        target = int(max_tokens * 0.25) - int(td_tokens)
         if target < 1000:
             target = 1000
 

@@ -66,3 +66,4 @@ mkdocs-material>=9.0.0
 # psycopg2-binary>=2.9.0   # PostgreSQL storage
 # pymysql>=1.1.0            # MySQL storage
 # pulsar-client>=3.3.0      # Pulsar messaging
+diff-match-patch>=20230501

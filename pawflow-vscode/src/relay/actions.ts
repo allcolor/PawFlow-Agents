@@ -327,9 +327,12 @@ export function executeAction(
           const wslBash = 'C:\\Windows\\System32\\bash.exe';
           if (fs.existsSync(gitBash)) {
             shellOpt = { shell: gitBash };
-            // Convert C:\path\to\dir to /c/path/to/dir for Git Bash
-            execCommand = command.replace(/([A-Z]):\\([^ "']*)/gi, (_m: string, drive: string, rest: string) =>
-              '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/'));
+            // Convert C:\path and C:/path to /c/path for Git Bash
+            execCommand = command
+              .replace(/([A-Z]):\\([^ "']*)/gi, (_m: string, drive: string, rest: string) =>
+                '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/'))
+              .replace(/([A-Z]):\/([^ "']*)/gi, (_m: string, drive: string, rest: string) =>
+                '/' + drive.toLowerCase() + '/' + rest);
           } else if (fs.existsSync(wslBash)) {
             shellOpt = { shell: wslBash };
           }

@@ -448,11 +448,16 @@ def _action_exec(handler, path, req):
         _wsl_bash = Path("C:/Windows/System32/bash.exe")
         if _git_bash.exists():
             shell_args = {"executable": str(_git_bash)}
-            # Convert Windows paths: C:\x\y → /c/x/y
+            # Convert Windows paths: C:\x\y and C:/x/y → /c/x/y
             exec_cmd = _re_path.sub(
                 r'([A-Za-z]):\\([^ "\']*)',
                 lambda m: '/' + m.group(1).lower() + '/' + m.group(2).replace('\\', '/'),
                 command,
+            )
+            exec_cmd = _re_path.sub(
+                r'([A-Za-z]):/([^ "\']*)',
+                lambda m: '/' + m.group(1).lower() + '/' + m.group(2),
+                exec_cmd,
             )
         elif _wsl_bash.exists():
             shell_args = {"executable": str(_wsl_bash)}

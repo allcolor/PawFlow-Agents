@@ -1307,8 +1307,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 iteration, start_time, source=_agent_source(),
                 interrupted=True,
             ))
+            # Set idle — the user stopped this agent intentionally.
+            # Don't set "active" which would trigger the poller to relance.
             from core.conversation_store import ConversationStore as _CSi
-            _CSi.instance().set_status(conversation_id, "active")
+            _CSi.instance().set_status(conversation_id, "idle")
         except AgentCancelled:
             logger.info(f"[agent:{conversation_id[:8]}] cancelled — stopping gracefully")
             # Flush any partial messages accumulated so far

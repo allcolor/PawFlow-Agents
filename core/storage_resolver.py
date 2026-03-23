@@ -122,17 +122,24 @@ class StorageResolver:
         svc = self._resolve_fs(service_name)
         if not svc:
             raise ValueError(f"Filesystem service '{service_name}' not found")
-        import base64
-        result = svc.execute_command({
-            "action": "write",
-            "path": path,
-            "content_b64": base64.b64encode(data).decode(),
-        })
+
+        # Prefer direct write_file (FilesystemService unified relay)
+        if hasattr(svc, 'write_file'):
+            svc.write_file(path, data)
+        elif hasattr(svc, 'execute_command'):
+            import base64
+            svc.execute_command({
+                "action": "write",
+                "path": path,
+                "content_b64": base64.b64encode(data).decode(),
+            })
+        else:
+            raise TypeError(f"Service '{service_name}' has no write method")
+
         return {
             "path": path,
             "destination": service_name,
             "service": service_name,
-            "result": result,
         }
 
     def _read_filesystem(self, service_name: str, path: str) -> Tuple[bytes, str]:
@@ -140,16 +147,23 @@ class StorageResolver:
         svc = self._resolve_fs(service_name)
         if not svc:
             raise ValueError(f"Filesystem service '{service_name}' not found")
-        import base64
-        result = svc.execute_command({
-            "action": "read",
-            "path": path,
-        })
-        if isinstance(result, dict) and result.get("content_b64"):
-            data = base64.b64decode(result["content_b64"])
-            return data, result.get("content_type", "")
-        elif isinstance(result, dict) and result.get("content"):
-            return result["content"].encode("utf-8"), "text/plain"
+
+        # Prefer direct read_file (FilesystemService unified relay)
+        if hasattr(svc, 'read_file'):
+            data = svc.read_file(path)
+            return data, ""
+        elif hasattr(svc, 'execute_command'):
+            import base64
+            result = svc.execute_command({
+                "action": "read",
+                "path": path,
+            })
+            if isinstance(result, dict) and result.get("content_b64"):
+                data = base64.b64decode(result["content_b64"])
+                return data, result.get("content_type", "")
+            elif isinstance(result, dict) and result.get("content"):
+                return result["content"].encode("utf-8"), "text/plain"
+
         raise FileNotFoundError(f"Not found on '{service_name}': {path}")
 
     # Aliases that auto-resolve to the first available filesystem service

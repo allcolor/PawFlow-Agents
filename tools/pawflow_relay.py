@@ -338,7 +338,22 @@ def _action_edit(handler, path, req):
         raise ValueError("Missing 'old_string' (or use start_line/end_line)")
     count = text.count(old_string)
     if count == 0:
-        raise ValueError(f"old_string not found in {p.name}")
+        # Find closest match to help the LLM
+        lines = text.split("\n")
+        needle = old_string.split("\n")[0].strip()
+        best_line, best_score = -1, 0
+        for li, line in enumerate(lines):
+            lt = line.strip()
+            if lt and (needle[:30] in lt or lt[:30] in needle):
+                score = min(len(lt), len(needle))
+                if score > best_score:
+                    best_score = score
+                    best_line = li + 1
+        hint = (f" Closest match near line {best_line}: \"{lines[best_line-1].strip()[:80]}\". "
+                f"Try edit with start_line={best_line}/end_line={best_line}."
+                if best_line > 0
+                else " Try using start_line/end_line instead of old_string.")
+        raise ValueError(f"old_string not found in {p.name}.{hint}")
     if count > 1 and not replace_all:
         raise ValueError(f"old_string found {count} times (use replace_all=true)")
     if replace_all:

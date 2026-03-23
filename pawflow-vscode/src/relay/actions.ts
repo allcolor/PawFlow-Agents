@@ -191,7 +191,23 @@ export function executeAction(
 
         if (!oldString) { return { ok: false, error: 'Missing old_string (or use start_line/end_line)' }; }
         const count = text.split(oldString).length - 1;
-        if (count === 0) { return { ok: false, error: `old_string not found in ${path.basename(absPath)}` }; }
+        if (count === 0) {
+          // Find closest match to help the LLM
+          const lines = text.split('\n');
+          const needle = oldString.split('\n')[0].trim();
+          let bestLine = -1, bestScore = 0;
+          for (let li = 0; li < lines.length; li++) {
+            const line = lines[li].trim();
+            if (line.includes(needle.slice(0, 30)) || needle.includes(line.slice(0, 30))) {
+              const score = Math.min(line.length, needle.length);
+              if (score > bestScore) { bestScore = score; bestLine = li + 1; }
+            }
+          }
+          const hint = bestLine > 0
+            ? ` Closest match near line ${bestLine}: "${lines[bestLine-1].trim().slice(0, 80)}". Try edit with start_line=${bestLine}/end_line=${bestLine}.`
+            : ' Try using start_line/end_line instead of old_string.';
+          return { ok: false, error: `old_string not found in ${path.basename(absPath)}.${hint}` };
+        }
         if (count > 1 && !replaceAll) { return { ok: false, error: `old_string found ${count} times (use replace_all)` }; }
         if (replaceAll) {
           text = text.split(oldString).join(newString);

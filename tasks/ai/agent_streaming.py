@@ -553,21 +553,29 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         if isinstance(_pbody, bytes):
                             _pbody = _pbody.decode("utf-8", errors="replace")
                         _ptext = None
+                        _is_action = False
                         try:
                             _pjson = json.loads(_pbody)
                             if isinstance(_pjson, dict):
-                                # Skip actions (list_resources, etc.) — only inject messages
-                                if _pjson.get("action") and "message" not in _pjson:
-                                    continue
-                                if _pjson.get("action"):
-                                    continue
-                                _pconv = _pjson.get("conversation_id")
-                                if _pconv and _pconv != conversation_id:
-                                    continue
-                                _ptext = _pjson.get("message", "")
+                                _is_action = bool(_pjson.get("action"))
+                                if not _is_action:
+                                    _pconv = _pjson.get("conversation_id")
+                                    if _pconv and _pconv != conversation_id:
+                                        continue
+                                    _ptext = _pjson.get("message", "")
                         except (json.JSONDecodeError, ValueError):
                             pass
-                        if _ptext and _ptext.strip():
+                        if _is_action:
+                            # Execute action immediately (UI requests: list_resources, etc.)
+                            try:
+                                result = self._handle_action(_pff)
+                                if result:
+                                    # Send response back to HTTP client
+                                    for _rff in result:
+                                        _respond_http(_rff)
+                            except Exception as _ae:
+                                logger.debug(f"Inline action failed: {_ae}")
+                        elif _ptext and _ptext.strip():
                             _inject_user_msg(_ptext, _pff.get_attribute("http.auth.principal"))
                             _respond_http(_pff)
                 except Exception as _e:
@@ -596,22 +604,24 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             logger.info(f"[agent:{conversation_id[:8]}] injected pending "
                         f"user message: {text[:80]!r}")
 
-        def _respond_http(ff):
+        def _respond_http(ff, body=None, status=200):
             """Send HTTP response for a drained FlowFile."""
             _req_id = ff.get_attribute("http.request.id")
             if not _req_id:
                 return
+            if body is None:
+                body = ff.get_content() if ff.get_attribute("http.response.status") else \
+                    json.dumps({"status": "accepted",
+                                "conversation_id": conversation_id}).encode()
+            if isinstance(body, str):
+                body = body.encode("utf-8")
+            _status = int(ff.get_attribute("http.response.status") or status)
+            _ct = ff.get_attribute("http.response.header.Content-Type") or "application/json"
             try:
                 from services.http_listener_service import _instances
                 for _port, _svc in _instances.items():
                     if _svc._server and _req_id in _svc._server._pending_requests:
-                        _svc.complete_response(
-                            _req_id, 200,
-                            {"Content-Type": "application/json"},
-                            json.dumps({"status": "accepted",
-                                        "conversation_id": conversation_id,
-                                        "injected": True}).encode()
-                        )
+                        _svc.complete_response(_req_id, _status, {"Content-Type": _ct}, body)
                         break
             except Exception:
                 pass

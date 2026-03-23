@@ -541,25 +541,13 @@ class ContinuousFlowExecutor:
             if hasattr(task, '_drain_pending'):
                 _incoming = self._connections.get_incoming(task_id)
                 def _drain_fn():
-                    """Dequeue only user message FlowFiles from input queue.
-                    Actions (list_resources, etc.) stay in queue for normal processing."""
-                    import json as _dj
+                    """Dequeue all pending FlowFiles from input queue."""
                     drained = []
                     for conn in (_incoming or []):
                         while True:
                             ff = conn.peek()
                             if ff is None:
                                 break
-                            # Check if it's a user message (has "message" key, no "action")
-                            try:
-                                _body = ff.get_content()
-                                if isinstance(_body, bytes):
-                                    _body = _body.decode("utf-8", errors="replace")
-                                _j = _dj.loads(_body)
-                                if isinstance(_j, dict) and (_j.get("action") or "message" not in _j):
-                                    break  # action or non-message → leave in queue
-                            except Exception:
-                                break  # can't parse → leave in queue
                             conn.dequeue()
                             drained.append(ff)
                     return drained

@@ -125,7 +125,7 @@ if (!('_secret' in _collapsedSections)) _collapsedSections['_secret'] = true;
 function _sectionHeader(title, rtype) {
   const isParamSecret = rtype === '_param' || rtype === '_secret';
   const onclick = isParamSecret
-    ? `_showParamEditor('','','${rtype === '_secret'}',true)`
+    ? `_showParamEditor('','',${rtype === '_secret'},true)`
     : `showResourceCreator('${rtype}')`;
   const collapsed = _collapsedSections[rtype] || false;
   const arrow = collapsed ? '\u25B6' : '\u25BC';
@@ -805,9 +805,13 @@ function _renderSchemaFields(schema, values, readonly) {
       html += '<textarea id="svc-p-' + pname + '"' + dis + ' style="' + _svcInputStyle + roS + 'min-height:80px;font-family:monospace;resize:vertical;">' + tval + '</textarea>';
     } else if (ptype === 'integer' || ptype === 'float') {
       html += '<input id="svc-p-' + pname + '" type="number"' + (ptype === 'float' ? ' step="any"' : '') + ' value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'width:120px;"/>';
+    } else if (pdef.sensitive) {
+      html += '<div style="display:flex;gap:4px;align-items:center;">'
+        + '<input id="svc-p-' + pname + '" type="password" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + 'flex:1;"/>'
+        + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + pname + '\',this)" style="background:none;border:1px solid #333;color:#888;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+        + '</div>';
     } else {
-      const inputType = pdef.sensitive ? 'password' : 'text';
-      html += '<input id="svc-p-' + pname + '" type="' + inputType + '" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
+      html += '<input id="svc-p-' + pname + '" type="text" value="' + escaped + '"' + dis + ' style="' + _svcInputStyle + roS + '"/>';
     }
     html += '</div>';
   }
@@ -999,8 +1003,16 @@ async function showServiceEditForm(serviceId, scope, readonly) {
         const isSecret = k.toLowerCase().includes('key') || k.toLowerCase().includes('secret') || k.toLowerCase().includes('token');
         const inputType = isSecret ? 'password' : 'text';
         const val = String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
-        formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
-          + '<input id="svc-p-' + k + '" type="' + inputType + '" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + '"/></div>';
+        if (isSecret) {
+          formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
+            + '<div style="display:flex;gap:4px;align-items:center;">'
+            + '<input id="svc-p-' + k + '" type="password" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + 'flex:1;"/>'
+            + '<button type="button" onclick="_togglePwdVis(\'svc-p-' + k + '\',this)" style="background:none;border:1px solid #333;color:#888;border-radius:4px;padding:4px 8px;cursor:pointer;font-size:12px;" title="Show/hide">\u{1F441}</button>'
+            + '</div></div>';
+        } else {
+          formHtml += '<div style="margin-bottom:6px;"><label style="' + _svcLabelStyle + '">' + k + '</label>'
+            + '<input id="svc-p-' + k + '" type="text" value="' + val + '"' + disabledAttr + ' style="' + _svcInputStyle + roStyle + '"/></div>';
+        }
       }
     }
 

@@ -8,6 +8,14 @@ function _canEditScope(scope) {
   return _isAdmin();
 }
 
+// ── Password visibility toggle ──
+function _togglePwdVis(inputId, btn) {
+  const el = document.getElementById(inputId);
+  if (!el) return;
+  if (el.type === 'password') { el.type = 'text'; btn.textContent = '\u{1F648}'; }
+  else { el.type = 'password'; btn.textContent = '\u{1F441}'; }
+}
+
 // Per-agent streaming state — prevents cross-agent clobbering when multiple
 // agents (random thoughts, sub-agents) stream concurrently.
 let streams = {};  // agentName → { el, text, chunks }

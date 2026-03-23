@@ -385,11 +385,8 @@ class AgentUtilsMixin:
 
     # ── Tool result size management ──────────────────────────────────
 
-    # Thresholds (chars) — mirrors Claude Code tiers
-    _TOOL_RESULT_SMALL = 10_000       # no truncation
-    _TOOL_RESULT_MEDIUM = 30_000      # truncate to first+last
-    _TOOL_RESULT_LARGE = 50_000       # save to FileStore, reference only
-    _TOOL_RESULT_TRUNCATED = 8_000    # how much to keep when truncating
+    # Tool result max size in context (chars). Anything over → FileStore.
+    _TOOL_RESULT_MAX = 800
 
 
     @staticmethod
@@ -405,63 +402,53 @@ class AgentUtilsMixin:
     def _truncate_tool_result(self, result: str, tool_name: str,
                                conversation_id: str = "",
                                user_id: str = "") -> str:
-        """Truncate large tool results, storing full content in FileStore.
+        """Truncate tool results > 800 chars — store full content in FileStore.
 
-        Tiers:
-        - < 10K chars: no change
-        - 10K-50K: keep first+last sections, note omitted middle
-        - > 50K or contains base64 blob: save to FileStore, return reference
+        The LLM gets a short preview + file reference. It can use
+        read_file with offset/limit to inspect specific parts on demand.
         """
-        if not result or len(result) <= self._TOOL_RESULT_SMALL:
-            # Small result with no base64 → pass through
-            if not self._detect_base64_blob(result):
-                return result
+        if not result:
+            return result
 
-        # Any base64 blob → always store in FileStore regardless of size
-        has_base64 = self._detect_base64_blob(result)
         result_len = len(result)
+        has_base64 = self._detect_base64_blob(result)
 
-        if has_base64 or result_len > self._TOOL_RESULT_LARGE:
-            # Store full result in FileStore, return reference
-            try:
-                from core.file_store import FileStore
-                store = FileStore.instance()
-                fname = f"tool_result_{tool_name}.txt"
-                fid = store.store(
-                    fname, result.encode("utf-8"),
-                    conversation_id=conversation_id,
-                )
-                url = f"/files/{fid}/{fname}"
-                # Build a useful preview (first 500 chars, no base64)
-                preview = result[:500]
-                # Strip any base64 data from preview
-                import re
-                preview = re.sub(
-                    r'data:[^;]+;base64,[A-Za-z0-9+/=]+',
-                    '[base64 data — see full result]',
-                    preview,
-                )
-                preview = re.sub(r'[A-Za-z0-9+/=]{200,}', '[...base64...]', preview)
-                return (
-                    f"{preview}\n\n"
-                    f"[Full result ({result_len:,} chars) saved to: {url} — "
-                    f"use show_file to view if needed]"
-                )
-            except Exception as e:
-                logger.warning(f"[truncate] Failed to store in FileStore: {e}")
-                # Fall through to truncation
+        # Small result without base64 → pass through
+        if result_len <= self._TOOL_RESULT_MAX and not has_base64:
+            return result
 
-        # Medium result: keep first + last sections
-        if result_len > self._TOOL_RESULT_MEDIUM:
-            half = self._TOOL_RESULT_TRUNCATED // 2
-            omitted = result_len - self._TOOL_RESULT_TRUNCATED
-            return (
-                result[:half]
-                + f"\n\n... [{omitted:,} chars omitted] ...\n\n"
-                + result[-half:]
+        # Store full result in FileStore, return preview + reference
+        try:
+            from core.file_store import FileStore
+            store = FileStore.instance()
+            fname = f"tool_result_{tool_name}.txt"
+            fid = store.store(
+                fname, result.encode("utf-8"),
+                conversation_id=conversation_id,
+                user_id=user_id,
             )
-
-        return result
+            url = f"/files/{fid}/{fname}"
+            # Build a clean preview
+            preview = result[:self._TOOL_RESULT_MAX // 2]
+            import re
+            preview = re.sub(
+                r'data:[^;]+;base64,[A-Za-z0-9+/=]+',
+                '[base64 data]',
+                preview,
+            )
+            preview = re.sub(r'[A-Za-z0-9+/=]{200,}', '[...base64...]', preview)
+            return (
+                f"{preview}\n\n"
+                f"[Full result ({result_len:,} chars) saved to: {url} — "
+                f"use read_file(path=\"{url}\") to inspect details]"
+            )
+        except Exception as e:
+            logger.warning(f"[truncate] Failed to store in FileStore: {e}")
+            # Fallback: hard truncate
+            return (
+                result[:self._TOOL_RESULT_MAX // 2]
+                + f"\n\n... [{result_len - self._TOOL_RESULT_MAX // 2:,} chars truncated]"
+            )
 
 
     @staticmethod

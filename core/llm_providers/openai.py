@@ -13,7 +13,8 @@ logger = logging.getLogger(__name__)
 class LLMOpenaiMixin:
     """OpenAI provider methods: complete, stream, message building."""
 
-    def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback):
+    def _stream_openai(self, messages, model, temperature, max_tokens, tools, callback,
+                        thinking_callback=None):
         """OpenAI streaming: reads SSE chunks from the API."""
         from core.llm_client import LLMClientError, LLMResponse, LLMToolCall
 
@@ -31,6 +32,10 @@ class LLMOpenaiMixin:
                 {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
                 for t in tools
             ]
+        # Request streaming usage stats (OpenAI official API only —
+        # local servers may not support stream_options)
+        if not self.base_url or "api.openai.com" in self.base_url:
+            body["stream_options"] = {"include_usage": True}
 
         parsed = urlparse(self.base_url)
         host = parsed.hostname
@@ -59,9 +64,11 @@ class LLMOpenaiMixin:
 
             # Parse SSE stream
             content_parts: List[str] = []
+            reasoning_parts: List[str] = []
             tool_calls_map: Dict[int, Dict] = {}  # index -> {id, name, arguments_str}
             finish_reason = ""
             resp_model = model
+            usage_data: Dict[str, Any] = {}
 
             buffer = ""
             while True:
@@ -80,12 +87,28 @@ class LLMOpenaiMixin:
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
-                            delta = data.get("choices", [{}])[0].get("delta", {})
-                            fr = data.get("choices", [{}])[0].get("finish_reason")
+
+                            # Final usage chunk (stream_options.include_usage)
+                            if data.get("usage"):
+                                usage_data = data["usage"]
+
+                            choices = data.get("choices", [])
+                            if not choices:
+                                continue
+                            choice0 = choices[0]
+                            delta = choice0.get("delta", {})
+                            fr = choice0.get("finish_reason")
                             if fr:
                                 finish_reason = fr
                             if data.get("model"):
                                 resp_model = data["model"]
+
+                            # Reasoning content (o1/o3/o4-mini models)
+                            reasoning = delta.get("reasoning_content", "")
+                            if reasoning:
+                                reasoning_parts.append(reasoning)
+                                if thinking_callback:
+                                    thinking_callback(reasoning)
 
                             # Text content
                             text = delta.get("content", "")
@@ -124,18 +147,28 @@ class LLMOpenaiMixin:
                 tool_calls.append(LLMToolCall(id=tc["id"], name=tc["name"], arguments=args))
 
             content = "".join(content_parts)
-            # Estimate tokens if not returned by provider
-            est_in = sum(len(m.content) if isinstance(m.content, str) else
-                         sum(len(str(p)) for p in m.content) if isinstance(m.content, list) else 0
-                         for m in messages) // 4
-            est_out = len(content) // 4
+            thinking = "".join(reasoning_parts)
+
+            # Use real usage from API if available, else estimate
+            tokens_in = usage_data.get("prompt_tokens", 0)
+            tokens_out = usage_data.get("completion_tokens", 0)
+            total_tokens = usage_data.get("total_tokens", 0)
+            if not tokens_in:
+                tokens_in = sum(len(m.content) if isinstance(m.content, str) else
+                             sum(len(str(p)) for p in m.content) if isinstance(m.content, list) else 0
+                             for m in messages) // 4
+            if not tokens_out:
+                tokens_out = len(content) // 4
+
             return LLMResponse(
                 content=content,
                 model=resp_model,
                 finish_reason=finish_reason,
                 tool_calls=tool_calls,
-                tokens_in=est_in,
-                tokens_out=est_out,
+                tokens_in=tokens_in,
+                tokens_out=tokens_out,
+                total_tokens=total_tokens,
+                thinking=thinking,
             )
         finally:
             conn.close()
@@ -270,6 +303,9 @@ class LLMOpenaiMixin:
                 arguments=args,
             ))
 
+        # Extract reasoning content if present (o-series models)
+        reasoning = message.get("reasoning_content", "") or ""
+
         return LLMResponse(
             content=message.get("content", "") or "",
             model=data.get("model", model),
@@ -278,5 +314,6 @@ class LLMOpenaiMixin:
             total_tokens=usage.get("total_tokens", 0),
             finish_reason=choice.get("finish_reason", ""),
             tool_calls=tool_calls,
+            thinking=reasoning,
             raw=data,
         )

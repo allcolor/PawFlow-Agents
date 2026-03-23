@@ -129,7 +129,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)
         elif _resilience_style == "aggressive":
             max_consecutive_tool_calls = max(max_consecutive_tool_calls, 50)
-        thinking_budget = int(self.config.get("thinking_budget", 0))
+        # thinking_budget: -1 = auto (10k for reasoning models, 0 for others)
+        # 0 = disabled, >0 = explicit budget
+        thinking_budget = int(self.config.get("thinking_budget", -1))
 
         use_conv_store = self.config.get("conversation_store", False)
         conv_ttl = int(self.config.get("conversation_ttl", 0))
@@ -631,6 +633,21 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # (must happen AFTER all modifications: narration, resilience, FS context, lazy tools)
         if messages and messages[0].role == "system":
             messages[0] = LLMMessage(role="system", content=system_prompt)
+
+        # Resolve thinking_budget auto-detect (-1)
+        if thinking_budget < 0:
+            _m = (_client_model_name or model_name or "").lower()
+            _p = (_client_provider_name or "").lower()
+            if _p == "anthropic" or "claude" in _m:
+                thinking_budget = 10000
+            elif any(_m.startswith(p) for p in ("o1", "o3", "o4", "deepseek-r1", "qwq")):
+                thinking_budget = 10000
+            else:
+                # Non-reasoning model — thinking not supported
+                thinking_budget = 0
+            if thinking_budget > 0:
+                logger.info("Auto-detected reasoning model (%s/%s), thinking_budget=%d",
+                            _p or "?", _m or "?", thinking_budget)
 
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,

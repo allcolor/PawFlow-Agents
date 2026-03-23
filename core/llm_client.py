@@ -350,7 +350,8 @@ class LLMClient(
             start = time.time()
 
             if self.provider == "openai":
-                result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback)
+                result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback,
+                                              thinking_callback=thinking_callback)
             elif self.provider == "claude-code":
                 result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
             elif self.provider == "gemini-cli":
@@ -390,7 +391,8 @@ class LLMClient(
                     start = time.time()
                     fb = self.fallback_model
                     if self.provider == "openai":
-                        result = self._stream_openai(messages, fb, temperature, max_tokens, tools, callback)
+                        result = self._stream_openai(messages, fb, temperature, max_tokens, tools, callback,
+                                                      thinking_callback=thinking_callback)
                     elif self.provider == "claude-code":
                         result = self._stream_claude_code(messages, fb, temperature, max_tokens, tools, callback)
                     elif self.provider == "gemini-cli":

@@ -552,16 +552,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         _pbody = _pff.get_content()
                         if isinstance(_pbody, bytes):
                             _pbody = _pbody.decode("utf-8", errors="replace")
-                        _ptext = _pbody
+                        _ptext = None
                         try:
                             _pjson = json.loads(_pbody)
-                            if isinstance(_pjson, dict) and "message" in _pjson:
-                                _ptext = _pjson["message"]
-                                _pconv = _pjson.get("conversation_id")
+                            if isinstance(_pjson, dict):
+                                # Skip actions (list_resources, etc.) — only inject messages
+                                if _pjson.get("action") and "message" not in _pjson:
+                                    continue
                                 if _pjson.get("action"):
                                     continue
+                                _pconv = _pjson.get("conversation_id")
                                 if _pconv and _pconv != conversation_id:
                                     continue
+                                _ptext = _pjson.get("message", "")
                         except (json.JSONDecodeError, ValueError):
                             pass
                         if _ptext and _ptext.strip():

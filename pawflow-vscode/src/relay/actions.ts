@@ -186,6 +186,45 @@ export function executeAction(
         return { ok: true, data: { replacements: replaceAll ? count : 1, path: rel(absPath, rootDir) } };
       }
 
+      case 'batch_edit': {
+        const edits = req.edits || [];
+        if (!edits.length) { return { ok: false, error: 'Missing edits list' }; }
+        const results: any[] = [];
+        const filesModified = new Set<string>();
+        for (const edit of edits) {
+          const ePath = edit.path || '';
+          const oldStr = edit.old_string || '';
+          const newStr = edit.new_string || '';
+          const replAll = edit.replace_all || false;
+          if (!ePath || !oldStr) {
+            results.push({ path: ePath, error: 'missing path or old_string' });
+            continue;
+          }
+          const eAbs = path.resolve(rootDir, ePath);
+          if (!eAbs.startsWith(rootDir)) {
+            results.push({ path: ePath, error: 'path escapes root' });
+            continue;
+          }
+          try {
+            let text = fs.readFileSync(eAbs, 'utf-8');
+            const count = text.split(oldStr).length - 1;
+            if (count === 0) { results.push({ path: ePath, error: 'old_string not found' }); continue; }
+            if (count > 1 && !replAll) { results.push({ path: ePath, error: `found ${count} times (use replace_all)` }); continue; }
+            text = replAll ? text.split(oldStr).join(newStr) : text.replace(oldStr, newStr);
+            fs.writeFileSync(eAbs, text, 'utf-8');
+            filesModified.add(ePath);
+            results.push({ path: ePath, replacements: replAll ? count : 1 });
+          } catch (e: any) {
+            results.push({ path: ePath, error: e.message });
+          }
+        }
+        return { ok: true, data: {
+          edits_applied: results.filter(r => r.replacements).length,
+          files_modified: Array.from(filesModified).sort(),
+          details: results,
+        }};
+      }
+
       case 'exec': {
         if (!allowExec) { return { ok: false, error: 'Shell execution disabled' }; }
         const command = req.command || '';

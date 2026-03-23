@@ -332,6 +332,45 @@ def _action_edit(handler, path, req):
     return {"replacements": count if replace_all else 1, "path": rel}
 
 
+def _action_batch_edit(handler, path, req):
+    """Atomic multi-file edit: [{path, old_string, new_string, replace_all}]."""
+    edits = req.get("edits", [])
+    if not edits:
+        raise ValueError("Missing 'edits' list")
+    root = Path(handler.root_dir).resolve()
+    results = []
+    files_modified = set()
+    for edit in edits:
+        epath = edit.get("path", "")
+        old_s = edit.get("old_string", "")
+        new_s = edit.get("new_string", "")
+        repl_all = edit.get("replace_all", False)
+        if not epath or not old_s:
+            results.append({"path": epath, "error": "missing path or old_string"})
+            continue
+        p = (root / epath).resolve()
+        if not str(p).startswith(str(root)):
+            results.append({"path": epath, "error": "path escapes root"})
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+            count = text.count(old_s)
+            if count == 0:
+                results.append({"path": epath, "error": "old_string not found"})
+                continue
+            if count > 1 and not repl_all:
+                results.append({"path": epath, "error": f"found {count} times (use replace_all)"})
+                continue
+            text = text.replace(old_s, new_s) if repl_all else text.replace(old_s, new_s, 1)
+            p.write_text(text, encoding="utf-8")
+            files_modified.add(epath)
+            results.append({"path": epath, "replacements": count if repl_all else 1})
+        except Exception as e:
+            results.append({"path": epath, "error": str(e)})
+    return {"edits_applied": sum(1 for r in results if "replacements" in r),
+            "files_modified": sorted(files_modified), "details": results}
+
+
 def _action_exec(handler, path, req):
     """Execute a shell command in the sandbox directory."""
     if not getattr(handler, 'allow_exec', False):
@@ -465,6 +504,7 @@ _ACTIONS = {
     "git_push": _action_git_push,
     "git_checkout": _action_git_checkout,
     "edit": _action_edit,
+    "batch_edit": _action_batch_edit,
     "exec": _action_exec,
 }
 

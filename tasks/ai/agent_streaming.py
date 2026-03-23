@@ -83,12 +83,13 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id,
     """
     narration = ""
 
-    # Try narrator service if configured
+    # Try narrator LLM: dedicated service → current LLM → static synthesis
     narrator_svc_name = ctx.get("narrator_service", "")
     if narrator_svc_name:
         narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
-
-    # Fallback: static synthesis
+    if not narration:
+        # Fallback: use current LLM client (same as summarizer pattern)
+        narration = _call_narrator_with_client(ctx.get("client"), tool_calls)
     if not narration:
         narration = _synthesize_narration(tool_calls)
 
@@ -135,6 +136,37 @@ def _call_narrator(svc_name: str, tool_calls: List[LLMToolCall],
     except Exception as e:
         logger.debug("Narrator service '%s' failed: %s", svc_name, e)
         return ""
+
+
+def _call_narrator_with_client(client, tool_calls: List[LLMToolCall]) -> str:
+    """Use the current LLM client to narrate tool_calls in one sentence."""
+    if not client:
+        return ""
+    try:
+        tools_desc = "; ".join(
+            f"{tc.name}({', '.join(f'{k}={str(v)[:40]}' for k, v in tc.arguments.items())})"
+            for tc in tool_calls[:5]
+        )
+        if len(tool_calls) > 5:
+            tools_desc += f"; ... +{len(tool_calls) - 5} more"
+
+        prompt = (
+            f"The AI agent is about to call these tools: {tools_desc}\n"
+            f"Write ONE short sentence (max 15 words) describing what it's doing. "
+            f"Write only the sentence, nothing else."
+        )
+
+        from core.llm_client import LLMMessage
+        messages = [LLMMessage(role="user", content=prompt)]
+        resp = client.complete(messages, max_tokens=50, temperature=0.3)
+        text = (resp.content or "").strip()
+        if text and not text.endswith("\n"):
+            text += "\n"
+        return text
+    except Exception as e:
+        logger.debug("Narrator via current LLM failed: %s", e)
+        return ""
+
 
 logger = logging.getLogger(__name__)
 

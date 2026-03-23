@@ -368,12 +368,11 @@ class AgentCompactionMixin:
         # Ensure no display-only messages leak into compaction
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
 
-        # Compact old tool chains first (cheap, no LLM call)
-        _pre_compact = len(messages)
-        messages = self._compact_tool_chains(messages, keep_recent=keep_recent)
-        if len(messages) < _pre_compact:
-            logger.info("[compact] Tool chains: %d → %d messages",
-                        _pre_compact, len(messages))
+        # NOTE: _compact_tool_chains is DISABLED — it replaces assistant+tool_calls
+        # messages with plain text summaries. The LLM then imitates these summaries
+        # instead of using real tool calls. Use _progressive_clear_tool_results
+        # and _clear_seen_tool_results instead (they clear results but keep the
+        # assistant message structure with tool_calls intact).
 
         # Deflate old images before estimating — but keep the last one
         # (the LLM hasn't seen it yet in this iteration)

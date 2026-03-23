@@ -344,18 +344,26 @@ export function executeAction(
         let shellOpt: Record<string, any> = {};
         let execCommand = command;
         if (process.platform === 'win32') {
-          const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
           const wslBash = 'C:\\Windows\\System32\\bash.exe';
-          if (fs.existsSync(gitBash)) {
-            shellOpt = { shell: gitBash };
-            // Convert C:\path and C:/path to /c/path for Git Bash
-            execCommand = command
-              .replace(/([A-Z]):\\([^ "']*)/gi, (_m: string, drive: string, rest: string) =>
-                '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/'))
-              .replace(/([A-Z]):\/([^ "']*)/gi, (_m: string, drive: string, rest: string) =>
-                '/' + drive.toLowerCase() + '/' + rest);
-          } else if (fs.existsSync(wslBash)) {
+          const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
+          // Prefer WSL (has its own python with /c/ paths) over Git Bash
+          // (uses Windows python which doesn't understand /c/)
+          if (fs.existsSync(wslBash)) {
             shellOpt = { shell: wslBash };
+            // WSL: convert ALL paths C:\x and C:/x to /mnt/c/x
+            execCommand = command
+              .replace(/([A-Z]):\\([^ ]*)/gi, (_m: string, d: string, r: string) =>
+                '/mnt/' + d.toLowerCase() + '/' + r.replace(/\\/g, '/'))
+              .replace(/([A-Z]):\/([^ ]*)/gi, (_m: string, d: string, r: string) =>
+                '/mnt/' + d.toLowerCase() + '/' + r);
+          } else if (fs.existsSync(gitBash)) {
+            shellOpt = { shell: gitBash };
+            // Git Bash: only convert cd paths (python.exe still uses C:/ paths)
+            execCommand = command.replace(
+              /^(cd\s+)([A-Z]):[\\\/]([^ &"']*)/i,
+              (_m: string, cd: string, drive: string, rest: string) =>
+                cd + '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/')
+            );
           }
         }
         try {

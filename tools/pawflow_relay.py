@@ -457,23 +457,30 @@ def _action_exec(handler, path, req):
     shell_args = {}
     exec_cmd = command
     if sys.platform == "win32":
-        _git_bash = Path("C:/Program Files/Git/bin/bash.exe")
         _wsl_bash = Path("C:/Windows/System32/bash.exe")
-        if _git_bash.exists():
-            shell_args = {"executable": str(_git_bash)}
-            # Convert Windows paths: C:\x\y and C:/x/y → /c/x/y
+        _git_bash = Path("C:/Program Files/Git/bin/bash.exe")
+        # Prefer WSL (has its own python with /mnt/c/ paths)
+        if _wsl_bash.exists():
+            shell_args = {"executable": str(_wsl_bash)}
+            # Convert ALL paths: C:\x and C:/x → /mnt/c/x
             exec_cmd = _re_path.sub(
-                r'([A-Za-z]):\\([^ "\']*)',
-                lambda m: '/' + m.group(1).lower() + '/' + m.group(2).replace('\\', '/'),
+                r'([A-Za-z]):\\([^ ]*)',
+                lambda m: '/mnt/' + m.group(1).lower() + '/' + m.group(2).replace('\\', '/'),
                 command,
             )
             exec_cmd = _re_path.sub(
-                r'([A-Za-z]):/([^ "\']*)',
-                lambda m: '/' + m.group(1).lower() + '/' + m.group(2),
+                r'([A-Za-z]):/([^ ]*)',
+                lambda m: '/mnt/' + m.group(1).lower() + '/' + m.group(2),
                 exec_cmd,
             )
-        elif _wsl_bash.exists():
-            shell_args = {"executable": str(_wsl_bash)}
+        elif _git_bash.exists():
+            shell_args = {"executable": str(_git_bash)}
+            # Git Bash: only convert cd paths
+            exec_cmd = _re_path.sub(
+                r'^(cd\s+)([A-Za-z]):[\\\/]([^ &"\']*)',
+                lambda m: m.group(1) + '/' + m.group(2).lower() + '/' + m.group(3).replace('\\', '/'),
+                command,
+            )
 
     result = subprocess.run(
         exec_cmd, shell=True,

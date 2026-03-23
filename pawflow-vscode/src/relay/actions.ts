@@ -339,41 +339,43 @@ export function executeAction(
         const command = req.command || '';
         const timeout = Math.min((req.timeout || 30) * 1000, 120000);
         if (!command) { return { ok: false, error: 'Missing command' }; }
-        // Use bash on Windows — cmd.exe breaks python -c with nested quotes.
-        // Convert Windows paths to Unix-style for bash compatibility.
-        let shellOpt: Record<string, any> = {};
+
+        // Like Claude Code: use native Windows shell (cmd.exe).
+        // For python -c with complex nested quotes, write to a temp file.
         let execCommand = command;
         if (process.platform === 'win32') {
-          const wslBash = 'C:\\Windows\\System32\\bash.exe';
-          const gitBash = 'C:\\Program Files\\Git\\bin\\bash.exe';
-          // Prefer WSL (has its own python with /c/ paths) over Git Bash
-          // (uses Windows python which doesn't understand /c/)
-          if (fs.existsSync(wslBash)) {
-            shellOpt = { shell: wslBash };
-            // WSL: convert ALL paths C:\x and C:/x to /mnt/c/x
-            execCommand = command
-              .replace(/([A-Z]):\\([^ ]*)/gi, (_m: string, d: string, r: string) =>
-                '/mnt/' + d.toLowerCase() + '/' + r.replace(/\\/g, '/'))
-              .replace(/([A-Z]):\/([^ ]*)/gi, (_m: string, d: string, r: string) =>
-                '/mnt/' + d.toLowerCase() + '/' + r);
-          } else if (fs.existsSync(gitBash)) {
-            shellOpt = { shell: gitBash };
-            // Git Bash: only convert cd paths (python.exe still uses C:/ paths)
-            execCommand = command.replace(
-              /^(cd\s+)([A-Z]):[\\\/]([^ &"']*)/i,
-              (_m: string, cd: string, drive: string, rest: string) =>
-                cd + '/' + drive.toLowerCase() + '/' + rest.replace(/\\/g, '/')
-            );
-          } else {
-            // Fallback: PowerShell (handles quotes better than cmd.exe)
-            const pwsh = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
-            if (fs.existsSync(pwsh)) { shellOpt = { shell: pwsh }; }
-            // else: default cmd.exe
+          const pyMatch = command.match(/^((?:cd\s+[^&]+&&\s*)?)python(?:3)?\s+-c\s+["']([\s\S]+)["']\s*(.*)$/i);
+          if (pyMatch) {
+            const tmpDir = require('os').tmpdir();
+            const tmpFile = path.join(tmpDir, `pawflow_exec_${Date.now()}.py`);
+            fs.writeFileSync(tmpFile, pyMatch[2], 'utf-8');
+            const prefix = pyMatch[1].trim();
+            const suffix = pyMatch[3].trim();
+            execCommand = prefix
+              ? `${prefix} python "${tmpFile}" ${suffix}`
+              : `python "${tmpFile}" ${suffix}`;
+            try {
+              const result = cp.execSync(execCommand, {
+                cwd: rootDir, timeout, encoding: 'utf-8',
+                maxBuffer: MAX_EXEC_OUTPUT,
+                env: { ...process.env, PYTHONIOENCODING: 'utf-8', PAWFLOW_FS_ROOT: rootDir },
+              });
+              try { fs.unlinkSync(tmpFile); } catch {}
+              return { ok: true, data: { stdout: result.slice(0, MAX_EXEC_OUTPUT), stderr: '', returncode: 0 } };
+            } catch (e: any) {
+              try { fs.unlinkSync(tmpFile); } catch {}
+              return { ok: true, data: {
+                stdout: (e.stdout || '').slice(0, MAX_EXEC_OUTPUT),
+                stderr: (e.stderr || '').slice(0, 5000),
+                returncode: e.status ?? 1,
+              }};
+            }
           }
         }
+
         try {
           const result = cp.execSync(execCommand, {
-            cwd: rootDir, timeout, encoding: 'utf-8', ...shellOpt,
+            cwd: rootDir, timeout, encoding: 'utf-8',
             maxBuffer: MAX_EXEC_OUTPUT,
             env: { ...process.env, PYTHONIOENCODING: 'utf-8', PAWFLOW_FS_ROOT: rootDir },
           });

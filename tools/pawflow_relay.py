@@ -451,41 +451,40 @@ def _action_exec(handler, path, req):
     if not command:
         raise ValueError("Missing 'command' parameter")
 
-    # On Windows, use bash (Git Bash or WSL) — cmd.exe breaks python -c
-    # with nested quotes. Convert C:\path to /c/path for bash.
-    import sys, re as _re_path
-    shell_args = {}
+    # Like Claude Code: use native shell. For python -c with complex
+    # nested quotes, write to a temp file and execute that instead.
+    import sys, re as _re_pyc, tempfile
     exec_cmd = command
+    shell_args = {}
     if sys.platform == "win32":
-        _wsl_bash = Path("C:/Windows/System32/bash.exe")
-        _git_bash = Path("C:/Program Files/Git/bin/bash.exe")
-        # Prefer WSL (has its own python with /mnt/c/ paths)
-        if _wsl_bash.exists():
-            shell_args = {"executable": str(_wsl_bash)}
-            # Convert ALL paths: C:\x and C:/x → /mnt/c/x
-            exec_cmd = _re_path.sub(
-                r'([A-Za-z]):\\([^ ]*)',
-                lambda m: '/mnt/' + m.group(1).lower() + '/' + m.group(2).replace('\\', '/'),
-                command,
-            )
-            exec_cmd = _re_path.sub(
-                r'([A-Za-z]):/([^ ]*)',
-                lambda m: '/mnt/' + m.group(1).lower() + '/' + m.group(2),
-                exec_cmd,
-            )
-        elif _git_bash.exists():
-            shell_args = {"executable": str(_git_bash)}
-            # Git Bash: only convert cd paths
-            exec_cmd = _re_path.sub(
-                r'^(cd\s+)([A-Za-z]):[\\\/]([^ &"\']*)',
-                lambda m: m.group(1) + '/' + m.group(2).lower() + '/' + m.group(3).replace('\\', '/'),
-                command,
-            )
-        else:
-            # Fallback: PowerShell (handles quotes better than cmd.exe)
-            _pwsh = Path("C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe")
-            if _pwsh.exists():
-                shell_args = {"executable": str(_pwsh)}
+        _py_match = _re_pyc.match(
+            r'^((?:cd\s+[^&]+&&\s*)?)python(?:3)?\s+-c\s+["\'](.+)["\']\s*(.*)$',
+            command, _re_pyc.DOTALL | _re_pyc.IGNORECASE)
+        if _py_match:
+            _tmp = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.py', prefix='pawflow_exec_',
+                dir=handler.root_dir, delete=False, encoding='utf-8')
+            _tmp.write(_py_match.group(2))
+            _tmp.close()
+            prefix = _py_match.group(1).strip()
+            suffix = _py_match.group(3).strip()
+            exec_cmd = f'{prefix} python "{_tmp.name}" {suffix}' if prefix else f'python "{_tmp.name}" {suffix}'
+            try:
+                result = subprocess.run(
+                    exec_cmd, shell=True,
+                    capture_output=True, text=True,
+                    timeout=timeout, cwd=handler.root_dir,
+                )
+                return {
+                    "stdout": result.stdout[-10000:],
+                    "stderr": result.stderr[-5000:],
+                    "returncode": result.returncode,
+                }
+            finally:
+                try:
+                    Path(_tmp.name).unlink()
+                except Exception:
+                    pass
 
     result = subprocess.run(
         exec_cmd, shell=True,

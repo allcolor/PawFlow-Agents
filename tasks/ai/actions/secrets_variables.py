@@ -162,8 +162,9 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             from pathlib import Path as _CfgPath
             path = _CfgPath("config/parameters.json")
             path.parent.mkdir(parents=True, exist_ok=True)
+            from core.config_value import ConfigValue
             data = ConfigStore.load_params(path)
-            data[key] = value
+            data[key] = ConfigValue(value=value)
             ConfigStore.save_params(path, data)
         elif scope == "conversation" and conv_id:
             cp = store.get_extra(conv_id, "conv_parameters") or {}
@@ -175,8 +176,9 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             from pathlib import Path as _CfgPath
             path = _CfgPath(f"config/users/{uid}/parameters.json")
             path.parent.mkdir(parents=True, exist_ok=True)
+            from core.config_value import ConfigValue
             data = ConfigStore.load_params(path)
-            data[key] = value
+            data[key] = ConfigValue(value=value)
             ConfigStore.save_params(path, data)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]
@@ -230,24 +232,26 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         sm = get_secrets_manager()
         if scope == "global":
             from core.config_store import ConfigStore
+            from core.config_value import ConfigValue
             from pathlib import Path as _CfgPath
             path = _CfgPath("config/secrets.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
-            data[key] = value
+            data[key] = ConfigValue(value=value)
             ConfigStore.save_secrets(path, data)
         elif scope == "conversation" and conv_id:
             cs = store.get_extra(conv_id, "conv_secrets") or {}
             cs[key] = sm.encrypt(value)
             store.set_extra(conv_id, "conv_secrets", cs)
         else:  # user
-            uid = user_id or "anonymous"
             from core.config_store import ConfigStore
+            from core.config_value import ConfigValue
             from pathlib import Path as _CfgPath
+            uid = user_id or "anonymous"
             path = _CfgPath(f"config/users/{uid}/secrets.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
-            data[key] = value
+            data[key] = ConfigValue(value=value)
             ConfigStore.save_secrets(path, data)
         flowfile.set_content(json.dumps({"ok": True}).encode())
         return [flowfile]

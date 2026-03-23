@@ -160,7 +160,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if scope == "global":
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
-            path = _CfgPath("config/parameters.json")
+            path = _CfgPath("config/global_parameters.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             from core.config_value import ConfigValue
             data = ConfigStore.load_params(path)
@@ -197,7 +197,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if scope == "global":
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
-            path = _CfgPath("config/parameters.json")
+            path = _CfgPath("config/global_parameters.json")
             data = ConfigStore.load_params(path)
             data.pop(key, None)
             ConfigStore.save_params(path, data)
@@ -234,7 +234,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
             from pathlib import Path as _CfgPath
-            path = _CfgPath("config/secrets.json")
+            path = _CfgPath("config/global_secrets.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
             data[key] = ConfigValue(value=value)
@@ -270,7 +270,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         if scope == "global":
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
-            path = _CfgPath("config/secrets.json")
+            path = _CfgPath("config/global_secrets.json")
             data = ConfigStore.load_secrets(path)
             data.pop(key, None)
             ConfigStore.save_secrets(path, data)

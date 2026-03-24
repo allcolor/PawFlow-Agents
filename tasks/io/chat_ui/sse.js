@@ -563,33 +563,55 @@
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
-    // Keep all existing DOM elements (narrations, tool calls, results).
-    // Only add the final response if it wasn't already streamed.
-    // Convert any active streaming element into a permanent message.
     // Register done msg_id (prevents poll/replay re-add)
     if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
       _seenMsgIds.add(extra.msg_id);
     }
-    // Find the target element: active stream > last finalized > none
+    // Also register ALL msg_ids we've seen in this turn's token stream
+    // (they may differ from the done msg_id due to multi-iteration turns)
+    if (s.msg_id && typeof _seenMsgIds !== 'undefined') {
+      _seenMsgIds.add(s.msg_id);
+    }
     const agentLower = doneAgent.toLowerCase();
-    const targetEl = (s.el && s.el.parentNode) ? s.el
-                   : (s.lastEl && s.lastEl.parentNode) ? s.lastEl : null;
-    // Remove finalized/narration elements EXCEPT the target we'll keep
-    document.querySelectorAll('#messages .finalized, #messages .narration').forEach(el => {
-      if (el.dataset.finalizedAgent === agentLower && el !== targetEl) el.remove();
+    // Clean up narration-only elements (ephemeral)
+    document.querySelectorAll('#messages .narration').forEach(el => {
+      if (el.dataset.finalizedAgent === agentLower) el.remove();
     });
-    if (targetEl) {
-      // Convert to permanent + add metadata
-      targetEl.classList.remove('streaming', 'finalized');
-      targetEl.classList.add('msg', 'assistant');
-      targetEl.dataset.rawText = finalText.substring(0, 500);
+    // Done NEVER creates a new message. The response was already streamed.
+    // Find the LAST assistant/subagent message from this agent and add meta.
+    if (s.el && s.el.parentNode) {
+      // Active streaming element — finalize it
+      s.el.classList.remove('streaming');
+      s.el.dataset.rawText = finalText.substring(0, 500);
       const meta = buildMetaLine(extra);
-      if (meta && !targetEl.querySelector('.msg-meta')) {
-        targetEl.insertAdjacentHTML('beforeend', meta);
+      if (meta && !s.el.querySelector('.msg-meta')) {
+        s.el.insertAdjacentHTML('beforeend', meta);
       }
-    } else if (finalText) {
-      // No streaming element at all — add fresh
-      addMsg('assistant', finalText, extra);
+    } else {
+      // No active stream — find last assistant msg from this agent in DOM
+      const allMsgs = document.querySelectorAll('#messages .msg.assistant, #messages .msg.subagent, #messages .finalized');
+      let lastAgentEl = null;
+      allMsgs.forEach(el => {
+        // Match by agent name in badge or dataset
+        const badge = el.querySelector('.source-badge');
+        const badgeText = badge ? badge.textContent.toLowerCase() : '';
+        const finAgent = (el.dataset.finalizedAgent || '').toLowerCase();
+        if (badgeText.includes(agentLower) || finAgent === agentLower) {
+          lastAgentEl = el;
+        }
+      });
+      if (lastAgentEl) {
+        lastAgentEl.classList.remove('finalized', 'streaming');
+        lastAgentEl.classList.add('msg', 'assistant');
+        lastAgentEl.dataset.rawText = finalText.substring(0, 500);
+        const meta = buildMetaLine(extra);
+        if (meta && !lastAgentEl.querySelector('.msg-meta')) {
+          lastAgentEl.insertAdjacentHTML('beforeend', meta);
+        }
+      } else if (finalText) {
+        // Truly no element exists (poll wakeup, zero tokens streamed)
+        addMsg('assistant', finalText, extra);
+      }
     }
     clearStream(doneAgent);
     scrollBottom();

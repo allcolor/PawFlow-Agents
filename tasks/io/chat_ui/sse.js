@@ -547,7 +547,18 @@
     }
     if (s.el && !s.chunks.includes(s.el) && s.el.parentNode) s.el.remove();
     _expectingClear = false;
-    if (finalText) addMsg('assistant', finalText, extra);
+    // Dedup: check if this exact text is already the last assistant message
+    if (finalText) {
+      const msgs = document.querySelectorAll('#messages .msg');
+      let isDup = false;
+      if (msgs.length > 0) {
+        const last = msgs[msgs.length - 1];
+        if (last.dataset.rawText && finalText.substring(0, 200) === last.dataset.rawText.substring(0, 200)) {
+          isDup = true;
+        }
+      }
+      if (!isDup) addMsg('assistant', finalText, extra);
+    }
     clearStream(doneAgent);
     scrollBottom();
 

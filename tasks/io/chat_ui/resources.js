@@ -148,6 +148,18 @@ async function loadResources() {
     if (data.error) { console.warn('[loadResources] error:', data.error); return; }
     // Store user role for permission checks (admin can edit globals)
     window._userRole = data.user_role || 'viewer';
+    // Load tool schemas (async, don't block rendering)
+    if (!window._cachedTools) {
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'get_tool_schemas', conversation_id: conversationId }),
+      }).then(r => r.json()).then(d => {
+        window._cachedTools = d.tools || [];
+        // Re-render to show tools
+        const toolSection = document.querySelector('[data-section="_tool"]');
+        if (toolSection) loadResources();
+      }).catch(() => {});
+    }
     const el = document.getElementById('resourcesContent');
     let html = '';
     // Agents
@@ -181,6 +193,19 @@ async function loadResources() {
         ${_scopeBadge(m.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${m.name}</span>
       </div>`;
     });
+    html += _sectionFooter();
+    // Tools (builtin + dynamic — clickable to open call dialog)
+    html += _sectionHeader('Tools', '_tool');
+    if (!_collapsedSections['_tool']) {
+      const tools = window._cachedTools || [];
+      tools.forEach(t => {
+        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;cursor:pointer" onclick="showToolCallDialog('${escapeHtml(t.name)}')">
+          <span style="color:#6c5ce7;font-size:11px">\u26A1</span>
+          <span style="font-size:12px;color:#c0c0d0">${escapeHtml(t.name)}</span>
+        </div>`;
+      });
+      if (!tools.length) html += '<div style="margin-left:8px;font-size:11px;color:#666">Loading...</div>';
+    }
     html += _sectionFooter();
     // Task definitions (always show header)
     html += _sectionHeader('Tasks', 'task_def');

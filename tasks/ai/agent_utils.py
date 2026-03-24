@@ -432,7 +432,7 @@ class AgentUtilsMixin:
     _TOOL_RESULT_TTL = 3600
     # Threshold for clearing tool results (chars). Results over this get
     # saved to FileStore and replaced with a reference after the LLM has seen them.
-    _TOOL_RESULT_CLEAR_THRESHOLD = 500
+    _TOOL_RESULT_CLEAR_THRESHOLD = 300
 
 
     @staticmethod

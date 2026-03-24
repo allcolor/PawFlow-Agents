@@ -98,6 +98,93 @@ function appendExecOutput(data) {
   scrollBottom();
 }
 
+// ── Tool call dialog ────────────────────────────────────────────
+
+function showToolCallDialog(toolName) {
+  const tools = window._cachedTools || [];
+  const tool = tools.find(t => t.name === toolName);
+  if (!tool) { addMsg('system', 'Tool not found: ' + toolName); return; }
+
+  const schema = tool.parameters || {};
+  const props = schema.properties || {};
+  const required = new Set(schema.required || []);
+
+  function _field(label, inputHtml, desc) {
+    return '<div style="margin-bottom:8px;">'
+      + '<label style="color:#aaa;font-size:11px;">' + label + '</label>'
+      + '<div style="margin-top:2px">' + inputHtml + '</div>'
+      + (desc ? '<div style="color:#666;font-size:10px;margin-top:1px">' + escapeHtml(desc) + '</div>' : '')
+      + '</div>';
+  }
+  const inputStyle = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;font-size:12px;';
+
+  let formHtml = '';
+  const propKeys = Object.keys(props);
+  for (const key of propKeys) {
+    const prop = props[key];
+    const isReq = required.has(key);
+    const label = escapeHtml(key) + (isReq ? ' <span style="color:#e74c3c">*</span>' : '');
+    const desc = prop.description || '';
+    if (prop.enum) {
+      const opts = prop.enum.map(v => '<option value="' + escapeHtml(v) + '">' + escapeHtml(v) + '</option>').join('');
+      formHtml += _field(label, '<select id="tc-' + key + '" style="' + inputStyle + '">' + opts + '</select>', desc);
+    } else if (prop.type === 'boolean') {
+      formHtml += _field(label, '<label style="cursor:pointer"><input type="checkbox" id="tc-' + key + '"> enabled</label>', desc);
+    } else if (prop.type === 'integer' || prop.type === 'number') {
+      formHtml += _field(label, '<input type="number" id="tc-' + key + '" style="' + inputStyle + '">', desc);
+    } else if (prop.type === 'object' || prop.type === 'array') {
+      formHtml += _field(label, '<textarea id="tc-' + key + '" rows="3" style="' + inputStyle + '">{}</textarea>', desc);
+    } else {
+      const isLong = /content|text|code|prompt|command|body|script|old_string|new_string/i.test(key);
+      if (isLong) {
+        formHtml += _field(label, '<textarea id="tc-' + key + '" rows="4" style="' + inputStyle + '"></textarea>', desc);
+      } else {
+        formHtml += _field(label, '<input type="text" id="tc-' + key + '" style="' + inputStyle + '">', desc);
+      }
+    }
+  }
+
+  // Build modal
+  const overlay = document.createElement('div');
+  overlay.id = 'toolCallOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+  const panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:550px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">'
+    + '<h3 style="margin:0;color:#e0e0e0;font-size:14px;">\u26A1 ' + escapeHtml(toolName) + '</h3>'
+    + '<button onclick="document.getElementById(\'toolCallOverlay\').remove()" style="background:none;border:none;color:#888;font-size:18px;cursor:pointer;">&times;</button>'
+    + '</div>'
+    + '<div style="color:#888;font-size:11px;margin-bottom:12px;">' + escapeHtml(tool.description || '').substring(0, 200) + '</div>'
+    + formHtml
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">'
+    + '<button onclick="document.getElementById(\'toolCallOverlay\').remove()" style="background:#333;color:#ccc;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+    + '<button id="tcExecuteBtn" style="background:#6c5ce7;color:white;border:none;padding:6px 16px;border-radius:4px;cursor:pointer;">Execute</button>'
+    + '</div>';
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+
+  // Execute button handler
+  document.getElementById('tcExecuteBtn').onclick = function() {
+    const args = {};
+    for (const key of propKeys) {
+      const el = document.getElementById('tc-' + key);
+      if (!el) continue;
+      let val = el.type === 'checkbox' ? el.checked : el.value;
+      if (val === '' || val === undefined || val === false) continue;
+      if (el.type === 'number' && val !== '') val = Number(val);
+      args[key] = val;
+    }
+    const argStr = Object.entries(args).map(function(pair) {
+      var k = pair[0], v = pair[1];
+      if (typeof v === 'string') return k + '="' + v.replace(/"/g, '\\"') + '"';
+      return k + '=' + JSON.stringify(v);
+    }).join(', ');
+    overlay.remove();
+    sendMessage('/call ' + toolName + '(' + argStr + ')');
+  };
+}
+
 // ── Slash commands ───────────────────────────────────────────────
 const HELP_DATA = {
   '/help': {

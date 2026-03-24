@@ -230,30 +230,21 @@ class AgentCoreMixin:
                             chars_per_token=ctx.get("chars_per_token", 0),
                             tool_defs=ctx.get("tool_defs"))
 
-                    # Dynamic lazy tools
+                    # Dynamic lazy tools fallback — for tools_mode=full that needs switching
                     if (tool_defs and not ctx.get("_lazy_tools_active")
-                            and len(tool_defs) > 2
-                            and _pre_send_est > _max_ctx * 0.6):
+                            and len(tool_defs) > 4 and iteration > 5):
                         _tools_chars = sum(
                             len(td.name) + len(td.description or "")
                             + len(json.dumps(td.parameters or {}))
                             for td in tool_defs)
-                        _tools_toks = int(_tools_chars / max(ctx.get("chars_per_token", 3.5), 1))
-                        if _tools_toks > _max_ctx * 0.05:
-                            logger.info(f"[compact] Dynamic lazy tools: {_tools_toks} tool tokens")
+                        _tools_pct = (_tools_chars / max(_pre_send_est * 3.5, 1)) * 100
+                        if _tools_pct > 15:
+                            logger.info(f"[compact] Dynamic lazy switch: tools={_tools_pct:.0f}%% of context")
                             from core.tool_registry import GetToolSchemaHandler, UseToolHandler
                             _gts = GetToolSchemaHandler(registry)
                             _ut = UseToolHandler(registry)
                             registry.register(_gts)
                             registry.register(_ut)
-                            _summary = "Available: " + ", ".join(td.name for td in tool_defs)
-                            llm_context.append(LLMMessage(
-                                role="user",
-                                content=f"[System: Tools switched to lazy mode — "
-                                        f"use get_tool_schema(name) then use_tool(name, args)]\n{_summary}"))
-                            llm_context.append(LLMMessage(
-                                role="assistant",
-                                content="Understood, I'll use get_tool_schema and use_tool."))
                             tool_defs = [
                                 LLMToolDefinition(name=_gts.name, description=_gts.description,
                                                   parameters=_gts.parameters_schema),
@@ -321,8 +312,10 @@ class AgentCoreMixin:
                     finish_reason = response.finish_reason
 
                     self._deflate_image_messages(messages)
+                    # Aggressive clearing like Claude Code: keep only last 2 results
+                    _keep = 2
                     self._clear_seen_tool_results(
-                        messages, keep_recent=6,
+                        messages, keep_recent=_keep,
                         conversation_id=conversation_id, user_id=user_id,
                         agent_name=ctx.get("active_agent_name", ""))
 
@@ -399,6 +392,20 @@ class AgentCoreMixin:
                         max_rounds, tools_called)
                     emitter.drain_pending(messages, _append, iteration)
                     emitter.check_cancelled()
+
+                    # Mid-turn compaction: every 5 iterations, progressively clear
+                    # old tool results on the canonical messages to stop context growth
+                    if iteration % 3 == 0 and len(messages) > 15:
+                        _cpt = ctx.get("chars_per_token", 0) or 3.5
+                        _mid_est = self._estimate_tokens(messages, chars_per_token=_cpt)
+                        _mid_target = int(ctx.get("max_context_size", 200000) * 0.5)
+                        if _mid_est > _mid_target:
+                            logger.info(f"[agent:{conversation_id[:8]}] mid-turn compact: "
+                                        f"{_mid_est} tokens > {_mid_target} target")
+                            self._progressive_clear_tool_results(
+                                messages, _mid_target, _mid_est,
+                                keep_recent=4, chars_per_token=_cpt)
+
                     _flush()
                 else:
                     # Max iterations reached

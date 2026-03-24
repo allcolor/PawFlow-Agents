@@ -148,16 +148,6 @@ class AgentCompactionMixin:
         old_messages = messages[start_idx:_split]
         recent_messages = messages[_split:]
 
-        # Already compact enough?
-        _cpt = chars_per_token if chars_per_token > 0 else 3.5
-        recent_est = self._estimate_tokens(
-            ([system_msg] if system_msg else []) + recent_messages,
-            chars_per_token=_cpt)
-        if recent_est > max_context * 0.4:
-            # Recent messages alone are 40%+ of context — don't add summary
-            logger.info(f"[compact-post] Recent messages already {recent_est} tokens, skipping summary")
-            return messages
-
         # Filter old messages: only conversation (no tool plumbing)
         old_conv = [
             m for m in old_messages
@@ -167,7 +157,11 @@ class AgentCompactionMixin:
                      and m.content.startswith("[System:"))
         ]
         if not old_conv:
+            logger.info(f"[compact-post] No conversation messages to summarize (all tool plumbing)")
             return messages
+
+        logger.info(f"[compact-post] {len(messages)} msgs → split at {_split}: "
+                     f"{len(old_messages)} old ({len(old_conv)} conv), {len(recent_messages)} recent")
 
         # Summarize
         try:

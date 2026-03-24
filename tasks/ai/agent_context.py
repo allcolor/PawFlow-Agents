@@ -428,9 +428,31 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
                             if mcp_via == "relay":
                                 # Via relay: launch/proxy on user's machine
-                                fs_svc = self._find_filesystem_service(_uid)
+                                # Resolve which relay service to use (expression-resolved)
+                                _relay_svc_id = mcp_def.get("relay_service", "")
+                                if _relay_svc_id and "${" in _relay_svc_id:
+                                    from core.expression import resolve_expression
+                                    _relay_svc_id = resolve_expression(_relay_svc_id, owner=_uid) or ""
+                                if _relay_svc_id:
+                                    # Use specific service
+                                    fs_svc = None
+                                    try:
+                                        from gui.services.global_service_registry import GlobalServiceRegistry
+                                        fs_svc = GlobalServiceRegistry.get_instance().get_live_instance(_relay_svc_id)
+                                    except Exception:
+                                        pass
+                                    if not fs_svc:
+                                        try:
+                                            from gui.services.user_service_registry import UserServiceRegistry
+                                            fs_svc = UserServiceRegistry.get_instance().get_live_instance(_uid, _relay_svc_id)
+                                        except Exception:
+                                            pass
+                                else:
+                                    # Auto-detect first available filesystem service
+                                    fs_svc = self._find_filesystem_service(_uid)
                                 if not fs_svc:
-                                    logger.warning(f"[mcp] No relay for stdio server '{mcp_name}'")
+                                    logger.warning(f"[mcp] No relay service for '{mcp_name}'"
+                                                   f"{f' (tried {_relay_svc_id})' if _relay_svc_id else ''}")
                                     continue
                                 # Start MCP server on relay if not running
                                 try:

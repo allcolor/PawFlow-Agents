@@ -304,7 +304,10 @@ class StreamEmitter(AgentEmitter):
                 "agent_name": self._agent_name or "",
                 "llm_service": self._agent_svc or "",
             })
-        # Narration: if LLM said nothing, synthesize a brief description
+        # Narration: ONLY if LLM said absolutely nothing
+        logger.debug(f"[narration check] content={bool(response_content)} "
+                     f"({len(response_content) if response_content else 0} chars), "
+                     f"thinking={bool(thinking)}, tools={len(tool_calls)}")
         if not response_content and not thinking and tool_calls:
             from tasks.ai.agent_streaming import _narrate_tool_calls
             _narrate_tool_calls(

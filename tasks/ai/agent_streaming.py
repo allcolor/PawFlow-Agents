@@ -75,10 +75,10 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
     if not narration:
         narration = _synthesize_narration(tool_calls)
     if narration:
-        bus.publish_event(conversation_id, "token", {
+        bus.publish_event(conversation_id, "narration", {
             "text": narration, "agent_name": agent_name,
             "msg_id": msg_id,
-            "source": source, "synthetic": True,
+            "source": source,
         })
     return narration
 

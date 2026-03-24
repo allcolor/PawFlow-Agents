@@ -92,6 +92,21 @@
     document.getElementById('status').textContent = t('streaming');
   });
 
+  // Narration: separate from token stream — not persisted, ephemeral display
+  eventSource.addEventListener('narration', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = data.agent_name || '';
+    const src = data.source || {type: 'agent', name: agent};
+    const badge = sourceBadge(src);
+    const el = document.createElement('div');
+    el.className = 'msg narration';
+    el.dataset.finalizedAgent = agent.toLowerCase();
+    el.innerHTML = badge + '<em>' + escapeHtml(data.text || '') + '</em>';
+    document.getElementById('messages').appendChild(el);
+    scrollBottom();
+  });
+
   eventSource.addEventListener('iteration_status', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -562,10 +577,9 @@
       const meta = buildMetaLine(extra);
       if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // Remove ALL finalized narrations for this agent — they were mid-turn
-      // narrations that should not persist alongside the final response
+      // Remove ALL narrations and finalized elements for this agent
       const agentLower = doneAgent.toLowerCase();
-      document.querySelectorAll('#messages .finalized').forEach(el => {
+      document.querySelectorAll('#messages .finalized, #messages .narration').forEach(el => {
         if (el.dataset.finalizedAgent === agentLower) {
           el.remove();
         }

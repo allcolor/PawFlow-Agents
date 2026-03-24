@@ -69,6 +69,12 @@ class LLMMessage:
     tool_calls: Optional[List[LLMToolCall]] = None
     tool_call_id: Optional[str] = None
     source: Optional[Dict[str, str]] = None  # {"type": "user"|"agent", "name": "...", "llm_service": "..."}
+    msg_id: str = ""  # unique ID — auto-generated if empty
+
+    def __post_init__(self):
+        if not self.msg_id:
+            import uuid
+            self.msg_id = uuid.uuid4().hex[:12]
 
     @property
     def text_content(self) -> str:

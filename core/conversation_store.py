@@ -228,10 +228,22 @@ class ConversationStore:
                 }
                 self._conversations[conversation_id] = entry
             now = time.time()
+            # Dedup by msg_id: check last messages for duplicates
+            existing = entry["messages"]
+            _recent_ids = set()
+            for m in existing[-10:]:
+                _mid = m.get("msg_id")
+                if _mid:
+                    _recent_ids.add(_mid)
             for msg in new_messages:
                 if "timestamp" not in msg:
                     msg["timestamp"] = now
-            entry["messages"].extend(new_messages)
+                _mid = msg.get("msg_id")
+                if _mid and _mid in _recent_ids:
+                    continue  # skip duplicate
+                existing.append(msg)
+                if _mid:
+                    _recent_ids.add(_mid)
             entry["updated_at"] = time.time()
             if user_id:
                 entry["user_id"] = user_id
@@ -479,8 +491,15 @@ class ConversationStore:
             agent_ctxs = entry.get("agent_contexts") or {}
             agent_ctx = agent_ctxs.get(agent_name)
             if agent_ctx is not None:
-                # Agent has its own context — append
-                agent_ctx.extend(new_messages)
+                # Agent has its own context — append (dedup by msg_id)
+                _ctx_ids = set(m.get("msg_id") for m in agent_ctx[-10:] if m.get("msg_id"))
+                for msg in new_messages:
+                    _mid = msg.get("msg_id")
+                    if _mid and _mid in _ctx_ids:
+                        continue
+                    agent_ctx.append(msg)
+                    if _mid:
+                        _ctx_ids.add(_mid)
                 entry["updated_at"] = time.time()
             elif entry.get("context") is not None:
                 # Shared context exists — fork for this agent

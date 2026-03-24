@@ -63,6 +63,87 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         except Exception:
             return flow_default
 
+    # ── /context (improved) ──
+    if action == "view_context":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        context_data = _ctx_load(conv_id, _ctx_agent)
+        source_data = context_data if context_data is not None else store.load(conv_id, user_id=user_id)
+        if not source_data:
+            flowfile.set_content(json.dumps({"error": "No context data"}).encode())
+            return [flowfile]
+        msgs = self._deserialize_messages(source_data)
+        max_ctx = _ctx_max_tokens(_ctx_agent)
+
+        # Category breakdown
+        system_tokens = 0
+        tool_tokens = 0
+        user_tokens = 0
+        assistant_tokens = 0
+        for m in msgs:
+            t = self._estimate_tokens([m])
+            if m.role == "system":
+                system_tokens += t
+            elif m.role == "tool":
+                tool_tokens += t
+            elif m.role == "user":
+                user_tokens += t
+            elif m.role == "assistant":
+                assistant_tokens += t
+
+        total = system_tokens + tool_tokens + user_tokens + assistant_tokens
+        free = max(0, max_ctx - total)
+        pct = lambda v: round(v / max_ctx * 100, 1) if max_ctx else 0
+
+        # Visual bar (40 chars)
+        bar_len = 40
+        def bar_segment(tokens):
+            return max(0, round(tokens / max_ctx * bar_len)) if max_ctx else 0
+        s_len = bar_segment(system_tokens)
+        t_len = bar_segment(tool_tokens)
+        u_len = bar_segment(user_tokens)
+        a_len = bar_segment(assistant_tokens)
+        f_len = bar_len - s_len - t_len - u_len - a_len
+        bar = "S" * s_len + "T" * t_len + "U" * u_len + "A" * a_len + "·" * max(0, f_len)
+
+        lines = [
+            f"## Context: {_ctx_agent or 'shared'}",
+            f"",
+            f"[{bar}] {total:,} / {max_ctx:,} tokens ({pct(total)}%)",
+            f"",
+            f"  **System**:    {system_tokens:>6,} tokens ({pct(system_tokens)}%) — S",
+            f"  **Tools**:     {tool_tokens:>6,} tokens ({pct(tool_tokens)}%) — T",
+            f"  **User**:      {user_tokens:>6,} tokens ({pct(user_tokens)}%) — U",
+            f"  **Assistant**: {assistant_tokens:>6,} tokens ({pct(assistant_tokens)}%) — A",
+            f"  **Free**:      {free:>6,} tokens ({pct(free)}%) — ·",
+            f"",
+            f"  Messages: {len(msgs)} | Diverged: {'yes' if context_data is not None else 'no'}",
+        ]
+        # Suggestions
+        if pct(total) > 80:
+            lines.append(f"\n  ⚠ Context is {pct(total)}% full — consider `/compact`")
+        if pct(tool_tokens) > 40:
+            lines.append(f"  💡 Tool results use {pct(tool_tokens)}% — old results will be auto-cleared")
+        if pct(system_tokens) > 20:
+            lines.append(f"  💡 System prompt is large ({system_tokens:,} tokens)")
+
+        flowfile.set_content(json.dumps({
+            "message": "\n".join(lines),
+            "total_tokens": total,
+            "max_tokens": max_ctx,
+            "breakdown": {
+                "system": system_tokens, "tools": tool_tokens,
+                "user": user_tokens, "assistant": assistant_tokens,
+                "free": free,
+            },
+            "message_count": len(msgs),
+            "pct_used": pct(total),
+        }).encode())
+        return [flowfile]
+
     # ── /rewind ──
     if action == "rewind":
         conv_id = body.get("conversation_id", "")

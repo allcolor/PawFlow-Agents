@@ -676,9 +676,18 @@ class PawCode:
                 "- `/cost` — Token usage/cost\n"
                 "- `/login` — Re-authenticate\n"
                 "- `/autoconv <on|off|status|now> <agent> [freq]` — Auto-conversation\n"
+                "- `/effort low|medium|high|max|reset` — Thinking effort level\n"
+                "- `/fast [on|off|model]` — Toggle fast/cheap model\n"
+                "- `/fork [name]` — Fork conversation\n"
+                "- `/rewind [checkpoint]` — Undo file changes + conversation\n"
+                "- `/plan [on|off|status]` — Plan mode (approval before execution)\n"
+                "- `/hooks [list|add|del]` — Pre/post tool hooks\n"
+                "- `/doctor` — System diagnostics\n"
+                "- `/add-dir <path>` — Add workspace directory\n"
                 "- `/quit` — Exit (`/exit` alias)\n"
                 "\n*Aliases: `/message` = `/msg`, `/interrupt` = `/stop`, "
-                "`/detach` = `/clear-files`*\n"
+                "`/detach` = `/clear-files`, `/branch` = `/fork`, "
+                "`/checkpoint` = `/rewind`*\n"
             )
             return
 
@@ -704,8 +713,26 @@ class PawCode:
             if handler(self, cmd, arg, text):
                 return
 
-        # Unknown command — send as message (might be a skill like /review)
-        self._send_message(text)
+        # Unknown command — try server-side command parser
+        try:
+            data = self.api.send_action("command", text=text,
+                                         agent_name=self.selected_agent or "",
+                                         conversation_id=self.conversation_id or "")
+            if isinstance(data, dict):
+                if data.get("client_only"):
+                    self._send_message(text)  # Fall back to message
+                elif data.get("help"):
+                    self.renderer.print_markdown(data["help"])
+                elif data.get("message"):
+                    self.renderer.print_system(data["message"])
+                elif data.get("error"):
+                    self.renderer.print_error(data["error"])
+                else:
+                    self.renderer.print_system(str(data))
+            else:
+                self._send_message(text)
+        except Exception:
+            self._send_message(text)  # Fall back to message
 
     def _display_history(self, messages: list, show_n: int = 10):
         """Display the last N messages from conversation history."""

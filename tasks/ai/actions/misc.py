@@ -297,4 +297,128 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
         return [flowfile]
 
+    # ── /stats ──
+    if action == "stats":
+        conv_id = body.get("conversation_id", "")
+        # Aggregate token usage from conversation messages
+        lines = ["## Session Statistics\n"]
+        try:
+            # Per-agent usage from conversation source metadata
+            all_msgs = store.load(conv_id, user_id=user_id) or [] if conv_id else []
+            agent_stats = {}  # agent -> {tokens_in, tokens_out, calls, models}
+            for m in all_msgs:
+                src = m.get("source") if isinstance(m, dict) else getattr(m, "source", None)
+                if not src or not isinstance(src, dict):
+                    continue
+                name = src.get("name", "")
+                if not name or src.get("type") != "agent":
+                    continue
+                s = agent_stats.setdefault(name, {
+                    "tokens_in": 0, "tokens_out": 0, "calls": 0, "models": set()})
+                s["tokens_in"] += src.get("tokens_in", 0) or 0
+                s["tokens_out"] += src.get("tokens_out", 0) or 0
+                s["calls"] += 1
+                model = src.get("model", "")
+                if model:
+                    s["models"].add(model)
+
+            if agent_stats:
+                total_in = sum(s["tokens_in"] for s in agent_stats.values())
+                total_out = sum(s["tokens_out"] for s in agent_stats.values())
+                lines.append(f"**Total**: {total_in:,} in / {total_out:,} out\n")
+                for name, s in sorted(agent_stats.items(), key=lambda x: -x[1]["tokens_out"]):
+                    models = ", ".join(sorted(s["models"])) if s["models"] else "?"
+                    lines.append(
+                        f"  **{name}** ({models}): "
+                        f"{s['tokens_in']:,} in / {s['tokens_out']:,} out "
+                        f"({s['calls']} messages)")
+            else:
+                lines.append("No agent activity recorded in this conversation.")
+
+            # Conversation count
+            all_convs = store.list_conversations(user_id=user_id)
+            lines.append(f"\n**Conversations**: {len(all_convs)}")
+            lines.append(f"**Messages in current**: {len(all_msgs)}")
+
+        except Exception as e:
+            lines.append(f"Error collecting stats: {e}")
+
+        flowfile.set_content(json.dumps({
+            "ok": True, "message": "\n".join(lines),
+        }).encode())
+        return [flowfile]
+
+    # ── /pr-comments ──
+    if action == "pr_comments":
+        pr = body.get("pr", "").strip()
+        conv_id = body.get("conversation_id", "")
+        # Build command for the agent to run via relay
+        if pr:
+            cmd = f"gh pr view {pr} --comments --json comments"
+        else:
+            cmd = "gh pr view --comments --json comments"
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": f"Fetching PR comments... Run this via relay:\n```\n{cmd}\n```\n\n"
+                       f"Or ask your agent: \"show me the PR comments\"",
+            "relay_command": cmd,
+        }).encode())
+        return [flowfile]
+
+    # ── /security-review ──
+    if action == "security_review":
+        conv_id = body.get("conversation_id", "")
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": "Starting security review...",
+            "_inject_message": (
+                "[System: SECURITY REVIEW MODE]\n"
+                "Run `git diff` to see pending changes, then analyze them for:\n"
+                "1. Injection vulnerabilities (SQL, XSS, command injection)\n"
+                "2. Authentication/authorization issues\n"
+                "3. Sensitive data exposure (secrets, tokens, PII)\n"
+                "4. Input validation gaps\n"
+                "5. Dependency vulnerabilities\n\n"
+                "Report findings with severity (critical/high/medium/low) and fix suggestions."
+            ),
+        }).encode())
+        return [flowfile]
+
+    # ── /insights ──
+    if action == "insights":
+        conv_id = body.get("conversation_id", "")
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": "Generating session insights...",
+            "_inject_message": (
+                "[System: SESSION INSIGHTS]\n"
+                "Analyze the conversation history and provide insights:\n"
+                "1. What were the main topics/tasks worked on?\n"
+                "2. Were there recurring friction points or repeated errors?\n"
+                "3. Which tools were used most? Any underutilized tools?\n"
+                "4. What patterns emerged in the workflow?\n"
+                "5. Suggestions for improving productivity in future sessions.\n\n"
+                "Be concise — 5-10 bullet points max."
+            ),
+        }).encode())
+        return [flowfile]
+
+    # ── /feedback ──
+    if action == "feedback":
+        report = body.get("report", "").strip()
+        if not report:
+            flowfile.set_content(json.dumps({
+                "message": "To report an issue:\n"
+                           "  /feedback <description of the issue>\n\n"
+                           "Or open an issue directly at the project's issue tracker.",
+            }).encode())
+        else:
+            # Store feedback as a notification
+            logger.info(f"[feedback] from {user_id}: {report}")
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Thank you for your feedback! Logged for review.\n\n> {report[:200]}",
+            }).encode())
+        return [flowfile]
+
     return None

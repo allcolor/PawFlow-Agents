@@ -449,6 +449,34 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
 
+    # ── Stats & Analysis ──
+    "/stats": {
+        "usage": "/stats",
+        "short": "Show session statistics",
+        "detail": "Token usage per agent, model breakdown, message counts.",
+    },
+    "/pr-comments": {
+        "usage": "/pr-comments [PR number or URL]",
+        "short": "Fetch GitHub PR comments",
+        "detail": "Fetch and display comments from a GitHub pull request.",
+    },
+    "/security-review": {
+        "usage": "/security-review",
+        "short": "Security audit of pending changes",
+        "detail": "Analyze git diff for security vulnerabilities (injection, auth, secrets, etc.).",
+    },
+    "/insights": {
+        "usage": "/insights",
+        "short": "Generate session insights",
+        "detail": "Analyze conversation history for patterns, friction points, and suggestions.",
+    },
+    "/feedback": {
+        "usage": "/feedback <description>",
+        "short": "Report an issue or give feedback",
+        "detail": "Report a bug or suggest an improvement.",
+        "aliases": "/bug",
+    },
+
     # ── Developer ──
     "/install": {
         "usage": "/install <tool_url_or_path>",
@@ -816,6 +844,22 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/vidservice":
         return _parse_media_service_command(arg, base, "video")
 
+    # ── Stats & Analysis ──
+    if cmd == "/stats":
+        return {"action": "stats", **base}
+
+    if cmd == "/pr-comments":
+        return {"action": "pr_comments", "pr": arg.strip(), **base}
+
+    if cmd == "/security-review":
+        return {"action": "security_review", **base}
+
+    if cmd == "/insights":
+        return {"action": "insights", **base}
+
+    if cmd in ("/feedback", "/bug"):
+        return {"action": "feedback", "report": arg, **base}
+
     # ── Client-only (not handled server-side) ──
     if cmd in ("/clear-ui", "/connect", "/disconnect", "/exit", "/quit",
                "/copy", "/paste", "/upload", "/files"):
@@ -1071,6 +1115,8 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
             "Mode": ["/plan", "/hooks"],
             "Activation": ["/activate", "/deactivate", "/share", "/link"],
             "Session": ["/login", "/help", "/doctor", "/add-dir"],
+            "Analysis": ["/stats", "/insights", "/pr-comments",
+                         "/security-review", "/feedback"],
             "Developer": ["/install", "/uninstall", "/batch", "/debug",
                           "/clear-store"],
         }

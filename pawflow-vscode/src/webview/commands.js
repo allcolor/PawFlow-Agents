@@ -386,7 +386,11 @@ function dispatchCommand(text) {
   var cmd = parts[0].toLowerCase();
   var arg = text.slice(cmd.length).trim();
   var def = COMMANDS[cmd];
-  if (!def) return false;
+  if (!def) {
+    // Fallback: try server-side command parser for new/unknown commands
+    sendCmd('command', JSON.stringify({ text: text, agent_name: window._selectedAgent || '' }));
+    return true;
+  }
 
   if (def.handler) {
     window[def.handler](arg);

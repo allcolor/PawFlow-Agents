@@ -2173,9 +2173,48 @@ async function handleSlashCommand(text) {
     return true;
   }
 
-  // Unknown slash command — show error, don't send as message
-  addMsg('system', 'Unknown command: ' + cmd + '. Type /help for available commands.');
-  return true;
+  // Unknown slash command — try server-side command parser
+  return await tryServerCommand(text);
+}
+
+/**
+ * Fallback: send raw /command text to the server-side unified parser.
+ * New commands added server-side auto-work without client changes.
+ */
+async function tryServerCommand(text) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'command', text,
+        conversation_id: conversationId || '',
+        agent_name: selectedAgent || '',
+      }),
+    });
+    const data = await resp.json();
+    if (data.client_only) {
+      addMsg('system', 'Unknown command: ' + text.split(/\s+/)[0] + '. Type /help for available commands.');
+      return true;
+    }
+    if (data.help) { addMsg('system', data.help); return true; }
+    if (data.message) { addMsg('system', data.message); }
+    if (data.error) { addMsg('system', '⚠ ' + data.error); }
+    // Handle special response types
+    if (data.conversation_id && data.ok && data.source) {
+      // Fork — switch to new conversation
+      addMsg('system', 'Switching to forked conversation...');
+      if (typeof switchConversation === 'function') {
+        switchConversation(data.conversation_id);
+      }
+    }
+    if (data.checkpoints && !data.error) {
+      // Rewind checkpoint list — already rendered via data.message
+    }
+    return true;
+  } catch (e) {
+    addMsg('system', 'Command failed: ' + e.message);
+    return true;
+  }
 }
 
 async function cmdSchedulesList() {

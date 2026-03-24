@@ -539,19 +539,28 @@
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
-    // Remove streaming chunks THEN create proper message via addMsg.
-    // Must be in this order so the new message appears at the right
-    // position (end of chat) without a stale chunk above it.
-    // Remove streaming chunks (including finalized narration elements)
-    _expectingClear = true;
-    for (const chunk of s.chunks) {
-      if (chunk && chunk.parentNode) chunk.remove();
+    // Keep all existing DOM elements (narrations, tool calls, results).
+    // Only add the final response if it wasn't already streamed.
+    // Convert any active streaming element into a permanent message.
+    if (s.el && s.el.parentNode) {
+      // Active streaming element exists — it IS the response, just finalize it
+      s.el.classList.remove('streaming');
+      s.el.classList.add('msg', 'assistant');
+      s.el.dataset.rawText = finalText.substring(0, 500);
+    } else if (finalText) {
+      // No streaming element — response came in one shot (e.g. from synthesis)
+      // Only add if not already visible as a finalized chunk
+      const existing = document.querySelectorAll('#messages .finalized');
+      let alreadyShown = false;
+      existing.forEach(el => {
+        if (el.textContent && finalText.substring(0, 100) === el.textContent.substring(0, 100)) {
+          alreadyShown = true;
+          el.classList.remove('finalized');
+          el.classList.add('msg', 'assistant');
+        }
+      });
+      if (!alreadyShown) addMsg('assistant', finalText, extra);
     }
-    if (s.el && !s.chunks.includes(s.el) && s.el.parentNode) s.el.remove();
-    // Also remove finalized narration elements for this agent
-    document.querySelectorAll('#messages .finalized').forEach(el => el.remove());
-    _expectingClear = false;
-    if (finalText) addMsg('assistant', finalText, extra);
     clearStream(doneAgent);
     scrollBottom();
 

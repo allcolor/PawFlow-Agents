@@ -236,7 +236,7 @@ Expressions ${...} support chainable operations:
 - Date: now(fmt), format_date(fmt), add_days(n), timestamp
 - Generators: uuid, uuid_short, random_int(min,max), random_string(n), now(fmt)
 - Syntax: ${scope.key:op1:op2("arg"):op3}
-- Nested: ${global.x:equals("y"):then("A"):else(${global.z:upper})}
+- Nested: ${x:equals("y"):then("A"):else(${z:upper})}
 - Generators: ${:uuid}, ${:now("%Y-%m-%d")}
 - Multi-pass: resolved values containing ${...} are re-resolved
 
@@ -383,10 +383,9 @@ The prompt task output flows as FlowFile content → tool.generate_image reads `
 - Parameters go in the `parameters` key inside the task definition
 - Tasks read config via `self.config.get("key")`
 - Use expressions like `${attribute_name}` in parameter values
-- Use `${secrets.global.key}` for global secrets or `${secrets.key}` for per-user secrets
-- Use `${global.key}` for global parameters
+- Use `${key}` for secrets and variables (auto-cascades: flow → conv → user → global)
 - Use `${env.VAR_NAME}` for environment variables
-- Use `${flow.parameters.key}` for flow-level parameters (overridable at start)
+- No scope prefix needed — `${api_key}` finds it wherever it's defined
 
 ## IMPORTANT: Before using any task, ALWAYS call pawflow_help with topic 'task:<type>'
 to get the EXACT parameter names. DO NOT guess parameter names.
@@ -403,7 +402,7 @@ Tasks can reference a service defined in the flow's `services` section:
   "services": {
     "my_llm": {
       "type": "llmConnection",
-      "parameters": { "provider": "openai", "api_key": "${secrets.global.openai_key}", "model": "gpt-4o" }
+      "parameters": { "provider": "openai", "api_key": "${openai_key}", "model": "gpt-4o" }
     }
   },
   "tasks": {
@@ -447,21 +446,21 @@ Variables available in scripts:
 PawFlow expressions use `${...}` syntax and are resolved at parse/runtime.
 
 ## Global Secrets (shared across all flows)
-- `${secrets.global.key_name}` — Encrypted global secret (config/global_secrets.json)
+- `${key_name}` — Encrypted global secret (config/global_secrets.json)
 - Managed via Runtime UI (🔑 button next to Global in treeview)
 
 ## User Secrets (per-user, encrypted at rest)
-- `${secrets.user.key_name}` — Encrypted user secret (config/users/{username}/secrets.json)
+- `${key_name}` — Encrypted user secret (config/users/{username}/secrets.json)
 - Store via: `/add-secret name value` in chat or `store_secret` tool
 - Managed via Runtime UI (🔑 button next to user group in treeview)
 - Use `list_secrets` tool or `/list-secrets` in chat to see available keys
 
 ## Global Parameters (shared across all flows)
-- `${global.key_name}` — Global parameter (config/global_parameters.json)
+- `${key_name}` — Global parameter (config/global_parameters.json)
 - Managed via Runtime UI (⚙️ button next to Global in treeview)
 
 ## User Parameters (per-user)
-- `${user.key_name}` — User parameter (config/users/{username}/parameters.json)
+- `${key_name}` — User parameter (config/users/{username}/parameters.json)
 - Store via: `/add-variable name value` in chat
 - Managed via Runtime UI (⚙️ button next to user group in treeview)
 - Use `/list-variables` in chat to see available keys
@@ -471,7 +470,7 @@ PawFlow expressions use `${...}` syntax and are resolved at parse/runtime.
 - `${telegram.chat_id}` — Dotted attribute names work
 
 ## Flow Parameters
-- `${flow.parameters.key}` — From the flow's parameter context
+- `${key}` — From the flow's parameter context
 
 ## Environment Variables
 - `${env.VAR_NAME}` — System environment variable
@@ -614,7 +613,7 @@ class StoreSecretHandler(ToolHandler):
 
     Uses the SecretsManager to encrypt the value at rest.
     Stores in user-level secrets file: config/users/{username}/secrets.json
-    Referenced via ${secrets.user.key_name} in flows.
+    Referenced via ${key_name} in flows.
     """
 
     def __init__(self):
@@ -630,7 +629,7 @@ class StoreSecretHandler(ToolHandler):
         return (
             "Securely store a secret (API key, token, password). "
             "The value is encrypted at rest and can be referenced in "
-            "flow configs as ${secrets.user.key_name}."
+            "flow configs as ${key_name}."
         )
 
     @property
@@ -698,7 +697,7 @@ class ListSecretsHandler(ToolHandler):
         return (
             "List available secret names for the current user. "
             "Returns only key names (never values). Use these names "
-            "in flow configs as ${secrets.user.key_name}."
+            "in flow configs as ${key_name}."
         )
 
     @property

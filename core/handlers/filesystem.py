@@ -442,6 +442,9 @@ class FilesystemToolHandler(ToolHandler):
             logger.debug(f"[checkpoint] capture failed for {path}: {e}")
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        # Resolve expressions in all arguments (secrets in commands, paths, etc.)
+        from core.expression import resolve_value
+        arguments = resolve_value(arguments, owner=self._user_id)
         result = self._execute_inner(arguments)
         # Append service hint if a fallback was used
         if hasattr(self, '_last_service_hint') and self._last_service_hint:

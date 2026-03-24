@@ -418,6 +418,10 @@ class LLMClient(
                                             tools, callback, thinking_budget, thinking_callback)
             raise
         except Exception as primary_err:
+            # Don't fallback on cancellation — re-raise immediately
+            from tasks.ai.agent_exceptions import AgentCancelled as _AC
+            if isinstance(primary_err, _AC):
+                raise
             if self.fallback_model and self.fallback_model != model:
                 logger.warning(
                     "Streaming with primary model '%s' failed, trying fallback '%s'",

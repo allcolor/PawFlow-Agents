@@ -274,9 +274,8 @@ class StreamEmitter(AgentEmitter):
             stop_event, t, cancel_flag = handle
             stop_event.set()
             t.join(timeout=1)
-            # If the heartbeat detected a cancel during the LLM call, raise now
-            if cancel_flag.is_set():
-                raise AgentCancelled()
+            # Don't raise here (we're in a finally block).
+            # The cancel_flag is checked by check_cancelled() after the finally.
 
     # ── Tool events ───────────────────────────────────────────────────
 

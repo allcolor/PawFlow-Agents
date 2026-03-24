@@ -715,6 +715,36 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 logger.info("Auto-detected reasoning model (%s/%s), thinking_budget=%d",
                             _p or "?", _m or "?", thinking_budget)
 
+        # Per-conversation effort override (from /effort command)
+        if use_conv_store and conversation_id:
+            try:
+                from tasks.ai.agent_utils import _resolve_extra
+                _effort = _resolve_extra(
+                    ConversationStore.instance(), conversation_id,
+                    "effort_override", user_id)
+                if _effort:
+                    thinking_budget = int(_effort)
+                    logger.info("Effort override: thinking_budget=%d", thinking_budget)
+            except (ValueError, Exception):
+                pass
+
+        # Plan mode directive
+        if use_conv_store and conversation_id:
+            try:
+                _plan_mode = ConversationStore.instance().get_extra(
+                    conversation_id, "plan_mode")
+                if _plan_mode:
+                    system_prompt += (
+                        "\n\nPLAN MODE: Before executing any tools, you MUST first "
+                        "call create_plan(title, steps) to propose your plan. "
+                        "Wait for the user to approve_plan() before executing. "
+                        "Do NOT call any other tools until the plan is approved."
+                    )
+                    if messages and messages[0].role == "system":
+                        messages[0] = LLMMessage(role="system", content=system_prompt)
+            except Exception:
+                pass
+
         return {
             "client": client, "registry": registry, "tool_defs": tool_defs,
             "messages": messages, "model": model_name,

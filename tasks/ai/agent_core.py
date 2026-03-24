@@ -43,9 +43,15 @@ class AgentCoreMixin:
             try:
                 from core.conversation_store import ConversationStore
                 from tasks.ai.agent_utils import _resolve_extra
+                _cs = ConversationStore.instance()
                 _agent_n = ctx.get("active_agent_name") or ""
+                # Fast mode: override model with fast variant
+                _fast = _resolve_extra(_cs, conversation_id, "fast_mode", user_id)
+                if _fast:
+                    model = _fast
+                # Per-agent model override (takes priority over fast)
                 _mo = _resolve_extra(
-                    ConversationStore.instance(), conversation_id,
+                    _cs, conversation_id,
                     f"model_override:{_agent_n}", user_id)
                 if _mo:
                     model = _mo

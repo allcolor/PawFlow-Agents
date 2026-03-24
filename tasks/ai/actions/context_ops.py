@@ -99,8 +99,17 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _compact_agent_name = _ctx_agent
         _compact_keep = int(self.config.get("context_keep_recent", 6))
 
+        _compact_instructions = body.get("instructions", "")
+
         def _do_compact():
             msgs = self._deserialize_messages(_compact_source)
+            # Inject focus instructions if provided (like Claude Code's /compact <focus>)
+            if _compact_instructions:
+                from core.llm_client import LLMMessage as _LM
+                msgs.insert(1 if msgs and msgs[0].role == "system" else 0,
+                    _LM(role="user", content=(
+                        f"[Compaction focus: {_compact_instructions}. "
+                        f"Prioritize retaining information about this topic.]")))
             before = len(msgs)
             estimated = self._estimate_tokens(msgs)
             compacted = self._compact_if_needed(
@@ -111,7 +120,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             after_tokens = self._estimate_tokens(compacted)
             return {"before": before, "after": len(compacted),
                     "tokens_before": estimated, "tokens_after": after_tokens,
-                    "agent": _compact_agent_name or "shared"}
+                    "agent": _compact_agent_name or "shared",
+                    "focus": _compact_instructions or None}
 
         return self._run_bg_context_op(conv_id, "compact", _do_compact, flowfile)
 

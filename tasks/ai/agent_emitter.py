@@ -30,6 +30,7 @@ class AgentResult:
     source: Dict[str, str] = field(default_factory=dict)
     messages: List[LLMMessage] = field(default_factory=list)
     new_messages: List[LLMMessage] = field(default_factory=list)
+    all_msg_ids: List[str] = field(default_factory=list)  # all assistant msg_ids (survives flush)
 
 
 class AgentEmitter:
@@ -158,9 +159,8 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
-        # Collect ALL msg_ids from this turn (1 per assistant message per iteration)
-        _all_ids = [m.msg_id for m in result.new_messages
-                    if m.role == "assistant" and m.msg_id]
+        # Use all_msg_ids from the full turn (survives flush)
+        _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
         self.bus.publish_event(self.conversation_id, "done", {
             "response": result.response_content,

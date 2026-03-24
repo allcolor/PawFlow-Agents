@@ -89,6 +89,7 @@ class AgentCoreMixin:
                 break
         # New messages tracking
         new_messages: List[LLMMessage] = []
+        all_assistant_msg_ids: List[str] = []  # survives flush, for done event
         base_count = ctx.get("_base_message_count", 0)
         if len(messages) > base_count:
             new_messages.extend(messages[base_count:])
@@ -98,6 +99,7 @@ class AgentCoreMixin:
             # share the SAME msg_id — enabling client-side dedup.
             if msg.role == "assistant" and emitter._current_msg_id:
                 msg.msg_id = emitter._current_msg_id
+                all_assistant_msg_ids.append(msg.msg_id)
                 # After this message, generate a NEW msg_id for the next one
                 import uuid as _uuid_append
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
@@ -555,7 +557,8 @@ class AgentCoreMixin:
                     tools_called=tools_called, iterations=iteration,
                     duration_ms=(time.time() - start_time) * 1000,
                     finish_reason=reason or finish_reason, source=_agent_source(),
-                    messages=messages, new_messages=new_messages)
+                    messages=messages, new_messages=new_messages,
+                    all_msg_ids=all_assistant_msg_ids)
 
             # NO_PENDING_WORK handling (streaming/poller only via emitter)
             _processed = emitter.on_no_pending_work(response_content or "", ctx)

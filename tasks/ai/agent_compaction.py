@@ -762,30 +762,22 @@ class AgentCompactionMixin:
             target_tokens = 2000
         clean_text = self._sanitize_for_llm(text)
         target_instruction = (
-            f"Target length: approximately {target_tokens} tokens. "
-            f"Use the full budget — do not produce a shorter summary than needed."
+            f"STRICT LIMIT: maximum {target_tokens} tokens. Be concise. "
+            f"Prioritize: current state, files modified, last action, pending work."
         )
         try:
             response = client.complete(
                 messages=[
                     LLMMessage(role="system", content=(
-                        "You are a conversation summarizer for an AI agent work session. "
-                        "Summarize the following exchange. You MUST preserve:\n"
-                        "1. CURRENT STATE: What project/task is being worked on, what version/stage\n"
-                        "2. FILES & ARTIFACTS: All files created, modified, or referenced (with paths)\n"
-                        "3. DECISIONS: Key decisions made, architecture choices, user preferences\n"
-                        "4. LAST ACTION: What the agent was doing right before this point\n"
-                        "5. PENDING WORK: What still needs to be done (user requests not yet fulfilled)\n"
-                        "6. KEY FACTS: URLs, credentials, config values, variable names, tool names\n\n"
-                        "Tool call details (arguments, raw outputs) can be summarized briefly — "
-                        "the agent can re-call tools if it needs fresh data. "
-                        "But NEVER lose the project state, file paths, or what was being worked on.\n\n"
+                        "Summarize this agent work session concisely. Preserve: "
+                        "project state, files modified (with paths), decisions, "
+                        "last action, pending work. Skip tool details. "
                         + target_instruction
                     )),
                     LLMMessage(role="user", content=clean_text),
                 ],
                 temperature=0.3,
-                max_tokens=0,  # no output limit — target is in the prompt
+                max_tokens=min(target_tokens * 2, 4000),  # hard cap
             )
         except Exception as e:
             err_str = str(e)

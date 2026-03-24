@@ -35,6 +35,7 @@ class AgentResult:
 class AgentEmitter:
     """Base emitter — all hooks are no-ops. Subclass to customize."""
     is_streaming: bool = False
+    _current_msg_id: str = ""  # set per iteration, shared across token/done events
 
     def on_loop_start(self, ctx: dict): pass
     def on_iteration_start(self, iteration, round_num, max_iterations,
@@ -155,13 +156,11 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
-        # Use the msg_id from the actual persisted assistant message
-        # (matches what the store has, so client dedup works across SSE + poll)
+        # MUST use _current_msg_id — same ID that was sent in token events.
+        # The client registered this ID during streaming. Using a different
+        # ID (from the LLMMessage) would cause the client to not recognize
+        # it as the same message → duplicate display.
         _msg_id = self._current_msg_id
-        for m in reversed(result.new_messages):
-            if m.role == "assistant" and m.msg_id:
-                _msg_id = m.msg_id
-                break
         self.bus.publish_event(self.conversation_id, "done", {
             "response": result.response_content,
             "msg_id": _msg_id,

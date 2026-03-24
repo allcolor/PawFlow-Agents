@@ -93,6 +93,11 @@ class AgentCoreMixin:
         if len(messages) > base_count:
             new_messages.extend(messages[base_count:])
         def _append(msg: LLMMessage):
+            # Sync msg_id: assistant messages use emitter's pre-generated ID
+            # so SSE streaming tokens, done event, and persisted message all
+            # share the SAME msg_id — enabling client-side dedup.
+            if msg.role == "assistant" and emitter._current_msg_id:
+                msg.msg_id = emitter._current_msg_id
             messages.append(msg)
             new_messages.append(msg)
 

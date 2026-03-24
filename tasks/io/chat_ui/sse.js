@@ -538,6 +538,7 @@
     const finalText = resp || s.text.replace(/^\[[^\]]+\]:\s*/, '') || '';
     // Build metadata — these fields ALWAYS exist for every message
     const extra = {};
+    extra.msg_id = data.msg_id || '';
     extra.source = data.source || {type: 'agent', name: doneAgent};
     extra.model = data.model || '';
     extra.provider = data.provider || '';

@@ -58,7 +58,19 @@ function buildMetaLine(extra) {
   return '<div class="msg-meta" onclick="this.classList.toggle(\'expanded\')">' + line + '</div>';
 }
 
+// Global set of seen msg_ids for dedup (SSE + poll + replay)
+const _seenMsgIds = new Set();
+
 function addMsg(role, text, extra) {
+  // Dedup by msg_id — if we've already displayed this message, skip
+  const msgId = (extra && extra.msg_id) || '';
+  if (msgId) {
+    if (_seenMsgIds.has(msgId)) {
+      console.log('[dedup] skipping duplicate msg_id:', msgId);
+      return null;
+    }
+    _seenMsgIds.add(msgId);
+  }
   const el = document.createElement('div');
   // Support classified types: tool_call, tool_result map to CSS class "tool"
   let cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;

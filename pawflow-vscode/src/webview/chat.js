@@ -215,7 +215,13 @@ function renderToolResult(content) {
   return esc(text);
 }
 
+var _seenMsgIds = {};
 function addMsg(type, content, meta) {
+  var msgId = (meta && meta.msg_id) || '';
+  if (msgId) {
+    if (_seenMsgIds[msgId]) return null;
+    _seenMsgIds[msgId] = true;
+  }
   var div = document.createElement('div');
   div.className = 'msg ' + type;
 

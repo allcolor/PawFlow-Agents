@@ -151,8 +151,15 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
+        # Extract msg_id from the last assistant message for client-side dedup
+        _msg_id = ""
+        for m in reversed(result.new_messages):
+            if m.role == "assistant" and m.msg_id:
+                _msg_id = m.msg_id
+                break
         self.bus.publish_event(self.conversation_id, "done", {
             "response": result.response_content,
+            "msg_id": _msg_id,
             "model": result.model,
             "provider": result.provider,
             "base_url": result.base_url,

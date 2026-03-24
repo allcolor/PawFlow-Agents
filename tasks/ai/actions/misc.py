@@ -177,14 +177,14 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 ctx_data = store.load_agent_context(conv_id, key.split(":", 1)[1])
                 if ctx_data:
                     store.save_agent_context(new_id, key.split(":", 1)[1], ctx_data)
-        # Set fork name
+        # Set fork name via extra
         if fork_name:
-            store.set_metadata_field(new_id, "title", fork_name)
+            store.set_extra(new_id, "title", fork_name, user_id=user_id)
         else:
-            src_meta = store.get_metadata(conv_id)
-            src_title = src_meta.get("title", "") if src_meta else ""
-            store.set_metadata_field(new_id, "title",
-                                     f"Fork of {src_title or conv_id[:8]}")
+            src_title = (store.get_extra(conv_id, "title", user_id=user_id)
+                         or conv_id[:8])
+            store.set_extra(new_id, "title",
+                            f"Fork of {src_title}", user_id=user_id)
         flowfile.set_content(json.dumps({
             "ok": True,
             "conversation_id": new_id,

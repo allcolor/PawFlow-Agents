@@ -56,6 +56,19 @@ class AgentPollerMixin:
         store = ConversationStore.instance()
         scheduler = PollScheduler.instance()
 
+        # Checkpoint cleanup (once per day, tracked by class var)
+        try:
+            _now = time.time()
+            _last_cleanup = getattr(self, '_last_checkpoint_cleanup', 0)
+            if _now - _last_cleanup > 86400:  # 24h
+                from core.checkpoint import CheckpointManager
+                _cleaned = CheckpointManager.cleanup_old(30)
+                if _cleaned:
+                    logger.info(f"[checkpoint] cleaned {_cleaned} old checkpoint(s)")
+                self._last_checkpoint_cleanup = _now
+        except Exception as _cp_err:
+            logger.debug(f"[checkpoint] cleanup failed: {_cp_err}")
+
         # Watchdog: ensure active tasks always have a pending schedule
         try:
             self._ensure_tasks_scheduled()

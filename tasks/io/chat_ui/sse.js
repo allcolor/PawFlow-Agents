@@ -79,8 +79,11 @@
       if (srcName) {
         s.el.className = 'msg subagent';
       }
-      // Tag with agent name for done handler lookup
-      if (s.el) s.el.dataset.agent = (agent || '').toLowerCase();
+      // Tag with agent name and msg_id for done/meta lookup
+      if (s.el) {
+        s.el.dataset.agent = (agent || '').toLowerCase();
+        if (s.msg_id) s.el.dataset.msgid = s.msg_id;
+      }
       s.chunks.push(s.el);
       streamingEl = s.el;  // legacy global
       streamingChunks = s.chunks;
@@ -92,6 +95,20 @@
     s.el.innerHTML = badge + renderMarkdown(displayText);
     scrollBottom(shouldScroll);
     document.getElementById('status').textContent = t('streaming');
+  });
+
+  // Per-message metadata: attaches model/tokens to the correct element by msg_id
+  eventSource.addEventListener('message_meta', (e) => {
+    const data = JSON.parse(e.data);
+    if (!data.msg_id) return;
+    // Register msg_id to prevent poll/replay duplicates
+    if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
+    // Find the element by data-msgid and add metadata
+    const el = document.querySelector('#messages [data-msgid="' + data.msg_id + '"]');
+    if (el && !el.querySelector('.msg-meta')) {
+      const meta = buildMetaLine(data);
+      if (meta) el.insertAdjacentHTML('beforeend', meta);
+    }
   });
 
   // Narration: separate from token stream — not persisted, ephemeral display
@@ -565,46 +582,38 @@
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
-    // Register done msg_id (prevents poll/replay re-add)
-    if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
-      _seenMsgIds.add(extra.msg_id);
+    // Register ALL msg_ids from this turn (prevents poll/replay duplicates)
+    const allIds = data.all_msg_ids || [];
+    if (extra.msg_id) allIds.push(extra.msg_id);
+    if (s.msg_id) allIds.push(s.msg_id);
+    for (const id of allIds) {
+      if (id && typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(id);
     }
-    // Also register ALL msg_ids we've seen in this turn's token stream
-    // (they may differ from the done msg_id due to multi-iteration turns)
-    if (s.msg_id && typeof _seenMsgIds !== 'undefined') {
-      _seenMsgIds.add(s.msg_id);
-    }
+    // Clean up narrations
     const agentLower = doneAgent.toLowerCase();
-    // Clean up narration-only elements (ephemeral)
     document.querySelectorAll('#messages .narration').forEach(el => {
       if (el.dataset.finalizedAgent === agentLower) el.remove();
     });
-    // Done NEVER creates a new message. The response was already streamed.
-    // Find the LAST assistant/subagent message from this agent and add meta.
+    // Finalize active streaming element (if any) — add done-level meta
     if (s.el && s.el.parentNode) {
-      // Active streaming element — finalize it
       s.el.classList.remove('streaming');
       s.el.dataset.rawText = finalText.substring(0, 500);
-      const meta = buildMetaLine(extra);
-      if (meta && !s.el.querySelector('.msg-meta')) {
-        s.el.insertAdjacentHTML('beforeend', meta);
-      }
-    } else {
-      // No active stream — find last message from this agent by data-agent tag
-      const allMsgs = document.querySelectorAll('#messages [data-agent="' + agentLower + '"]');
-      const lastAgentEl = allMsgs.length ? allMsgs[allMsgs.length - 1] : null;
-      if (lastAgentEl) {
-        lastAgentEl.classList.remove('finalized', 'streaming');
-        lastAgentEl.classList.add('msg', 'assistant');
-        lastAgentEl.dataset.rawText = finalText.substring(0, 500);
+      if (!s.el.querySelector('.msg-meta')) {
         const meta = buildMetaLine(extra);
-        if (meta && !lastAgentEl.querySelector('.msg-meta')) {
-          lastAgentEl.insertAdjacentHTML('beforeend', meta);
-        }
-      } else if (finalText) {
-        // Truly no element exists (poll wakeup, zero tokens streamed)
-        addMsg('assistant', finalText, extra);
+        if (meta) s.el.insertAdjacentHTML('beforeend', meta);
       }
+    } else if (extra.msg_id) {
+      // Find element by msg_id and add meta if missing
+      const el = document.querySelector('#messages [data-msgid="' + extra.msg_id + '"]');
+      if (el && !el.querySelector('.msg-meta')) {
+        el.classList.remove('finalized', 'streaming');
+        const meta = buildMetaLine(extra);
+        if (meta) el.insertAdjacentHTML('beforeend', meta);
+      }
+    }
+    // If response text exists but was NEVER streamed (poll wakeup), add it
+    if (finalText && !s.el && !document.querySelector('#messages [data-msgid="' + (extra.msg_id || '') + '"]')) {
+      addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

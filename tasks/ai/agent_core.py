@@ -98,8 +98,29 @@ class AgentCoreMixin:
             # share the SAME msg_id — enabling client-side dedup.
             if msg.role == "assistant" and emitter._current_msg_id:
                 msg.msg_id = emitter._current_msg_id
+                # After this message, generate a NEW msg_id for the next one
+                import uuid as _uuid_append
+                emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
             messages.append(msg)
             new_messages.append(msg)
+            # Publish per-message metadata (model, tokens) so client can
+            # attach it to the correct element by msg_id
+            if msg.role == "assistant" and msg.source and emitter.is_streaming:
+                _src = msg.source
+                if _src.get("tokens_in") or _src.get("tokens_out"):
+                    from core.conversation_event_bus import ConversationEventBus
+                    try:
+                        ConversationEventBus.instance().publish_event(
+                            conversation_id, "message_meta", {
+                                "msg_id": msg.msg_id,
+                                "source": _src,
+                                "model": _src.get("model", ""),
+                                "provider": _src.get("provider", ""),
+                                "tokens_in": _src.get("tokens_in", 0),
+                                "tokens_out": _src.get("tokens_out", 0),
+                            })
+                    except Exception:
+                        pass
 
         def _flush():
             nonlocal new_messages

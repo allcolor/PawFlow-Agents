@@ -119,9 +119,11 @@ class StreamEmitter(AgentEmitter):
 
     def on_iteration_start(self, iteration, round_num, max_iterations,
                            max_rounds, tools_called, poll_silent):
-        # Pre-generate msg_id for this iteration — shared across token/done events
-        import uuid
-        self._current_msg_id = uuid.uuid4().hex[:12]
+        # Generate msg_id ONCE per round (not per iteration).
+        # All messages from this agent in this turn share the same msg_id.
+        if not self._current_msg_id:
+            import uuid
+            self._current_msg_id = uuid.uuid4().hex[:12]
         logger.info(
             f"[agent:{self.conversation_id[:8]}] round {round_num}/{max_rounds}, "
             f"iteration {iteration}/{max_iterations}, "
@@ -156,14 +158,14 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
-        # MUST use _current_msg_id — same ID that was sent in token events.
-        # The client registered this ID during streaming. Using a different
-        # ID (from the LLMMessage) would cause the client to not recognize
-        # it as the same message → duplicate display.
-        _msg_id = self._current_msg_id
+        # Collect ALL msg_ids from this turn (1 per assistant message per iteration)
+        _all_ids = [m.msg_id for m in result.new_messages
+                    if m.role == "assistant" and m.msg_id]
+        _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
         self.bus.publish_event(self.conversation_id, "done", {
             "response": result.response_content,
-            "msg_id": _msg_id,
+            "msg_id": _last_id,
+            "all_msg_ids": _all_ids,
             "model": result.model,
             "provider": result.provider,
             "base_url": result.base_url,

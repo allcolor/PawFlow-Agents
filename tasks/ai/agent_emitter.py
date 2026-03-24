@@ -296,14 +296,8 @@ class StreamEmitter(AgentEmitter):
 
     def on_tool_calls(self, tool_calls, response_content, thinking,
                       poll_silent):
-        # Narration: if no text and no thinking, synthesize
-        if not response_content and not thinking and tool_calls:
-            from tasks.ai.agent_streaming import _narrate_tool_calls
-            _narrate_tool_calls(
-                tool_calls, self.ctx, self.bus, self.conversation_id,
-                self._agent_name or "", self._agent_source(),
-            )
-        # Publish tool_call events
+        # Publish tool_call events FIRST — this finalizes the streaming element
+        # on the client, so narration tokens create a NEW element (not appended)
         for tc in tool_calls:
             self.bus.publish_event(self.conversation_id, "tool_call", {
                 "tool": tc.name,
@@ -311,6 +305,14 @@ class StreamEmitter(AgentEmitter):
                 "agent_name": self._agent_name or "",
                 "llm_service": self._agent_svc or "",
             })
+        # Narration: if LLM said nothing, synthesize a brief description
+        if not response_content and not thinking and tool_calls:
+            from tasks.ai.agent_streaming import _narrate_tool_calls
+            _narrate_tool_calls(
+                tool_calls, self.ctx, self.bus, self.conversation_id,
+                self._agent_name or "", self._agent_source(),
+                msg_id=self._current_msg_id,
+            )
 
     def on_tool_result(self, tc, result_text, preview):
         evt = {

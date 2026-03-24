@@ -63,7 +63,8 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
     return ", ".join(parts) + ".\n"
 
 
-def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, source):
+def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, source,
+                        msg_id=""):
     """Narration cascade: narrator LLM → current LLM → static synthesis."""
     narration = ""
     narrator_svc_name = ctx.get("narrator_service", "")
@@ -76,6 +77,7 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
     if narration:
         bus.publish_event(conversation_id, "token", {
             "text": narration, "agent_name": agent_name,
+            "msg_id": msg_id,
             "source": source, "synthetic": True,
         })
     return narration

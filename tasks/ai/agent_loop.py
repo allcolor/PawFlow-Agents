@@ -562,25 +562,34 @@ class AgentLoopTask(
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
 
-    _interrupt_synthesis_active: set = set()  # tracks active interrupt synthesis threads
+    _interrupt_cooldowns: dict = {}  # key → timestamp of last interrupt
 
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
         """Interrupt: cancel the current LLM call and spawn a parallel synthesis.
 
-        1. Cancel the current generation (LLM call result will be discarded)
-        2. Spawn a new thread that loads context + interrupt message → LLM → done
-        Idempotent: ignores if a synthesis is already running for this conversation.
+        Cooldown: ignores repeated interrupts within 10 seconds.
         """
+        import time as _t
         _synth_key = f"{conversation_id}:{agent_name or 'all'}"
-        if _synth_key in self._interrupt_synthesis_active:
-            logger.info(f"[agent:{conversation_id[:8]}] interrupt already in progress, skipping")
+        _now = _t.time()
+        _last = self._interrupt_cooldowns.get(_synth_key, 0)
+        if _now - _last < 10:
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt cooldown ({_now - _last:.1f}s < 10s), skipping")
             return
+        self._interrupt_cooldowns[_synth_key] = _now
 
         logger.info(f"[agent:{conversation_id[:8]}] interrupt → cancel + parallel synthesis "
                     f"for '{agent_name or 'agent'}'")
 
         # Cancel the current run (generation bump — result will be discarded)
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
+
+        # Clear active interactions for this conversation (prevents ghost agents)
+        with self._interactions_lock:
+            _stale = [k for k, v in self._active_interactions.items()
+                      if v.get("conversation_id") == conversation_id]
+            for k in _stale:
+                self._active_interactions.pop(k, None)
 
         # Spawn parallel synthesis thread
         from core.conversation_event_bus import ConversationEventBus
@@ -589,8 +598,6 @@ class AgentLoopTask(
             "detail": "interrupted — synthesizing response...",
             "agent_name": agent_name or "",
         })
-
-        self._interrupt_synthesis_active.add(_synth_key)
 
         def _synthesis():
             try:
@@ -681,7 +688,7 @@ class AgentLoopTask(
                 except Exception:
                     pass
             finally:
-                self._interrupt_synthesis_active.discard(_synth_key)
+                pass  # cooldown handles dedup
 
         t = threading.Thread(target=_synthesis, daemon=True,
                              name=f"interrupt-synth-{conversation_id[:8]}")

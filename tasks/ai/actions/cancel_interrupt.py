@@ -44,10 +44,15 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
                     "agent_name": agent_name or "",
                     "force_stopped": True,
                 })
-            # Clear active tracking
+            # Clear active tracking (conversations + interactions)
             with self._active_lock:
                 self._active_conversations.pop(conv_id, None)
                 self._user_active_conversations.discard(conv_id)
+            with self._interactions_lock:
+                _stale = [k for k, v in self._active_interactions.items()
+                          if v.get("conversation_id") == conv_id]
+                for k in _stale:
+                    self._active_interactions.pop(k, None)
             logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,

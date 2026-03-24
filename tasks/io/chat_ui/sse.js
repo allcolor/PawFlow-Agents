@@ -204,10 +204,10 @@
     const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
-      // Finalize: convert streaming element into a permanent message.
-      // Don't remove — the narration stays visible above the tool call.
-      // Just detach from streaming tracking so new tokens create a fresh element.
+      // Finalize narration — stays visible, detach from streaming tracking
       tcs.el.classList.add('finalized');
+      // Save the text so done handler knows it was already displayed
+      tcs.el.dataset.streamedText = (tcs.text || tcs.el.textContent || '').substring(0, 200);
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
@@ -543,34 +543,27 @@
     // Only add the final response if it wasn't already streamed.
     // Convert any active streaming element into a permanent message.
     if (s.el && s.el.parentNode) {
-      // Active streaming element exists — it IS the response, just finalize it
+      // Active streaming element — convert to permanent + add metadata
       s.el.classList.remove('streaming');
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
+      const meta = buildMetaLine(extra);
+      if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // Check if already visible as a finalized narration chunk
-      let handled = false;
+      // Check if already shown as a finalized narration (same text = duplicate)
+      let dup = false;
       document.querySelectorAll('#messages .finalized').forEach(el => {
-        if (!handled && el.textContent && el.textContent.substring(0, 80) === finalText.substring(0, 80)) {
+        const st = el.dataset.streamedText || '';
+        if (st && finalText.substring(0, 100) === st.substring(0, 100)) {
+          // Same text — convert to permanent + add metadata, don't addMsg
           el.classList.remove('finalized');
           el.classList.add('msg', 'assistant');
-          el.dataset.rawText = finalText.substring(0, 500);
-          handled = true;
+          const meta = buildMetaLine(extra);
+          if (meta) el.insertAdjacentHTML('beforeend', meta);
+          dup = true;
         }
       });
-      if (!handled) addMsg('assistant', finalText, extra);
-    }
-    // Always append metadata to the last message in the chat
-    // (whether streamed, finalized, or just added)
-    const meta = buildMetaLine(extra);
-    if (meta) {
-      const allMsgs = document.querySelectorAll('#messages .msg');
-      if (allMsgs.length > 0) {
-        const lastMsg = allMsgs[allMsgs.length - 1];
-        if (!lastMsg.querySelector('.meta-summary')) {
-          lastMsg.insertAdjacentHTML('beforeend', meta);
-        }
-      }
+      if (!dup) addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

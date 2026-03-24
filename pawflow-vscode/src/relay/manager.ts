@@ -249,17 +249,54 @@ export class RelayManager implements vscode.Disposable {
       socket.write(response + '\n');
       return;
     }
-    // Execute in next tick to allow reading more WS messages concurrently
-    setImmediate(() => {
-    const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec, this.relayId);
-
-    const response = JSON.stringify({
-      type: 'result',
-      request_id: requestId,
-      data: result.ok ? result.data : result,
-    });
-    this._wsSend(socket, response);
-    }); // end setImmediate
+    // Execute in a worker thread for true parallel execution
+    const { Worker } = require('worker_threads');
+    const workerData = {
+      rootDir: this.rootDir, action, relPath, msg,
+      readonly: this.readonly, allowExec: this.allowExec, relayId: this.relayId,
+    };
+    try {
+      // Inline worker: evaluates executeAction in a separate thread
+      const workerCode = `
+        const { parentPort, workerData } = require('worker_threads');
+        const { executeAction } = require(workerData.actionsPath);
+        const result = executeAction(
+          workerData.rootDir, workerData.action, workerData.relPath,
+          workerData.msg, workerData.readonly, workerData.allowExec, workerData.relayId
+        );
+        parentPort.postMessage(result);
+      `;
+      const actionsPath = require('path').join(__dirname, 'actions');
+      const worker = new Worker(workerCode, {
+        eval: true,
+        workerData: { ...workerData, actionsPath },
+      });
+      worker.on('message', (result: any) => {
+        const response = JSON.stringify({
+          type: 'result',
+          request_id: requestId,
+          data: result.ok ? result.data : result,
+        });
+        this._wsSend(socket, response);
+      });
+      worker.on('error', (err: Error) => {
+        const response = JSON.stringify({
+          type: 'result',
+          request_id: requestId,
+          data: { ok: false, error: `Worker error: ${err.message}` },
+        });
+        this._wsSend(socket, response);
+      });
+    } catch (workerErr: any) {
+      // Fallback: synchronous execution if worker_threads fails
+      const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec, this.relayId);
+      const response = JSON.stringify({
+        type: 'result',
+        request_id: requestId,
+        data: result.ok ? result.data : result,
+      });
+      this._wsSend(socket, response);
+    }
   }
 
   private _scheduleReconnect(): void {

@@ -79,6 +79,8 @@
       if (srcName) {
         s.el.className = 'msg subagent';
       }
+      // Tag with agent name for done handler lookup
+      if (s.el) s.el.dataset.agent = (agent || '').toLowerCase();
       s.chunks.push(s.el);
       streamingEl = s.el;  // legacy global
       streamingChunks = s.chunks;
@@ -588,18 +590,9 @@
         s.el.insertAdjacentHTML('beforeend', meta);
       }
     } else {
-      // No active stream — find last assistant msg from this agent in DOM
-      const allMsgs = document.querySelectorAll('#messages .msg.assistant, #messages .msg.subagent, #messages .finalized');
-      let lastAgentEl = null;
-      allMsgs.forEach(el => {
-        // Match by agent name in badge or dataset
-        const badge = el.querySelector('.source-badge');
-        const badgeText = badge ? badge.textContent.toLowerCase() : '';
-        const finAgent = (el.dataset.finalizedAgent || '').toLowerCase();
-        if (badgeText.includes(agentLower) || finAgent === agentLower) {
-          lastAgentEl = el;
-        }
-      });
+      // No active stream — find last message from this agent by data-agent tag
+      const allMsgs = document.querySelectorAll('#messages [data-agent="' + agentLower + '"]');
+      const lastAgentEl = allMsgs.length ? allMsgs[allMsgs.length - 1] : null;
       if (lastAgentEl) {
         lastAgentEl.classList.remove('finalized', 'streaming');
         lastAgentEl.classList.add('msg', 'assistant');

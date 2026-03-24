@@ -187,10 +187,11 @@ class AgentCompactionMixin:
         ))
         compacted.extend(recent_messages)
 
+        _cpt = chars_per_token if chars_per_token > 0 else 3.5
         new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
         logger.info(
             f"[compact-post] {len(messages)} messages → {len(compacted)} "
-            f"(~{recent_est} → ~{new_est} tokens)")
+            f"(~{new_est} tokens)")
 
         # Persist compacted context
         if conversation_id:

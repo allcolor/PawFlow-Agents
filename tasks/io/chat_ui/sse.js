@@ -547,19 +547,12 @@
       s.el.classList.remove('streaming');
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
+      // Append metadata line (tokens, model, duration)
+      const meta = buildMetaLine(extra);
+      if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // No streaming element — response came in one shot (e.g. from synthesis)
-      // Only add if not already visible as a finalized chunk
-      const existing = document.querySelectorAll('#messages .finalized');
-      let alreadyShown = false;
-      existing.forEach(el => {
-        if (el.textContent && finalText.substring(0, 100) === el.textContent.substring(0, 100)) {
-          alreadyShown = true;
-          el.classList.remove('finalized');
-          el.classList.add('msg', 'assistant');
-        }
-      });
-      if (!alreadyShown) addMsg('assistant', finalText, extra);
+      // No streaming element — add via addMsg (includes metadata)
+      addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

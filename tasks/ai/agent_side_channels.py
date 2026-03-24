@@ -59,20 +59,8 @@ class AgentSideChannelsMixin:
                 })
                 return
             sys_prompt = adef["prompt"]
-            llm_svc = adef.get("llm_service", "")
-            if llm_svc and "${" in llm_svc:
-                from core.expression import resolve_expression
-                llm_svc = resolve_expression(llm_svc, owner=user_id)
-                if "${" in llm_svc:
-                    llm_svc = ""
-            client = None
-            if llm_svc:
-                client, _ = self._resolve_llm_service(llm_svc, user_id)
-            if not client:
-                task_svc = self.config.get("llm_service", "default")
-                if "${" in task_svc:
-                    task_svc = "default"
-                client, _ = self._resolve_llm_service(task_svc, user_id)
+            client, _, _ = self._resolve_agent_client(
+                agent_name, user_id, conversation_id)
 
             if not client:
                 bus.publish_event(conversation_id, "btw_done", {
@@ -198,13 +186,8 @@ class AgentSideChannelsMixin:
                 "detail": f"Broadcasting to {len(all_targets)} targets: {', '.join(all_targets)}",
             })
 
-            # Resolve default LLM client
-            task_llm_service = self.config.get("llm_service", "")
-            if not task_llm_service or "${" in task_llm_service:
-                task_llm_service = "default"
-            client, _ = self._resolve_client(
-                task_llm_service, user_id, resolve_expressions=False,
-            )
+            # Resolve default LLM client (no specific agent for broadcast)
+            client, _, _ = self._resolve_agent_client("", user_id, conversation_id)
             if not client:
                 bus.publish_event(conversation_id, "error_event", {
                     "message": "No LLM service available for broadcast.",
@@ -213,7 +196,10 @@ class AgentSideChannelsMixin:
 
             # Build tasks
             registry = self.get_tool_registry()
-            self._configure_tool_handlers(registry)
+            self._configure_tool_handlers(
+                registry, conversation_id=conversation_id,
+                user_id=user_id, llm_client=client,
+            )
 
             def _client_resolver(svc_id, uid):
                 return self._resolve_llm_service(svc_id, uid)

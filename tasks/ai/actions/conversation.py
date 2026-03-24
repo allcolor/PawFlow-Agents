@@ -107,22 +107,11 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             context_max = int(self.config.get("max_context_size", 64000))
             # Resolve agent's max_tokens
             if _rs_agent:
-                try:
-                    from core.resource_store import ResourceStore as _RS_r
-                    _ad = _RS_r.instance().get_any("agent", _rs_agent, user_id)
-                    if _ad and _ad.get("llm_service"):
-                        _sid = _ad["llm_service"]
-                        if "${" in _sid:
-                            from core.expression import resolve_expression as _re_r
-                            _sid = _re_r(_sid, owner=user_id)
-                        if _sid and "${" not in _sid:
-                            _, _sv = self._resolve_llm_service(_sid, user_id)
-                            if _sv:
-                                _v = int((getattr(_sv, 'config', {}) or {}).get("max_context_size", 0))
-                                if _v:
-                                    context_max = _v
-                except Exception:
-                    pass
+                _, _, _sv = self._resolve_agent_client(_rs_agent, user_id, conv_id)
+                if _sv:
+                    _v = int((getattr(_sv, 'config', {}) or {}).get("max_context_size", 0))
+                    if _v:
+                        context_max = _v
             summary = self._summarize_messages(
                 content_msgs, _rs_client, context_max,
                 target_tokens=max_summary_tokens,

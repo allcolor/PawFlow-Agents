@@ -21,6 +21,33 @@ logger = logging.getLogger(__name__)
 
 
 
+def _resolve_extra(store, conv_id: str, key: str, user_id: str = ""):
+    """Read a conv extra and resolve ${...} expressions in string values."""
+    val = store.get_extra(conv_id, key)
+    if val and isinstance(val, str) and "${" in val:
+        from core.expression import resolve_expression
+        val = resolve_expression(val, owner=user_id)
+        if val and "${" in val:
+            val = ""  # unresolved expression → treat as unset
+    return val
+
+
+def _resolve_extra_dict(store, conv_id: str, key: str, user_id: str = ""):
+    """Read a conv extra dict and resolve ${...} expressions in each string value."""
+    raw = store.get_extra(conv_id, key) or {}
+    if not isinstance(raw, dict):
+        return raw
+    result = {}
+    for k, v in raw.items():
+        if isinstance(v, str) and "${" in v:
+            from core.expression import resolve_expression
+            v = resolve_expression(v, owner=user_id)
+            if v and "${" in v:
+                continue  # unresolved → skip
+        result[k] = v
+    return result
+
+
 class AgentUtilsMixin:
     """Methods extracted from AgentLoopTask."""
 
@@ -104,6 +131,55 @@ class AgentUtilsMixin:
             logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
 
+
+    def _resolve_agent_client(self, agent_name: str, user_id: str,
+                              conversation_id: str = ""):
+        """Resolve an agent's LLM client by following the override chain.
+
+        Resolution order:
+        1. Per-conversation LLM override (agent_llm_overrides extra)
+        2. Agent definition's llm_service (with expression resolution)
+        3. Task-level llm_service default
+
+        Returns (client, service_id, resolved_svc) or (None, "", None).
+        """
+        svc_id = ""
+        # 1. Per-conversation override (values may be expressions)
+        if conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                overrides = _resolve_extra_dict(
+                    ConversationStore.instance(), conversation_id,
+                    "agent_llm_overrides", user_id)
+                svc_id = overrides.get(agent_name, "")
+            except Exception:
+                pass
+        # 2. Agent definition
+        if not svc_id and agent_name:
+            try:
+                from core.resource_store import ResourceStore
+                adef = ResourceStore.instance().get_any(
+                    "agent", agent_name, user_id,
+                    conversation_id=conversation_id)
+                if adef:
+                    svc_id = adef.get("llm_service", "")
+                    if svc_id and "${" in svc_id:
+                        from core.expression import resolve_expression
+                        svc_id = resolve_expression(svc_id, owner=user_id)
+                    if "${" in (svc_id or ""):
+                        svc_id = ""
+            except Exception:
+                pass
+        # 3. Task default
+        if not svc_id:
+            svc_id = self.config.get("llm_service", "")
+            if not svc_id or "${" in svc_id:
+                svc_id = "default"
+        client, svc = self._resolve_llm_service(svc_id, user_id)
+        if not client:
+            client = self._get_default_client(user_id)
+            svc = None
+        return client, svc_id, svc
 
     def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:
         """Resolve a service parameter that may contain ${...} expressions.
@@ -245,9 +321,9 @@ class AgentUtilsMixin:
             # Multiple → check per-agent preference, then wildcard
             if conversation_id:
                 from core.conversation_store import ConversationStore
-                prefs = ConversationStore.instance().get_extra(
-                    conversation_id, extra_key,
-                ) or {}
+                prefs = _resolve_extra_dict(
+                    ConversationStore.instance(), conversation_id,
+                    extra_key, user_id)
                 preferred = prefs.get(agent_name or "agent") or prefs.get("*")
                 if preferred:
                     svc = _self._resolve_media_service_by_id(preferred, user_id)

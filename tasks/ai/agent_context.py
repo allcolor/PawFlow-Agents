@@ -28,8 +28,16 @@ from tasks.ai.agent_tool_exec import AgentToolExecMixin
 class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
     """Context preparation + user content building."""
 
-    def _prepare_agent_context(self, flowfile: FlowFile):
-        """Extract common context from flowfile and config for both sync and streaming modes."""
+    def _prepare_agent_context(self, flowfile: FlowFile, *,
+                               preloaded_messages: Optional[List[Dict]] = None):
+        """Extract common context from flowfile and config for both sync and streaming modes.
+
+        Args:
+            flowfile: The FlowFile with request data.
+            preloaded_messages: If set, use these raw message dicts instead of
+                loading from ConversationStore. Used by the poller for task
+                sub-conversations that have their own isolated message store.
+        """
         model = self.config.get("model", "")
         timeout = int(self.config.get("timeout", 120))
 
@@ -230,7 +238,21 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _context_agent = _early_agent or "assistant"
 
         _context_diverged = False
-        if use_conv_store and conversation_id:
+        if preloaded_messages is not None:
+            # Caller provided messages (e.g. poller task sub-conversation)
+            try:
+                messages = self._deserialize_messages(preloaded_messages)
+                messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+                logger.info(f"[context:{(conversation_id or '?')[:8]}] using preloaded messages: "
+                            f"{len(messages)} messages")
+            except (KeyError, TypeError) as e:
+                logger.error(f"[context] preloaded messages deser failed: {e}")
+            # Auto-compact on preloaded messages too
+            if messages:
+                _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
+                messages = self._auto_compact_messages(
+                    messages, conversation_id or "", _context_agent, _uid_pl)
+        elif use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
             context_data = store.load_agent_context(conversation_id, _context_agent)
@@ -246,40 +268,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 except (KeyError, TypeError) as deser_err:
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
                 # Auto-compact on load (OUTSIDE the deserialize try/except)
-                if len(messages) > 20:
-                    try:
-                        from core.conversation_event_bus import ConversationEventBus
-                        _ac_bus = ConversationEventBus.instance()
-                        _ac_bus.publish_event(conversation_id, "thinking", {
-                            "detail": f"compacting {len(messages)} messages...",
-                            "agent_name": _context_agent,
-                        })
-                        _uid = flowfile.get_attribute("http.auth.principal") or ""
-                        _sc, _sc_max, _sc_svc = self._get_summarizer_client(_uid)
-                        if not _sc:
-                            # No dedicated summarizer → use main LLM as fallback
-                            _sc = self._get_default_client(_uid)
-                            _sc_svc = self._resolve_service_param("llm_service", _uid) or ""
-                        _ac_client = _sc
-                        _ac_svc_id = _sc_svc
-                        if _ac_client:
-                            _before = len(messages)
-                            messages = self._compact_post_response(
-                                messages, _ac_client, 200000,
-                                keep_recent=6,
-                                conversation_id=conversation_id,
-                                agent_name=_context_agent,
-                                llm_service=_ac_svc_id)
-                            logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
-                                        f"{_before} → {len(messages)} messages (via {_ac_svc_id or 'default'})")
-                            _tok_after = self._estimate_tokens(messages)
-                            _ac_bus.publish_event(conversation_id, "compact_progress", {
-                                "stage": "done", "agent": _context_agent,
-                                "before": _before, "after": len(messages),
-                                "tokens_after": _tok_after,
-                            })
-                    except Exception as _ac_err:
-                        logger.warning(f"[context] auto-compact failed: {_ac_err}")
+                _uid = flowfile.get_attribute("http.auth.principal") or ""
+                messages = self._auto_compact_messages(
+                    messages, conversation_id, _context_agent, _uid)
             else:
                 # No divergence — use messages as context
                 existing = store.load(conversation_id)
@@ -293,36 +284,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
                     # Auto-compact on load (OUTSIDE deserialize try/except)
-                    if len(messages) > 20:
-                        try:
-                            from core.conversation_event_bus import ConversationEventBus
-                            _ac_bus2 = ConversationEventBus.instance()
-                            _ac_bus2.publish_event(conversation_id, "thinking", {
-                                "detail": f"compacting {len(messages)} messages...",
-                                "agent_name": _context_agent,
-                            })
-                            _uid2 = flowfile.get_attribute("http.auth.principal") or ""
-                            _sc2, _sc2_max, _sc2_svc = self._get_summarizer_client(_uid2)
-                            if not _sc2:
-                                _sc2 = self._get_default_client(_uid2)
-                                _sc2_svc = self._resolve_service_param("llm_service", _uid2) or ""
-                            if _sc2:
-                                _before = len(messages)
-                                messages = self._compact_post_response(
-                                    messages, _sc2, 200000,
-                                    keep_recent=6, conversation_id=conversation_id,
-                                    agent_name=_context_agent,
-                                    llm_service=_sc2_svc)
-                                logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
-                                            f"{_before} → {len(messages)} messages")
-                                _tok_after = self._estimate_tokens(messages)
-                                _ac_bus2.publish_event(conversation_id, "compact_progress", {
-                                    "stage": "done", "agent": _context_agent,
-                                    "before": _before, "after": len(messages),
-                                    "tokens_after": _tok_after,
-                                })
-                        except Exception as _ac_err:
-                            logger.warning(f"[context] auto-compact failed: {_ac_err}")
+                    _uid2 = flowfile.get_attribute("http.auth.principal") or ""
+                    messages = self._auto_compact_messages(
+                        messages, conversation_id, _context_agent, _uid2)
                 else:
                     logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                    f"starting fresh conversation")
@@ -518,53 +482,19 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 )
                 _active_agent_name = _target_agent or _ares.get("agent", "")
                 if _active_agent_name:
-                    # Check per-conversation LLM service override first
-                    _llm_overrides = ConversationStore.instance().get_extra(
-                        conversation_id, "agent_llm_overrides",
-                    ) or {}
-                    _override_svc = _llm_overrides.get(_active_agent_name or "")
-                    if _override_svc:
-                        _active_llm_service = _override_svc
-                    from core.resource_store import ResourceStore
-                    _adef = ResourceStore.instance().get_any(
-                        "agent", _active_agent_name, user_id,
-                        conversation_id=conversation_id,
-                    )
-                    if not _override_svc and _adef and _adef.get("llm_service", ""):
-                        _agent_llm = _adef["llm_service"]
-                        # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
-                        if "${" in _agent_llm:
-                            from core.expression import resolve_expression
-                            _agent_llm = resolve_expression(
-                                _agent_llm, owner=user_id,
-                            )
-                        if _agent_llm and "${" not in _agent_llm:
-                            _active_llm_service = _agent_llm
-                # If active agent has its own LLM service, resolve it now
-                if _active_llm_service and _active_llm_service != task_llm_service:
-                    logger.info("Agent '%s' switching LLM service: '%s' → '%s'",
-                                _active_agent_name, task_llm_service, _active_llm_service)
-                    _rc, _rs = self._resolve_llm_service(_active_llm_service, user_id)
-                    if _rc:
+                    _rc, _rsvc_id, _rsvc = self._resolve_agent_client(
+                        _active_agent_name, user_id, conversation_id)
+                    if _rc and _rsvc_id != task_llm_service:
                         client = _rc
-                        resolved_svc = _rs
-                        # Use service's default model, not the task's model
-                        model_name = ""
-                        logger.info("Agent '%s' now using LLM service '%s' (provider: %s)",
-                                    _active_agent_name, _active_llm_service,
-                                    getattr(_rs, 'provider', '?'))
+                        resolved_svc = _rsvc
+                        _active_llm_service = _rsvc_id
+                        model_name = ""  # Use service's default model
+                        logger.info("Agent '%s' using LLM service '%s' (provider: %s)",
+                                    _active_agent_name, _rsvc_id,
+                                    getattr(_rsvc, 'provider', '?') if _rsvc else '?')
                     else:
-                        logger.warning("Agent '%s': LLM service '%s' NOT FOUND — falling back to '%s'",
-                                       _active_agent_name, _active_llm_service, task_llm_service)
-                        _active_llm_service = task_llm_service  # Reset so badge reflects reality
-                elif _active_llm_service == task_llm_service and _active_agent_name:
-                    logger.info("Agent '%s' llm_service='%s' same as task default — no switch needed",
-                                _active_agent_name, _active_llm_service)
-                elif _active_agent_name and not _adef:
-                    logger.warning("Agent '%s' definition not found in ResourceStore", _active_agent_name)
-                elif _active_agent_name and not _adef.get("llm_service", ""):
-                    logger.info("Agent '%s' has no llm_service — using task default '%s'",
-                                _active_agent_name, task_llm_service)
+                        logger.info("Agent '%s' using task default LLM '%s'",
+                                    _active_agent_name, task_llm_service)
             except Exception as e:
                 logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
 
@@ -822,6 +752,43 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         }
 
 
+
+    # ── Auto-compact helper ──────────────────────────────────────────────
+
+    def _auto_compact_messages(self, messages: List[LLMMessage],
+                               conversation_id: str, agent_name: str,
+                               user_id: str) -> List[LLMMessage]:
+        """Auto-compact messages on context load if >20 messages."""
+        if len(messages) <= 20:
+            return messages
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+            bus.publish_event(conversation_id, "thinking", {
+                "detail": f"compacting {len(messages)} messages...",
+                "agent_name": agent_name,
+            })
+            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
+            if not _sc:
+                _sc = self._get_default_client(user_id)
+                _sc_svc = self._resolve_service_param("llm_service", user_id) or ""
+            if _sc:
+                _before = len(messages)
+                messages = self._compact_post_response(
+                    messages, _sc, 200000,
+                    keep_recent=6, conversation_id=conversation_id,
+                    agent_name=agent_name, llm_service=_sc_svc)
+                logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
+                            f"{_before} → {len(messages)} messages (via {_sc_svc or 'default'})")
+                _tok_after = self._estimate_tokens(messages)
+                bus.publish_event(conversation_id, "compact_progress", {
+                    "stage": "done", "agent": agent_name,
+                    "before": _before, "after": len(messages),
+                    "tokens_after": _tok_after,
+                })
+        except Exception as e:
+            logger.warning(f"[context] auto-compact failed: {e}")
+        return messages
 
     # ── Context operation pause/resume ─────────────────────────────────
 

@@ -626,28 +626,9 @@ class AgentLoopTask(
                         "what you did, what's left to do. No details, no code.]"),
                 ))
 
-                # Resolve the agent's LLM service (same resolution as _prepare_agent_context)
-                from core.conversation_store import ConversationStore as _CSi2
-                _csi = _CSi2.instance()
-                # 1. Per-agent override
-                _llm_overrides = _csi.get_extra(conversation_id, "agent_llm_overrides") or {}
-                _agent_svc = _llm_overrides.get(_agent, "")
-                # 2. Agent definition
-                if not _agent_svc:
-                    from core.resource_store import ResourceStore
-                    _adef = ResourceStore.instance().get_any("agent", _agent, user_id,
-                                                             conversation_id=conversation_id)
-                    if _adef:
-                        _agent_svc = _adef.get("llm_service", "")
-                        if _agent_svc and "${" in _agent_svc:
-                            from core.expression import resolve_expression
-                            _agent_svc = resolve_expression(_agent_svc, owner=user_id)
-                # 3. Task default
-                if not _agent_svc or "${" in _agent_svc:
-                    _agent_svc = self._resolve_service_param("llm_service", user_id)
-                client, _ = self._resolve_llm_service(_agent_svc, user_id) if _agent_svc else (None, None)
-                if not client:
-                    client = self._get_default_client(user_id)
+                # Resolve the agent's LLM service
+                client, _agent_svc, _ = self._resolve_agent_client(
+                    _agent, user_id, conversation_id)
                 logger.info(f"[interrupt synthesis] LLM service: '{_agent_svc}', "
                             f"client: {getattr(client, 'provider', '?')}/{getattr(client, 'default_model', '?')}")
                 if not client:

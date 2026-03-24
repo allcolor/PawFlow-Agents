@@ -32,22 +32,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
 
     def _resolve_agent_max_tokens(agent_name):
         """Get max_tokens from an agent's LLM service config."""
-        try:
-            from core.resource_store import ResourceStore
-            adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
-            if adef and adef.get("llm_service"):
-                svc_id = adef["llm_service"]
-                if "${" in svc_id:
-                    from core.expression import resolve_expression
-                    svc_id = resolve_expression(svc_id, owner=user_id)
-                if svc_id and "${" not in svc_id:
-                    _, svc = self._resolve_llm_service(svc_id, user_id)
-                    if svc:
-                        v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
-                        if v:
-                            return v
-        except Exception:
-            pass
+        _, _, svc = self._resolve_agent_client(agent_name, user_id)
+        if svc:
+            v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
+            if v:
+                return v
         return 0
 
     def _ctx_max_tokens(agent_name=""):

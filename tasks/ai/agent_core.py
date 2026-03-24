@@ -42,9 +42,11 @@ class AgentCoreMixin:
         if use_conv_store and conversation_id:
             try:
                 from core.conversation_store import ConversationStore
+                from tasks.ai.agent_utils import _resolve_extra
                 _agent_n = ctx.get("active_agent_name") or ""
-                _mo = ConversationStore.instance().get_extra(
-                    conversation_id, f"model_override:{_agent_n}")
+                _mo = _resolve_extra(
+                    ConversationStore.instance(), conversation_id,
+                    f"model_override:{_agent_n}", user_id)
                 if _mo:
                     model = _mo
             except Exception:

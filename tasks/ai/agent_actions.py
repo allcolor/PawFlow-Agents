@@ -25,6 +25,7 @@ from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
 from tasks.ai.actions.usage import _handle_usage
 from tasks.ai.actions.plans import _handle_plans
+from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,18 @@ class AgentActionsMixin:
 
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
+
+        # Unified command dispatch: parse /command text → action body → redispatch
+        if action == "command":
+            result = _handle_command_dispatch(self, action, body, store, user_id, flowfile)
+            if result is not None:
+                if isinstance(result, dict) and result.get("_redispatch"):
+                    # Re-dispatch with parsed action
+                    body = result["body"]
+                    action = body["action"]
+                    flowfile = result["flowfile"]
+                else:
+                    return result
 
         # Dispatch to action handlers
         for handler in _ACTION_HANDLERS:

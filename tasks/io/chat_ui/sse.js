@@ -547,12 +547,21 @@
       s.el.classList.remove('streaming');
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
-      // Append metadata line (tokens, model, duration)
-      const meta = buildMetaLine(extra);
-      if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
       // No streaming element — add via addMsg (includes metadata)
       addMsg('assistant', finalText, extra);
+    }
+    // Always append metadata to the last message in the chat
+    // (whether streamed, finalized, or just added)
+    const meta = buildMetaLine(extra);
+    if (meta) {
+      const allMsgs = document.querySelectorAll('#messages .msg');
+      if (allMsgs.length > 0) {
+        const lastMsg = allMsgs[allMsgs.length - 1];
+        if (!lastMsg.querySelector('.meta-summary')) {
+          lastMsg.insertAdjacentHTML('beforeend', meta);
+        }
+      }
     }
     clearStream(doneAgent);
     scrollBottom();

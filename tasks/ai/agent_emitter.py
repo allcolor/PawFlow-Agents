@@ -154,8 +154,11 @@ class StreamEmitter(AgentEmitter):
         self.bus.publish_event(self.conversation_id, "done", {
             "response": result.response_content,
             "model": result.model,
+            "provider": result.provider,
+            "base_url": result.base_url,
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
+            "duration_ms": result.duration_ms,
             "source": result.source,
             "agent_name": self._agent_name or "",
         })

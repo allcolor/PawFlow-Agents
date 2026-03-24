@@ -552,7 +552,8 @@ class FilesystemToolHandler(ToolHandler):
                                 lines.append(f"Output:\n```\n{c['output']}\n```")
                         return "\n".join(lines)
                     return json.dumps(result)
-                # Text files — support offset/limit for large files
+                # Text files — support offset/limit for pagination
+                _MAX_PAGE = 4096  # max chars per read — forces pagination
                 try:
                     text = data.decode("utf-8")
                 except UnicodeDecodeError:
@@ -562,20 +563,38 @@ class FilesystemToolHandler(ToolHandler):
                 lines = text.split("\n")
                 total_lines = len(lines)
                 total_chars = len(text)
-                # Auto-paginate: if file > 4000 chars and no explicit offset/limit, truncate
-                if total_chars > 4000 and not _offset and not _limit:
-                    _limit = 100
-                if _offset or _limit:
-                    start = max(0, _offset - 1) if _offset > 0 else 0
-                    end = start + _limit if _limit else total_lines
-                    selected = lines[start:end]
-                    numbered = [f"{start + i + 1:4d}\t{ln}" for i, ln in enumerate(selected)]
-                    header = f"[{fname}: {total_lines} lines, {total_chars} chars"
-                    if start > 0 or end < total_lines:
-                        header += f", showing lines {start+1}-{min(end, total_lines)}"
-                    header += "]"
-                    return header + "\n" + "\n".join(numbered)
-                return text
+
+                # Always paginate: select lines by offset/limit
+                start = max(0, _offset - 1) if _offset > 0 else 0
+                end = start + _limit if _limit else total_lines
+                selected = lines[start:end]
+
+                # Enforce max page size — trim lines until under 4KB
+                output_lines = []
+                output_chars = 0
+                for i, ln in enumerate(selected):
+                    line_text = f"{start + i + 1:4d}\t{ln}\n"
+                    if output_chars + len(line_text) > _MAX_PAGE and output_lines:
+                        end = start + i  # actual end
+                        break
+                    output_lines.append(line_text)
+                    output_chars += len(line_text)
+
+                has_more = end < total_lines
+                header = f"[{fname}: {total_lines} lines, {total_chars:,} chars"
+                if start > 0 or has_more:
+                    header += f", showing lines {start+1}-{min(end, total_lines)}"
+                if has_more:
+                    header += (f" — use offset={end+1} to read next page"
+                               f" (MUST paginate, max {_MAX_PAGE} chars/page)")
+                header += "]"
+
+                # Small files that fit entirely — return as-is with line numbers
+                if not has_more and start == 0:
+                    if total_chars <= _MAX_PAGE:
+                        return header + "\n" + "".join(output_lines)
+
+                return header + "\n" + "".join(output_lines)
 
             elif action == "read_pdf":
                 max_pages = arguments.get("max_pages", 50)
@@ -717,7 +736,7 @@ class FilesystemToolHandler(ToolHandler):
             elif action == "exec":
                 command = arguments.get("command", "")
                 timeout = arguments.get("timeout", 30)
-                _max_out = int(arguments.get("max_output", 4000) or 4000)
+                _max_out = min(int(arguments.get("max_output", 4000) or 4000), 4096)
                 result = svc.exec(path, command, timeout)
                 output = result.get("stdout", "")
                 if result.get("stderr"):

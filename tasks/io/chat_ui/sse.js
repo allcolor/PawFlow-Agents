@@ -225,9 +225,10 @@
     const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
-      // Finalize narration — stays visible, detach from streaming tracking
+      // Finalize: keep reference for done handler to add metadata later
       tcs.el.classList.add('finalized');
       tcs.el.dataset.finalizedAgent = tcAgent.toLowerCase();
+      tcs.lastEl = tcs.el;  // preserve for done handler
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
@@ -569,38 +570,24 @@
     if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
       _seenMsgIds.add(extra.msg_id);
     }
-    if (s.el && s.el.parentNode) {
-      // Active streaming element — convert to permanent + add metadata
-      s.el.classList.remove('streaming');
-      s.el.classList.add('msg', 'assistant');
-      s.el.dataset.rawText = finalText.substring(0, 500);
+    // Find the target element: active stream > finalized by tool_call > none
+    const targetEl = (s.el && s.el.parentNode) ? s.el : (s.lastEl && s.lastEl.parentNode) ? s.lastEl : null;
+    if (targetEl) {
+      // Convert streaming/finalized element to permanent + add metadata
+      targetEl.classList.remove('streaming', 'finalized');
+      targetEl.classList.add('msg', 'assistant');
+      targetEl.dataset.rawText = finalText.substring(0, 500);
       const meta = buildMetaLine(extra);
-      if (meta) s.el.insertAdjacentHTML('beforeend', meta);
+      if (meta && !targetEl.querySelector('.msg-meta')) {
+        targetEl.insertAdjacentHTML('beforeend', meta);
+      }
     } else if (finalText) {
-      // No active streaming element — find the LAST assistant message
-      // from this agent and add metadata to it (don't create a duplicate).
+      // No streaming element at all — add fresh (poll wakeup, no tokens streamed)
       const agentLower = doneAgent.toLowerCase();
-      // Remove narrations/finalized for this agent
-      document.querySelectorAll('#messages .finalized, #messages .narration').forEach(el => {
+      document.querySelectorAll('#messages .narration').forEach(el => {
         if (el.dataset.finalizedAgent === agentLower) el.remove();
       });
-      // Find existing message from this agent (finalized by tool_call)
-      const existing = [...document.querySelectorAll('#messages .msg.assistant, #messages .msg.subagent')]
-        .reverse()
-        .find(el => {
-          const badge = el.querySelector('.source-badge');
-          return badge && badge.textContent.toLowerCase().includes(agentLower);
-        });
-      if (existing && !existing.querySelector('.msg-meta')) {
-        // Add metadata to existing element (was streamed, then finalized by tool_call)
-        existing.dataset.rawText = finalText.substring(0, 500);
-        const meta = buildMetaLine(extra);
-        if (meta) existing.insertAdjacentHTML('beforeend', meta);
-      } else if (!existing) {
-        // Truly new message (no streaming happened) — add it
-        addMsg('assistant', finalText, extra);
-      }
-      // If existing already has meta, skip (already complete)
+      addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

@@ -74,8 +74,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             display = value
             if "${" in value:
                 try:
-                    from core.expression import resolve_expression
-                    display = resolve_expression(value, owner=user_id) or value
+                    from core.expression import resolve_value
+                    display = resolve_value(value, owner=user_id) or value
                 except Exception:
                     pass
             _labels = {"0": "low", "5000": "medium", "10000": "high", "20000": "max"}
@@ -106,8 +106,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             display = fast_val
             if "${" in fast_val:
                 try:
-                    from core.expression import resolve_expression
-                    display = resolve_expression(fast_val, owner=user_id) or fast_val
+                    from core.expression import resolve_value
+                    display = resolve_value(fast_val, owner=user_id) or fast_val
                 except Exception:
                     pass
             if "${" in display:

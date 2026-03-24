@@ -402,12 +402,11 @@ class AgentLoopTask(
                 if agent_name:
                     adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
                     if adef:
-                        service_id = adef.get("llm_service", "")
-                        if service_id and "${" in service_id:
-                            from core.expression import resolve_expression
-                            service_id = resolve_expression(service_id, owner=user_id)
-                            if "${" in service_id:
-                                service_id = ""
+                        from core.expression import resolve_value
+                        service_id = resolve_value(
+                            adef.get("llm_service", ""), owner=user_id) or ""
+                        if "${" in service_id:
+                            service_id = ""
             except Exception:
                 pass
 

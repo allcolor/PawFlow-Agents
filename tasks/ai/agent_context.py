@@ -413,105 +413,89 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if active_mcps:
                     for mcp_name in active_mcps:
                         try:
-                            mcp_def = rs.get_any("mcp", mcp_name, _uid)
-                            if not mcp_def:
+                            raw_def = rs.get_any("mcp", mcp_name, _uid)
+                            if not raw_def:
                                 continue
-                            mcp_url = mcp_def.get("url", "")
-                            mcp_transport = mcp_def.get("transport", "http")
-                            # "via" routing: relay (user's machine) or direct (server-side)
-                            # Default: stdio→relay, http→direct
-                            mcp_via = mcp_def.get("via", "") or (
-                                "relay" if mcp_transport == "stdio" else "direct")
-                            mcp_headers = mcp_def.get("auth", {})
-                            if isinstance(mcp_headers, str):
-                                mcp_headers = {"Authorization": mcp_headers}
+                            # Resolve ALL expressions at point of use
+                            from core.expression import resolve_value
+                            mcp_def = resolve_value(raw_def, owner=_uid,
+                                                     conversation_id=conversation_id)
+                            transport = mcp_def.get("transport", "http")
+                            via = mcp_def.get("via", "") or (
+                                "relay" if transport == "stdio" else "direct")
+                            auth = mcp_def.get("auth", {})
+                            if isinstance(auth, str):
+                                auth = {"Authorization": auth}
 
-                            if mcp_via == "relay":
-                                # Via relay: launch/proxy on user's machine
-                                # Resolve which relay service to use (expression-resolved)
-                                _relay_svc_id = mcp_def.get("relay_service", "")
-                                if _relay_svc_id and "${" in _relay_svc_id:
-                                    from core.expression import resolve_expression
-                                    _relay_svc_id = resolve_expression(_relay_svc_id, owner=_uid) or ""
-                                if _relay_svc_id:
-                                    # Use specific service
-                                    fs_svc = None
-                                    try:
-                                        from gui.services.global_service_registry import GlobalServiceRegistry
-                                        fs_svc = GlobalServiceRegistry.get_instance().get_live_instance(_relay_svc_id)
-                                    except Exception:
-                                        pass
-                                    if not fs_svc:
+                            disc_tools = []
+                            relay_svc = None
+
+                            if via == "relay":
+                                # Resolve relay service (already expression-resolved)
+                                _rsid = mcp_def.get("relay_service", "")
+                                if _rsid:
+                                    relay_svc = self._resolve_media_service_by_id(_rsid, _uid)
+                                    if not relay_svc:
+                                        # Try filesystem service registries
                                         try:
-                                            from gui.services.user_service_registry import UserServiceRegistry
-                                            fs_svc = UserServiceRegistry.get_instance().get_live_instance(_uid, _relay_svc_id)
+                                            from gui.services.global_service_registry import GlobalServiceRegistry
+                                            relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_rsid)
                                         except Exception:
                                             pass
-                                else:
-                                    # Auto-detect first available filesystem service
-                                    fs_svc = self._find_filesystem_service(_uid)
-                                if not fs_svc:
-                                    logger.warning(f"[mcp] No relay service for '{mcp_name}'"
-                                                   f"{f' (tried {_relay_svc_id})' if _relay_svc_id else ''}")
+                                if not relay_svc:
+                                    relay_svc = self._find_filesystem_service(_uid)
+                                if not relay_svc:
+                                    logger.warning(f"[mcp] No relay for '{mcp_name}'")
                                     continue
-                                # Start MCP server on relay if not running
+                                # Start stdio server on relay
+                                if transport == "stdio":
+                                    try:
+                                        relay_svc._request("mcp_start", ".", **{
+                                            "server_id": mcp_name,
+                                            "command": mcp_def.get("command", ""),
+                                            "args": mcp_def.get("args", []),
+                                            "env": mcp_def.get("env", {}),
+                                        })
+                                    except Exception as e:
+                                        if "already_running" not in str(e):
+                                            logger.error(f"[mcp] Start failed '{mcp_name}': {e}")
+                                            continue
+                                # Discover tools via relay
                                 try:
-                                    fs_svc._request("mcp_start", ".", **{
-                                        "server_id": mcp_name,
-                                        "command": mcp_def.get("command", ""),
-                                        "args": mcp_def.get("args", []),
-                                        "env": mcp_def.get("env", {}),
-                                    })
-                                except Exception as _mcp_start_err:
-                                    if "already_running" not in str(_mcp_start_err):
-                                        logger.error(f"[mcp] Failed to start '{mcp_name}': {_mcp_start_err}")
-                                        continue
-                                # Discover tools
-                                try:
-                                    disc = fs_svc._request("mcp_discover", ".", **{
-                                        "server_id": mcp_name,
-                                    })
-                                    disc_tools = disc.get("tools", []) if isinstance(disc, dict) else []
-                                except Exception as _disc_err:
-                                    logger.error(f"[mcp] Discovery failed for '{mcp_name}': {_disc_err}")
-                                    disc_tools = []
-                                from core.handlers.agent_tools import MCPToolHandler
-                                for mt in disc_tools:
-                                    h = MCPToolHandler(
-                                        tool_name=mt["name"],
-                                        tool_description=mt.get("description", ""),
-                                        tool_parameters=mt.get("inputSchema", {
-                                            "type": "object", "properties": {}}),
-                                        transport="stdio",
-                                        server_id=mcp_name,
-                                        relay_service=fs_svc,
-                                    )
-                                    registry.register(h)
-                                if disc_tools:
-                                    logger.info(f"[mcp] Loaded {len(disc_tools)} tools "
-                                                f"from stdio server '{mcp_name}'")
+                                    disc = relay_svc._request("mcp_discover", ".",
+                                                              server_id=mcp_name)
+                                    disc_tools = (disc.get("tools", [])
+                                                  if isinstance(disc, dict) else [])
+                                except Exception as e:
+                                    logger.error(f"[mcp] Discovery failed '{mcp_name}': {e}")
                             else:
-                                # HTTP: discover via direct HTTP
-                                if not mcp_url:
+                                # Direct HTTP
+                                url = mcp_def.get("url", "")
+                                if not url:
                                     continue
                                 from core.tool_registry import discover_mcp_tools
-                                from core.handlers.agent_tools import MCPToolHandler
                                 disc_tools = discover_mcp_tools(
-                                    mcp_url, headers=mcp_headers, timeout=10)
-                                for mt in disc_tools:
-                                    h = MCPToolHandler(
-                                        tool_name=mt["name"],
-                                        tool_description=mt.get("description", ""),
-                                        tool_parameters=mt.get("inputSchema", {
-                                            "type": "object", "properties": {}}),
-                                        server_url=mcp_url,
-                                        mcp_tool_name=mt["name"],
-                                        headers=mcp_headers,
-                                    )
-                                    registry.register(h)
-                                if disc_tools:
-                                    logger.info(f"[mcp] Loaded {len(disc_tools)} tools "
-                                                f"from HTTP server '{mcp_name}' ({mcp_url})")
+                                    url, headers=auth, timeout=10)
+
+                            # Register discovered tools
+                            from core.handlers.agent_tools import MCPToolHandler
+                            for mt in disc_tools:
+                                h = MCPToolHandler(
+                                    tool_name=mt["name"],
+                                    tool_description=mt.get("description", ""),
+                                    tool_parameters=mt.get("inputSchema", {
+                                        "type": "object", "properties": {}}),
+                                    server_url=mcp_def.get("url", ""),
+                                    mcp_tool_name=mt["name"],
+                                    headers=auth,
+                                    transport=transport if via == "relay" else "http",
+                                    server_id=mcp_name,
+                                    relay_service=relay_svc,
+                                )
+                                registry.register(h)
+                            if disc_tools:
+                                logger.info(f"[mcp] Loaded {len(disc_tools)} tools "
+                                            f"from '{mcp_name}' ({via}/{transport})")
                         except Exception as _mcp_err:
                             logger.warning(f"[mcp] Failed to load '{mcp_name}': {_mcp_err}")
 

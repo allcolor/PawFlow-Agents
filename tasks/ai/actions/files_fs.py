@@ -240,10 +240,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             from core.resource_store import ResourceStore
             adef = ResourceStore.instance().get_any("agent", agent_name, user_id)
             if adef and adef.get("llm_service"):
-                svc_id = adef["llm_service"]
-                if "${" in svc_id:
-                    from core.expression import resolve_expression
-                    svc_id = resolve_expression(svc_id, owner=user_id)
+                from core.expression import resolve_value
+                svc_id = resolve_value(adef["llm_service"], owner=user_id) or ""
                 if svc_id and "${" not in svc_id:
                     _, svc = self._resolve_llm_service(svc_id, user_id)
                     if svc:

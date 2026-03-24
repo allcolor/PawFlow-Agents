@@ -489,3 +489,31 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                                     _depth=_depth + 1)
 
     return result
+
+
+def resolve_value(value, owner: Optional[str] = None,
+                  conversation_id: Optional[str] = None):
+    """Resolve ${...} expressions recursively in any value.
+
+    Works on str, dict, list — returns a NEW object with all strings resolved.
+    Use this at the point of USE, never at storage time.
+
+    Examples:
+        resolve_value("${secrets.api_key}", owner="bob")
+        resolve_value({"url": "${user.mcp_url}", "args": ["--key", "${secrets.key}"]}, owner="bob")
+        resolve_value(["${global.x}", "literal"], owner="bob")
+    """
+    if isinstance(value, str):
+        if "${" not in value:
+            return value
+        return resolve_expression(value, owner=owner,
+                                  conversation_id=conversation_id)
+    if isinstance(value, dict):
+        return {k: resolve_value(v, owner=owner, conversation_id=conversation_id)
+                for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        resolved = [resolve_value(v, owner=owner, conversation_id=conversation_id)
+                    for v in value]
+        return type(value)(resolved)
+    # int, float, bool, None — pass through
+    return value

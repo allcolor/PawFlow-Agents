@@ -22,30 +22,16 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_extra(store, conv_id: str, key: str, user_id: str = ""):
-    """Read a conv extra and resolve ${...} expressions in string values."""
-    val = store.get_extra(conv_id, key)
-    if val and isinstance(val, str) and "${" in val:
-        from core.expression import resolve_expression
-        val = resolve_expression(val, owner=user_id)
-        if val and "${" in val:
-            val = ""  # unresolved expression → treat as unset
-    return val
+    """Read a conv extra and resolve ${...} expressions."""
+    from core.expression import resolve_value
+    return resolve_value(store.get_extra(conv_id, key), owner=user_id)
 
 
 def _resolve_extra_dict(store, conv_id: str, key: str, user_id: str = ""):
-    """Read a conv extra dict and resolve ${...} expressions in each string value."""
+    """Read a conv extra dict and resolve ${...} expressions in all values."""
+    from core.expression import resolve_value
     raw = store.get_extra(conv_id, key) or {}
-    if not isinstance(raw, dict):
-        return raw
-    result = {}
-    for k, v in raw.items():
-        if isinstance(v, str) and "${" in v:
-            from core.expression import resolve_expression
-            v = resolve_expression(v, owner=user_id)
-            if v and "${" in v:
-                continue  # unresolved → skip
-        result[k] = v
-    return result
+    return resolve_value(raw, owner=user_id)
 
 
 class AgentUtilsMixin:
@@ -62,9 +48,9 @@ class AgentUtilsMixin:
         is True a ``ValueError`` is raised instead of returning ``(None, None)``.
         """
         svc_id = service_id
-        if resolve_expressions and svc_id and "${" in svc_id:
-            from core.expression import resolve_expression
-            svc_id = resolve_expression(svc_id, owner=user_id)
+        if resolve_expressions and svc_id:
+            from core.expression import resolve_value
+            svc_id = resolve_value(svc_id, owner=user_id) or ""
         if not svc_id or "${" in svc_id:
             if resolve_expressions:
                 svc_id = ""  # expression unresolved → let registries try
@@ -162,11 +148,10 @@ class AgentUtilsMixin:
                     "agent", agent_name, user_id,
                     conversation_id=conversation_id)
                 if adef:
-                    svc_id = adef.get("llm_service", "")
-                    if svc_id and "${" in svc_id:
-                        from core.expression import resolve_expression
-                        svc_id = resolve_expression(svc_id, owner=user_id)
-                    if "${" in (svc_id or ""):
+                    from core.expression import resolve_value
+                    svc_id = resolve_value(adef.get("llm_service", ""),
+                                           owner=user_id) or ""
+                    if "${" in svc_id:
                         svc_id = ""
             except Exception:
                 pass
@@ -196,10 +181,9 @@ class AgentUtilsMixin:
             default = (schema.get(param_name) or {}).get("default", "")
             if default:
                 svc_id = default
-        if svc_id and "${" in svc_id:
-            from core.expression import resolve_expression
-            svc_id = resolve_expression(svc_id, owner=user_id)
-        if not svc_id or "${" in svc_id:
+        from core.expression import resolve_value
+        svc_id = resolve_value(svc_id, owner=user_id) or ""
+        if "${" in svc_id:
             return ""
         return svc_id
 

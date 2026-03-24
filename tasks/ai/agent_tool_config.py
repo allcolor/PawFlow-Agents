@@ -63,10 +63,9 @@ class AgentToolConfigMixin:
         # file_ttl is set per-request to match conversation TTL
         # (see _prepare_agent_context and _build_poll_context)
         # Resolve any remaining expressions (e.g. ${secrets.*} from cascaded ${flow.parameters.*})
-        from core.expression import resolve_expression as _re
-        _params = self._parameter_context._params if hasattr(self, '_parameter_context') and self._parameter_context else None
-        if file_base_url and "${" in file_base_url:
-            file_base_url = _re(file_base_url, parameters=_params)
+        from core.expression import resolve_value as _rv
+        if file_base_url:
+            file_base_url = _rv(file_base_url) or ""
             if "${" in file_base_url:
                 file_base_url = ""
 

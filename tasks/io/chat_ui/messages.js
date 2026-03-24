@@ -36,8 +36,8 @@ function buildMetaLine(extra) {
   const model = extra.model || src.model || '';
   const provider = extra.provider || src.provider || '';
   const baseUrl = extra.base_url || src.base_url || '';
-  const tokIn = extra.tokens_in || 0;
-  const tokOut = extra.tokens_out || 0;
+  const tokIn = extra.tokens_in || src.tokens_in || 0;
+  const tokOut = extra.tokens_out || src.tokens_out || 0;
   const dur = extra.duration_ms || 0;
   const parts = [];
   if (model) parts.push(model);

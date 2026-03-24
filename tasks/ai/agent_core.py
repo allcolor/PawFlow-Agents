@@ -57,16 +57,20 @@ class AgentCoreMixin:
         _client_base_url = getattr(client, "base_url", "") or ""
         if not isinstance(_client_base_url, str):
             _client_base_url = ""
-        def _agent_source():
+        def _agent_source(tok_in=0, tok_out=0, model_override=""):
             import re as _re
-            return {
+            src = {
                 "type": "agent", "name": ctx.get("active_agent_name", ""),
                 "llm_service": ctx.get("active_llm_service", ""),
                 "provider": _client_provider,
-                "model": _client_model,
+                "model": model_override or _client_model,
                 "base_url": _re.sub(r'(key|token|secret)=[^&]+', r'\1=***',
                                     _client_base_url) if _client_base_url else "",
             }
+            if tok_in or tok_out:
+                src["tokens_in"] = tok_in
+                src["tokens_out"] = tok_out
+            return src
         # SpawnAgentsHandler source tracking
         from core.tool_registry import SpawnAgentsHandler as _SAH
         for _h in registry.list_tools():
@@ -318,7 +322,8 @@ class AgentCoreMixin:
                         # Give it one more chance with explicit instruction
                         if not _resp_text and _has_thinking and not _need_more_retried:
                             logger.warning(f"[agent:{conversation_id[:8]}] thinking-only response (no text/tools), nudging")
-                            _append(LLMMessage(role="assistant", content="", source=_agent_source()))
+                            _append(LLMMessage(role="assistant", content="",
+                                               source=_agent_source(response.tokens_in, response.tokens_out)))
                             _append(LLMMessage(role="user", content=(
                                 "[System: You produced reasoning but no visible response or tool calls. "
                                 "You MUST either call a tool or provide a text response to the user. "
@@ -327,7 +332,8 @@ class AgentCoreMixin:
                             continue
                         action, msgs, final, _need_more_retried = self._handle_response_no_tools(
                             _resp_text, _client_provider, tool_defs,
-                            _need_more_retried, source=_agent_source())
+                            _need_more_retried,
+                            source=_agent_source(response.tokens_in, response.tokens_out, response.model))
                         for _m in msgs:
                             _append(_m)
                         if action == "break":
@@ -340,7 +346,8 @@ class AgentCoreMixin:
                     _need_more_retried = False
                     _append(LLMMessage(
                         role="assistant", content=response.content,
-                        tool_calls=response.tool_calls, source=_agent_source()))
+                        tool_calls=response.tool_calls,
+                        source=_agent_source(response.tokens_in, response.tokens_out, response.model)))
 
                     if poll_silent and response.tool_calls:
                         poll_silent = False

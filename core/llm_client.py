@@ -70,6 +70,7 @@ class LLMMessage:
     tool_call_id: Optional[str] = None
     source: Optional[Dict[str, str]] = None  # {"type": "user"|"agent", "name": "...", "llm_service": "..."}
     msg_id: str = ""  # unique ID — auto-generated if empty
+    display_only: bool = False  # True = visible in transcript, excluded from LLM context
 
     def __post_init__(self):
         if not self.msg_id:

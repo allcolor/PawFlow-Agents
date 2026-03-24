@@ -44,14 +44,24 @@ class AgentSerializationMixin:
                 entry["channel"] = channel
             if m.source:
                 entry["source"] = m.source
+            if m.display_only:
+                entry["display_only"] = True
             result.append(entry)
         return result
 
 
-    def _deserialize_messages(self, data: List[Dict[str, Any]]) -> List[LLMMessage]:
-        """Deserialize messages from storage."""
+    def _deserialize_messages(self, data: List[Dict[str, Any]], *,
+                              include_display_only: bool = False) -> List[LLMMessage]:
+        """Deserialize messages from storage.
+
+        By default, display_only messages (narrations, sub_agent_trace) are
+        excluded — they are transcript-only, not for LLM context.
+        Pass include_display_only=True for UI replay.
+        """
         messages = []
         for entry in data:
+            if not include_display_only and entry.get("display_only"):
+                continue
             tool_calls = None
             if "tool_calls" in entry:
                 tool_calls = [
@@ -69,6 +79,7 @@ class AgentSerializationMixin:
                 tool_call_id=entry.get("tool_call_id"),
                 source=entry.get("source"),
                 msg_id=entry.get("msg_id", ""),
+                display_only=entry.get("display_only", False),
             ))
         return messages
 
@@ -197,6 +208,10 @@ class AgentSerializationMixin:
                 if role == "user" and content.startswith("[System:"):
                     continue
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
+                if m.get("msg_id"):
+                    entry["msg_id"] = m["msg_id"]
+                if m.get("display_only"):
+                    entry["display_only"] = True
                 if m.get("timestamp"):
                     entry["timestamp"] = m["timestamp"]
                 if m.get("channel"):

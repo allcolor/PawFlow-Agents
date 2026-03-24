@@ -76,6 +76,20 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
             "msg_id": msg_id,
             "source": source,
         })
+        # Persist in transcript (display-only — NOT in agent context)
+        try:
+            from core.conversation_store import ConversationStore
+            import time as _t
+            ConversationStore.instance().append_messages(conversation_id, [{
+                "role": "assistant",
+                "content": narration,
+                "source": {**(source or {}), "narrator": True},
+                "msg_id": msg_id,
+                "display_only": True,
+                "timestamp": _t.time(),
+            }])
+        except Exception as _pe:
+            logging.getLogger(__name__).debug(f"[narrator] persist failed: {_pe}")
     return narration
 
 

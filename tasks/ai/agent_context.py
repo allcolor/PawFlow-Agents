@@ -241,7 +241,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             # Caller provided messages (e.g. poller task sub-conversation)
             try:
                 messages = self._deserialize_messages(preloaded_messages)
-                messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+                # display_only messages already filtered by _deserialize_messages
                 logger.info(f"[context:{(conversation_id or '?')[:8]}] using preloaded messages: "
                             f"{len(messages)} messages")
             except (KeyError, TypeError) as e:
@@ -260,7 +260,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 try:
                     messages = self._deserialize_messages(context_data)
                     # Filter out display-only messages (sub-agent traces)
-                    messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+                    # display_only messages already filtered by _deserialize_messages
                     _context_diverged = True
                     logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
                                 f"{len(messages)} messages")
@@ -277,7 +277,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     try:
                         messages = self._deserialize_messages(existing)
                         # Filter out display-only messages (sub-agent traces)
-                        messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+                        # display_only messages already filtered by _deserialize_messages
                         logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
@@ -295,7 +295,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 try:
                     messages = self._deserialize_messages(json.loads(existing))
                     # Filter out display-only messages (sub-agent traces)
-                    messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
+                    # display_only messages already filtered by _deserialize_messages
                 except (json.JSONDecodeError, KeyError):
                     pass
 

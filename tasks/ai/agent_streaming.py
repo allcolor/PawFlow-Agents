@@ -95,24 +95,45 @@ def _track_narrator(resp, ctx):
 
 
 def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
-    """Call a small LLM to narrate tool_calls in one sentence."""
+    """Call a narrator LLM to describe what the agent is doing."""
     try:
         from gui.services.global_service_registry import GlobalServiceRegistry
         svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
         if not svc:
             return ""
         logging.getLogger(__name__).debug(f"[narrator] using service '{svc_name}'")
-        _KEY_LIMITS = {"command": 300, "code": 300, "prompt": 150}
+
+        # Format tool calls with enough detail for meaningful narration
+        _KEY_LIMITS = {"command": 500, "code": 500, "prompt": 300,
+                       "content": 300, "path": 200, "query": 200}
         def _fmt(args):
-            return ", ".join(f"{k}={str(v)[:_KEY_LIMITS.get(k, 50)]}" for k, v in args.items())
-        tools_desc = "; ".join(f"{tc.name}({_fmt(tc.arguments)})" for tc in tool_calls[:5])
-        if len(tool_calls) > 5:
-            tools_desc += f"; ... +{len(tool_calls) - 5} more"
+            return ", ".join(f"{k}={str(v)[:_KEY_LIMITS.get(k, 80)]}"
+                             for k, v in args.items())
+        tools_desc = "\n".join(
+            f"  - {tc.name}({_fmt(tc.arguments)})"
+            for tc in tool_calls[:8])
+        if len(tool_calls) > 8:
+            tools_desc += f"\n  - ... +{len(tool_calls) - 8} more"
+
+        # Give context: agent name + last user message
+        agent_name = ctx.get("active_agent_name", "the agent")
+        last_user_msg = ""
+        for m in reversed(ctx.get("messages", [])):
+            if m.role == "user":
+                content = m.content if isinstance(m.content, str) else str(m.content)
+                last_user_msg = content[:200]
+                break
+
         prompt = (
-            f"The AI agent is about to call these tools: {tools_desc}\n"
-            f"Write ONE short sentence (max 15 words) describing what it's doing. "
-            f"Be specific about the actual action, not generic. Write only the sentence.")
-        resp = svc.complete([LLMMessage(role="user", content=prompt)], max_tokens=50, temperature=0.3)
+            f"Agent '{agent_name}' is executing these tool calls:\n{tools_desc}\n\n"
+            + (f"Context — the user asked: \"{last_user_msg}\"\n\n" if last_user_msg else "")
+            + "Describe what the agent is doing in 1-2 short sentences. "
+            "Be specific about the actual action and its purpose. "
+            "Don't say 'the agent' — speak as if narrating: 'Reading the config file to check...'")
+
+        resp = svc.complete(
+            [LLMMessage(role="user", content=prompt)],
+            max_tokens=150, temperature=0.3)
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
         return text + "\n" if text and not text.endswith("\n") else text

@@ -170,6 +170,11 @@ class AgentCompactionMixin:
             logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)
             return messages
 
+        # Guard: empty summary = LLM returned nothing → don't compact
+        if not summary or len(summary.strip()) < 20:
+            logger.warning(f"[compact-post] Summary too short ({len(summary)} chars), keeping original")
+            return messages
+
         # Build compacted context
         compacted: List[LLMMessage] = []
         if system_msg:

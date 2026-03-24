@@ -549,21 +549,16 @@
       const meta = buildMetaLine(extra);
       if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // Check if there's a finalized narration for this agent — it's the same turn
+      // Remove ALL finalized narrations for this agent — they were mid-turn
+      // narrations that should not persist alongside the final response
       const agentLower = doneAgent.toLowerCase();
-      let handled = false;
       document.querySelectorAll('#messages .finalized').forEach(el => {
-        if (!handled && el.dataset.finalizedAgent === agentLower) {
-          // Convert finalized narration to permanent + add metadata
-          el.classList.remove('finalized');
-          el.classList.add('msg', 'assistant');
-          el.dataset.rawText = finalText.substring(0, 500);
-          const meta = buildMetaLine(extra);
-          if (meta) el.insertAdjacentHTML('beforeend', meta);
-          handled = true;
+        if (el.dataset.finalizedAgent === agentLower) {
+          el.remove();
         }
       });
-      if (!handled) addMsg('assistant', finalText, extra);
+      // Add the final response with full metadata
+      addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

@@ -647,14 +647,17 @@ class AgentLoopTask(
                     temperature=0.7, max_tokens=2000,
                     tools=None, callback=_on_token)
 
-                # Save + publish done
-                messages.append(LLMMessage(
+                # Save to both transcript (visible on reload) and agent context
+                _interrupt_msg = LLMMessage(
                     role="assistant", content=resp.content,
                     source={"type": "agent", "name": agent_name or "",
-                            "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out}))
+                            "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out,
+                            "model": resp.model})
+                messages.append(_interrupt_msg)
+                _serialized = self._serialize_messages(messages[-2:])
+                store.append_messages(conversation_id, _serialized)
                 store.append_to_agent_context(
-                    conversation_id, _agent,
-                    self._serialize_messages(messages[-2:]))
+                    conversation_id, _agent, _serialized)
 
                 bus.publish_event(conversation_id, "done", {
                     "response": resp.content,

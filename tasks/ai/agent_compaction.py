@@ -142,6 +142,12 @@ class AgentCompactionMixin:
         old_messages = messages[start_idx:_split]
         recent_messages = messages[_split:]
 
+        # Clear oversized tool results in ALL messages before compacting
+        # (prevents 2MB blobs from inflating the token estimate)
+        self._clear_seen_tool_results(messages, keep_recent=0,
+                                       conversation_id=conversation_id,
+                                       agent_name=agent_name)
+
         # Filter old messages: only conversation (no tool plumbing)
         old_conv = [
             m for m in old_messages

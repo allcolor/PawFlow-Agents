@@ -614,10 +614,8 @@ class AgentLoopTask(
                 messages.append(LLMMessage(
                     role="user",
                     content=(
-                        "[System: The user has requested an immediate response. "
-                        "Stop all tool usage. Summarize your progress so far and "
-                        "provide your best answer with the information you have. "
-                        "Mention what you were still working on.]"),
+                        "[System: INTERRUPTED. Reply in 2-3 sentences max: "
+                        "what you did, what's left to do. No details, no code.]"),
                 ))
 
                 # Resolve client
@@ -644,7 +642,7 @@ class AgentLoopTask(
 
                 resp = client.complete_stream(
                     messages=compact_msgs,
-                    temperature=0.7, max_tokens=2000,
+                    temperature=0.7, max_tokens=500,
                     tools=None, callback=_on_token)
 
                 # Save to both transcript (visible on reload) and agent context

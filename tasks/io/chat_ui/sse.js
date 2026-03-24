@@ -206,8 +206,7 @@
     if (tcs && tcs.el) {
       // Finalize narration — stays visible, detach from streaming tracking
       tcs.el.classList.add('finalized');
-      // Save the text so done handler knows it was already displayed
-      tcs.el.dataset.streamedText = (tcs.text || tcs.el.textContent || '').substring(0, 200);
+      tcs.el.dataset.finalizedAgent = tcAgent.toLowerCase();
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
@@ -550,20 +549,21 @@
       const meta = buildMetaLine(extra);
       if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // Check if already shown as a finalized narration (same text = duplicate)
-      let dup = false;
+      // Check if there's a finalized narration for this agent — it's the same turn
+      const agentLower = doneAgent.toLowerCase();
+      let handled = false;
       document.querySelectorAll('#messages .finalized').forEach(el => {
-        const st = el.dataset.streamedText || '';
-        if (st && finalText.substring(0, 100) === st.substring(0, 100)) {
-          // Same text — convert to permanent + add metadata, don't addMsg
+        if (!handled && el.dataset.finalizedAgent === agentLower) {
+          // Convert finalized narration to permanent + add metadata
           el.classList.remove('finalized');
           el.classList.add('msg', 'assistant');
+          el.dataset.rawText = finalText.substring(0, 500);
           const meta = buildMetaLine(extra);
           if (meta) el.insertAdjacentHTML('beforeend', meta);
-          dup = true;
+          handled = true;
         }
       });
-      if (!dup) addMsg('assistant', finalText, extra);
+      if (!handled) addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

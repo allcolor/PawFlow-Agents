@@ -565,27 +565,42 @@
     // Keep all existing DOM elements (narrations, tool calls, results).
     // Only add the final response if it wasn't already streamed.
     // Convert any active streaming element into a permanent message.
+    // Register done msg_id (prevents poll/replay re-add)
+    if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
+      _seenMsgIds.add(extra.msg_id);
+    }
     if (s.el && s.el.parentNode) {
       // Active streaming element — convert to permanent + add metadata
       s.el.classList.remove('streaming');
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
-      // Register msg_id so poll/replay won't re-add this message
-      if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
-        _seenMsgIds.add(extra.msg_id);
-      }
       const meta = buildMetaLine(extra);
       if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {
-      // Remove ALL narrations and finalized elements for this agent
+      // No active streaming element — find the LAST assistant message
+      // from this agent and add metadata to it (don't create a duplicate).
       const agentLower = doneAgent.toLowerCase();
+      // Remove narrations/finalized for this agent
       document.querySelectorAll('#messages .finalized, #messages .narration').forEach(el => {
-        if (el.dataset.finalizedAgent === agentLower) {
-          el.remove();
-        }
+        if (el.dataset.finalizedAgent === agentLower) el.remove();
       });
-      // Add the final response with full metadata
-      addMsg('assistant', finalText, extra);
+      // Find existing message from this agent (finalized by tool_call)
+      const existing = [...document.querySelectorAll('#messages .msg.assistant, #messages .msg.subagent')]
+        .reverse()
+        .find(el => {
+          const badge = el.querySelector('.source-badge');
+          return badge && badge.textContent.toLowerCase().includes(agentLower);
+        });
+      if (existing && !existing.querySelector('.msg-meta')) {
+        // Add metadata to existing element (was streamed, then finalized by tool_call)
+        existing.dataset.rawText = finalText.substring(0, 500);
+        const meta = buildMetaLine(extra);
+        if (meta) existing.insertAdjacentHTML('beforeend', meta);
+      } else if (!existing) {
+        // Truly new message (no streaming happened) — add it
+        addMsg('assistant', finalText, extra);
+      }
+      // If existing already has meta, skip (already complete)
     }
     clearStream(doneAgent);
     scrollBottom();

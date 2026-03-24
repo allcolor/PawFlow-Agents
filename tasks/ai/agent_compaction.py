@@ -127,17 +127,10 @@ class AgentCompactionMixin:
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        # Find split point: last keep_recent conversation messages
-        _split = len(messages)
-        _count = 0
-        while _split > start_idx and _count < keep_recent:
-            _split -= 1
-            m = messages[_split]
-            if m.role == "user" and not (isinstance(m.content, str)
-                                         and m.content.startswith("[System:")):
-                _count += 1
-            elif m.role == "assistant" and not getattr(m, "tool_calls", None):
-                _count += 1
+        # Split: keep last keep_recent*3 messages (includes tool plumbing).
+        # The multiplier accounts for tool_call chains (assistant + N tool results).
+        _keep_total = min(keep_recent * 3, len(messages) - start_idx - 1)
+        _split = max(start_idx + 1, len(messages) - _keep_total)
         # Don't split inside a tool chain
         while _split > start_idx and messages[_split].role == "tool":
             _split -= 1
@@ -166,7 +159,7 @@ class AgentCompactionMixin:
         # Summarize
         try:
             summary = self._call_summarize(client, self._messages_to_text(old_conv),
-                                            target_tokens=max(300, int(max_context * 0.05)),
+                                            target_tokens=1000,
                                             agent_name=agent_name)
         except Exception as e:
             logger.warning(f"[compact-post] Summary failed: {e}")

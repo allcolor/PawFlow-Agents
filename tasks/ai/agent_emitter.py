@@ -247,8 +247,15 @@ class StreamEmitter(AgentEmitter):
         agent_name = self._agent_name
         emitter = self
 
+        _cancel_detected = threading.Event()
+
         def heartbeat():
-            while not stop_event.wait(5.0):
+            while not stop_event.wait(2.0):  # check every 2s
+                # Check cancel during LLM call — signal main thread
+                if not emitter.agent._is_current_generation(emitter.gen_key, emitter.generation):
+                    _cancel_detected.set()
+                    stop_event.set()  # stop heartbeat
+                    return
                 if poll_silent:
                     continue
                 elapsed = int(time.time() - emitter._last_token_time)
@@ -260,13 +267,16 @@ class StreamEmitter(AgentEmitter):
 
         t = threading.Thread(target=heartbeat, daemon=True)
         t.start()
-        return (stop_event, t)
+        return (stop_event, t, _cancel_detected)
 
     def stop_heartbeat(self, handle: Any) -> None:
         if handle:
-            stop_event, t = handle
+            stop_event, t, cancel_flag = handle
             stop_event.set()
             t.join(timeout=1)
+            # If the heartbeat detected a cancel during the LLM call, raise now
+            if cancel_flag.is_set():
+                raise AgentCancelled()
 
     # ── Tool events ───────────────────────────────────────────────────
 

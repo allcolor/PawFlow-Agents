@@ -57,11 +57,12 @@ _DEFAULTS = {
         "description": "",
     },
     "mcp": {
-        "url": "",          # HTTP transport: server URL
+        "url": "",           # HTTP transport: server URL
         "transport": "http", # "http" or "stdio"
+        "via": "",           # "relay" or "direct" (default: stdio→relay, http→direct)
         "command": "",       # stdio transport: command to run
         "args": [],          # stdio transport: command arguments
-        "env": {},           # stdio transport: extra environment variables
+        "env": {},           # stdio/http: extra environment variables
         "auth": {},          # HTTP transport: auth headers
         "discovered_tools": [],
     },

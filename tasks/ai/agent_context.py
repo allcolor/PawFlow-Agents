@@ -418,12 +418,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 continue
                             mcp_url = mcp_def.get("url", "")
                             mcp_transport = mcp_def.get("transport", "http")
+                            # "via" routing: relay (user's machine) or direct (server-side)
+                            # Default: stdio→relay, http→direct
+                            mcp_via = mcp_def.get("via", "") or (
+                                "relay" if mcp_transport == "stdio" else "direct")
                             mcp_headers = mcp_def.get("auth", {})
                             if isinstance(mcp_headers, str):
                                 mcp_headers = {"Authorization": mcp_headers}
 
-                            if mcp_transport == "stdio":
-                                # Stdio: discover via relay proxy
+                            if mcp_via == "relay":
+                                # Via relay: launch/proxy on user's machine
                                 fs_svc = self._find_filesystem_service(_uid)
                                 if not fs_svc:
                                     logger.warning(f"[mcp] No relay for stdio server '{mcp_name}'")

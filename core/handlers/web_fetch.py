@@ -381,6 +381,10 @@ class WebFetchHandler(ToolHandler):
         import base64
         from urllib.parse import urlparse
 
+        # Resolve expressions in all arguments (secrets in headers, urls, etc.)
+        from core.expression import resolve_value
+        arguments = resolve_value(arguments, owner=getattr(self, '_user_id', ''))
+
         url = arguments.get("url", "")
         if not url:
             return "Error: missing 'url' parameter"

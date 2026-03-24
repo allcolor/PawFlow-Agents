@@ -100,8 +100,9 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         from gui.services.global_service_registry import GlobalServiceRegistry
         svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
         if not svc:
+            logging.getLogger(__name__).info(f"[narrator] service '{svc_name}' NOT FOUND")
             return ""
-        logging.getLogger(__name__).debug(f"[narrator] using service '{svc_name}'")
+        logging.getLogger(__name__).info(f"[narrator] calling service '{svc_name}'")
 
         # Format tool calls with enough detail for meaningful narration
         _KEY_LIMITS = {"command": 500, "code": 500, "prompt": 300,
@@ -138,7 +139,7 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         text = (resp.content or "").strip()
         return text + "\n" if text and not text.endswith("\n") else text
     except Exception as e:
-        logging.getLogger(__name__).debug("Narrator service '%s' failed: %s", svc_name, e)
+        logging.getLogger(__name__).warning("[narrator] service '%s' failed: %s", svc_name, e)
         return ""
 
 

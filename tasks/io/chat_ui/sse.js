@@ -204,9 +204,10 @@
     const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
-      // Remove the streaming element — the narration text will be part of
-      // the tool_call display, no need to keep it visible separately.
-      if (tcs.el.parentNode) tcs.el.remove();
+      // Finalize: convert streaming element into a permanent message.
+      // Don't remove — the narration stays visible above the tool call.
+      // Just detach from streaming tracking so new tokens create a fresh element.
+      tcs.el.classList.add('finalized');
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
@@ -541,24 +542,16 @@
     // Remove streaming chunks THEN create proper message via addMsg.
     // Must be in this order so the new message appears at the right
     // position (end of chat) without a stale chunk above it.
+    // Remove streaming chunks (including finalized narration elements)
     _expectingClear = true;
     for (const chunk of s.chunks) {
       if (chunk && chunk.parentNode) chunk.remove();
     }
     if (s.el && !s.chunks.includes(s.el) && s.el.parentNode) s.el.remove();
+    // Also remove finalized narration elements for this agent
+    document.querySelectorAll('#messages .finalized').forEach(el => el.remove());
     _expectingClear = false;
-    // Dedup: check if this exact text is already the last assistant message
-    if (finalText) {
-      const msgs = document.querySelectorAll('#messages .msg');
-      let isDup = false;
-      if (msgs.length > 0) {
-        const last = msgs[msgs.length - 1];
-        if (last.dataset.rawText && finalText.substring(0, 200) === last.dataset.rawText.substring(0, 200)) {
-          isDup = true;
-        }
-      }
-      if (!isDup) addMsg('assistant', finalText, extra);
-    }
+    if (finalText) addMsg('assistant', finalText, extra);
     clearStream(doneAgent);
     scrollBottom();
 

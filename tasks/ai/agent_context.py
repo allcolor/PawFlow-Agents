@@ -248,6 +248,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Auto-compact on load (OUTSIDE the deserialize try/except)
                 if len(messages) > 20:
                     try:
+                        from core.conversation_event_bus import ConversationEventBus
+                        _ac_bus = ConversationEventBus.instance()
+                        _ac_bus.publish_event(conversation_id, "thinking", {
+                            "detail": f"compacting {len(messages)} messages...",
+                            "agent_name": _context_agent,
+                        })
                         _ac_client = self._get_default_client(
                             flowfile.get_attribute("http.auth.principal") or "")
                         if _ac_client:
@@ -259,6 +265,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 agent_name=_context_agent)
                             logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                                         f"{_before} → {len(messages)} messages")
+                            _ac_bus.publish_event(conversation_id, "compact_progress", {
+                                "stage": "done", "agent": _context_agent,
+                                "before": _before, "after": len(messages),
+                            })
                     except Exception as _ac_err:
                         logger.warning(f"[context] auto-compact failed: {_ac_err}")
             else:
@@ -276,6 +286,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     # Auto-compact on load (OUTSIDE deserialize try/except)
                     if len(messages) > 20:
                         try:
+                            from core.conversation_event_bus import ConversationEventBus
+                            _ac_bus2 = ConversationEventBus.instance()
+                            _ac_bus2.publish_event(conversation_id, "thinking", {
+                                "detail": f"compacting {len(messages)} messages...",
+                                "agent_name": _context_agent,
+                            })
                             _ac_client = self._get_default_client(
                                 flowfile.get_attribute("http.auth.principal") or "")
                             if _ac_client:
@@ -286,6 +302,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     agent_name=_context_agent)
                                 logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                                             f"{_before} → {len(messages)} messages")
+                                _ac_bus2.publish_event(conversation_id, "compact_progress", {
+                                    "stage": "done", "agent": _context_agent,
+                                    "before": _before, "after": len(messages),
+                                })
                         except Exception as _ac_err:
                             logger.warning(f"[context] auto-compact failed: {_ac_err}")
                 else:

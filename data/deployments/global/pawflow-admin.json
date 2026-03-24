@@ -1,0 +1,17 @@
+{
+  "instance_id": "pawflow-admin",
+  "flow_id": "pawflow-admin",
+  "flow_name": "PawFlow Admin",
+  "flow_path": "flows/pawflow_admin.json",
+  "owner": null,
+  "status": "running",
+  "source": "admin",
+  "parameters": {},
+  "created_at": 1774257076.5409634,
+  "last_started": 1774257076.5409636,
+  "max_workers": 4,
+  "max_retries": 3,
+  "service_overrides": {},
+  "service_configs": {},
+  "layout": {}
+}

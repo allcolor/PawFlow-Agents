@@ -4,12 +4,12 @@
     "service_type": "llmConnection",
     "config": {
       "provider": "openai",
-      "api_key": "${secrets.global.llm_api_key}",
-      "base_url": "${global.llm_base_url}",
-      "default_model": "${global.llm_model}",
+      "api_key": "${llm_api_key}",
+      "base_url": "${llm_base_url}",
+      "default_model": "${llm_model}",
       "timeout": 300,
       "max_retries": 2,
-      "max_context_size": 65536,
+      "max_context_size": 196608,
       "max_concurrent": 0,
       "cost_per_1m_input": "2.5",
       "cost_per_1m_output": "15",
@@ -25,12 +25,12 @@
     "service_type": "llmConnection",
     "config": {
       "provider": "openai",
-      "api_key": "${secrets.global.grok_llm_api_key}",
-      "base_url": "${global.grok_llm_base_url}",
-      "default_model": "${global.grok_llm_model}",
+      "api_key": "${grok_llm_api_key}",
+      "base_url": "${grok_llm_base_url}",
+      "default_model": "${grok_llm_model}",
       "timeout": 300,
       "max_retries": 2,
-      "max_context_size": 65536,
+      "max_context_size": 1000000,
       "max_concurrent": 0,
       "cost_per_1m_input": "0.02",
       "cost_per_1m_output": "0.05"
@@ -43,11 +43,19 @@
     "service_id": "claude_llm_service",
     "service_type": "llmConnection",
     "config": {
-      "provider": "claude-code",
-      "default_model": "sonnet",
-      "timeout": 300,
+      "provider": "anthropic",
+      "api_key": "${claude_api_key}",
+      "base_url": "${claude_llm_base_url}",
+      "default_model": "claude-sonnet-4-6",
+      "fallback_model": "",
+      "timeout": 600,
+      "max_retries": 2,
+      "max_context_size": 128000,
       "max_concurrent": 0,
-      "claude_binary": "C:/Users/quent/.local/bin/claude.exe"
+      "cost_per_1m_input": "3",
+      "cost_per_1m_output": "15",
+      "claude_binary": "",
+      "gemini_binary": ""
     },
     "enabled": true,
     "description": "",
@@ -59,8 +67,8 @@
     "config": {
       "provider": "openai",
       "api_key": "local",
-      "base_url": "${global.qwen_llm_base_url}",
-      "default_model": "${global.qwen_llm_model}",
+      "base_url": "${qwen_llm_base_url}",
+      "default_model": "${qwen_llm_model}",
       "timeout": 120,
       "max_retries": 1,
       "max_context_size": 8192,
@@ -78,25 +86,38 @@
     "service_id": "image_default_service",
     "service_type": "pixazoImageGeneration",
     "config": {
-      "api_key": "${secrets.global.pixazo_api_key}",
+      "api_key": "${pixazo_api_key}",
+      "model": "nano-banana",
+      "custom_endpoint": "",
+      "custom_poll_endpoint": "",
       "timeout": 120,
+      "poll_interval": 5,
       "max_retries": 5
     },
     "enabled": true,
     "description": "",
     "created_at": 1773738321.588766
   },
-  "localFS": {
-    "service_id": "localFS",
-    "service_type": "filesystem",
+  "gpt_nano_llm_service": {
+    "service_id": "gpt_nano_llm_service",
+    "service_type": "llmConnection",
     "config": {
-      "port": 9091,
-      "path": "/ws/relay",
-      "token": "monsecret",
-      "mode": "readwrite"
+      "provider": "openai",
+      "api_key": "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",
+      "base_url": "${llm_base_url}",
+      "default_model": "gpt-5-nano",
+      "fallback_model": "",
+      "timeout": 60,
+      "max_retries": 2,
+      "max_context_size": 32768,
+      "max_concurrent": 0,
+      "cost_per_1m_input": "0,05",
+      "cost_per_1m_output": "0,40",
+      "claude_binary": "claude",
+      "gemini_binary": "gemini"
     },
     "enabled": true,
-    "description": "Local filesystem relay",
-    "created_at": 1773948166.0070543
+    "description": "",
+    "created_at": 1774340516.3666816
   }
 }

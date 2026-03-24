@@ -250,16 +250,16 @@ class AgentLoopTask(
                 "description": "Number of recent messages to keep intact during compaction (never summarized)",
             },
             "summarizer_service": {
-                "type": "string", "required": False, "default": "${conv.summarizer_service}",
-                "description": "Dedicated LLM service for context compaction/summary. Cascades: conv → user → global params.",
+                "type": "string", "required": False, "default": "${summarizer_service}",
+                "description": "Dedicated LLM service for context compaction/summary.",
             },
             "narrator_service": {
-                "type": "string", "required": False, "default": "${conv.narrator_service}",
-                "description": "Dedicated LLM service for tool-call narration. Cascades: conv → user → global params.",
+                "type": "string", "required": False, "default": "${narrator_service}",
+                "description": "Dedicated LLM service for tool-call narration.",
             },
             "llm_service": {
-                "type": "string", "required": False, "default": "${conv.llm_default_service}",
-                "description": "LLM service ID (from global/user services). Cascades: conv → user → global params.",
+                "type": "string", "required": False, "default": "${llm_default_service}",
+                "description": "LLM service ID (from global/user services).",
             },
             "resilience_style": {
                 "type": "string", "required": False, "default": "balanced",

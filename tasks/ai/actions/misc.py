@@ -101,7 +101,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
         else:
             # Model can be explicit, expression, or default to ${user.fast_model}
-            fast_val = model or "${user.fast_model}"
+            fast_val = model or "${fast_model}"
             store.set_extra(conv_id, "fast_mode", fast_val, user_id=user_id)
             display = fast_val
             if "${" in fast_val:

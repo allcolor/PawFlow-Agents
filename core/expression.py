@@ -142,25 +142,25 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     """
     Résoudre toutes les expressions ${...} dans un template.
 
-    Uniform cascade — ALL prefixes resolve in the same order:
-        flow params → conv params → user params → global params
+    Simplified syntax: ${name} — no scope prefix needed.
+    Resolution order: secrets cascade → params cascade → env → attrs.
 
-    The prefix (flow., conv., user., global.) is just the variable name
-    extraction point — it does NOT restrict the lookup scope.
+    Secrets cascade:  conv → user → global (no flow-level secrets)
+    Params cascade:   flow → conv → user → global
 
     Examples:
-        ${global.X}  → looks in flow, then conv, then user, then global
-        ${user.X}    → same cascade: flow → conv → user → global
-        ${conv.X}    → same cascade: flow → conv → user → global
-        ${flow.parameters.X} → same cascade: flow → conv → user → global
+        ${api_key}           → secrets first, then params, all scopes
+        ${fast_model}        → same cascade for everything
+        ${api_key:default("sk-xxx")} → with fallback
+        ${env.PATH}          → OS environment (only prefix kept)
 
-    Force exact scope with :!important suffix:
-        ${global.X:!important}  → global params ONLY
-        ${user.X:!important}    → user params ONLY
-        ${conv.X:!important}    → conv params ONLY
-        ${flow.X:!important}    → flow params ONLY
+    Force exact scope:
+        ${api_key:!important(global)}  → global params ONLY
+        ${api_key:!important(user)}    → user params ONLY
+        ${api_key:!important(conv)}    → conv params ONLY
 
-    Secrets cascade: conv → user → global (no flow-level secrets).
+    Old prefixes (global., user., secrets.) are NOT supported.
+    Use tools/migrate_expressions.py --apply to migrate existing data.
 
     Résolution récursive : si la valeur résolue contient des ${...},
     elles sont résolues à leur tour (max 10 niveaux).
@@ -348,29 +348,23 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         return None, False
 
     def _parse_important(expr):
-        """Parse :!important suffix. Returns (clean_expr, exact_scope_or_None).
+        """Parse :!important(scope) suffix. Returns (clean_expr, exact_scope_or_None).
+
+        New syntax: ${key:!important(global)}, ${key:!important(user)}, etc.
+        Legacy syntax: ${global.key:!important} (scope from prefix)
 
         Examples:
-            "global.mavar"           → ("global.mavar", None)
-            "global.mavar:!important" → ("global.mavar", "global")
-            "user.x:!important"      → ("user.x", "user")
-            "conv.x:!important"      → ("conv.x", "conv")
-            "flow.parameters.x:!important" → ("flow.parameters.x", "flow")
+            "api_key"                        → ("api_key", None)
+            "api_key:!important(global)"     → ("api_key", "global")
+            "api_key:!important(user)"       → ("api_key", "user")
+            "api_key:!important(conv)"       → ("api_key", "conv")
+            "global.mavar:!important"        → ("global.mavar", "global")  # legacy
         """
-        if not expr.endswith(':!important'):
-            return expr, None
-        clean = expr[:-len(':!important')]
-        # Determine which scope the prefix refers to
-        for prefix in ('flow.parameters.', 'flow.', 'conv.', 'user.', 'global.',
-                       'secrets.conv.', 'secrets.user.', 'secrets.global.', 'secrets.'):
-            if clean.startswith(prefix):
-                scope = prefix.rstrip('.')
-                if scope.startswith('secrets.'):
-                    scope = scope[len('secrets.'):]
-                if scope in ('flow.parameters', 'flow'):
-                    scope = 'flow'
-                return clean, scope
-        return clean, None
+        # Syntax: ${key:!important(scope)}
+        m = re.match(r'^(.+):!important\((\w+)\)$', expr)
+        if m:
+            return m.group(1), m.group(2)
+        return expr, None
 
     def _resolve_single(expr_inner):
         """Resolve a single ${...} expression (for recursive arg resolution)."""
@@ -385,7 +379,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     def replacer_core(expr):
         nonlocal secrets, variables
 
-        # Parse pipeline operations (e.g. "global.key:upper:equals("X"):then("Y")")
+        # Parse pipeline operations (e.g. "key:upper:equals("X"):then("Y")")
         from core.expression_pipeline import parse_pipeline, evaluate_pipeline
         scope_key, operations = parse_pipeline(expr)
 
@@ -405,79 +399,57 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         # Parse :!important modifier
         expr, exact_scope = _parse_important(expr)
 
-        # ── Secrets ─────────────────────────────────────────────────────
-        # secrets.conv.X / secrets.user.X / secrets.global.X → full cascade (or exact with !important)
-        for sec_prefix, _sec_scope in [
-            ('secrets.conv.', 'conv'),
-            ('secrets.user.', 'user'),
-            ('secrets.global.', 'global'),
-        ]:
-            if expr.startswith(sec_prefix):
-                key = expr[len(sec_prefix):]
-                val, found = _cascade_secret(key, exact_scope=exact_scope)
-                return _return_val(val) if found else "${" + scope_key + "}"
-
-        # secrets.key_name → per-user secrets (legacy agent_secrets, no cascade)
-        if expr.startswith('secrets.'):
-            key = expr[len('secrets.'):]
-            if secrets is None:
-                secrets = _load_secrets()
-            if key in secrets:
-                resolved = _resolve_value(secrets[key])
-                return "${" + scope_key + "}" if resolved is None else _return_val(resolved)
-            return match.group(0)
-
-        # ── Parameters ──────────────────────────────────────────────────
-        # All prefixes cascade: flow → conv → user → global (unless !important)
-        for param_prefix, _param_scope in [
-            ('flow.parameters.', 'flow'),
-            ('flow.', 'flow'),
-            ('conv.', 'conv'),
-            ('user.', 'user'),
-            ('global.', 'global'),
-        ]:
-            if expr.startswith(param_prefix):
-                key = expr[len(param_prefix):]
-                val, found = _cascade_param(key, exact_scope=exact_scope)
-                if found:
-                    return _return_val(val)
-                # Not found: if has operations (e.g. :default), try with empty
-                if operations:
-                    return evaluate_pipeline("", operations, resolve_fn=_resolve_single)
-                return "${" + scope_key + "}"
-
-        # var.key_name (plaintext variables, no cascade)
-        if expr.startswith('var.'):
-            key = expr[len('var.'):]
-            if variables is None:
-                variables = _load_variables()
-            if key in variables:
-                return _return_val(variables[key])
-            return "${" + scope_key + "}"
-
-        # env.VAR
+        # env.X is the ONLY prefix — OS environment access
         if expr.startswith('env.'):
             var = expr[len('env.'):]
             val = os.environ.get(var)
             if val is not None:
                 return _return_val(val)
+            if operations:
+                return evaluate_pipeline("", operations, resolve_fn=_resolve_single)
             return "${" + scope_key + "}"
 
-        # Attribut du FlowFile
+        key = expr
+
+        # ── Unified resolution: secrets cascade → params cascade ──
+        # 1. Secrets: flow(n/a) → conv → user → global
+        val, found = _cascade_secret(key, exact_scope=exact_scope)
+        if found:
+            return _return_val(val)
+        # Legacy per-user secrets (agent_secrets.json)
+        if secrets is None:
+            secrets = _load_secrets()
+        if key in secrets:
+            resolved = _resolve_value(secrets[key])
+            if resolved is not None:
+                return _return_val(resolved)
+
+        # 2. Parameters: flow → conv → user → global
+        val, found = _cascade_param(key, exact_scope=exact_scope)
+        if found:
+            return _return_val(val)
+
+        # 3. Legacy variables (agent_variables.json)
+        if variables is None:
+            variables = _load_variables()
+        if key in variables:
+            return _return_val(variables[key])
+
+        # 4. FlowFile attributes (for flow expressions like ${http.method})
         if expr in attrs:
             val = attrs[expr]
-            if operations:
-                return evaluate_pipeline(val, operations, resolve_fn=_resolve_single)
-            return val
+            return _return_val(val)
+        # Also try stripped key in attrs
+        if key != expr and key in attrs:
+            return _return_val(attrs[key])
 
+        # Not found — try pipeline operations with empty (e.g. ${x:default("fallback")})
         if operations:
-            # Expression not resolved but has operations — try pipeline with empty value
-            # This allows ${nonexistent:default("fallback")} to work
             result_val = evaluate_pipeline("", operations, resolve_fn=_resolve_single)
             if result_val:
                 return result_val
 
-        return "${" + expr + "}"
+        return "${" + scope_key + "}"
 
     # Custom substitution that handles nested ${...} in arguments
     result = _substitute_expressions(template, replacer_core)

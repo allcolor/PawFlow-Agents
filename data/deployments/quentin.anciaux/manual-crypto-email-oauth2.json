@@ -7,7 +7,6 @@
   "status": "stopped",
   "source": "agent",
   "parameters": {},
-  "conversation_id": "5acf2ef2a37d4970",
   "created_at": 1773401348.7368188,
   "last_started": 1773921162.0520518,
   "last_stopped": 1773921257.125249,
@@ -16,9 +15,9 @@
   "service_overrides": {},
   "service_configs": {
     "llm_local": {
-      "provider": "${user.llm_provider}",
-      "api_key": "${secrets.user.api_key}",
-      "base_url": "${user.llm_base_url}",
+      "provider": "${llm_provider}",
+      "api_key": "${api_key}",
+      "base_url": "${llm_base_url}",
       "default_model": "",
       "timeout": 60,
       "max_retries": 2

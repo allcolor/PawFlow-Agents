@@ -159,7 +159,7 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": (
             "  /llm grok_service        — Set for current agent\n"
             "  /llm grok_service claude  — Set for specific agent\n\n"
-            "Supports expressions: /llm ${user.preferred_llm}"
+            "Supports expressions: /llm ${preferred_llm}"
         ),
         "aliases": "/set_llm_service",
     },
@@ -173,7 +173,7 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /effort high   — Deep thinking (budget=10000)\n"
             "  /effort max    — Maximum thinking (budget=20000)\n"
             "  /effort reset  — Revert to default\n\n"
-            "Supports expressions: /effort ${user.default_effort}"
+            "Supports expressions: /effort ${default_effort}"
         ),
     },
     "/fast": {
@@ -316,7 +316,7 @@ HELP: Dict[str, Dict[str, str]] = {
     "/add-variable": {
         "usage": "/add-variable <name> <value>",
         "short": "Store a plaintext variable",
-        "detail": "Store a variable accessible via ${user.name} or ${global.name}.",
+        "detail": "Store a variable accessible via ${name} in expressions.",
         "aliases": "/add-var",
     },
 

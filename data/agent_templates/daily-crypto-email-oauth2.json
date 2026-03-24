@@ -51,9 +51,9 @@
         "smtp_port": 587,
         "use_tls": true,
         "auth_type": "oauth2",
-        "oauth2_client_id": "${secrets.anonymous.gmail_client_id_crypto_daily}",
-        "oauth2_client_secret": "${secrets.anonymous.gmail_client_secret_crypto_daily}",
-        "oauth2_refresh_token": "${secrets.anonymous.gmail_refresh_token_crypto_daily}",
+        "oauth2_client_id": "${anonymous.gmail_client_id_crypto_daily}",
+        "oauth2_client_secret": "${anonymous.gmail_client_secret_crypto_daily}",
+        "oauth2_refresh_token": "${anonymous.gmail_refresh_token_crypto_daily}",
         "from": "quentin.anciaux@allcolor.org",
         "to": "quentin.anciaux@allcolor.org",
         "subject": "Résumé quotidien crypto"
@@ -103,7 +103,7 @@
       "parameters": {
         "provider": "openai",
         "base_url": "http://127.0.0.1:8080",
-        "api_key": "${secrets.anonymous.openai_api_key_crypto_daily}",
+        "api_key": "${anonymous.openai_api_key_crypto_daily}",
         "model": "qwen"
       }
     }

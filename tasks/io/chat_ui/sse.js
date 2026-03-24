@@ -548,8 +548,17 @@
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
     } else if (finalText) {
-      // No streaming element — add via addMsg (includes metadata)
-      addMsg('assistant', finalText, extra);
+      // Check if already visible as a finalized narration chunk
+      let handled = false;
+      document.querySelectorAll('#messages .finalized').forEach(el => {
+        if (!handled && el.textContent && el.textContent.substring(0, 80) === finalText.substring(0, 80)) {
+          el.classList.remove('finalized');
+          el.classList.add('msg', 'assistant');
+          el.dataset.rawText = finalText.substring(0, 500);
+          handled = true;
+        }
+      });
+      if (!handled) addMsg('assistant', finalText, extra);
     }
     // Always append metadata to the last message in the chat
     // (whether streamed, finalized, or just added)

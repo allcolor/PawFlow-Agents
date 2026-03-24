@@ -514,11 +514,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # Full serialization for agent context (all messages)
             all_serialized = self._serialize_messages(_persist_msgs, channel=channel)
 
-            # Transcript: only conversation messages (user + assistant text, no tool plumbing)
+            # Transcript: user messages + assistant responses (text visible to user).
+            # Include assistant messages WITH tool_calls if they have text content
+            # (that's the LLM's reasoning/narration, visible in chat).
             transcript_msgs = [
                 m for m in _persist_msgs
-                if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
-                and m.role != "tool"
+                if m.role == "user"
+                or (m.role == "assistant" and m.content and not m.content.startswith("[TOOL OUTPUT"))
             ]
             transcript_serialized = self._serialize_messages(transcript_msgs, channel=channel) if transcript_msgs else []
 

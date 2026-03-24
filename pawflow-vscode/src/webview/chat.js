@@ -481,18 +481,65 @@ function handleSSE(event) {
 
     case 'done': {
       finalizeThinking(agent);
-      removeStreamEl(agent);
-      var text = data.response || streaming[agent] || '';
-      if (text) addMsg('assistant', text, data);
+      var doneText = data.response || streaming[agent] || '';
+      var aKey = (agent || '').toLowerCase();
+      var existingEl = streamEls[aKey];
+      // Register all msg_ids from this turn
+      var allIds = data.all_msg_ids || [];
+      if (data.msg_id) allIds.push(data.msg_id);
+      for (var ii = 0; ii < allIds.length; ii++) {
+        if (allIds[ii]) _seenMsgIds[allIds[ii]] = true;
+      }
+      if (existingEl) {
+        // Convert streaming element to permanent with metadata
+        existingEl.classList.remove('streaming-live');
+        existingEl.style.opacity = '';
+        existingEl.className = 'msg assistant';
+        existingEl.dataset.rawText = (doneText || '').substring(0, 200);
+        // Add metadata line
+        var tin = data.tokens_in || 0;
+        var tout = data.tokens_out || 0;
+        var mdl = data.model || '';
+        if (tin || tout) {
+          var metaSpan = document.createElement('div');
+          metaSpan.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:4px;';
+          metaSpan.textContent = (mdl || '?') + ' \u00b7 ' + tin + '\u2191 ' + tout + '\u2193';
+          existingEl.appendChild(metaSpan);
+        }
+        delete streamEls[aKey];
+      } else if (doneText) {
+        // No streaming element — check msg_id dedup before adding
+        if (!data.msg_id || !_seenMsgIds[data.msg_id]) {
+          addMsg('assistant', doneText, data);
+        }
+      }
       streaming[agent] = '';
       _hadToolCalls = false;
       updateActiveAgents(agent, 'done');
-      var tin = data.tokens_in || 0;
-      var tout = data.tokens_out || 0;
-      var model = data.model || '';
-      statusEl.innerHTML = '<span class="token-footer">' + tin + '\u2191 ' + tout + '\u2193' + (model ? ' \u00b7 ' + model : '') + '</span>';
+      var tin2 = data.tokens_in || 0;
+      var tout2 = data.tokens_out || 0;
+      var model2 = data.model || '';
+      statusEl.innerHTML = '<span class="token-footer">' + tin2 + '\u2191 ' + tout2 + '\u2193' + (model2 ? ' \u00b7 ' + model2 : '') + '</span>';
       break;
     }
+
+    case 'message_meta':
+      // Per-message metadata — find element by msg_id
+      if (data.msg_id) _seenMsgIds[data.msg_id] = true;
+      break;
+
+    case 'narration':
+      // Display-only narration (not persisted in context)
+      if (data.text) {
+        var narEl = document.createElement('div');
+        narEl.className = 'msg narration';
+        narEl.style.cssText = 'font-style:italic;opacity:0.7;font-size:12px;';
+        narEl.textContent = data.text;
+        narEl.dataset.agent = (agent || '').toLowerCase();
+        messagesEl.appendChild(narEl);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+      break;
 
     case 'error_event':
       addMsg('error', data.message || 'Error');

@@ -602,18 +602,23 @@
         const meta = buildMetaLine(extra);
         if (meta) s.el.insertAdjacentHTML('beforeend', meta);
       }
-    } else if (extra.msg_id) {
-      // Find element by msg_id and add meta if missing
-      const el = document.querySelector('#messages [data-msgid="' + extra.msg_id + '"]');
-      if (el && !el.querySelector('.msg-meta')) {
-        el.classList.remove('finalized', 'streaming');
-        const meta = buildMetaLine(extra);
-        if (meta) el.insertAdjacentHTML('beforeend', meta);
+    } else {
+      // Find element by ANY msg_id from this turn
+      let foundEl = null;
+      for (const mid of allIds) {
+        if (!mid) continue;
+        foundEl = document.querySelector('#messages [data-msgid="' + mid + '"]');
+        if (foundEl) break;
       }
-    }
-    // If response text exists but was NEVER streamed (poll wakeup), add it
-    if (finalText && !s.el && !document.querySelector('#messages [data-msgid="' + (extra.msg_id || '') + '"]')) {
-      addMsg('assistant', finalText, extra);
+      if (foundEl && !foundEl.querySelector('.msg-meta')) {
+        foundEl.classList.remove('finalized', 'streaming');
+        const meta = buildMetaLine(extra);
+        if (meta) foundEl.insertAdjacentHTML('beforeend', meta);
+      }
+      // If response was NEVER streamed (poll wakeup), add it
+      if (finalText && !foundEl) {
+        addMsg('assistant', finalText, extra);
+      }
     }
     clearStream(doneAgent);
     scrollBottom();

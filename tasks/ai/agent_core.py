@@ -268,6 +268,9 @@ class AgentCoreMixin:
                         raise
                     except Exception as llm_err:
                         err_str = str(llm_err)
+                        # AgentCancelled may be wrapped in LLMClientError
+                        if "AgentCancelled" in err_str:
+                            raise AgentCancelled()
                         if "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)

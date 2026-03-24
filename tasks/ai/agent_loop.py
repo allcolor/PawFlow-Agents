@@ -562,12 +562,20 @@ class AgentLoopTask(
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
 
+    _interrupt_synthesis_active: set = set()  # tracks active interrupt synthesis threads
+
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
         """Interrupt: cancel the current LLM call and spawn a parallel synthesis.
 
         1. Cancel the current generation (LLM call result will be discarded)
         2. Spawn a new thread that loads context + interrupt message → LLM → done
+        Idempotent: ignores if a synthesis is already running for this conversation.
         """
+        _synth_key = f"{conversation_id}:{agent_name or 'all'}"
+        if _synth_key in self._interrupt_synthesis_active:
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt already in progress, skipping")
+            return
+
         logger.info(f"[agent:{conversation_id[:8]}] interrupt → cancel + parallel synthesis "
                     f"for '{agent_name or 'agent'}'")
 
@@ -581,6 +589,8 @@ class AgentLoopTask(
             "detail": "interrupted — synthesizing response...",
             "agent_name": agent_name or "",
         })
+
+        self._interrupt_synthesis_active.add(_synth_key)
 
         def _synthesis():
             try:
@@ -669,6 +679,8 @@ class AgentLoopTask(
                     ConversationStore.instance().set_status(conversation_id, "idle")
                 except Exception:
                     pass
+            finally:
+                self._interrupt_synthesis_active.discard(_synth_key)
 
         t = threading.Thread(target=_synthesis, daemon=True,
                              name=f"interrupt-synth-{conversation_id[:8]}")

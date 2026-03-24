@@ -114,7 +114,9 @@ class AgentUtilsMixin:
         svc_id = self.config.get(param_name, "")
         # If not in config, try schema default (e.g. "${conv.summarizer_service}")
         if not svc_id:
-            schema = getattr(self, 'PARAMETERS', None) or {}
+            schema = {}
+            if hasattr(self, 'get_parameter_schema'):
+                schema = self.get_parameter_schema() or {}
             default = (schema.get(param_name) or {}).get("default", "")
             if default:
                 svc_id = default

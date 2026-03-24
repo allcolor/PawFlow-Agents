@@ -65,15 +65,11 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
 
 def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, source,
                         msg_id=""):
-    """Narration cascade: narrator LLM → current LLM → static synthesis."""
-    narration = ""
+    """Call narrator service if configured. No fallback — no narrator = silence."""
     narrator_svc_name = ctx.get("narrator_service", "")
-    if narrator_svc_name:
-        narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
-    if not narration:
-        narration = _call_narrator_with_client(ctx.get("client"), tool_calls, ctx)
-    if not narration:
-        narration = _synthesize_narration(tool_calls)
+    if not narrator_svc_name:
+        return ""  # No narrator configured → tools execute silently
+    narration = _call_narrator(narrator_svc_name, tool_calls, ctx)
     if narration:
         bus.publish_event(conversation_id, "narration", {
             "text": narration, "agent_name": agent_name,

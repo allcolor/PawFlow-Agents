@@ -166,6 +166,8 @@ class LLMClient(
         self._token_lock = threading.Lock() if refresh_token else None
         # Token tracking callback — set by LLMConnectionService
         self._on_tokens = None  # callable(tokens_in, tokens_out, model)
+        # Abort signal — set from another thread to cancel the current LLM call
+        self._abort = threading.Event()
         # If created via from_config, _config_ref holds the lazy dict
         self._config_ref = None  # set by from_config
 
@@ -348,6 +350,14 @@ class LLMClient(
                         except Exception as fallback_err:
                             logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fallback_err)
                     raise LLMClientError(f"LLM request failed after {self.max_retries} attempts: {last_error}")
+
+    def abort(self):
+        """Signal the current LLM call to abort (thread-safe)."""
+        self._abort.set()
+
+    def reset_abort(self):
+        """Clear the abort signal before a new call."""
+        self._abort.clear()
 
     def complete_stream(
         self,

@@ -635,8 +635,8 @@ async function handleSlashCommand(text) {
   if (cmd === '/stop') {
     const force = parts.includes('-f') || parts.includes('--force');
     const targetParts = parts.slice(1).filter(p => p !== '-f' && p !== '--force');
-    if (targetParts.length === 0) { addMsg('system', 'Usage: /stop <agent|ALL> [-f]'); return true; }
-    const target = resolveAgentName(targetParts[0]);
+    // Default to current agent (or ALL if none selected)
+    const target = targetParts.length > 0 ? resolveAgentName(targetParts[0]) : (selectedAgent || 'ALL');
     if (force) {
       await cancelAgent(target, true);
     } else {

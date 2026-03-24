@@ -311,6 +311,13 @@ async function send() {
 
 function handleKey(e) {
   const input = e.target;
+  // Escape: stop/interrupt current agent
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    const target = selectedAgent || 'ALL';
+    cmdAgentInterrupt(target);
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault();
     send();

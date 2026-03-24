@@ -563,27 +563,116 @@ class AgentLoopTask(
 
 
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
-        """Signal an agent to finish gracefully — conclude with what it has.
+        """Interrupt: cancel the current LLM call and spawn a parallel synthesis.
 
-        Unlike cancel_agent, does NOT kill the thread. Instead sets a flag
-        that the loop checks and triggers a forced synthesis response.
+        1. Cancel the current generation (LLM call result will be discarded)
+        2. Spawn a new thread that loads context + interrupt message → LLM → done
         """
-        with self._interrupt_lock:
-            if agent_name and agent_name != "":
-                self._conv_interrupt[f"{conversation_id}:{agent_name}"] = True
-            else:
-                # Interrupt default assistant + all per-agent threads
-                self._conv_interrupt[conversation_id] = True
-                for k in list(self._conv_interrupt):
-                    if k.startswith(conversation_id + ":"):
-                        self._conv_interrupt[k] = True
+        logger.info(f"[agent:{conversation_id[:8]}] interrupt → cancel + parallel synthesis "
+                    f"for '{agent_name or 'agent'}'")
+
+        # Cancel the current run (generation bump — result will be discarded)
+        self.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
+
+        # Spawn parallel synthesis thread
         from core.conversation_event_bus import ConversationEventBus
-        ConversationEventBus.instance().publish_event(
-            conversation_id, "interrupting",
-            {"agent": agent_name},
-        )
-        logger.info(f"[agent:{conversation_id[:8]}] interrupt requested for "
-                    f"'{agent_name or 'agent'}'")
+        bus = ConversationEventBus.instance()
+        bus.publish_event(conversation_id, "thinking", {
+            "detail": "interrupted — synthesizing response...",
+            "agent_name": agent_name or "",
+        })
+
+        def _synthesis():
+            try:
+                user_id = ""
+                # Load current context
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                _agent = agent_name or "assistant"
+                ctx_data = store.load_agent_context(conversation_id, _agent)
+                if not ctx_data:
+                    ctx_data = store.load(conversation_id) or []
+                messages = self._deserialize_messages(ctx_data) if ctx_data else []
+                if not messages:
+                    bus.publish_event(conversation_id, "done", {
+                        "response": "[Interrupted — no context available]",
+                        "agent_name": agent_name or "",
+                    })
+                    return
+
+                # Add interrupt instruction
+                messages.append(LLMMessage(
+                    role="user",
+                    content=(
+                        "[System: The user has requested an immediate response. "
+                        "Stop all tool usage. Summarize your progress so far and "
+                        "provide your best answer with the information you have. "
+                        "Mention what you were still working on.]"),
+                ))
+
+                # Resolve client
+                client = self._get_default_client(user_id)
+                if not client:
+                    bus.publish_event(conversation_id, "done", {
+                        "response": "[Interrupted — no LLM client available]",
+                        "agent_name": agent_name or "",
+                    })
+                    return
+
+                # Compact + call LLM (stream tokens to user)
+                compact_msgs = self._compact_if_needed(
+                    messages, client,
+                    ctx.get("max_context_size", 64000) if 'ctx' in dir() else 64000,
+                    0.6, 6, conversation_id=conversation_id)
+
+                def _on_token(text):
+                    bus.publish_event(conversation_id, "token", {
+                        "text": text,
+                        "agent_name": agent_name or "",
+                        "source": {"type": "agent", "name": agent_name or ""},
+                    })
+
+                resp = client.complete_stream(
+                    messages=compact_msgs,
+                    temperature=0.7, max_tokens=2000,
+                    tools=None, callback=_on_token)
+
+                # Save + publish done
+                messages.append(LLMMessage(
+                    role="assistant", content=resp.content,
+                    source={"type": "agent", "name": agent_name or "",
+                            "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out}))
+                store.append_to_agent_context(
+                    conversation_id, _agent,
+                    self._serialize_messages(messages[-2:]))
+
+                bus.publish_event(conversation_id, "done", {
+                    "response": resp.content,
+                    "model": resp.model,
+                    "tokens_in": resp.tokens_in,
+                    "tokens_out": resp.tokens_out,
+                    "agent_name": agent_name or "",
+                    "source": {"type": "agent", "name": agent_name or ""},
+                    "interrupted": True,
+                })
+                store.set_status(conversation_id, "idle")
+                self._track_tokens(
+                    user_id or "anonymous", resp.tokens_in, resp.tokens_out,
+                    model=resp.model, agent_name=agent_name or "")
+            except Exception as e:
+                logger.error(f"[interrupt synthesis] failed: {e}", exc_info=True)
+                bus.publish_event(conversation_id, "done", {
+                    "response": f"[Interrupted — synthesis failed: {e}]",
+                    "agent_name": agent_name or "",
+                })
+                try:
+                    ConversationStore.instance().set_status(conversation_id, "idle")
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_synthesis, daemon=True,
+                             name=f"interrupt-synth-{conversation_id[:8]}")
+        t.start()
 
 
     def _check_interrupt(self, gen_key: str) -> bool:

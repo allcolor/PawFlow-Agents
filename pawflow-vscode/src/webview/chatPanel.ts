@@ -600,7 +600,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
 <div id="status" class="status"></div>
 <div class="input-area">
   <textarea id="input" rows="1" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
-    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}"></textarea>
+    onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();send()}else if(event.key==='Escape'){event.preventDefault();sendCmd('interrupt','')}"></textarea>
   <button onclick="send()">Send</button>
 </div>
 <script src="${chatUri}"></script>

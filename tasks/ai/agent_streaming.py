@@ -103,6 +103,7 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_name)
         if not svc:
             return ""
+        logging.getLogger(__name__).debug(f"[narrator] using service '{svc_name}'")
         _KEY_LIMITS = {"command": 300, "code": 300, "prompt": 150}
         def _fmt(args):
             return ", ".join(f"{k}={str(v)[:_KEY_LIMITS.get(k, 50)]}" for k, v in args.items())

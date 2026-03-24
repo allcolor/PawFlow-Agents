@@ -756,6 +756,8 @@ class AgentCompactionMixin:
                         user_id: str = "", agent_name: str = "",
                         llm_service: str = "") -> str:
         """Single LLM call to summarize text."""
+        logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
+                     f"target={target_tokens} tokens, input={len(text)} chars")
         if not target_tokens:
             target_tokens = 2000
         clean_text = self._sanitize_for_llm(text)

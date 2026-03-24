@@ -146,18 +146,9 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
             "Be specific about the actual action and its purpose. "
             "Don't say 'the agent' — speak as if narrating: 'Reading the config file to check...'")
 
-        try:
-            resp = svc.complete(
-                [LLMMessage(role="user", content=prompt)],
-                max_tokens=150, temperature=0.3)
-        except Exception as _temp_err:
-            if "temperature" in str(_temp_err).lower():
-                # Reasoning models only accept temperature=1
-                resp = svc.complete(
-                    [LLMMessage(role="user", content=prompt)],
-                    max_tokens=150, temperature=1.0)
-            else:
-                raise
+        resp = svc.complete(
+            [LLMMessage(role="user", content=prompt)],
+            max_tokens=150, temperature=0.3)
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
         logging.getLogger(__name__).info(

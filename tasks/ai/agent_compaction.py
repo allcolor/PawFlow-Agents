@@ -792,22 +792,7 @@ class AgentCompactionMixin:
             )
         except Exception as e:
             err_str = str(e)
-            # Reasoning models (o1/o3/gpt-5-nano) only support temperature=1
-            if "temperature" in err_str and "unsupported" in err_str.lower():
-                logger.info("[compact] Retrying with temperature=1 (reasoning model)")
-                response = client.complete(
-                    messages=[
-                        LLMMessage(role="system", content=(
-                            "Summarize this agent work session concisely. Preserve: "
-                            "project state, files modified (with paths), decisions, "
-                            "last action, pending work. Skip tool details. "
-                            + target_instruction)),
-                        LLMMessage(role="user", content=clean_text),
-                    ],
-                    temperature=1.0,
-                    max_tokens=min(target_tokens * 2, 4000),
-                )
-            elif "parse" in err_str.lower() or "500" in err_str:
+            if "parse" in err_str.lower() or "500" in err_str:
                 # Find the approximate problematic position
                 import re as _re
                 pos_match = _re.search(r'pos (\d+)', err_str)

@@ -83,6 +83,19 @@ class LLMConnectionService(BaseService):
     def _close_connection(self):
         pass
 
+    def _apply_defaults(self, temperature, max_tokens, model):
+        """Apply service-level defaults from config (overrides caller values)."""
+        # Service config can force temperature, max_tokens, top_p, etc.
+        cfg_temp = self.config.get("default_temperature")
+        if cfg_temp is not None:
+            temperature = float(cfg_temp)
+        cfg_max = self.config.get("default_max_tokens")
+        if cfg_max is not None and int(cfg_max) > 0:
+            max_tokens = int(cfg_max)
+        cfg_top_p = self.config.get("default_top_p")
+        # top_p not supported in current LLMClient API but stored for future use
+        return temperature, max_tokens, model
+
     def complete(
         self,
         messages: List[LLMMessage],
@@ -94,6 +107,7 @@ class LLMConnectionService(BaseService):
     ) -> LLMResponse:
         """Send a completion request to the LLM."""
         self.ensure_connected()
+        temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
             resp = self._client.complete(messages, model, temperature, max_tokens, response_format, tools)
             self._track_tokens(resp, messages)
@@ -112,6 +126,7 @@ class LLMConnectionService(BaseService):
     ) -> LLMResponse:
         """Streaming completion — delegates to LLMClient.complete_stream()."""
         self.ensure_connected()
+        temperature, max_tokens, model = self._apply_defaults(temperature, max_tokens, model)
         try:
             resp = self._client.complete_stream(messages, model, temperature, max_tokens, tools, callback)
             self._track_tokens(resp, messages)

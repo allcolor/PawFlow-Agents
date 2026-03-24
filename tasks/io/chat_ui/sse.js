@@ -594,31 +594,23 @@
     document.querySelectorAll('#messages .narration').forEach(el => {
       if (el.dataset.finalizedAgent === agentLower) el.remove();
     });
-    // Finalize active streaming element (if any) — add done-level meta
+    // Finalize active streaming element (remove streaming class)
     if (s.el && s.el.parentNode) {
       s.el.classList.remove('streaming');
-      s.el.dataset.rawText = finalText.substring(0, 500);
-      if (!s.el.querySelector('.msg-meta')) {
-        const meta = buildMetaLine(extra);
-        if (meta) s.el.insertAdjacentHTML('beforeend', meta);
-      }
-    } else {
-      // Find element by ANY msg_id from this turn
-      let foundEl = null;
+    }
+    // Done does NOT add messages or meta — message_meta handles that.
+    // Done only creates a message if NOTHING was ever streamed (poll wakeup).
+    let anyExists = !!s.el;
+    if (!anyExists) {
       for (const mid of allIds) {
-        if (!mid) continue;
-        foundEl = document.querySelector('#messages [data-msgid="' + mid + '"]');
-        if (foundEl) break;
+        if (mid && document.querySelector('#messages [data-msgid="' + mid + '"]')) {
+          anyExists = true;
+          break;
+        }
       }
-      if (foundEl && !foundEl.querySelector('.msg-meta')) {
-        foundEl.classList.remove('finalized', 'streaming');
-        const meta = buildMetaLine(extra);
-        if (meta) foundEl.insertAdjacentHTML('beforeend', meta);
-      }
-      // If response was NEVER streamed (poll wakeup), add it
-      if (finalText && !foundEl) {
-        addMsg('assistant', finalText, extra);
-      }
+    }
+    if (finalText && !anyExists) {
+      addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);
     scrollBottom();

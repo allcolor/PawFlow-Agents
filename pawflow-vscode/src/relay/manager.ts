@@ -249,6 +249,8 @@ export class RelayManager implements vscode.Disposable {
       socket.write(response + '\n');
       return;
     }
+    // Execute in next tick to allow reading more WS messages concurrently
+    setImmediate(() => {
     const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec, this.relayId);
 
     const response = JSON.stringify({
@@ -257,6 +259,7 @@ export class RelayManager implements vscode.Disposable {
       data: result.ok ? result.data : result,
     });
     this._wsSend(socket, response);
+    }); // end setImmediate
   }
 
   private _scheduleReconnect(): void {

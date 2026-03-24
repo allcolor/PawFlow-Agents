@@ -806,6 +806,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
             reconnect_delay = 1
             sock.settimeout(60)
+            from concurrent.futures import ThreadPoolExecutor
+            _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
+            _send_lock = threading.Lock()
 
             while True:
                 try:
@@ -826,13 +829,24 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
-                    result = _execute_command(msg)
-                    response = json.dumps({
-                        "type": "result",
-                        "request_id": request_id,
-                        "data": result.get("data", result),
-                    }).encode("utf-8")
-                    _ws_frame_send(sock, response)
+                    # Execute in thread pool for parallel command handling
+                    def _run_cmd(_msg, _rid, _sock, _send_fn):
+                        try:
+                            _result = _execute_command(_msg)
+                            _resp = json.dumps({
+                                "type": "result",
+                                "request_id": _rid,
+                                "data": _result.get("data", _result),
+                            }).encode("utf-8")
+                        except Exception as _e:
+                            _resp = json.dumps({
+                                "type": "result",
+                                "request_id": _rid,
+                                "data": {"ok": False, "error": str(_e)},
+                            }).encode("utf-8")
+                        with _send_lock:
+                            _send_fn(_sock, _resp)
+                    _pool.submit(_run_cmd, msg, request_id, sock, _ws_frame_send)
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")

@@ -601,10 +601,11 @@ class AgentLoopTask(
 
         def _synthesis():
             try:
-                user_id = ""
-                # Load current context
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
+                # Resolve user_id from conversation metadata
+                _conv_entry = store._conversations.get(conversation_id, {})
+                user_id = _conv_entry.get("user_id", "")
                 _agent = agent_name or "assistant"
                 ctx_data = store.load_agent_context(conversation_id, _agent)
                 if not ctx_data:
@@ -647,6 +648,8 @@ class AgentLoopTask(
                 client, _ = self._resolve_llm_service(_agent_svc, user_id) if _agent_svc else (None, None)
                 if not client:
                     client = self._get_default_client(user_id)
+                logger.info(f"[interrupt synthesis] LLM service: '{_agent_svc}', "
+                            f"client: {getattr(client, 'provider', '?')}/{getattr(client, 'default_model', '?')}")
                 if not client:
                     bus.publish_event(conversation_id, "done", {
                         "response": "[Interrupted — no LLM client available]",

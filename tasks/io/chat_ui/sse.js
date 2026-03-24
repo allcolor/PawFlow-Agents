@@ -570,10 +570,18 @@
     if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
       _seenMsgIds.add(extra.msg_id);
     }
-    // Find the target element: active stream > finalized by tool_call > none
-    const targetEl = (s.el && s.el.parentNode) ? s.el : (s.lastEl && s.lastEl.parentNode) ? s.lastEl : null;
+    // Remove ALL finalized/narration elements for this agent — they are
+    // intermediate streaming artifacts that should not persist.
+    // The done response is the authoritative final message.
+    const agentLower = doneAgent.toLowerCase();
+    document.querySelectorAll('#messages .finalized, #messages .narration').forEach(el => {
+      if (el.dataset.finalizedAgent === agentLower) el.remove();
+    });
+    // Find the target element: active stream > last finalized > none
+    const targetEl = (s.el && s.el.parentNode) ? s.el
+                   : (s.lastEl && s.lastEl.parentNode) ? s.lastEl : null;
     if (targetEl) {
-      // Convert streaming/finalized element to permanent + add metadata
+      // Convert to permanent + add metadata
       targetEl.classList.remove('streaming', 'finalized');
       targetEl.classList.add('msg', 'assistant');
       targetEl.dataset.rawText = finalText.substring(0, 500);
@@ -582,11 +590,7 @@
         targetEl.insertAdjacentHTML('beforeend', meta);
       }
     } else if (finalText) {
-      // No streaming element at all — add fresh (poll wakeup, no tokens streamed)
-      const agentLower = doneAgent.toLowerCase();
-      document.querySelectorAll('#messages .narration').forEach(el => {
-        if (el.dataset.finalizedAgent === agentLower) el.remove();
-      });
+      // No streaming element at all — add fresh
       addMsg('assistant', finalText, extra);
     }
     clearStream(doneAgent);

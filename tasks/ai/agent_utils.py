@@ -478,35 +478,11 @@ class AgentUtilsMixin:
         """
         import re as _re_fs
         _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
-        safe_end = max(1, len(messages) - keep_recent)
-        _FORCE_CLEAR_THRESHOLD = 50000  # always clear results > 50K even if recent
         cleared = 0
 
-        # Pass 0: force-clear monster results (>50K) regardless of position
+        # Clear ALL tool results > threshold — recent or not.
+        # The LLM can use read_file(path=url, offset, limit) to paginate if needed.
         for i in range(1, len(messages)):
-            m = messages[i]
-            if m.role != "tool" or not isinstance(m.content, str):
-                continue
-            if len(m.content) > _FORCE_CLEAR_THRESHOLD and "[Result cleared" not in m.content:
-                _first_line = m.content.split("\n", 1)[0][:200]
-                try:
-                    from core.file_store import FileStore
-                    store = FileStore.instance()
-                    fname = f"tool_result_{cleared}.txt"
-                    fid = store.store(fname, m.content.encode("utf-8"),
-                                      conversation_id=conversation_id,
-                                      user_id=user_id, ttl=self._TOOL_RESULT_TTL,
-                                      agent_name=agent_name, category="tool_result")
-                    url = f"/files/{fid}/{fname}"
-                    m.content = (f"{_first_line}\n[Result cleared — {len(m.content):,} chars. "
-                                 f"Full output: read_file(path=\"{url}\")]")
-                    cleared += 1
-                except Exception:
-                    m.content = _first_line + f"\n[...{len(m.content):,} chars cleared]"
-                    cleared += 1
-
-        # Pass 1: normal clearing (outside keep_recent window)
-        for i in range(1, safe_end):
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
                 continue

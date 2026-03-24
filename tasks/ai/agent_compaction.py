@@ -108,6 +108,7 @@ class AgentCompactionMixin:
         keep_recent: int = 6,
         conversation_id: str = "",
         agent_name: str = "",
+        llm_service: str = "",
         chars_per_token: float = 0,
     ) -> List[LLMMessage]:
         """Compact context AFTER the agent's final response.
@@ -162,7 +163,8 @@ class AgentCompactionMixin:
             logger.info(f"[compact-post] Summarizing {len(_text_to_summarize)} chars from {len(old_conv)} msgs...")
             summary = self._call_summarize(client, _text_to_summarize,
                                             target_tokens=1000,
-                                            agent_name=agent_name)
+                                            agent_name=agent_name,
+                                            llm_service=llm_service)
             logger.info(f"[compact-post] Summary done: {len(summary)} chars")
         except Exception as e:
             logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)

@@ -254,17 +254,24 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             "detail": f"compacting {len(messages)} messages...",
                             "agent_name": _context_agent,
                         })
-                        _ac_client = self._get_default_client(
-                            flowfile.get_attribute("http.auth.principal") or "")
+                        _uid = flowfile.get_attribute("http.auth.principal") or ""
+                        _sc, _sc_max, _sc_svc = self._get_summarizer_client(_uid)
+                        if not _sc:
+                            # No dedicated summarizer → use main LLM as fallback
+                            _sc = self._get_default_client(_uid)
+                            _sc_svc = self._resolve_service_param("llm_service", _uid) or ""
+                        _ac_client = _sc
+                        _ac_svc_id = _sc_svc
                         if _ac_client:
                             _before = len(messages)
                             messages = self._compact_post_response(
                                 messages, _ac_client, 200000,
                                 keep_recent=6,
                                 conversation_id=conversation_id,
-                                agent_name=_context_agent)
+                                agent_name=_context_agent,
+                                llm_service=_ac_svc_id)
                             logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
-                                        f"{_before} → {len(messages)} messages")
+                                        f"{_before} → {len(messages)} messages (via {_ac_svc_id or 'default'})")
                             _tok_after = self._estimate_tokens(messages)
                             _ac_bus.publish_event(conversation_id, "compact_progress", {
                                 "stage": "done", "agent": _context_agent,
@@ -294,14 +301,18 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 "detail": f"compacting {len(messages)} messages...",
                                 "agent_name": _context_agent,
                             })
-                            _ac_client = self._get_default_client(
-                                flowfile.get_attribute("http.auth.principal") or "")
-                            if _ac_client:
+                            _uid2 = flowfile.get_attribute("http.auth.principal") or ""
+                            _sc2, _sc2_max, _sc2_svc = self._get_summarizer_client(_uid2)
+                            if not _sc2:
+                                _sc2 = self._get_default_client(_uid2)
+                                _sc2_svc = self._resolve_service_param("llm_service", _uid2) or ""
+                            if _sc2:
                                 _before = len(messages)
                                 messages = self._compact_post_response(
-                                    messages, _ac_client, 200000,
+                                    messages, _sc2, 200000,
                                     keep_recent=6, conversation_id=conversation_id,
-                                    agent_name=_context_agent)
+                                    agent_name=_context_agent,
+                                    llm_service=_sc2_svc)
                                 logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                                             f"{_before} → {len(messages)} messages")
                                 _tok_after = self._estimate_tokens(messages)
@@ -803,7 +814,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
-            "summarizer": self._get_summarizer_client(user_id),
+            "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,

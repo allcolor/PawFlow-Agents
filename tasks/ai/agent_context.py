@@ -265,9 +265,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 agent_name=_context_agent)
                             logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                                         f"{_before} → {len(messages)} messages")
+                            _tok_after = self._estimate_tokens(messages)
                             _ac_bus.publish_event(conversation_id, "compact_progress", {
                                 "stage": "done", "agent": _context_agent,
                                 "before": _before, "after": len(messages),
+                                "tokens_after": _tok_after,
                             })
                     except Exception as _ac_err:
                         logger.warning(f"[context] auto-compact failed: {_ac_err}")
@@ -302,9 +304,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     agent_name=_context_agent)
                                 logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                                             f"{_before} → {len(messages)} messages")
+                                _tok_after = self._estimate_tokens(messages)
                                 _ac_bus2.publish_event(conversation_id, "compact_progress", {
                                     "stage": "done", "agent": _context_agent,
                                     "before": _before, "after": len(messages),
+                                    "tokens_after": _tok_after,
                                 })
                         except Exception as _ac_err:
                             logger.warning(f"[context] auto-compact failed: {_ac_err}")

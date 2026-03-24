@@ -102,23 +102,8 @@ class AgentCoreMixin:
         _summ = ctx.get("summarizer", (None, 0))
         compact_client = _summ[0] if _summ[0] else (ctx.get("default_client") or client)
 
-        # Lazy post-response compact: if previous turn flagged it, do it now
-        if conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                _pc_key = f"pending_compact:{ctx.get('active_agent_name', '')}"
-                if ConversationStore.instance().get_extra(conversation_id, _pc_key):
-                    ConversationStore.instance().set_extra(conversation_id, _pc_key, None)
-                    messages[:] = self._compact_post_response(
-                        messages, compact_client,
-                        ctx.get("max_context_size", 200000),
-                        keep_recent=ctx.get("context_keep_recent", 6),
-                        conversation_id=conversation_id,
-                        agent_name=ctx.get("active_agent_name", ""),
-                        chars_per_token=ctx.get("chars_per_token", 0))
-                    logger.info(f"[agent:{conversation_id[:8]}] lazy post-compact done: {len(messages)} msgs")
-            except Exception as e:
-                logger.debug(f"[agent] lazy compact check failed: {e}")
+        # Note: post-response compact is done by auto-compact on load
+        # in _prepare_agent_context. No lazy flag needed.
 
         try:
             for current_round in range(1, max_rounds + 1):
@@ -500,15 +485,7 @@ class AgentCoreMixin:
 
             # Mark for lazy compaction on next turn (avoid blocking done event
             # and prevent poll ghosts from the summarize LLM call)
-            if conversation_id:
-                try:
-                    from core.conversation_store import ConversationStore
-                    ConversationStore.instance().set_extra(
-                        conversation_id,
-                        f"pending_compact:{ctx.get('active_agent_name', '')}",
-                        True)
-                except Exception:
-                    pass
+            # Post-response compact is handled by auto-compact on next load
 
             self._cleanup_tool_result_files(
                 conversation_id=conversation_id,

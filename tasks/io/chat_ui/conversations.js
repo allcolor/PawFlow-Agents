@@ -272,6 +272,11 @@ async function _recoverConversation(cid) {
           }
         }
       }
+      // Skip if msg_id already seen (SSE already displayed this message)
+      if (m.msg_id && typeof _seenMsgIds !== 'undefined' && _seenMsgIds.has(m.msg_id)) {
+        console.log('[poll] skipping msg_id already seen:', m.msg_id);
+        continue;
+      }
       let pollContent = m.content || '';
       // Strip identity prefixes (same as history replay)
       if (mType === 'assistant' && typeof pollContent === 'string') {

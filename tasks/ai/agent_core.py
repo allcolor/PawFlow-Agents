@@ -369,6 +369,7 @@ class AgentCoreMixin:
 
                     for tc, result_text in results:
                         tools_called.append(tc.name)
+                        emitter.check_cancelled()  # check after each tool
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))

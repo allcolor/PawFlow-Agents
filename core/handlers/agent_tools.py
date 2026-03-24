@@ -411,36 +411,72 @@ class TaskToolHandler(ConfigurableToolHandler):
 
 
 class MCPToolHandler(ConfigurableToolHandler):
-    """Tool that calls a tool on an MCP server (HTTP transport).
+    """Tool that calls a tool on an MCP server (HTTP or stdio via relay).
 
-    Config example::
+    HTTP config::
 
         {
             "type": "mcp",
             "server_url": "http://localhost:3001/mcp",
             "tool_name": "web_search",
             "headers": {"Authorization": "Bearer xxx"},
-            "timeout": 30,
-            "description": "Search the web via MCP",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
         }
 
-    Uses JSON-RPC over HTTP (MCP Streamable HTTP transport).
-    Sends tools/call to the server and returns the text result.
+    Stdio config (via relay)::
+
+        {
+            "type": "mcp",
+            "transport": "stdio",
+            "server_id": "my-mcp-server",
+            "tool_name": "web_search",
+            "relay_service": <FilesystemService instance>,
+        }
+
+    Uses JSON-RPC 2.0. HTTP transport uses direct HTTP POST.
+    Stdio transport proxies through the relay subprocess manager.
     """
 
     def __init__(self, tool_name: str, tool_description: str,
-                 tool_parameters: Dict[str, Any], server_url: str,
+                 tool_parameters: Dict[str, Any], server_url: str = "",
                  mcp_tool_name: Optional[str] = None,
                  headers: Optional[Dict[str, str]] = None,
-                 timeout: int = 30):
+                 timeout: int = 30,
+                 transport: str = "http",
+                 server_id: str = "",
+                 relay_service=None):
         super().__init__(tool_name, tool_description, tool_parameters)
         self._server_url = server_url
         self._mcp_tool_name = mcp_tool_name or tool_name
         self._headers = headers or {}
         self._timeout = timeout
+        self._transport = transport  # "http" or "stdio"
+        self._server_id = server_id
+        self._relay_service = relay_service  # FilesystemService for relay calls
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        if self._transport == "stdio":
+            return self._execute_stdio(arguments)
+        return self._execute_http(arguments)
+
+    def _execute_stdio(self, arguments: Dict[str, Any]) -> str:
+        """Execute via relay's MCP stdio proxy."""
+        if not self._relay_service:
+            return "Error: no relay service for stdio MCP transport"
+        try:
+            result = self._relay_service._request("mcp_call", ".", **{
+                "server_id": self._server_id,
+                "tool_name": self._mcp_tool_name,
+                "arguments": arguments,
+            })
+            if isinstance(result, dict):
+                if result.get("isError"):
+                    return f"MCP error: {result.get('result', 'unknown error')}"
+                return result.get("result", json.dumps(result))
+            return str(result)
+        except Exception as e:
+            return f"Error calling MCP tool '{self._mcp_tool_name}' via relay: {e}"
+
+    def _execute_http(self, arguments: Dict[str, Any]) -> str:
         import uuid as _uuid
         parsed = urlparse(self._server_url)
         host = parsed.hostname

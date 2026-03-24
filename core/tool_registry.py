@@ -504,6 +504,33 @@ def load_agent_tools(agent_tools_config: Dict[str, Any]) -> ToolRegistry:
                            f"from {server_url}")
             continue  # skip the register below
 
+        elif tool_type == "mcp_stdio":
+            # MCP server via stdio (relay proxy)
+            # Config: {type: "mcp_stdio", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem"],
+            #          env: {"KEY": "val"}, server_id: "fs-mcp"}
+            mcp_command = tool_def.get("command", "")
+            mcp_args = tool_def.get("args", [])
+            mcp_env = tool_def.get("env", {})
+            mcp_server_id = tool_def.get("server_id", tool_name)
+            if not mcp_command:
+                logger.warning(f"agent_tools: '{tool_name}' has no command for mcp_stdio")
+                continue
+            # The relay_service will be injected later by _configure_tool_handlers
+            # Store config for deferred initialization
+            handler = MCPToolHandler(
+                tool_name=f"mcp_stdio_{mcp_server_id}",
+                tool_description=f"MCP stdio server '{mcp_server_id}' (pending discovery)",
+                tool_parameters={"type": "object", "properties": {}},
+                transport="stdio",
+                server_id=mcp_server_id,
+            )
+            handler._mcp_stdio_config = {
+                "command": mcp_command, "args": mcp_args,
+                "env": mcp_env, "server_id": mcp_server_id,
+            }
+            # Don't register this placeholder — discovery happens at runtime
+            continue
+
         else:
             logger.warning(f"agent_tools: unknown type '{tool_type}' "
                           f"for tool '{tool_name}'")

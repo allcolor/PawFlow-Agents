@@ -38,7 +38,7 @@ GLOBAL_USER_ID = "__global__"
 _REQUIRED_FIELDS = {
     "agent": ("prompt",),
     "skill": ("prompt",),
-    "mcp": ("url",),
+    "mcp": (),  # url or command required (validated in create)
     "prompt": ("content",),
     "task_def": ("prompt",),
 }
@@ -57,7 +57,12 @@ _DEFAULTS = {
         "description": "",
     },
     "mcp": {
-        "auth": {},
+        "url": "",          # HTTP transport: server URL
+        "transport": "http", # "http" or "stdio"
+        "command": "",       # stdio transport: command to run
+        "args": [],          # stdio transport: command arguments
+        "env": {},           # stdio transport: extra environment variables
+        "auth": {},          # HTTP transport: auth headers
         "discovered_tools": [],
     },
     "prompt": {

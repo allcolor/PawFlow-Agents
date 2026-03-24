@@ -108,9 +108,16 @@ class AgentUtilsMixin:
     def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:
         """Resolve a service parameter that may contain ${...} expressions.
 
+        If not in task config, falls back to schema default (lazy eval).
         Returns the resolved service ID string, or "" if not configured.
         """
         svc_id = self.config.get(param_name, "")
+        # If not in config, try schema default (e.g. "${conv.summarizer_service}")
+        if not svc_id:
+            schema = getattr(self, 'PARAMETERS', None) or {}
+            default = (schema.get(param_name) or {}).get("default", "")
+            if default:
+                svc_id = default
         if svc_id and "${" in svc_id:
             from core.expression import resolve_expression
             svc_id = resolve_expression(svc_id, owner=user_id)
@@ -123,15 +130,10 @@ class AgentUtilsMixin:
 
         Returns (client, max_context_tokens, service_id) or (None, 0, "").
         """
-        svc_id = self.config.get("summarizer_service", "")
-        _raw = svc_id
-        if svc_id and "${" in svc_id:
-            from core.expression import resolve_expression
-            svc_id = resolve_expression(svc_id, owner=user_id)
-        if not svc_id or "${" in svc_id:
-            logger.warning(f"[summarizer] NOT resolved: raw='{_raw}' → '{svc_id}', user='{user_id}'")
+        svc_id = self._resolve_service_param("summarizer_service", user_id)
+        if not svc_id:
             return None, 0, ""
-        logger.info(f"[summarizer] resolved: '{_raw}' → '{svc_id}'")
+        logger.debug(f"[summarizer] resolved to '{svc_id}'")
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if client and svc:
             ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))

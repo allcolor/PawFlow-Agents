@@ -20,16 +20,16 @@ class FlowParser:
 
     @staticmethod
     def _resolve_config(params: Dict[str, Any], flow_parameters: Dict[str, Any] = None) -> Dict[str, Any]:
-        """Resolve ${secrets.*} and ${env.*} expressions in config values.
+        """Resolve all ${...} expressions in config values.
 
-        NOTE: ${flow.parameters.*} are NOT resolved here — they are resolved
-        at runtime by the executor, which may have parameter overrides.
+        Uses flow_parameters as the parameters context so ${poll_interval}
+        resolves from flow params, then cascades to conv→user→global.
         """
+        from core.expression import resolve_value
         resolved = {}
         for k, v in params.items():
             if isinstance(v, str) and '${' in v:
-                # Only resolve secrets and env — leave flow.parameters for runtime
-                resolved[k] = resolve_expression(v)
+                resolved[k] = resolve_expression(v, parameters=flow_parameters or {})
             else:
                 resolved[k] = v
         return resolved

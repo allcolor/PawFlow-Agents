@@ -237,7 +237,8 @@ class UseToolHandler(ToolHandler):
         tool_name = arguments.get("tool_name", "")
         tool_args = arguments.get("arguments", {})
         if tool_name in ("get_tool_schema", "use_tool"):
-            return "Error: cannot call meta-tools via use_tool"
+            return (f"Error: '{tool_name}' is a meta-tool — call it directly "
+                    f"as a top-level tool call, not via use_tool.")
         return self._registry.execute(tool_name, tool_args)
 
 

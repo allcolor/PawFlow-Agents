@@ -124,11 +124,14 @@ class AgentUtilsMixin:
         Returns (client, max_context_tokens, service_id) or (None, 0, "").
         """
         svc_id = self.config.get("summarizer_service", "")
+        _raw = svc_id
         if svc_id and "${" in svc_id:
             from core.expression import resolve_expression
             svc_id = resolve_expression(svc_id, owner=user_id)
         if not svc_id or "${" in svc_id:
+            logger.warning(f"[summarizer] NOT resolved: raw='{_raw}' → '{svc_id}', user='{user_id}'")
             return None, 0, ""
+        logger.info(f"[summarizer] resolved: '{_raw}' → '{svc_id}'")
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if client and svc:
             ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))

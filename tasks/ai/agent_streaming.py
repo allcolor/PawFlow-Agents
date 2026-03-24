@@ -160,6 +160,8 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
                 raise
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
+        logging.getLogger(__name__).info(
+            f"[narrator] result: {len(text)} chars: {text[:80]!r}")
         return text + "\n" if text and not text.endswith("\n") else text
     except Exception as e:
         logging.getLogger(__name__).warning("[narrator] service '%s' failed: %s", svc_name, e)

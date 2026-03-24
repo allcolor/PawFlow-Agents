@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "LLM agent accessible via Slack. Messages are processed by the agent and responses are sent back.",
   "parameters": {
-    "llm_service": "${global.llm.default.service}",
+    "llm_service": "${llm.default.service}",
     "slack_bot_token": "",
     "slack_app_token": "",
     "conversation_ttl": 0
@@ -13,8 +13,8 @@
     "slack_bot": {
       "type": "slackBot",
       "parameters": {
-        "bot_token": "${flow.parameters.slack_bot_token}",
-        "app_token": "${flow.parameters.slack_app_token}",
+        "bot_token": "${slack_bot_token}",
+        "app_token": "${slack_app_token}",
         "mode": "socket"
       }
     }
@@ -29,10 +29,10 @@
     "agent": {
       "type": "agentLoop",
       "parameters": {
-        "llm_service": "${flow.parameters.llm_service}",
+        "llm_service": "${llm_service}",
         "system_prompt": "You are a helpful AI assistant on Slack. Be concise and helpful.",
         "conversation_attribute": "slack.channel_id",
-        "conversation_ttl": "${flow.parameters.conversation_ttl}",
+        "conversation_ttl": "${conversation_ttl}",
         "max_iterations": 50
       }
     },
@@ -48,12 +48,16 @@
     {
       "source": "receive",
       "target": "agent",
-      "relationships": ["success"]
+      "relationships": [
+        "success"
+      ]
     },
     {
       "source": "agent",
       "target": "send_reply",
-      "relationships": ["success"]
+      "relationships": [
+        "success"
+      ]
     }
   ]
 }

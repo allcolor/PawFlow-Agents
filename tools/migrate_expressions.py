@@ -106,20 +106,15 @@ def main():
     total = 0
     files = 0
 
-    # Config files
-    for pattern in ['config/*.json', 'config/users/**/*.json']:
+    # All JSON files that may contain expressions
+    for pattern in ['config/*.json', 'config/users/**/*.json',
+                    'flows/*.json', 'flows/**/*.json',
+                    'data/**/*.json']:
         for path in Path('.').glob(pattern):
             n = process_file(path, dry_run)
             if n:
                 total += n
                 files += 1
-
-    # Conversation store data
-    for path in Path('data').rglob('*.json'):
-        n = process_file(path, dry_run)
-        if n:
-            total += n
-            files += 1
 
     print(f"\n{'Would migrate' if dry_run else 'Migrated'}: "
           f"{total} expression(s) in {files} file(s)")

@@ -44,7 +44,7 @@
     "log_result": {
       "type": "log",
       "parameters": {
-        "message": "${flow.parameters.greeting} - User: ${user.name}, Email: ${user.email}, Hash: ${content.hash}",
+        "message": "${greeting} - User: ${name}, Email: ${email}, Hash: ${content.hash}",
         "level": "INFO"
       }
     },
@@ -66,12 +66,33 @@
     }
   },
   "relations": [
-    {"from": "generate", "to": "validate"},
-    {"from": "validate", "to": "extract_name"},
-    {"from": "extract_name", "to": "hash"},
-    {"from": "hash", "to": "count"},
-    {"from": "count", "to": "log_result"},
-    {"from": "log_result", "to": "update_attrs"},
-    {"from": "update_attrs", "to": "output"}
+    {
+      "from": "generate",
+      "to": "validate"
+    },
+    {
+      "from": "validate",
+      "to": "extract_name"
+    },
+    {
+      "from": "extract_name",
+      "to": "hash"
+    },
+    {
+      "from": "hash",
+      "to": "count"
+    },
+    {
+      "from": "count",
+      "to": "log_result"
+    },
+    {
+      "from": "log_result",
+      "to": "update_attrs"
+    },
+    {
+      "from": "update_attrs",
+      "to": "output"
+    }
   ]
 }

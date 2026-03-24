@@ -4,14 +4,14 @@
   "version": "1.5.0",
   "description": "LLM agent with SSE streaming, OAuth2 login, chat UI, multi-turn conversations, file generation, and per-tool permissions. Visit /chat for the web interface.",
   "parameters": {
-    "llm_service": "${conv.llm_default_service}",
+    "llm_service": "${llm_default_service}",
     "conversation_ttl": 0,
     "oauth_provider": "google",
     "oauth_client_id": "",
     "oauth_client_secret": "",
     "oauth_redirect_uri": "http://localhost:9090/auth/callback",
     "oauth_default_role": "operator",
-    "image_service": "${conv.image_default_service}",
+    "image_service": "${image_default_service}",
     "poll_interval": 30,
     "poll_recheck_delay": 7200
   },
@@ -28,18 +28,20 @@
       "type": "oauthProvider",
       "parameters": {
         "provider": "pawflow",
-        "redirect_uri": "${flow.parameters.oauth_redirect_uri}"
+        "redirect_uri": "${oauth_redirect_uri}"
       }
     },
     "auth": {
       "type": "authGateway",
       "parameters": {
         "providers": {
-          "builtin": {"enabled": true},
+          "builtin": {
+            "enabled": true
+          },
           "google": {
             "enabled": true,
-            "client_id": "${flow.parameters.oauth_client_id}",
-            "client_secret": "${flow.parameters.oauth_client_secret}"
+            "client_id": "${oauth_client_id}",
+            "client_secret": "${oauth_client_secret}"
           }
         },
         "auto_provision": {
@@ -125,19 +127,19 @@
     "agent": {
       "type": "agentLoop",
       "parameters": {
-        "llm_service": "${flow.parameters.llm_service}",
+        "llm_service": "${llm_service}",
         "system_prompt": "You are a helpful research assistant. You have access to tools for web search, web scraping, calculations, file reading, file creation, and autonomous continuation.\n\nWhen asked to research a topic:\n- Do multiple searches with different queries to get comprehensive results\n- Scrape relevant pages to get full content (use scrape_url)\n- Cross-reference information from multiple sources\n- If you need more research rounds, call schedule_continuation with a plan of what to do next — this will deliver your current findings to the user and automatically resume your work after a short pause\n- Synthesize findings into a well-structured response\n\nWhen creating files, provide the download URL to the user.\n\nIMPORTANT: For complex research tasks, use schedule_continuation to break your work into rounds. Each round: search/scrape, synthesize intermediate findings, then schedule_continuation if there's more to investigate.",
         "max_iterations": 200,
         "max_rounds": 5,
-        "poll_interval": "${flow.parameters.poll_interval}",
-        "poll_recheck_delay": "${flow.parameters.poll_recheck_delay}",
+        "poll_interval": "${poll_interval}",
+        "poll_recheck_delay": "${poll_recheck_delay}",
         "temperature": 0.7,
         "timeout": 600,
         "conversation_store": true,
-        "conversation_ttl": "${flow.parameters.conversation_ttl}",
+        "conversation_ttl": "${conversation_ttl}",
         "file_base_url": "http://localhost:9090",
         "streaming": true,
-        "image_service": "${flow.parameters.image_service}"
+        "image_service": "${image_service}"
       }
     },
     "agent_events": {
@@ -199,65 +201,179 @@
     }
   },
   "relations": [
-    {"from": "http_in", "to": "validate_auth", "type": "POST:/api/agent"},
-    {"from": "http_in", "to": "validate_auth", "type": "GET:/chat"},
-    {"from": "http_in", "to": "validate_auth", "type": "GET:/api/agent/events"},
-    {"from": "http_in", "to": "validate_auth", "type": "GET:/files"},
-    {"from": "validate_auth", "to": "route_after_auth", "type": "success"},
-    {"from": "validate_auth", "to": "send_response", "type": "failure"},
-    {"from": "route_after_auth", "to": "agent", "type": "api"},
-    {"from": "route_after_auth", "to": "chat_ui", "type": "chat"},
-    {"from": "route_after_auth", "to": "agent_events", "type": "sse"},
-    {"from": "route_after_auth", "to": "serve_file", "type": "files"},
-    {"from": "http_in", "to": "oauth_login", "type": "GET:/auth/login"},
-    {"from": "http_in", "to": "oauth_callback", "type": "GET:/auth/callback"},
-    {"from": "http_in", "to": "oauth_logout", "type": "POST:/auth/logout"},
-    {"from": "agent", "to": "format_response", "type": "success"},
-    {"from": "format_response", "to": "send_response", "type": "success"},
-    {"from": "agent_events", "to": "send_response", "type": "success"},
-    {"from": "chat_ui", "to": "send_response", "type": "success"},
-    {"from": "serve_file", "to": "send_response", "type": "success"},
-    {"from": "oauth_login", "to": "send_response", "type": "success"},
-    {"from": "oauth_callback", "to": "send_response", "type": "success"},
-    {"from": "oauth_logout", "to": "send_response", "type": "success"}
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "POST:/api/agent"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/chat"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/api/agent/events"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/files"
+    },
+    {
+      "from": "validate_auth",
+      "to": "route_after_auth",
+      "type": "success"
+    },
+    {
+      "from": "validate_auth",
+      "to": "send_response",
+      "type": "failure"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "agent",
+      "type": "api"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "chat_ui",
+      "type": "chat"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "agent_events",
+      "type": "sse"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "serve_file",
+      "type": "files"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_login",
+      "type": "GET:/auth/login"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_callback",
+      "type": "GET:/auth/callback"
+    },
+    {
+      "from": "http_in",
+      "to": "oauth_logout",
+      "type": "POST:/auth/logout"
+    },
+    {
+      "from": "agent",
+      "to": "format_response",
+      "type": "success"
+    },
+    {
+      "from": "format_response",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "agent_events",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "chat_ui",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "serve_file",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "oauth_login",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "oauth_callback",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "oauth_logout",
+      "to": "send_response",
+      "type": "success"
+    }
   ],
-  "entries": ["http_in"],
-  "exits": ["send_response"],
+  "entries": [
+    "http_in"
+  ],
+  "exits": [
+    "send_response"
+  ],
   "agent_tools": {
     "web_search": {
       "type": "builtin",
       "handler": "web_search",
-      "allowed_roles": ["admin", "editor", "operator"]
+      "allowed_roles": [
+        "admin",
+        "editor",
+        "operator"
+      ]
     },
     "scrape_url": {
       "type": "builtin",
       "handler": "scrape_url",
-      "allowed_roles": ["admin", "editor", "operator"]
+      "allowed_roles": [
+        "admin",
+        "editor",
+        "operator"
+      ]
     },
     "calculator": {
       "type": "builtin",
       "handler": "execute_script",
-      "allowed_roles": ["admin", "editor", "operator"]
+      "allowed_roles": [
+        "admin",
+        "editor",
+        "operator"
+      ]
     },
     "read_file": {
       "type": "builtin",
       "handler": "read_file",
-      "allowed_roles": ["admin", "editor"]
+      "allowed_roles": [
+        "admin",
+        "editor"
+      ]
     },
     "create_file": {
       "type": "builtin",
       "handler": "create_file",
-      "allowed_roles": ["admin", "editor"]
+      "allowed_roles": [
+        "admin",
+        "editor"
+      ]
     },
     "schedule_continuation": {
       "type": "builtin",
       "handler": "schedule_continuation",
-      "allowed_roles": ["admin", "editor", "operator"]
+      "allowed_roles": [
+        "admin",
+        "editor",
+        "operator"
+      ]
     },
     "generate_image": {
       "type": "builtin",
       "handler": "generate_image",
-      "allowed_roles": ["admin", "editor", "operator"]
+      "allowed_roles": [
+        "admin",
+        "editor",
+        "operator"
+      ]
     }
   }
 }

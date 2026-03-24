@@ -79,14 +79,22 @@ async function resumeConv(cid) {
     _expectingClear = false;
     // Load nicknames BEFORE replay so displayAgentName() works on old messages
     nicknameMap = data.nicknames || {};
-    // Replay messages (using classified types: user/assistant/tool_call/tool_result)
+    // Replay messages (dedup consecutive identical assistant messages)
+    let _prevReplayKey = '';
     for (const m of (data.messages || [])) {
       let content = m.content || '';
-      // Strip identity prefixes that may have been persisted (e.g. "[AgentName]: text")
       if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
         content = content.replace(/^\[[^\]]+\]:\s*/, '');
       }
-      addMsg(m.type || m.role, content, m);
+      const role = m.type || m.role;
+      if (role === 'assistant' && typeof content === 'string') {
+        const key = content.substring(0, 200);
+        if (key && key === _prevReplayKey) continue;  // skip exact consecutive duplicate
+        _prevReplayKey = key;
+      } else {
+        _prevReplayKey = '';
+      }
+      addMsg(role, content, m);
     }
     serverMsgCount = data.message_count || 0;
     currentOffset = 0;

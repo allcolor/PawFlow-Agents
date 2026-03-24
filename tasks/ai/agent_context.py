@@ -42,14 +42,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         timeout = int(self.config.get("timeout", 120))
 
         # LLM service routing — all LLM access goes through services
-        task_llm_service = self.config.get("llm_service", "")
-        if not task_llm_service or "${" in task_llm_service:
-            task_llm_service = "default"
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
+        task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
+        if not task_llm_service:
+            task_llm_service = "default"
         client, resolved_svc = self._resolve_client(
             task_llm_service, _user_id_for_svc,
-            resolve_expressions=False, raise_on_missing=True,
-            default_model=model,
+            raise_on_missing=True, default_model=model,
         )
 
         registry = self.get_tool_registry()

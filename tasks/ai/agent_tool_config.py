@@ -64,10 +64,7 @@ class AgentToolConfigMixin:
         # (see _prepare_agent_context and _build_poll_context)
         # Resolve any remaining expressions (e.g. ${secrets.*} from cascaded ${flow.parameters.*})
         from core.expression import resolve_value as _rv
-        if file_base_url:
-            file_base_url = _rv(file_base_url) or ""
-            if "${" in file_base_url:
-                file_base_url = ""
+        file_base_url = _rv(file_base_url) or ""
 
         for h in registry.list_tools():
             if isinstance(h, CreateFileHandler):

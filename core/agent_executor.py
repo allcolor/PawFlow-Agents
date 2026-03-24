@@ -800,13 +800,9 @@ def resolve_agent_task(
     if agent_def is None:
         raise KeyError(f"Agent '{agent_name}' not found for user '{user_id}'")
 
-    # Resolve expressions in llm_service (e.g. ${user.grok_llm_service})
-    llm_svc = agent_def.get("llm_service", "")
-    if llm_svc and "${" in llm_svc:
-        from core.expression import resolve_expression
-        llm_svc = resolve_expression(llm_svc, owner=user_id)
-        if "${" in llm_svc:
-            llm_svc = ""  # unresolved → skip
+    # Resolve expressions in llm_service
+    from core.expression import resolve_value
+    llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=user_id) or ""
 
     # Build system prompt with identity block
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")

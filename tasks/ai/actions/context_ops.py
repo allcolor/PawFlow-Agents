@@ -52,8 +52,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 v = _resolve_agent_max_tokens(a["name"])
                 if v > max_val:
                     max_val = v
-            default_svc = self.config.get("llm_service", "default")
-            if default_svc and "${" not in default_svc:
+            default_svc = self._resolve_service_param("llm_service", user_id) or "default"
+            if default_svc:
                 _, svc = self._resolve_llm_service(default_svc, user_id)
                 if svc:
                     v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
@@ -289,12 +289,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if _summ_client:
             _compact_client = _summ_client
         else:
-            svc_id = self.config.get("llm_service", "")
-            if not svc_id or "${" in svc_id:
-                svc_id = "default"
-            _compact_client, _ = self._resolve_client(
-                svc_id, user_id, resolve_expressions=False,
-            )
+            svc_id = self._resolve_service_param("llm_service", user_id) or "default"
+            _compact_client, _ = self._resolve_client(svc_id, user_id)
         if not _compact_client:
             flowfile.set_content(json.dumps({"error": "LLM service not found"}).encode())
             return [flowfile]
@@ -349,10 +345,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _summ_client, _ = self._get_summarizer_client(user_id)
         _rb_client = _summ_client
         if not _rb_client:
-            _rb_client, _ = self._resolve_client(
-                self.config.get("llm_service", "default"),
-                user_id, resolve_expressions=False,
-            )
+            _rb_svc = self._resolve_service_param("llm_service", user_id) or "default"
+            _rb_client, _ = self._resolve_client(_rb_svc, user_id)
         _rb_max = _ctx_max_tokens(_rb_agent)
 
         def _do_rebuild():

@@ -39,23 +39,15 @@ class AgentUtilsMixin:
 
 
     def _resolve_client(self, service_id: str, user_id: str, *,
-                        resolve_expressions: bool = True,
                         raise_on_missing: bool = False,
-                        default_model: str = ""):
+                        default_model: str = "",
+                        **_compat):
         """Unified LLM client resolution.
 
-        Returns (LLMClient | None, service | None).  When *raise_on_missing*
-        is True a ``ValueError`` is raised instead of returning ``(None, None)``.
+        service_id is ALREADY resolved (caller uses resolve_value/resolve_service_param).
+        Returns (LLMClient | None, service | None).
         """
-        svc_id = service_id
-        if resolve_expressions and svc_id:
-            from core.expression import resolve_value
-            svc_id = resolve_value(svc_id, owner=user_id) or ""
-        if not svc_id or "${" in svc_id:
-            if resolve_expressions:
-                svc_id = ""  # expression unresolved → let registries try
-            else:
-                svc_id = "default"
+        svc_id = service_id or ""
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if not client and self.config.get("api_key"):
             client = LLMClient(
@@ -144,22 +136,18 @@ class AgentUtilsMixin:
         if not svc_id and agent_name:
             try:
                 from core.resource_store import ResourceStore
+                from core.expression import resolve_value
                 adef = ResourceStore.instance().get_any(
                     "agent", agent_name, user_id,
                     conversation_id=conversation_id)
                 if adef:
-                    from core.expression import resolve_value
                     svc_id = resolve_value(adef.get("llm_service", ""),
                                            owner=user_id) or ""
-                    if "${" in svc_id:
-                        svc_id = ""
             except Exception:
                 pass
         # 3. Task default
         if not svc_id:
-            svc_id = self.config.get("llm_service", "")
-            if not svc_id or "${" in svc_id:
-                svc_id = "default"
+            svc_id = self._resolve_service_param("llm_service", user_id) or "default"
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if not client:
             client = self._get_default_client(user_id)
@@ -182,10 +170,7 @@ class AgentUtilsMixin:
             if default:
                 svc_id = default
         from core.expression import resolve_value
-        svc_id = resolve_value(svc_id, owner=user_id) or ""
-        if "${" in svc_id:
-            return ""
-        return svc_id
+        return resolve_value(svc_id, owner=user_id) or ""
 
     def _get_summarizer_client(self, user_id: str = ""):
         """Resolve a dedicated summarizer LLM service for compaction/summary.

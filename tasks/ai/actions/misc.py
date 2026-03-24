@@ -71,13 +71,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             # Value can be a number or an expression like ${user.effort}
             store.set_extra(conv_id, "effort_override", value, user_id=user_id)
             # Resolve for display
-            display = value
-            if "${" in value:
-                try:
-                    from core.expression import resolve_value
-                    display = resolve_value(value, owner=user_id) or value
-                except Exception:
-                    pass
+            from core.expression import resolve_value
+            display = resolve_value(value, owner=user_id) or value
             _labels = {"0": "low", "5000": "medium", "10000": "high", "20000": "max"}
             label = _labels.get(display, f"budget={display}")
             flowfile.set_content(json.dumps({
@@ -103,14 +98,9 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             # Model can be explicit, expression, or default to ${user.fast_model}
             fast_val = model or "${fast_model}"
             store.set_extra(conv_id, "fast_mode", fast_val, user_id=user_id)
-            display = fast_val
-            if "${" in fast_val:
-                try:
-                    from core.expression import resolve_value
-                    display = resolve_value(fast_val, owner=user_id) or fast_val
-                except Exception:
-                    pass
-            if "${" in display:
+            from core.expression import resolve_value
+            display = resolve_value(fast_val, owner=user_id) or fast_val
+            if not display or display == fast_val and fast_val.startswith("$"):
                 flowfile.set_content(json.dumps({
                     "ok": True,
                     "message": f"Fast mode enabled but no fast_model configured. "

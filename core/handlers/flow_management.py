@@ -677,12 +677,8 @@ class AskAgentHandler(ToolHandler):
             # Resolve LLM client for this agent
             client = self._llm_client
             model = self._model
-            llm_svc = agent_def.get("llm_service", "")
-            if llm_svc and "${" in llm_svc:
-                from core.expression import resolve_expression
-                llm_svc = resolve_expression(llm_svc, owner=uid)
-                if "${" in llm_svc:
-                    llm_svc = ""
+            from core.expression import resolve_value
+            llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=uid) or ""
             if llm_svc and self._client_resolver:
                 try:
                     resolved_client, _ = self._client_resolver(llm_svc, uid)

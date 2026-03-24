@@ -242,7 +242,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             if adef and adef.get("llm_service"):
                 from core.expression import resolve_value
                 svc_id = resolve_value(adef["llm_service"], owner=user_id) or ""
-                if svc_id and "${" not in svc_id:
+                if svc_id:
                     _, svc = self._resolve_llm_service(svc_id, user_id)
                     if svc:
                         v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
@@ -272,8 +272,8 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 if v > max_val:
                     max_val = v
             # Also check the default LLM service
-            default_svc = self.config.get("llm_service", "default")
-            if default_svc and "${" not in default_svc:
+            default_svc = self._resolve_service_param("llm_service", user_id) or "default"
+            if default_svc:
                 _, svc = self._resolve_llm_service(default_svc, user_id)
                 if svc:
                     v = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))

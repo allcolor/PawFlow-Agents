@@ -405,8 +405,6 @@ class AgentLoopTask(
                         from core.expression import resolve_value
                         service_id = resolve_value(
                             adef.get("llm_service", ""), owner=user_id) or ""
-                        if "${" in service_id:
-                            service_id = ""
             except Exception:
                 pass
 

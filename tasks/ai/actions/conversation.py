@@ -93,10 +93,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         _summ_client, _ = self._get_summarizer_client(user_id)
         _rs_client = _summ_client
         if not _rs_client:
-            _rs_client, _ = self._resolve_client(
-                self.config.get("llm_service", "default"),
-                user_id, resolve_expressions=False,
-            )
+            _rs_svc = self._resolve_service_param("llm_service", user_id) or "default"
+            _rs_client, _ = self._resolve_client(_rs_svc, user_id)
         if not _rs_client:
             flowfile.set_content(json.dumps({"error": "No LLM service for summarization"}).encode())
             return [flowfile]

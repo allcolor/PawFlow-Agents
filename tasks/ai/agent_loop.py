@@ -581,8 +581,8 @@ class AgentLoopTask(
         logger.info(f"[agent:{conversation_id[:8]}] interrupt → cancel + parallel synthesis "
                     f"for '{agent_name or 'agent'}'")
 
-        # Cancel the current run (generation bump — result will be discarded)
-        self.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
+        # Cancel the current run — publish cancelled event so UI stops
+        self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
 
         # Clear active interactions for this conversation (prevents ghost agents)
         with self._interactions_lock:
@@ -625,8 +625,14 @@ class AgentLoopTask(
                         "what you did, what's left to do. No details, no code.]"),
                 ))
 
-                # Resolve client
-                client = self._get_default_client(user_id)
+                # Resolve the agent's LLM service (not the task default)
+                from core.conversation_store import ConversationStore as _CSi2
+                _ares = _CSi2.instance().get_extra(conversation_id, "active_resources") or {}
+                _agent_svc = _ares.get(f"llm_service:{_agent}") or _ares.get("llm_service") or ""
+                if _agent_svc:
+                    client, _ = self._resolve_llm_service(_agent_svc, user_id)
+                if not client:
+                    client = self._get_default_client(user_id)
                 if not client:
                     bus.publish_event(conversation_id, "done", {
                         "response": "[Interrupted — no LLM client available]",

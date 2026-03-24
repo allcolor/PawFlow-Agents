@@ -120,6 +120,8 @@ class AgentCoreMixin:
                     iteration += 1
 
                     poll_silent = ctx.get("is_poll", False) and iteration == 1
+                    # Heartbeat covers the ENTIRE iteration (LLM + tools)
+                    _iter_hb = emitter.start_heartbeat(poll_silent)
                     emitter.on_iteration_start(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
@@ -261,7 +263,6 @@ class AgentCoreMixin:
                             temperature=ctx["temperature"], max_tokens=ctx["max_tokens"],
                             tools=tool_defs if tool_defs else None, thinking_budget=_tb)
 
-                    hb = emitter.start_heartbeat(poll_silent)
                     try:
                         response = _llm_call(llm_context)
                     except AgentCancelled:
@@ -294,7 +295,7 @@ class AgentCoreMixin:
                             _fatal_error = True
                             break
                     finally:
-                        emitter.stop_heartbeat(hb)
+                        pass  # heartbeat stopped at iteration end
 
                     emitter.check_cancelled()
 
@@ -342,6 +343,7 @@ class AgentCoreMixin:
                             _append(_m)
                         if action == "break":
                             response_content = final
+                            emitter.stop_heartbeat(_iter_hb)
                             _flush()
                             break
                         continue
@@ -384,6 +386,7 @@ class AgentCoreMixin:
                                 _prev = _prev[:-len("[/TOOL OUTPUT]")].rstrip("\n")
                         emitter.on_tool_result(tc, result_text, _prev)
 
+                    emitter.stop_heartbeat(_iter_hb)  # stop iteration heartbeat
                     emitter.on_iteration_end(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called)

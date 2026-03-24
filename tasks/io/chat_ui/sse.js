@@ -194,9 +194,14 @@
     scrollBottom();
   });
 
+  // Track cancelled agents — suppress their events until done/new message
+  const _cancelledAgents = new Set();
+
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    // Suppress events from cancelled agents
+    if (_cancelledAgents.has((data.agent_name || '').toLowerCase())) return;
     // Finalize thinking block before showing tool call
     finalizeThinking(data.agent_name || '');
     console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
@@ -301,6 +306,7 @@
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
+    if (_cancelledAgents.has((data.agent_name || '').toLowerCase())) return;
     console.log('[SSE] tool_result received:', data.tool, (data.result || '').substring(0, 100));
     // spawn_agents: responses are shown via sub_agent_done events in real-time
     // tool_result just shows a compact summary (don't duplicate responses)
@@ -514,6 +520,7 @@
     hideTyping();
     const data = JSON.parse(e.data);
     const doneAgent = data.agent_name || data.source?.name || '';
+    _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
     trackAgentDone(doneAgent);
@@ -587,6 +594,12 @@
     lastSSEActivity = Date.now();
     const cancelData = e.data ? JSON.parse(e.data) : {};
     const cancelAgent = cancelData.agent_name || 'all';
+    // Suppress subsequent tool events from this agent
+    if (cancelAgent === 'all') {
+      Object.keys(streams).forEach(k => _cancelledAgents.add(k));
+    } else {
+      _cancelledAgents.add(cancelAgent.toLowerCase());
+    }
     if (cancelAgent === 'all') {
       // Clear all interactions
       activeInteractions = {};

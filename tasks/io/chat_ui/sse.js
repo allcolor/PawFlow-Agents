@@ -204,10 +204,10 @@
     const tcAgent = data.agent_name || '';
     const tcs = streams[tcAgent.toLowerCase()];
     if (tcs && tcs.el) {
-      // Detach the current streaming element so new tokens create a fresh one,
-      // but KEEP it in chunks so the done handler can clean it up later.
+      // Remove the streaming element — the narration text will be part of
+      // the tool_call display, no need to keep it visible separately.
+      if (tcs.el.parentNode) tcs.el.remove();
       tcs.el = null; tcs.text = '';
-      // Do NOT clear tcs.chunks — done handler needs them to remove DOM elements
     }
     trackAgentTool(tcAgent, data.tool);
     const srcLabel = displayAgentName(tcAgent) + (data.llm_service ? ' via ' + data.llm_service : '');

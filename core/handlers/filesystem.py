@@ -49,7 +49,7 @@ class FilesystemToolHandler(ToolHandler):
             "use 'FileStore' as source_service or dest_service to read/write from the server file store), "
             "list_store (list FileStore files), delete_from_store (delete from FileStore). "
             "Project: project_init (generate .pawflow.md). "
-            "Paths support fs:// URLs: fs://service_id/path. "
+            "Paths support fs:// URLs: fs://service_id/path or fs://filestore/file_id for server FileStore. "
             "Paths are relative to the service root. "
             "If only one filesystem is connected, any service name resolves to it. Use the 'service' parameter with the exact service name from the conversation context. "
             "Git workflow: use git_tag to create checkpoints before major changes (e.g. 'v33-stable'). "
@@ -285,6 +285,70 @@ class FilesystemToolHandler(ToolHandler):
         """Plan D: set list of available filesystem services for multi-service selection."""
         self._available_services = services
 
+    def _execute_filestore(self, action: str, path: str, arguments: dict) -> str:
+        """Handle read/write/list/delete on the server FileStore.
+
+        Routed when service_name is 'filestore'/'store'/'server'.
+        Path format: file_id/filename or just file_id.
+        """
+        from core.file_store import FileStore
+        import re as _re_fs
+        store = FileStore.instance()
+
+        # Extract file_id from path (could be "abc123/file.png" or "/files/abc123/file.png" or just "abc123")
+        _fid_match = _re_fs.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
+        file_id = _fid_match.group(1) if _fid_match else path.split("/")[0]
+
+        if action in ("read_file", "read"):
+            entry = store.get(file_id)
+            if not entry:
+                found = store.find_by_name(file_id)
+                if found:
+                    entry = store.get(found)
+            if not entry:
+                return f"Error: '{file_id}' not found in FileStore"
+            fname, data, ct = entry
+            if ct and ct.startswith("image/"):
+                import base64 as _b64
+                b64 = _b64.b64encode(data).decode("ascii")
+                url = f"/files/{file_id}/{fname}"
+                return f"Image: {url}\n__image_data__:{ct}:{b64}"
+            try:
+                text = data.decode("utf-8")
+                return text
+            except UnicodeDecodeError:
+                return f"Binary file: {fname} ({len(data):,} bytes, {ct})"
+
+        elif action in ("list_dir", "list", "ls"):
+            entries = store.list_all() if hasattr(store, 'list_all') else []
+            if not entries:
+                return "(FileStore is empty)"
+            lines = [f"📄 fs://filestore/{e['id']}/{e['name']} ({e.get('size', '?')} bytes)"
+                     for e in entries[:50]]
+            if len(entries) > 50:
+                lines.append(f"... +{len(entries) - 50} more")
+            return "\n".join(lines)
+
+        elif action in ("delete_file", "delete", "rm"):
+            store.delete(file_id)
+            return f"Deleted '{file_id}' from FileStore"
+
+        elif action == "exists":
+            entry = store.get(file_id)
+            return "true" if entry else "false"
+
+        elif action == "stat":
+            entry = store.get(file_id)
+            if not entry:
+                return f"Error: '{file_id}' not found in FileStore"
+            fname, data, ct = entry
+            return json.dumps({"name": fname, "size": len(data), "content_type": ct})
+
+        return (f"Error: action '{action}' not supported on FileStore. "
+                f"FileStore is read-only (temporary server storage). "
+                f"Supported: read_file, list_dir, delete_file, exists, stat. "
+                f"To write files, use a filesystem service (fs://service_name/path).")
+
     def _find_service(self, service_name: str = ""):
         """Find a filesystem service by name or auto-detect.
 
@@ -370,6 +434,11 @@ class FilesystemToolHandler(ToolHandler):
             parts = path[5:].split("/", 1)
             service_name = parts[0]
             path = parts[1] if len(parts) > 1 else "."
+
+        # Route filestore:// to FileStore directly (read/write/delete)
+        _fs_aliases = ("filestore", "store", "server")
+        if service_name.lower() in _fs_aliases:
+            return self._execute_filestore(action, path, arguments)
 
         # Plan D: try explicit service first, then injected, then search
         svc = None

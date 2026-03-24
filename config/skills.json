@@ -6,6 +6,13 @@
     "created_at": 1742472000,
     "updated_at": 1742472000
   },
+  ":debug": {
+    "name": "debug",
+    "prompt": "Diagnose the current session. Use your available tools to check:\n1. **Recent errors**: Read the last 10 tool results — look for failures, exceptions, unexpected outputs\n2. **Context state**: How many messages in context? Are we near the token limit? Has compaction happened?\n3. **Agent loop**: Is the agent stuck repeating the same actions? Check the last 5 tool calls for patterns\n4. **File state**: If editing files, check git_status for uncommitted changes, git_diff for what changed\n5. **Service health**: Can we reach the LLM service? Any timeout or rate limit errors?\n\nOutput a structured diagnosis:\n- **Status**: OK | WARNING | ERROR\n- **Issues found**: List with severity (CRITICAL/WARNING/INFO)\n- **Root cause**: Most likely explanation\n- **Recommended fix**: Actionable steps\n- **Context health**: tokens used/remaining, messages count, compaction state\n\nBe concise. Focus on actionable findings.",
+    "description": "Diagnose session issues: errors, context state, agent loops, service health",
+    "created_at": 1742472000,
+    "updated_at": 1742472000
+  },
   ":pr": {
     "name": "pr",
     "prompt": "Create a pull request for the current branch. Steps:\n1. Use `filesystem` tool with `git_status` to check current state\n2. Use `filesystem` with `git_log` to get recent commits on this branch\n3. Use `filesystem` with `git_diff` with ref=main (or master) to see all changes\n4. Draft a PR title (short, under 70 chars) and description with:\n   - ## Summary (2-3 bullet points)\n   - ## Changes (list of files and what changed)\n   - ## Test plan (how to verify)\n5. Use `filesystem` with `exec` to run: `gh pr create --title \"<title>\" --body \"<body>\"`\n6. Report the PR URL back to the user\n\nIf `gh` is not installed, provide the PR title and body for manual creation.",

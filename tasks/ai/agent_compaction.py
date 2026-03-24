@@ -24,6 +24,9 @@ logger = logging.getLogger(__name__)
 class AgentCompactionMixin:
     """Methods extracted from AgentLoopTask."""
 
+    # Max chars kept per tool result after compaction truncation
+    _TOOL_TRUNC_LIMIT = 800
+
     @staticmethod
     def _progressive_clear_tool_results(messages: List[LLMMessage],
                                           target_tokens: int,
@@ -89,116 +92,119 @@ class AgentCompactionMixin:
 
         return current_tokens
 
-    @staticmethod
-    def _compact_tool_chains(messages: List[LLMMessage], keep_recent: int = 4):
-        """Compact old tool call chains into summaries.
+    def _compact_post_response(
+        self,
+        messages: List[LLMMessage],
+        client: LLMClient,
+        max_context: int,
+        keep_recent: int = 6,
+        conversation_id: str = "",
+        agent_name: str = "",
+        chars_per_token: float = 0,
+    ) -> List[LLMMessage]:
+        """Compact context AFTER the agent's final response.
 
-        Replaces sequences of [assistant(tool_calls), tool, tool, ..., tool]
-        with a single assistant message summarizing what was done.
-        Only compacts chains that are NOT in the last `keep_recent` messages.
+        Called at the end of every agent turn to minimize token usage on
+        the next turn. Strategy:
+        1. Keep system prompt (message[0])
+        2. Summarize the full conversation into a short state summary (~500 tokens)
+        3. Summarize the last work in more detail (~1000 tokens)
+        4. Keep the last `keep_recent` messages verbatim
 
-        This is called BEFORE _compact_if_needed to reduce token count
-        without needing an LLM summarization call.
+        The full history is always available via read_history tool.
         """
-        if len(messages) <= keep_recent + 2:
-            return messages  # too few to compact
+        if len(messages) <= keep_recent + 3:
+            return messages  # not enough to compact
 
-        # Find the boundary: don't touch system prompt (idx 0)
-        # and last keep_recent messages
-        safe_end = len(messages) - keep_recent
+        system_msg = messages[0] if messages[0].role == "system" else None
+        start_idx = 1 if system_msg else 0
 
-        # Scan for tool chains in the compactable region
-        result = [messages[0]]  # system prompt
-        i = 1
-        while i < len(messages):
-            m = messages[i]
-            # If we're past the safe zone, keep as-is
-            if i >= safe_end:
-                result.append(m)
-                i += 1
-                continue
+        # Find split point: last keep_recent conversation messages
+        _split = len(messages)
+        _count = 0
+        while _split > start_idx and _count < keep_recent:
+            _split -= 1
+            m = messages[_split]
+            if m.role == "user" and not (isinstance(m.content, str)
+                                         and m.content.startswith("[System:")):
+                _count += 1
+            elif m.role == "assistant" and not getattr(m, "tool_calls", None):
+                _count += 1
+        # Don't split inside a tool chain
+        while _split > start_idx and messages[_split].role == "tool":
+            _split -= 1
 
-            # Detect tool chain: assistant with tool_calls followed by tool results
-            if m.role == "assistant" and m.tool_calls:
-                chain_tools = list(m.tool_calls)
-                chain_results = []
-                # Collect ALL subsequent tool result messages (even past safe_end)
-                # The chain is atomic — can't separate assistant from its results
-                _tc_ids = {tc.id for tc in chain_tools}
-                j = i + 1
-                while j < len(messages) and messages[j].role == "tool":
-                    if getattr(messages[j], 'tool_call_id', '') in _tc_ids:
-                        chain_results.append(messages[j])
-                    j += 1
+        if _split <= start_idx:
+            return messages
 
-                if chain_tools and chain_results:
-                    # Build compact summary
-                    tool_counts = {}
-                    for tc in chain_tools:
-                        tool_counts[tc.name] = tool_counts.get(tc.name, 0) + 1
-                    parts = []
-                    for name, count in tool_counts.items():
-                        if count > 1:
-                            parts.append(f"{name} x{count}")
-                        else:
-                            # Include first arg hint
-                            tc0 = next(tc for tc in chain_tools if tc.name == name)
-                            _hint = ""
-                            for k in ("path", "prompt", "command", "query"):
-                                v = tc0.arguments.get(k, "")
-                                if v:
-                                    _hint = f"({str(v)[:40]})"
-                                    break
-                            parts.append(f"{name}{_hint}")
+        old_messages = messages[start_idx:_split]
+        recent_messages = messages[_split:]
 
-                    # Collect short result summaries
-                    result_hints = []
-                    for tr in chain_results[:3]:
-                        _rc = tr.content if isinstance(tr.content, str) else str(tr.content)
-                        # Strip TOOL OUTPUT wrapper
-                        if "[TOOL OUTPUT" in _rc:
-                            _rc = _rc.split("\n", 1)[-1] if "\n" in _rc else _rc
-                        if "[/TOOL OUTPUT]" in _rc:
-                            _rc = _rc.replace("[/TOOL OUTPUT]", "").strip()
-                        result_hints.append(_rc[:60])
-                    if len(chain_results) > 3:
-                        result_hints.append(f"... +{len(chain_results) - 3} more")
+        # Already compact enough?
+        _cpt = chars_per_token if chars_per_token > 0 else 3.5
+        recent_est = self._estimate_tokens(
+            ([system_msg] if system_msg else []) + recent_messages,
+            chars_per_token=_cpt)
+        if recent_est > max_context * 0.4:
+            # Recent messages alone are 40%+ of context — don't add summary
+            logger.info(f"[compact-post] Recent messages already {recent_est} tokens, skipping summary")
+            return messages
 
-                    summary = f"[Used {len(chain_tools)} tool(s): {', '.join(parts)}]"
-                    if result_hints:
-                        summary += "\n[Results: " + " | ".join(result_hints) + "]"
-
-                    # Preserve the LLM's own text/reasoning if present
-                    _llm_text = m.content if isinstance(m.content, str) else ""
-                    if _llm_text:
-                        summary = _llm_text + "\n" + summary
-
-                    # Replace the chain with a single assistant message
-                    result.append(LLMMessage(
-                        role="assistant", content=summary,
-                        source=getattr(m, 'source', None),
-                    ))
-                    i = j  # skip past the tool results
-                    continue
-
-                # assistant with tool_calls but no results yet → keep as-is
-                # (shouldn't happen in compactable region but be safe)
-
-            result.append(m)
-            i += 1
-
-        # Safety: remove orphan tool results (no matching tool_use)
-        _valid_tc_ids = set()
-        for m in result:
-            if m.role == "assistant" and m.tool_calls:
-                for tc in m.tool_calls:
-                    _valid_tc_ids.add(tc.id)
-        result = [
-            m for m in result
-            if m.role != "tool" or getattr(m, 'tool_call_id', '') in _valid_tc_ids
+        # Filter old messages: only conversation (no tool plumbing)
+        old_conv = [
+            m for m in old_messages
+            if m.role in ("user", "assistant")
+            and not getattr(m, "tool_calls", None)
+            and not (m.role == "user" and isinstance(m.content, str)
+                     and m.content.startswith("[System:"))
         ]
+        if not old_conv:
+            return messages
 
-        return result
+        # Summarize
+        try:
+            summary = self._call_summarize(client, self._messages_to_text(old_conv),
+                                            target_tokens=max(300, int(max_context * 0.05)),
+                                            agent_name=agent_name)
+        except Exception as e:
+            logger.warning(f"[compact-post] Summary failed: {e}")
+            return messages
+
+        # Build compacted context
+        compacted: List[LLMMessage] = []
+        if system_msg:
+            compacted.append(system_msg)
+        compacted.append(LLMMessage(
+            role="user",
+            content=(
+                f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
+                f"Use read_history tool to access older messages if needed. "
+                f"The recent messages below are the current state."
+            ),
+        ))
+        compacted.append(LLMMessage(
+            role="assistant",
+            content="Understood. I have the summary of our earlier conversation "
+                    "and can use read_history if I need details from older messages.",
+        ))
+        compacted.extend(recent_messages)
+
+        new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
+        logger.info(
+            f"[compact-post] {len(messages)} messages → {len(compacted)} "
+            f"(~{recent_est} → ~{new_est} tokens)")
+
+        # Persist compacted context
+        if conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                serialized = self._serialize_messages(compacted)
+                ConversationStore.instance().save_agent_context(
+                    conversation_id, agent_name, serialized)
+            except Exception as e:
+                logger.warning(f"[compact-post] Persist failed: {e}")
+
+        return compacted
 
     def _force_synthesis(self, messages, client, ctx, *, prompt: str,
                          compact_client=None, use_streaming: bool = False,
@@ -278,11 +284,12 @@ class AgentCompactionMixin:
         td_tokens = 0
         if tool_defs:
             for td in tool_defs:
-                td_tokens += len(getattr(td, 'name', '') or '') // cpt
-                td_tokens += len(getattr(td, 'description', '') or '') // cpt
+                td_tokens += len(getattr(td, 'name', '') or '') / cpt
+                td_tokens += len(getattr(td, 'description', '') or '') / cpt
                 params = getattr(td, 'parameters', None)
                 if params:
-                    td_tokens += len(json.dumps(params) if isinstance(params, dict) else str(params)) // cpt
+                    td_tokens += len(json.dumps(params) if isinstance(params, dict) else str(params)) / cpt
+            td_tokens = int(td_tokens)
 
         # Target: 25% of max (same as summarization — leave 75% for response)
         target = int(max_tokens * 0.25) - int(td_tokens)
@@ -323,11 +330,11 @@ class AgentCompactionMixin:
 
         est = self._estimate_tokens(result, tool_defs=tool_defs, chars_per_token=chars_per_token)
         if est <= max_tokens:
-            print(f"[COMPACT-GUARD] force-fit step 1 OK: {est} tokens", flush=True)
+            logger.info(f"[compact] force-fit step 1 OK: {est} tokens")
             return result
 
         # Step 2: Drop middle messages, keep system + last N
-        print(f"[COMPACT-GUARD] step 1 insufficient ({est} > {max_tokens}), dropping middle", flush=True)
+        logger.warning(f"[compact] force-fit step 1 insufficient ({est} > {max_tokens}), dropping middle")
         keep = []
         if result and result[0].role == "system":
             keep.append(result[0])
@@ -368,11 +375,22 @@ class AgentCompactionMixin:
         # Ensure no display-only messages leak into compaction
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
 
-        # NOTE: _compact_tool_chains is DISABLED — it replaces assistant+tool_calls
-        # messages with plain text summaries. The LLM then imitates these summaries
-        # instead of using real tool calls. Use _progressive_clear_tool_results
-        # and _clear_seen_tool_results instead (they clear results but keep the
-        # assistant message structure with tool_calls intact).
+        # Remove orphan tool results — tool messages whose tool_call_id has
+        # no matching assistant message with that tool_call. These accumulate
+        # when tool chains are partially compacted or messages are dropped.
+        _valid_tc_ids = set()
+        for m in messages:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    _valid_tc_ids.add(tc.id)
+        _pre_orphan = len(messages)
+        messages = [
+            m for m in messages
+            if m.role != "tool"
+            or getattr(m, 'tool_call_id', None) in _valid_tc_ids
+        ]
+        if len(messages) < _pre_orphan:
+            logger.info(f"[compact] Removed {_pre_orphan - len(messages)} orphan tool result(s)")
 
         # Deflate old images before estimating — but keep the last one
         # (the LLM hasn't seen it yet in this iteration)
@@ -401,14 +419,14 @@ class AgentCompactionMixin:
                                           chars_per_token=chars_per_token)
         limit = int(max_tokens * threshold)
 
-        print(f"[COMPACT] check: {estimated} est. tokens, limit={limit} "
-              f"(max={max_tokens}×{threshold}), {len(messages)} msgs, "
-              f"cpt={chars_per_token:.2f}", flush=True)
+        logger.debug(f"[compact] check: {estimated} est. tokens, limit={limit} "
+                     f"(max={max_tokens}×{threshold}), {len(messages)} msgs, "
+                     f"cpt={chars_per_token:.2f}")
 
         if estimated <= limit:
             return messages
 
-        print(f"[COMPACT] TRIGGERED: {estimated} > {limit}, compacting...", flush=True)
+        logger.info(f"[compact] TRIGGERED: {estimated} > {limit}, compacting...")
 
         # Pass 1: Progressive clearing of old tool results (oldest first)
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
@@ -513,10 +531,9 @@ class AgentCompactionMixin:
             compacted.extend(old_conversation)
             compacted.extend(recent_messages)
             # Truncate large tool results in recent zone
-            _tool_trunc_limit = 800
             for m in compacted:
-                if m.role == "tool" and isinstance(m.content, str) and len(m.content) > _tool_trunc_limit:
-                    m.content = m.content[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..."
+                if m.role == "tool" and isinstance(m.content, str) and len(m.content) > self._TOOL_TRUNC_LIMIT:
+                    m.content = m.content[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
             # Persist stripped context so we don't re-compact next iteration
             if conversation_id:
                 try:
@@ -534,7 +551,8 @@ class AgentCompactionMixin:
         try:
             summary = self._summarize_messages(old_conversation, client, max_tokens,
                                                target_tokens=_summary_target,
-                                               conversation_id=conversation_id)
+                                               conversation_id=conversation_id,
+                                               agent_name=agent_name)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
             # NEVER return the original messages if they exceed the limit.
@@ -574,14 +592,13 @@ class AgentCompactionMixin:
 
         # Truncate large tool results in the recent zone — they can blow up
         # the context budget on their own (e.g. scrape_url, read_file).
-        _tool_trunc_limit = 800  # chars kept per tool result
         for m in compacted:
-            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > _tool_trunc_limit:
-                m.content = m.content[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..."
+            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > self._TOOL_TRUNC_LIMIT:
+                m.content = m.content[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
             elif m.role == "tool" and isinstance(m.content, list):
                 text_parts = [p for p in m.content if p.get("type") == "text"]
                 text = " ".join(p.get("text", "") for p in text_parts)
-                m.content = text[:_tool_trunc_limit] + "\n...[compacted — re-call tool if needed]..." if len(text) > _tool_trunc_limit else text
+                m.content = text[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..." if len(text) > self._TOOL_TRUNC_LIMIT else text
 
         new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
                                               chars_per_token=chars_per_token)
@@ -627,6 +644,7 @@ class AgentCompactionMixin:
         max_tokens: int,
         target_tokens: int = 0,
         conversation_id: str = "",
+        agent_name: str = "",
     ) -> str:
         """Summarize messages iteratively until they fit.
 
@@ -677,7 +695,7 @@ class AgentCompactionMixin:
             # If everything fits → single summary call
             if total_tokens <= safe_limit:
                 _pub("summarizing", f"pass {_pass}: single call ({total_tokens} tokens)")
-                return self._call_summarize(client, total_text, target_tokens)
+                return self._call_summarize(client, total_text, target_tokens, agent_name=agent_name)
 
             # Split chunks into groups that each fit in safe_limit
             groups: List[str] = []
@@ -714,7 +732,7 @@ class AgentCompactionMixin:
             for i, group_text in enumerate(groups):
                 _pub("summarizing", f"pass {_pass}: group {i+1}/{n_groups}")
                 try:
-                    s = self._call_summarize(client, group_text, chunk_target)
+                    s = self._call_summarize(client, group_text, chunk_target, agent_name=agent_name)
                     summaries.append(s)
                 except Exception as e:
                     logger.error(f"[compact] Group {i+1} summarization failed: {e}")
@@ -733,7 +751,9 @@ class AgentCompactionMixin:
 
 
     def _call_summarize(self, client: LLMClient, text: str,
-                        target_tokens: int = 0) -> str:
+                        target_tokens: int = 0,
+                        user_id: str = "", agent_name: str = "",
+                        llm_service: str = "") -> str:
         """Single LLM call to summarize text."""
         if not target_tokens:
             target_tokens = 2000
@@ -797,7 +817,6 @@ class AgentCompactionMixin:
                             )),
                             LLMMessage(role="user", content=ascii_text),
                         ],
-                        model=model or None,
                         temperature=0.3,
                         max_tokens=2000,
                     )
@@ -810,6 +829,12 @@ class AgentCompactionMixin:
         summary = response.content
         logger.info(f"[compact] Summarized {len(text)} chars into {len(summary)} chars "
                     f"({self._estimate_tokens([LLMMessage(role='user', content=summary)])} tokens)")
+        # Track summarizer token usage
+        if response.tokens_in > 0 and (user_id or agent_name):
+            self._track_tokens(
+                user_id or "system", response.tokens_in, response.tokens_out,
+                model=response.model or "", agent_name=agent_name or "summarizer",
+                llm_service=llm_service or "summarizer")
         return summary
 
 

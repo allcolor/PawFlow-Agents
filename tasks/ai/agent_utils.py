@@ -105,6 +105,19 @@ class AgentUtilsMixin:
         return None, None
 
 
+    def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:
+        """Resolve a service parameter that may contain ${...} expressions.
+
+        Returns the resolved service ID string, or "" if not configured.
+        """
+        svc_id = self.config.get(param_name, "")
+        if svc_id and "${" in svc_id:
+            from core.expression import resolve_expression
+            svc_id = resolve_expression(svc_id, owner=user_id)
+        if not svc_id or "${" in svc_id:
+            return ""
+        return svc_id
+
     def _get_summarizer_client(self, user_id: str = ""):
         """Resolve a dedicated summarizer LLM service for compaction/summary.
 
@@ -401,8 +414,11 @@ class AgentUtilsMixin:
                             img_refs.append("(image)")
                     elif "/files/" in url:
                         img_refs.append(url)
+                    elif url.startswith(("http://", "https://")):
+                        # Keep full URL — small compared to base64, allows re-fetch
+                        img_refs.append(url)
                     else:
-                        img_refs.append(url[:100] if url else "(image)")
+                        img_refs.append("(image)")
             text = "\n".join(text_parts)
             if img_refs:
                 refs_text = "\n".join(f"  - {ref}" for ref in img_refs)
@@ -443,7 +459,8 @@ class AgentUtilsMixin:
 
     def _clear_seen_tool_results(self, messages, keep_recent: int = 4,
                                   conversation_id: str = "",
-                                  user_id: str = ""):
+                                  user_id: str = "",
+                                  agent_name: str = ""):
         """Clear old tool results that the LLM has already seen.
 
         Called AFTER the LLM has responded. Saves large results to FileStore
@@ -490,21 +507,47 @@ class AgentUtilsMixin:
                     conversation_id=conversation_id,
                     user_id=user_id,
                     ttl=self._TOOL_RESULT_TTL,
+                    agent_name=agent_name,
+                    category="tool_result",
                 )
                 url = f"/files/{fid}/{fname}"
+                # Keep a short summary so the LLM knows what happened
+                _first_line = _inner.split("\n", 1)[0][:200]
                 m.content = (
-                    f"[Result cleared — {content_len:,} chars saved to: {url}. "
-                    f"Use read_file(path=\"{url}\") to retrieve.]"
+                    f"{_first_line}\n"
+                    f"[Result cleared — {content_len:,} chars. "
+                    f"Full output: read_file(path=\"{url}\")]"
                 )
                 cleared += 1
             except Exception:
-                # Fallback: just truncate
-                m.content = content[:200] + f"\n[...{content_len - 200:,} chars cleared]"
+                # Fallback: keep first line + truncate
+                _first_line = content.split("\n", 1)[0][:200]
+                m.content = f"{_first_line}\n[...{content_len - len(_first_line):,} chars cleared]"
                 cleared += 1
 
         if cleared:
             logger.info(f"[clear_tool_results] Cleared {cleared} old tool result(s)")
 
+    @staticmethod
+    def _cleanup_tool_result_files(conversation_id: str = "",
+                                    agent_name: str = ""):
+        """Delete tool result files from FileStore after the agent's final response.
+
+        Uses metadata filters (category + conversation_id + agent_name) —
+        safe for multi-agent parallel execution.
+        """
+        try:
+            from core.file_store import FileStore
+            count = FileStore.instance().delete_by(
+                category="tool_result",
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+            )
+            if count:
+                logger.info(f"[cleanup] Deleted {count} tool result file(s) "
+                            f"for {agent_name or 'unknown'}@{conversation_id[:8]}")
+        except Exception as e:
+            logger.debug(f"[cleanup] Tool result file cleanup failed: {e}")
 
     @staticmethod
     def _estimate_tokens(messages: List[LLMMessage],

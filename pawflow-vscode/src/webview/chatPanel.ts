@@ -58,6 +58,27 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'relayDisconnect':
           await vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
           break;
+        case 'openFile':
+          // Open a file in VS Code editor from the webview
+          try {
+            const relayRoot = this.relay?.getRootDir?.() || '';
+            let filePath = msg.path || '';
+            // Resolve fs://service/path → absolute path
+            if (filePath.startsWith('fs://')) {
+              const rest = filePath.slice(5);
+              const sep = rest.indexOf('/');
+              filePath = sep > 0 ? rest.slice(sep + 1) : rest;
+            }
+            // Make absolute if relay root is known
+            if (relayRoot && !require('path').isAbsolute(filePath)) {
+              filePath = require('path').join(relayRoot, filePath);
+            }
+            const uri = vscode.Uri.file(filePath);
+            await vscode.window.showTextDocument(uri, { preview: true });
+          } catch (e: any) {
+            vscode.window.showWarningMessage(`Cannot open file: ${e.message}`);
+          }
+          break;
         case 'command':
           if (msg.command === 'clipboard_write') {
             await vscode.env.clipboard.writeText(msg.arg || '');

@@ -324,6 +324,9 @@ def make_sandbox_open(
                 raise ValueError(f"Invalid fs:// URL: '{name}'. Use fs://service_id/path")
             svc_id = rest[:sep]
             path = rest[sep + 1:]
+            # fs://filestore/ → route to FileStore
+            if svc_id.lower() in ("filestore", "store", "server"):
+                return _FileStoreFile(path, mode, base_url, created_files)
             return _FilesystemServiceFile(svc_id, path, mode, fs_resolver)
 
         # Default: VFS sandbox (existing behavior)

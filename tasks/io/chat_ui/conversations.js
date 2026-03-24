@@ -433,7 +433,10 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     if (type === 'tool_call' || type === 'tool_result') cssClass = 'tool';
     // Convert markdown-like formatting
     let html = escapeHtml(content);
-    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>');
+    html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
+      var cls = lang ? ' class="language-' + lang + '"' : '';
+      return '<pre><code' + cls + '>' + code + '</code></pre>';
+    });
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');

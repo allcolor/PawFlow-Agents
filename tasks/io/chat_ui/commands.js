@@ -184,7 +184,8 @@
     usage: '/compact [agent|ALL]',
     short: 'Compact context (summarize old messages)',
     detail: 'Summarizes older messages to reduce context size while preserving key information.\n\n'
-      + '  /compact        \u2014 Compact the shared context\n'
+      + '  /compact        \u2014 Compact current agent\'s context (or shared if none selected)\n'
+      + '  /compact shared \u2014 Compact the shared context\n'
       + '  /compact grok   \u2014 Compact grok\'s context only\n'
       + '  /compact ALL    \u2014 Compact all agents\' contexts',
   },
@@ -440,6 +441,26 @@
     short: 'Clear the chat display',
     detail: 'Removes all messages from the visible chat. History is preserved server-side.',
   },
+  '/clear-store': {
+    usage: '/clear-store [agent|ALL]',
+    short: 'Clean up FileStore files',
+    detail: '/clear-store — delete all FileStore files for this conversation.\n/clear-store <agent> — delete tool results for a specific agent.\n/clear-store ALL — delete tool results for all agents.',
+  },
+  '/batch': {
+    usage: '/batch <instruction> [--files <glob>]',
+    short: 'Parallel changes across multiple files',
+    detail: '/batch "add JSDoc to all functions" --files src/**/*.js\n/batch "convert to async/await" --files *.ts\nThe agent will split files into groups and use spawn_agents to process them in parallel.',
+  },
+  '/debug': {
+    usage: '/debug [description]',
+    short: 'Diagnose session issues',
+    detail: 'Analyzes context state, recent errors, agent loops, and service health. Optionally describe the problem.',
+  },
+  '/loop': {
+    usage: '/loop <interval> <prompt> | list | stop <key>',
+    short: 'Run a prompt on a recurring interval',
+    detail: '/loop 5m "check build status" — runs every 5 minutes\n/loop 30s /compact — runs /compact every 30s\n/loop 2-3/h "check deploy" — 2-3 times per hour (autoconv syntax)\n/loop 1/30s "ping" — once per 30 seconds\n/loop list — show active loops\n/loop stop <key> — stop a loop',
+  },
   '/login': {
     usage: '/login',
     short: 'Re-authenticate',
@@ -617,7 +638,7 @@ async function handleSlashCommand(text) {
     if (targetParts.length === 0) { addMsg('system', 'Usage: /stop <agent|ALL> [-f]'); return true; }
     const target = resolveAgentName(targetParts[0]);
     if (force) {
-      await cancelAgent(target);
+      await cancelAgent(target, true);
     } else {
       await cmdAgentInterrupt(target);
     }
@@ -720,8 +741,7 @@ async function handleSlashCommand(text) {
 
   if (cmd === '/cost') {
     const cargs = parseQuotedArgs(text);
-    const target = cargs[1] || '';
-    if (!target) { addMsg('system', 'Usage: /cost <agent|ALL>'); return true; }
+    const target = cargs[1] || selectedAgent || 'ALL';
     try {
       const resp = await fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
@@ -2026,6 +2046,128 @@ async function handleSlashCommand(text) {
     return true;
   }
 
+  if (cmd === '/clear-store') {
+    if (!conversationId) { addMsg('system', 'No active conversation'); return true; }
+    const csArg = (parts[1] || '').trim();
+    const csPayload = {action: 'clear_store', conversation_id: conversationId};
+    if (csArg && csArg.toUpperCase() === 'ALL') {
+      csPayload.scope = 'all_agents';
+    } else if (csArg) {
+      csPayload.agent_name = csArg;
+    }
+    try {
+      const r = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify(csPayload),
+      }).then(res => res.json());
+      if (r && r.deleted !== undefined) {
+        addMsg('system', 'FileStore: deleted ' + r.deleted + ' file(s)' + (r.scope ? ' (' + r.scope + ')' : ''));
+      } else if (r && r.error) {
+        addMsg('error', r.error);
+      }
+    } catch (e) {
+      addMsg('error', 'clear-store failed: ' + e.message);
+    }
+    return true;
+  }
+
+  if (cmd === '/loop') {
+    if (!conversationId) { addMsg('system', 'No active conversation'); return true; }
+    const loopArg = parts[1] || '';
+    if (loopArg === 'list') {
+      try {
+        const r = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({action: 'loop_list', conversation_id: conversationId}),
+        }).then(res => res.json());
+        const loops = r.loops || [];
+        if (loops.length === 0) { addMsg('system', 'No active loops'); }
+        else {
+          const lines = loops.map(l => l.key + ' — every ' + l.interval_seconds + 's: ' + (l.prompt || '?'));
+          addMsg('system', 'Active loops:\n' + lines.join('\n'));
+        }
+      } catch(e) { addMsg('error', e.message); }
+      return true;
+    }
+    if (loopArg === 'stop') {
+      const loopKey = parts[2] || '';
+      if (!loopKey) { addMsg('system', 'Usage: /loop stop <key>'); return true; }
+      try {
+        const r = await fetch(API, {
+          method: 'POST', headers: getAuthHeaders(),
+          body: JSON.stringify({action: 'loop_stop', key: loopKey}),
+        }).then(res => res.json());
+        addMsg('system', r.stopped ? 'Loop stopped: ' + loopKey : 'Loop not found: ' + loopKey);
+      } catch(e) { addMsg('error', e.message); }
+      return true;
+    }
+    // Parse interval: supports "5m", "30s", "2h" AND autoconv "2-3/h", "1/30s", "6/1m"
+    const _units = {s:1, m:60, h:3600, d:86400};
+    let intervalSec = 0;
+    // Try autoconv format: N[-M]/[D]U
+    const acMatch = loopArg.match(/^(\d+)(?:-(\d+))?\/(\d*)([smhd])$/);
+    if (acMatch) {
+      const countMin = parseInt(acMatch[1]);
+      const durationNum = parseInt(acMatch[3] || '1');
+      const period = durationNum * _units[acMatch[4]];
+      intervalSec = Math.floor(period / countMin);
+    } else {
+      // Try simple format: 5m, 30s, 2h
+      const simpleMatch = loopArg.match(/^(\d+)([smhd])$/);
+      if (simpleMatch) {
+        intervalSec = parseInt(simpleMatch[1]) * _units[simpleMatch[2]];
+      }
+    }
+    if (!intervalSec || intervalSec < 5) {
+      addMsg('system', 'Usage: /loop <interval> <prompt>\nInterval: 5m, 30s, 2h, 2-3/h, 1/30s, 6/1m (min 5s)');
+      return true;
+    }
+    const loopPrompt = parts.slice(2).join(' ').trim();
+    if (!loopPrompt) { addMsg('system', 'Usage: /loop <interval> <prompt>'); return true; }
+    try {
+      const r = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({action: 'loop_start', conversation_id: conversationId,
+                              interval_seconds: intervalSec, prompt: loopPrompt}),
+      }).then(res => res.json());
+      if (r.started) {
+        addMsg('system', 'Loop started: every ' + intervalSec + 's — ' + loopPrompt + '\nKey: ' + r.key);
+      } else { addMsg('error', r.error || 'Failed to start loop'); }
+    } catch(e) { addMsg('error', e.message); }
+    return true;
+  }
+
+  if (cmd === '/batch') {
+    const batchText = text.replace(/^\/batch\s*/, '').trim();
+    if (!batchText) { addMsg('system', 'Usage: /batch <instruction> [--files <glob>]'); return true; }
+    // Parse --files flag
+    let batchFiles = '';
+    let batchInstruction = batchText;
+    const filesMatch = batchText.match(/--files\s+(\S+)/);
+    if (filesMatch) {
+      batchFiles = filesMatch[1];
+      batchInstruction = batchText.replace(/--files\s+\S+/, '').trim();
+    }
+    const batchMsg = '[System: BATCH MODE — Apply the following change across multiple files in parallel.\n'
+      + 'Instruction: ' + batchInstruction + '\n'
+      + (batchFiles ? 'File pattern: ' + batchFiles + '\n' : '')
+      + 'Steps:\n'
+      + '1. Use filesystem(action=search) to find all matching files\n'
+      + '2. Split files into groups of 3-5\n'
+      + '3. Use spawn_agents to process each group in parallel — each agent applies the instruction to its files\n'
+      + '4. Report a summary of all changes made\n'
+      + 'Use the current agent for each sub-task. Work in parallel for speed.]';
+    sendMessage(batchMsg);
+    return true;
+  }
+
+  if (cmd === '/debug') {
+    const debugDesc = parts.slice(1).join(' ').trim();
+    const debugMsg = '/call use_skill(skill_name="debug"' + (debugDesc ? ', context="' + debugDesc.replace(/"/g, '\\"') + '"' : '') + ')';
+    sendMessage(debugMsg);
+    return true;
+  }
+
   if (cmd === '/login') {
     window.location.href = '/login';
     return true;
@@ -2512,10 +2654,12 @@ async function cmdUninstallTool(toolName) {
 function cmdCompact(agentName) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
   contextOpInProgress = true;
-  const label = agentName ? 'Compacting (' + agentName + ')' : 'Compacting';
+  const _compactLabel = agentName || selectedAgent || '';
+  const label = _compactLabel ? 'Compacting (' + _compactLabel + ')' : 'Compacting';
   showContextOp(label);
   const body = { action: 'compact', conversation_id: conversationId };
-  if (agentName) body.agent_name = agentName;
+  const _compactAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
+  if (_compactAgent) body.agent_name = _compactAgent;
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),
@@ -2538,7 +2682,8 @@ function cmdRebuild(agentName) {
   const label = agentName ? 'Rebuilding (' + agentName + ')' : 'Rebuilding';
   showContextOp(label);
   const body = { action: 'rebuild', conversation_id: conversationId };
-  if (agentName) body.agent_name = agentName;
+  const _rebuildAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
+  if (_rebuildAgent) body.agent_name = _rebuildAgent;
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),

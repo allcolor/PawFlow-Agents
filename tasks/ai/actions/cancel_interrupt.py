@@ -27,9 +27,32 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         self.cancel_agent(conv_id, agent_name=agent_name)
+        # Force mode: kill the thread and force UI cleanup
+        if body.get("force"):
+            # Kill agent threads for this conversation
+            _killed = 0
+            for t in threading.enumerate():
+                if t.name == f"agent-stream-{conv_id}" and t.is_alive():
+                    # Python can't kill threads, but we can set status + publish done
+                    # to force the UI to stop showing "thinking..."
+                    _killed += 1
+            store.set_status(conv_id, "idle")
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conv_id, "done", {
+                    "response": "[Force stopped by user]",
+                    "agent_name": agent_name or "",
+                    "force_stopped": True,
+                })
+            # Clear active tracking
+            with self._active_lock:
+                self._active_conversations.pop(conv_id, None)
+                self._user_active_conversations.discard(conv_id)
+            logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,
             "agent_name": agent_name or "all",
+            "force": bool(body.get("force")),
         }).encode())
         return [flowfile]
 

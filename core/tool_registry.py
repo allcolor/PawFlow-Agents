@@ -289,6 +289,14 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 
+    # History browsing (read old messages outside current context)
+    from core.handlers.history import ReadHistoryHandler
+    registry.register(ReadHistoryHandler())
+
+    # Screen interaction (screenshots, clicks — requires relay with exec)
+    from core.handlers.screen import ScreenHandler
+    registry.register(ScreenHandler())
+
     # Browser automation (conditional — requires playwright)
     try:
         from services.browser_service import BrowserService  # noqa: F401

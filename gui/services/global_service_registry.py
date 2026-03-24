@@ -95,6 +95,11 @@ class GlobalServiceRegistry:
         """Install a new global service definition."""
         self._ensure_loaded()
 
+        # Reserved names (used by fs:// URL routing)
+        _RESERVED = {"filestore", "store", "server"}
+        if service_id.lower() in _RESERVED:
+            raise ValueError(f"Service name '{service_id}' is reserved (builtin FileStore alias)")
+
         # Validate service type exists
         try:
             ServiceFactory.get(service_type)

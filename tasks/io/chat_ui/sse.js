@@ -221,6 +221,67 @@
         return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
       });
       addMsg('tool', lines.join('\n'));
+    } else if (data.tool === 'filesystem' && args.action === 'edit' && args.path) {
+      // Special rendering for edit operations — show inline diff preview
+      const fpath = args.path || '?';
+      const oldStr = args.old_string || '';
+      const newStr = args.new_string || '';
+      const startLn = args.start_line || '';
+      const endLn = args.end_line || '';
+      let editHtml = '<span style="color:#4ecdc4;font-size:11px">\u270E [' + escapeHtml(srcLabel) + '] Edit(' + escapeHtml(fpath) + ')</span>';
+      if (startLn && endLn) {
+        editHtml += '<span style="color:#8b949e;font-size:11px"> lines ' + startLn + '-' + endLn + '</span>';
+      }
+      // Detect language from file extension for syntax highlighting
+      const _ext = fpath.split('.').pop().toLowerCase();
+      const _langMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',bash:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',md:'markdown',jsx:'javascript',tsx:'typescript',vue:'xml',svelte:'xml'};
+      const _lang = _langMap[_ext] || '';
+      // Build unified diff: common prefix as context, then changes, then common suffix
+      const oldLines = oldStr ? oldStr.split('\n') : [];
+      const newLines = newStr ? newStr.split('\n') : [];
+      // Find common prefix
+      let cpx = 0;
+      while (cpx < oldLines.length && cpx < newLines.length && oldLines[cpx] === newLines[cpx]) cpx++;
+      // Find common suffix
+      let csx = 0;
+      while (csx < (oldLines.length - cpx) && csx < (newLines.length - cpx) && oldLines[oldLines.length - 1 - csx] === newLines[newLines.length - 1 - csx]) csx++;
+      const diffLines = [];
+      const maxLines = 12;
+      let shown = 0;
+      // Context prefix (max 2 lines)
+      const ctxPrefix = oldLines.slice(Math.max(0, cpx - 2), cpx);
+      ctxPrefix.forEach(l => { diffLines.push('<div><span style="color:#8b949e;user-select:none">  </span>' + _synLine(l, _lang) + '</div>'); });
+      // Removed lines
+      const removed = oldLines.slice(cpx, oldLines.length - csx);
+      removed.slice(0, 6).forEach(l => { diffLines.push('<div style="background:rgba(248,81,73,0.15)"><span style="color:#f85149;user-select:none">- </span>' + _synLine(l, _lang) + '</div>'); shown++; });
+      if (removed.length > 6) diffLines.push('<div style="color:#8b949e">  ... +' + (removed.length - 6) + ' lines removed</div>');
+      // Added lines
+      const added = newLines.slice(cpx, newLines.length - csx);
+      added.slice(0, 6).forEach(l => { diffLines.push('<div style="background:rgba(63,185,80,0.15)"><span style="color:#3fb950;user-select:none">+ </span>' + _synLine(l, _lang) + '</div>'); shown++; });
+      if (added.length > 6) diffLines.push('<div style="color:#8b949e">  ... +' + (added.length - 6) + ' lines added</div>');
+      // Context suffix (max 2 lines)
+      const ctxSuffix = oldLines.slice(oldLines.length - csx, oldLines.length - csx + 2);
+      ctxSuffix.forEach(l => { diffLines.push('<div><span style="color:#8b949e;user-select:none">  </span>' + _synLine(l, _lang) + '</div>'); });
+      // Summary line
+      const _addedCount = added.length;
+      const _removedCount = removed.length;
+      if (_addedCount || _removedCount) {
+        const parts = [];
+        if (_addedCount) parts.push(_addedCount + ' added');
+        if (_removedCount) parts.push(_removedCount + ' removed');
+        editHtml += '<span style="color:#8b949e;font-size:10px;margin-left:8px">(' + parts.join(', ') + ')</span>';
+      }
+      if (diffLines.length > 0) {
+        editHtml += '<pre class="diff-output' + (_lang ? ' language-' + _lang : '') + '" style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('') + '</pre>';
+      }
+      const el = document.createElement('div');
+      el.className = 'msg tool';
+      el.innerHTML = editHtml;
+      const shouldScroll = isNearBottom();
+      const container = document.getElementById('messages');
+      const typingEl = document.getElementById('typing');
+      if (typingEl) { container.insertBefore(el, typingEl); } else { container.appendChild(el); }
+      scrollBottom(shouldScroll);
     } else {
       // Show agent source + tool name + arguments preview
       const argKeys = Object.keys(args);
@@ -266,7 +327,7 @@
     const resultSvc = data.llm_service ? ' via ' + data.llm_service : '';
     const fullResult = data.result || '';
     // Check if result contains a diff — render it fully with colors
-    const diffRendered = _renderDiff(fullResult);
+    const diffRendered = _renderDiff(fullResult, data.path || '');
     if (diffRendered) {
       const el = document.createElement('div');
       el.className = 'msg tool';
@@ -276,9 +337,58 @@
       const typingEl = document.getElementById('typing');
       if (typingEl) { container.insertBefore(el, typingEl); } else { container.appendChild(el); }
       scrollBottom(shouldScroll);
+    } else if (fullResult.length > 300) {
+      // Long result — collapsible details with optional syntax highlighting
+      const firstLine = fullResult.split('\n')[0].substring(0, 200);
+      const el = document.createElement('div');
+      el.className = 'msg tool';
+      // Detect language from file path for read_file results
+      const _trPath = data.path || '';
+      const _trExt = _trPath.split('.').pop().toLowerCase();
+      const _trLangMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',jsx:'javascript',tsx:'typescript'};
+      const _trLang = _trLangMap[_trExt] || '';
+      const _trCls = (data.fs_action === 'read_file' && _trLang) ? ' class="language-' + _trLang + '"' : '';
+      el.innerHTML = '<details><summary style="color:#4ecdc4;font-size:11px;cursor:pointer">\u2705 [' + escapeHtml(resultAgent + resultSvc) + '] ' + escapeHtml(data.tool) + ': ' + escapeHtml(firstLine) + '</summary><pre style="font-size:11px;margin:4px 0 0 0;max-height:300px;overflow-y:auto"><code' + _trCls + '>' + escapeHtml(fullResult) + '</code></pre></details>';
+      const shouldScroll = isNearBottom();
+      const container = document.getElementById('messages');
+      const typingEl = document.getElementById('typing');
+      if (typingEl) { container.insertBefore(el, typingEl); } else { container.appendChild(el); }
+      // Apply syntax highlighting when details is opened
+      if (typeof hljs !== 'undefined' && _trLang) {
+        el.querySelector('details').addEventListener('toggle', function() {
+          if (this.open) { el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b)); }
+        }, { once: true });
+      }
+      scrollBottom(shouldScroll);
+    } else if (data.fs_action === 'read_file' && data.path && fullResult.length > 50) {
+      // read_file: render as syntax-highlighted code block
+      const _rfExt = (data.path || '').split('.').pop().toLowerCase();
+      const _rfLangMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',jsx:'javascript',tsx:'typescript'};
+      const _rfLang = _rfLangMap[_rfExt] || '';
+      const _rfCls = _rfLang ? ' class="language-' + _rfLang + '"' : '';
+      const el = document.createElement('div');
+      el.className = 'msg tool';
+      const _rfFirstLine = fullResult.split('\n')[0].substring(0, 150);
+      if (fullResult.length > 300) {
+        el.innerHTML = '<details><summary style="color:#4ecdc4;font-size:11px;cursor:pointer">\u2705 [' + escapeHtml(resultAgent + resultSvc) + '] read_file: ' + escapeHtml(_rfFirstLine) + '</summary><pre style="margin:4px 0 0 0;max-height:400px;overflow-y:auto"><code' + _rfCls + '>' + escapeHtml(fullResult) + '</code></pre></details>';
+        if (typeof hljs !== 'undefined' && _rfLang) {
+          el.querySelector('details').addEventListener('toggle', function() {
+            if (this.open) { el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b)); }
+          }, { once: true });
+        }
+      } else {
+        el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 [' + escapeHtml(resultAgent + resultSvc) + '] read_file</span><pre style="margin:4px 0 0 0"><code' + _rfCls + '>' + escapeHtml(fullResult) + '</code></pre>';
+        if (typeof hljs !== 'undefined' && _rfLang) {
+          el.querySelectorAll('pre code').forEach(b => hljs.highlightElement(b));
+        }
+      }
+      const shouldScroll = isNearBottom();
+      const container = document.getElementById('messages');
+      const typingEl = document.getElementById('typing');
+      if (typingEl) { container.insertBefore(el, typingEl); } else { container.appendChild(el); }
+      scrollBottom(shouldScroll);
     } else {
-      const preview = fullResult.substring(0, 200);
-      addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + preview + (fullResult.length > 200 ? '...' : ''));
+      addMsg('tool', '\u2705 [' + resultAgent + resultSvc + '] ' + data.tool + ': ' + escapeHtml(fullResult));
     }
     // User /call has no agent loop following — don't show typing
     if (data.agent_name === 'user') {

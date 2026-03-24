@@ -38,7 +38,9 @@ export class RelayManager implements vscode.Disposable {
   private port: number = 0;
   private wsToken: string = '';
   private rootDir: string = '';
+  public getRootDir(): string { return this.rootDir; }
   private allowExec: boolean = true;
+  private allowAutomation: boolean = false;
   private readonly: boolean = false;
   private running = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -61,6 +63,7 @@ export class RelayManager implements vscode.Disposable {
 
     this.rootDir = workspaceDir;
     this.allowExec = allowExec;
+    this.allowAutomation = vscode.workspace.getConfiguration('pawflow').get('allowAutomation', false);
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
     this.port = await findFreePort();
@@ -237,6 +240,15 @@ export class RelayManager implements vscode.Disposable {
     const relPath = msg.path || '.';
     const requestId = msg.request_id || '';
 
+    // Gate screen automation
+    if (action.startsWith('screen_') && !this.allowAutomation) {
+      const response = JSON.stringify({
+        request_id: requestId, ok: false,
+        error: 'Screen automation not allowed. Enable pawflow.allowAutomation in VS Code settings.',
+      });
+      socket.write(response + '\n');
+      return;
+    }
     const result = executeAction(this.rootDir, action, relPath, msg, this.readonly, this.allowExec, this.relayId);
 
     const response = JSON.stringify({

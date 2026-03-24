@@ -50,6 +50,25 @@ class VariableResolutionError(PawFlowError):
 
 
 # ============================================================================
+# Utilities
+# ============================================================================
+
+def safe_float(val, default: float = 0.0) -> float:
+    """Parse a float from user input, handling French comma decimal separator.
+
+    Supports: '0.05', '0,05', 3.5, 0, None, ''.
+    """
+    if val is None or val == "":
+        return default
+    if isinstance(val, (int, float)):
+        return float(val)
+    try:
+        return float(str(val).replace(",", "."))
+    except (ValueError, TypeError):
+        return default
+
+
+# ============================================================================
 # FlowFile
 # ============================================================================
 

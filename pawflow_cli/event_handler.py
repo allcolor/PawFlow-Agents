@@ -43,6 +43,7 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             data.get("tool", "?"),
             data.get("result", ""),
             data.get("agent_name", ""),
+            path=data.get("path", ""),
         )
 
     elif ev_type == "iteration_status":

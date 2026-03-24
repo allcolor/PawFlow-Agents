@@ -157,6 +157,11 @@
           "default": true,
           "description": "Allow shell execution via relay"
         },
+        "pawflow.allowAutomation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow screen automation (screenshot, click, type) via relay. Requires pyautogui + mss installed."
+        },
         "pawflow.pythonPath": {
           "type": "string",
           "default": "python",

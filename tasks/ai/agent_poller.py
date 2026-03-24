@@ -693,7 +693,7 @@ class AgentPollerMixin:
             "conv_attr": "", "conversation_id": conversation_id,
             "user_id": poll_user_id,
             "max_context_size": _poll_ctx_max,
-            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.8)),
+            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.75)),
             "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
             "active_agent_name": _agent_name,
             "active_llm_service": _agent_svc,

@@ -151,6 +151,11 @@ class FSRelayHandler(BaseHTTPRequestHandler):
             self._log_op(action, rel_path, False, "readonly mode")
             self._send_json(False, error="Operation not allowed in readonly mode")
             return
+        # Automation check
+        if action.startswith("screen_") and not getattr(self, 'allow_automation', False):
+            self._log_op(action, rel_path, False, "automation not allowed")
+            self._send_json(False, error="Screen automation not allowed. Start relay with --allow-automation")
+            return
 
         # Resolve path
         abs_path = self._resolve(rel_path)
@@ -626,7 +631,7 @@ _ACTIONS = {
 # ── Main ──────────────────────────────────────────────────────────
 
 def _make_handler_class(root_dir: str, secret: str, readonly: bool,
-                        allow_exec: bool = False):
+                        allow_exec: bool = False, allow_automation: bool = False):
     """Create a handler class with bound config (avoids lambda issues)."""
 
     class ConfiguredHandler(FSRelayHandler):
@@ -636,6 +641,7 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
     ConfiguredHandler.secret = secret
     ConfiguredHandler.readonly = readonly
     ConfiguredHandler.allow_exec = allow_exec
+    ConfiguredHandler.allow_automation = allow_automation
     return ConfiguredHandler
 
 
@@ -1039,6 +1045,8 @@ def main():
                         help="Reject write/delete operations")
     parser.add_argument("--allow-exec", action="store_true",
                         help="Allow shell command execution (disabled by default)")
+    parser.add_argument("--allow-automation", action="store_true",
+                        help="Allow screen automation (screenshot, click, type — disabled by default)")
     # Auto-registration params
     parser.add_argument("--login-url", default="http://localhost:9090",
                         help="PawFlow chat UI URL for OAuth login (default: http://localhost:9090)")
@@ -1083,6 +1091,7 @@ def main():
         f"  Directory: {root_dir}\n"
         f"  Mode:      {mode}\n"
         f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
+        f"  Automation:{'enabled' if args.allow_automation else 'disabled'}\n"
         f"  Token:     {masked}\n"
         f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n\n"
     )

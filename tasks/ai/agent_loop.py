@@ -60,11 +60,13 @@ from tasks.ai.agent_poller import AgentPollerMixin
 from tasks.ai.agent_identity import AgentIdentityMixin
 from tasks.ai.agent_serialization import AgentSerializationMixin
 from tasks.ai.agent_utils import AgentUtilsMixin
+from tasks.ai.agent_core import AgentCoreMixin
 
 
 class AgentLoopTask(
     AgentActionsMixin,
     AgentStreamingMixin,
+    AgentCoreMixin,
     AgentCompactionMixin,
     AgentContextMixin,
     AgentPollerMixin,
@@ -250,6 +252,10 @@ class AgentLoopTask(
             "summarizer_service": {
                 "type": "string", "required": False, "default": "${conv.summarizer_service}",
                 "description": "Dedicated LLM service for context compaction/summary. Cascades: conv → user → global params.",
+            },
+            "narrator_service": {
+                "type": "string", "required": False, "default": "${conv.narrator_service}",
+                "description": "Dedicated LLM service for tool-call narration. Cascades: conv → user → global params.",
             },
             "llm_service": {
                 "type": "string", "required": False, "default": "${conv.llm_default_service}",

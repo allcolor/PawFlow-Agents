@@ -132,6 +132,10 @@ function addMsg(role, text, extra) {
     container.appendChild(el);
   }
   scrollBottom(shouldScroll);
+  // Syntax highlighting via highlight.js (if loaded)
+  if (typeof hljs !== 'undefined') {
+    el.querySelectorAll('pre code').forEach(function(block) { hljs.highlightElement(block); });
+  }
   // Re-scroll when images finish loading (they change height after initial render)
   if (shouldScroll) {
     for (const img of el.querySelectorAll('img')) {
@@ -147,29 +151,53 @@ function escapeHtml(t) {
   return d.innerHTML;
 }
 
-function _renderDiff(text) {
-  // Detect if this looks like a diff (PawFlow custom format or unified)
-  const lines = text.split('\\n');
-  const hasDiffLines = lines.some(l => {
-    const s = l.trimStart();
+var _diffLangMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',jsx:'javascript',tsx:'typescript',vue:'xml',svelte:'xml'};
+
+function _synLine(code, lang) {
+  // Syntax-highlight a single line of code (returns HTML)
+  if (!lang || typeof hljs === 'undefined') return escapeHtml(code);
+  try { return hljs.highlight(code, {language: lang, ignoreIllegals: true}).value; }
+  catch(e) { return escapeHtml(code); }
+}
+
+function _renderDiff(text, filePath) {
+  var lines = text.split('\n');
+  var hasDiffLines = lines.some(function(l) {
+    var s = l.trimStart();
     return s.startsWith('+ ') || s.startsWith('- ') || s.startsWith('@@');
   });
-  const hasDiffContext = /replacement|edited |written |hunks/i.test(text);
+  var hasDiffContext = /replacement|edited |written |hunks/i.test(text);
   if (!hasDiffLines || !hasDiffContext) return null;
 
-  return '<pre class="diff-output">' + lines.map(line => {
-    const s = line.trimStart();
-    if (s.startsWith('+ ') || /^\\d+\\s+\\+ /.test(s)) {
-      return '<span style="color:#3fb950">' + escapeHtml(line) + '</span>';
-    } else if (s.startsWith('- ') || /^\\d+\\s+- /.test(s)) {
-      return '<span style="color:#f85149">' + escapeHtml(line) + '</span>';
-    } else if (s.startsWith('@@')) {
-      return '<span style="color:#58a6ff">' + escapeHtml(line) + '</span>';
-    } else if (/^(Edited |Written |replacement)/i.test(s)) {
-      return '<strong>' + escapeHtml(line) + '</strong>';
+  // Detect language from file path for syntax coloring within diff lines
+  var ext = (filePath || '').split('.').pop().toLowerCase();
+  var lang = _diffLangMap[ext] || '';
+
+  return '<pre class="diff-output">' + lines.map(function(line) {
+    var s = line.trimStart();
+    // Extract line number prefix and +/- marker, highlight only the code part
+    var m = s.match(/^(\d+\s+)?([+-] )(.*)/);
+    if (m) {
+      var prefix = (m[1] || '') + m[2];
+      var code = m[3];
+      var bg = m[2].startsWith('+') ? 'rgba(63,185,80,0.1)' : 'rgba(248,81,73,0.1)';
+      var markerColor = m[2].startsWith('+') ? '#3fb950' : '#f85149';
+      return '<div style="background:' + bg + '"><span style="color:' + markerColor + ';user-select:none">' + escapeHtml(prefix) + '</span>' + _synLine(code, lang) + '</div>';
     }
-    return '<span style="color:#8b949e">' + escapeHtml(line) + '</span>';
-  }).join('\\n') + '</pre>';
+    if (s.startsWith('+ ')) {
+      return '<div style="background:rgba(63,185,80,0.1)"><span style="color:#3fb950;user-select:none">+ </span>' + _synLine(s.slice(2), lang) + '</div>';
+    }
+    if (s.startsWith('- ')) {
+      return '<div style="background:rgba(248,81,73,0.1)"><span style="color:#f85149;user-select:none">- </span>' + _synLine(s.slice(2), lang) + '</div>';
+    }
+    if (s.startsWith('@@')) {
+      return '<div><span style="color:#58a6ff">' + escapeHtml(line) + '</span></div>';
+    }
+    if (/^(Edited |Written |replacement)/i.test(s)) {
+      return '<div><strong>' + escapeHtml(line) + '</strong></div>';
+    }
+    return '<div><span style="color:#8b949e">' + _synLine(line, lang) + '</span></div>';
+  }).join('') + '</pre>';
 }
 
 function isImageFile(name) {
@@ -272,7 +300,8 @@ function renderMarkdown(text) {
   // 1. Extract code blocks BEFORE escaping (preserve their content as-is)
   const _codeBlocks = [];
   text = text.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
-    _codeBlocks.push('<pre><code>' + escapeHtml(code) + '</code></pre>');
+    var cls = lang ? ' class="language-' + lang + '"' : '';
+    _codeBlocks.push('<pre><code' + cls + '>' + escapeHtml(code) + '</code></pre>');
     return '\x00CB' + (_codeBlocks.length - 1) + '\x00';
   });
   const _inlineCodes = [];

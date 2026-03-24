@@ -88,7 +88,9 @@ class FileStore:
               content_type: str = "application/octet-stream",
               conversation_id: str = "",
               user_id: str = "",
-              ttl: int = 0) -> str:
+              ttl: int = 0,
+              agent_name: str = "",
+              category: str = "") -> str:
         """Store a file and return its file_id.
 
         Args:
@@ -98,6 +100,8 @@ class FileStore:
             conversation_id: Optional conversation context
             user_id: Owner user ID (empty = no ownership restriction)
             ttl: Time-to-live in seconds (0 = no expiry)
+            agent_name: Agent that created this file (for cleanup filtering)
+            category: File category: 'tool_result', 'image', 'export', etc.
 
         Returns:
             file_id: Unique identifier for retrieval
@@ -125,6 +129,8 @@ class FileStore:
                 "user_id": user_id,
                 "shared_with": [],
                 "ttl": ttl,
+                "agent_name": agent_name,
+                "category": category,
             }
 
         self._save_index()
@@ -233,6 +239,29 @@ class FileStore:
             self._remove_entry(file_id)
         self._save_index()
         return True
+
+    def delete_by(self, category: str = "", conversation_id: str = "",
+                  agent_name: str = "") -> int:
+        """Delete all files matching the given filters.
+
+        All non-empty filters must match (AND logic). Returns count deleted.
+        """
+        to_delete = []
+        with self._store_lock:
+            self._ensure_loaded()
+            for fid, entry in self._entries.items():
+                if category and entry.get("category") != category:
+                    continue
+                if conversation_id and entry.get("conversation_id") != conversation_id:
+                    continue
+                if agent_name and entry.get("agent_name") != agent_name:
+                    continue
+                to_delete.append(fid)
+            for fid in to_delete:
+                self._remove_entry(fid)
+        if to_delete:
+            self._save_index()
+        return len(to_delete)
 
     def _remove_entry(self, file_id: str):
         """Remove entry and its files (must be called with lock held)."""

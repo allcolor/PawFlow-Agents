@@ -139,12 +139,13 @@ async function deleteMsg(btn) {
   }
 }
 
-async function cancelAgent(target) {
+async function cancelAgent(target, force) {
   if (!conversationId) return;
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('status').textContent = t('cancelling');
   const body = { action: 'cancel', conversation_id: conversationId };
   if (target && target !== 'ALL') body.agent_name = target;
+  if (force) body.force = true;
   try {
     await fetch(API, {
       method: 'POST',

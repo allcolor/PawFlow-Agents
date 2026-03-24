@@ -203,6 +203,19 @@ class AgentToolConfigMixin:
                     h.set_base_url(file_base_url)
                 if user_id:
                     h.set_user_id(user_id)
+            elif hasattr(h, 'name') and h.name == 'screen':
+                fs_svc = self._find_filesystem_service(user_id)
+                if fs_svc:
+                    h.set_service(fs_svc)
+                if user_id:
+                    h.set_user_id(user_id)
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+            elif hasattr(h, 'name') and h.name == 'read_history':
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
             elif isinstance(h, RemoteExecutorHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)

@@ -32,14 +32,14 @@ class ImageGenerationHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Generate an image from a text prompt. "
+            "ALWAYS set width/height to match your target size (min 256). "
+            "For small assets (icons, sprites), generate at 256-512 and resize with a script. "
             "PREFER writing directly to the user's filesystem: set destination to "
             "the filesystem service name and path to the target file "
             "(e.g. destination='fs_xxx', path='assets/player.png'). "
             "This avoids extra copy steps. Use 'filestore' only when you need a "
             "temporary download URL. "
-            "To move a filestore file to the filesystem later, use filesystem "
-            "copy_between (source_service='FileStore', dest_service='fs_xxx'). "
-            "NEVER use execute_script to download from filestore URLs — they require auth."
+            "To read a FileStore image from a script, use read_file with fs://filestore/file_id."
         )
 
     @property
@@ -57,11 +57,11 @@ class ImageGenerationHandler(ToolHandler):
                 },
                 "width": {
                     "type": "integer",
-                    "description": "Image width in pixels (optional)",
+                    "description": "Image width in pixels (default 1024, minimum 256). For small assets like icons, generate at 256-512 then resize with a script.",
                 },
                 "height": {
                     "type": "integer",
-                    "description": "Image height in pixels (optional)",
+                    "description": "Image height in pixels (default 1024, minimum 256).",
                 },
                 "destination": {
                     "type": "string",

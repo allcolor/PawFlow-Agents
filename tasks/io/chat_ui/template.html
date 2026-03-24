@@ -283,7 +283,21 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .ask-user-btn:hover{background:#c73e54}
 .load-more-banner{text-align:center;padding:8px;color:#e94560;cursor:pointer;font-size:13px;border-bottom:1px solid #0f3460;background:#0f1629}
 .load-more-banner:hover{background:#16213e}
+.diff-output{background:#161b22;border-radius:4px;padding:4px 8px;overflow-x:auto;line-height:1.5}
+.diff-output div{margin:0;padding:0 4px;border-radius:2px}
+pre code.hljs{background:transparent!important;padding:0!important}
+.msg pre{background:#161b22;border-radius:6px;padding:8px 12px;overflow-x:auto;font-size:12px;line-height:1.5;margin:4px 0}
 </style>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+if (typeof hljs !== 'undefined') {
+  hljs.configure({ ignoreUnescapedHTML: true });
+  document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('pre code').forEach(function(b) { hljs.highlightElement(b); });
+  });
+}
+</script>
 </head>
 <body>
 <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9776;</button>

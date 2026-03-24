@@ -47,6 +47,43 @@ def _agent_color(name: str) -> str:
     return _AGENT_COLORS[h % len(_AGENT_COLORS)]
 
 
+_EXT_LANG = {
+    "js": "javascript", "ts": "typescript", "py": "python", "rb": "ruby",
+    "rs": "rust", "go": "go", "java": "java", "cpp": "cpp", "c": "c",
+    "cs": "csharp", "php": "php", "sh": "bash", "bash": "bash",
+    "json": "json", "html": "html", "xml": "xml", "css": "css",
+    "sql": "sql", "yaml": "yaml", "yml": "yaml", "jsx": "javascript",
+    "tsx": "typescript", "vue": "html", "svelte": "html",
+}
+
+
+def _lang_from_path(fpath: str) -> str:
+    ext = fpath.rsplit(".", 1)[-1].lower() if "." in fpath else ""
+    return _EXT_LANG.get(ext, "")
+
+
+def _syn_diff_line(console, marker: str, code: str, lang: str, bg: str):
+    """Print a single diff line with syntax highlighting + colored background."""
+    from rich.text import Text
+    from rich.style import Style
+    marker_style = "green" if marker == "+" else "red"
+    prefix = Text(f"    {marker} ", style=marker_style)
+    if lang:
+        try:
+            from rich.syntax import Syntax
+            syn = Syntax("", lang, theme="monokai", background_color="default")
+            highlighted = syn.highlight(code)
+            highlighted.rstrip()
+            line = prefix + highlighted
+        except Exception:
+            from rich.markup import escape
+            line = Text(f"    {marker} {code}", style=marker_style)
+    else:
+        line = Text(f"    {marker} {code}", style=marker_style)
+    line.stylize(Style(bgcolor=bg))
+    console.print(line, highlight=False)
+
+
 class TerminalRenderer:
     """Renders PawFlow chat events to the terminal."""
 
@@ -227,7 +264,44 @@ class TerminalRenderer:
 
     def print_tool_call(self, tool: str, arguments: dict, agent: str = "",
                         service: str = ""):
-        # Format arguments compactly — Claude Code style
+        self._set_status(f"▶ {agent or ''}  {tool}...")
+
+        # Special rendering for filesystem edit — inline diff preview
+        if tool == "filesystem" and arguments.get("action") == "edit" and arguments.get("path"):
+            fpath = arguments.get("path", "?")
+            old_s = arguments.get("old_string", "")
+            new_s = arguments.get("new_string", "")
+            start_ln = arguments.get("start_line", "")
+            end_ln = arguments.get("end_line", "")
+            if self.console:
+                from rich.markup import escape
+                color = _agent_color(agent) if agent else "yellow"
+                header = f"  [{color}]● {escape(agent or '')}[/{color}] [yellow]Edit[/yellow]([dim]{escape(fpath)}[/dim])"
+                if start_ln and end_ln:
+                    header += f" [dim]lines {start_ln}-{end_ln}[/dim]"
+                self.console.print(header)
+                _lang = _lang_from_path(fpath)
+                if old_s:
+                    for line in old_s.split("\n")[:8]:
+                        _syn_diff_line(self.console, "-", line, _lang, "rgb(40,22,22)")
+                    if len(old_s.split("\n")) > 8:
+                        self.console.print(f"    [dim]  ... +{len(old_s.split(chr(10))) - 8} lines[/dim]")
+                if new_s:
+                    for line in new_s.split("\n")[:8]:
+                        _syn_diff_line(self.console, "+", line, _lang, "rgb(22,40,22)")
+                    if len(new_s.split("\n")) > 8:
+                        self.console.print(f"    [dim]  ... +{len(new_s.split(chr(10))) - 8} lines[/dim]")
+            else:
+                print(f"  ● {agent or ''} Edit({fpath})")
+                if old_s:
+                    for line in old_s.split("\n")[:6]:
+                        print(f"    - {line}")
+                if new_s:
+                    for line in new_s.split("\n")[:6]:
+                        print(f"    + {line}")
+            return
+
+        # Default: compact argument preview
         args_parts = []
         for k, v in arguments.items():
             vs = repr(v) if not isinstance(v, str) else v
@@ -238,7 +312,6 @@ class TerminalRenderer:
         if len(args_str) > 200:
             args_str = args_str[:200] + "..."
 
-        self._set_status(f"▶ {agent or ''}  {tool}...")
         if self.console:
             from rich.markup import escape
             color = _agent_color(agent) if agent else "yellow"
@@ -250,43 +323,62 @@ class TerminalRenderer:
         else:
             print(f"  ● {agent or ''} {tool}({args_str})")
 
-    def print_tool_result(self, tool: str, result: str, agent: str = ""):
+    def print_tool_result(self, tool: str, result: str, agent: str = "",
+                          path: str = ""):
         result = self._strip_tool_wrapper(result)
-        # Detect diff output — both unified format and PawFlow custom format
         lines = result.split("\n")
+        import re as _re_diff
         has_diff_lines = any(
             line.lstrip().startswith("+ ") or line.lstrip().startswith("- ")
             or line.startswith("@@")
+            or _re_diff.match(r'\s*\d+\s+[+-] ', line)
             for line in lines
         )
         is_diff = has_diff_lines and ("replacement" in result.lower() or "edited " in result.lower()
                   or "diff " in result or "---" in result)
 
-        # Truncate non-diff results
         if not is_diff and len(result) > 500:
             result = result[:500] + f"\n... ({len(result)} chars total)"
 
         if self.console:
             from rich.markup import escape
             if is_diff:
-                # Render diff with colors
-                rendered_lines = []
+                _lang = _lang_from_path(path)
                 for line in result.split("\n"):
                     stripped = line.lstrip()
-                    # Check for line-number prefixed diffs: "  42 + new_code" or "  42 - old_code"
-                    if stripped.startswith("+ ") or (len(stripped) > 4 and stripped[0].isdigit() and " + " in stripped):
-                        rendered_lines.append(f"  [green]{escape(line)}[/green]")
-                    elif stripped.startswith("- ") or (len(stripped) > 4 and stripped[0].isdigit() and " - " in stripped):
-                        rendered_lines.append(f"  [red]{escape(line)}[/red]")
+                    import re as _re_ln
+                    # Line-number prefixed: "  42 + code" or "  42 - code"
+                    _m = _re_ln.match(r'^(\s*\d+\s+)([+-] )(.*)', line)
+                    if _m:
+                        marker = "+" if _m.group(2).startswith("+") else "-"
+                        bg = "rgb(22,40,22)" if marker == "+" else "rgb(40,22,22)"
+                        _syn_diff_line(self.console, marker, _m.group(3), _lang, bg)
+                    elif stripped.startswith("+ "):
+                        _syn_diff_line(self.console, "+", stripped[2:], _lang, "rgb(22,40,22)")
+                    elif stripped.startswith("- "):
+                        _syn_diff_line(self.console, "-", stripped[2:], _lang, "rgb(40,22,22)")
                     elif stripped.startswith("@@"):
-                        rendered_lines.append(f"  [cyan]{escape(line)}[/cyan]")
+                        self.console.print(f"  [cyan]{escape(line)}[/cyan]")
                     elif "replacement" in line.lower() or "edited " in line.lower():
-                        rendered_lines.append(f"  [bold]{escape(line)}[/bold]")
+                        self.console.print(f"  [bold]{escape(line)}[/bold]")
                     else:
-                        rendered_lines.append(f"  [dim]{escape(line)}[/dim]")
-                self.console.print("\n".join(rendered_lines))
+                        self.console.print(f"  [dim]{escape(line)}[/dim]")
             else:
-                # Compact result — green checkmark, first line only
+                # Syntax highlight for read_file results
+                _lang = _lang_from_path(path) if path else ""
+                if _lang and len(result) > 50:
+                    try:
+                        from rich.syntax import Syntax
+                        from rich.panel import Panel
+                        _fname = path.rsplit("/", 1)[-1] if "/" in path else path
+                        syntax = Syntax(result, _lang, theme="monokai",
+                                        line_numbers=True, word_wrap=True)
+                        self.console.print(Panel(syntax, title=f"[dim]{_fname}[/dim]",
+                                                 border_style="dim", expand=False,
+                                                 padding=(0, 1)))
+                        return
+                    except Exception:
+                        pass
                 first_line = result.split("\n")[0][:200]
                 if len(result) > len(first_line):
                     self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}...[/dim]")

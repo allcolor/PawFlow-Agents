@@ -24,12 +24,14 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
 
         # Build service cost info from registry
         greg = GlobalServiceRegistry.get_instance()
+        from core import safe_float
+
         svc_costs = {}
         for svc_id, svc_def in greg.get_all_definitions().items():
             if getattr(svc_def, "service_type", "") == "llmConnection":
                 svc_costs[svc_id] = {
-                    "cost_per_1m_input": float(svc_def.config.get("cost_per_1m_input", 0) or 0),
-                    "cost_per_1m_output": float(svc_def.config.get("cost_per_1m_output", 0) or 0),
+                    "cost_per_1m_input": safe_float(svc_def.config.get("cost_per_1m_input", 0)),
+                    "cost_per_1m_output": safe_float(svc_def.config.get("cost_per_1m_output", 0)),
                 }
 
         stats = []

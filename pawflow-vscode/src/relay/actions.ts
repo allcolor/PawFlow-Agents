@@ -16,6 +16,7 @@ const WRITE_ACTIONS = new Set([
   'git_commit', 'git_push', 'exec', 'batch_edit', 'apply_patch',
   'edit_notebook', 'git_add', 'git_reset', 'git_stash', 'git_branch',
   'git_merge', 'git_rebase', 'git_cherry_pick', 'git_tag', 'project_init',
+  'screen_click', 'screen_double_click', 'screen_type', 'screen_key', 'screen_move', 'screen_scroll',
 ]);
 
 // Resolve fs://service_id/path → real filesystem path
@@ -151,7 +152,7 @@ export function executeAction(
         const recursive = req.recursive !== false;
         // Simple glob implementation
         const results: string[] = [];
-        function walk(dir: string) {
+        const walk = (dir: string): void => {
           for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
             const relP = path.relative(absPath, full).replace(/\\/g, '/');
@@ -169,7 +170,7 @@ export function executeAction(
         const compiled = new RegExp(regex, 'i');
         const recursive = req.recursive !== false;
         const results: any[] = [];
-        function grepWalk(dir: string) {
+        const grepWalk = (dir: string): void => {
           for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
             const full = path.join(dir, entry.name);
             if (entry.isFile()) {
@@ -661,6 +662,75 @@ export function executeAction(
         const content = `# PawFlow Project\n\nRoot: ${rootDir}\nGenerated: ${new Date().toISOString()}\n`;
         fs.writeFileSync(mdPath, content, 'utf-8');
         return { ok: true, data: { path: '.pawflow.md', size: content.length } };
+      }
+
+      // Screen automation — delegate to Python (nut-js is complex to bundle in VS Code)
+      case 'screen_screenshot':
+      case 'screen_click':
+      case 'screen_double_click':
+      case 'screen_type':
+      case 'screen_key':
+      case 'screen_move':
+      case 'screen_scroll':
+      case 'screen_mouse_position': {
+        // Use Python pyautogui via subprocess — simpler than bundling native deps
+        const screenAction = action.replace('screen_', '');
+        const pyArgs = JSON.stringify(req).replace(/"/g, '\\"');
+        const pyScript = `
+import json, sys
+args = json.loads("${pyArgs}")
+action = "${screenAction}"
+try:
+    import pyautogui
+    pyautogui.FAILSAFE = True
+    if action == "screenshot":
+        import mss, base64
+        from mss.tools import to_png
+        with mss.mss() as sct:
+            img = sct.grab(sct.monitors[0])
+            png = to_png(img.rgb, img.size)
+        print(json.dumps(base64.b64encode(png).decode()))
+    elif action == "click":
+        pyautogui.click(int(args.get("x",0)), int(args.get("y",0)), button=args.get("button","left"))
+        print(json.dumps({"x": args.get("x",0), "y": args.get("y",0)}))
+    elif action == "double_click":
+        pyautogui.doubleClick(int(args.get("x",0)), int(args.get("y",0)))
+        print(json.dumps({"x": args.get("x",0), "y": args.get("y",0)}))
+    elif action == "type":
+        pyautogui.write(args.get("text",""), interval=0.02)
+        print(json.dumps({"typed": len(args.get("text",""))}))
+    elif action == "key":
+        k = args.get("key","")
+        if "+" in k:
+            pyautogui.hotkey(*[x.strip() for x in k.split("+")])
+        else:
+            pyautogui.press(k)
+        print(json.dumps({"pressed": k}))
+    elif action == "move":
+        pyautogui.moveTo(int(args.get("x",0)), int(args.get("y",0)), duration=0.2)
+        print(json.dumps({"moved": True}))
+    elif action == "scroll":
+        pyautogui.scroll(int(args.get("amount",3)), x=int(args.get("x",0)), y=int(args.get("y",0)))
+        print(json.dumps({"scrolled": args.get("amount",3)}))
+    elif action == "mouse_position":
+        p = pyautogui.position()
+        print(json.dumps({"x": p.x, "y": p.y}))
+except ImportError:
+    print(json.dumps({"error": "pyautogui not installed. Run: pip install pyautogui mss"}))
+    sys.exit(1)
+`.trim();
+        const tmpFile = path.join(require('os').tmpdir(), `pawflow_screen_${Date.now()}.py`);
+        fs.writeFileSync(tmpFile, pyScript, 'utf-8');
+        try {
+          const result = cp.execSync(`python "${tmpFile}"`, { timeout: 30000, encoding: 'utf-8' });
+          fs.unlinkSync(tmpFile);
+          const parsed = JSON.parse(result.trim());
+          if (parsed.error) { return { ok: false, error: parsed.error }; }
+          return { ok: true, data: parsed };
+        } catch (e: any) {
+          try { fs.unlinkSync(tmpFile); } catch {}
+          return { ok: false, error: `Screen action failed: ${e.message}` };
+        }
       }
 
       default:

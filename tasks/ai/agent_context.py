@@ -388,6 +388,37 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         model_name = self.config.get("model", "")
         user_id = flowfile.get_attribute("http.auth.principal") or ""
 
+        # Check for cancel checkpoint — inject resume context if present
+        if use_conv_store and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                _cp_store = ConversationStore.instance()
+                _cp_key = f"cancel_checkpoint:{_early_agent or 'assistant'}"
+                _checkpoint = _cp_store.get_extra(conversation_id, _cp_key)
+                if _checkpoint and isinstance(_checkpoint, dict):
+                    _cp_tools = _checkpoint.get("tools_called", [])
+                    _cp_partial = _checkpoint.get("partial_response", "")
+                    _resume_parts = ["[System: Resuming after cancellation."]
+                    if _cp_tools:
+                        _resume_parts.append(
+                            f"Tools used before cancel: {', '.join(_cp_tools[-10:])}.")
+                    if _cp_partial:
+                        _resume_parts.append(
+                            f"Partial progress: {_cp_partial}")
+                    _resume_parts.append(
+                        "Continue from where you left off. "
+                        "Do NOT restart work that was already done.]")
+                    messages.append(LLMMessage(
+                        role="user", content=" ".join(_resume_parts)))
+                    messages.append(LLMMessage(
+                        role="assistant",
+                        content="Understood. I'll continue from where I left off."))
+                    # Clear checkpoint after injection
+                    _cp_store.set_extra(conversation_id, _cp_key, None)
+                    logger.info(f"[context:{conversation_id[:8]}] injected resume from cancel checkpoint")
+            except Exception as _cp_err:
+                logger.warning(f"[context] cancel checkpoint check failed: {_cp_err}")
+
         if user_text.strip() or attachments:
             if attachments:
                 logger.info("User message has %d attachment(s): %s",
@@ -542,6 +573,18 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "Keep narration to one short sentence — no explanations, just the action."
         )
 
+        # Context management directive
+        system_prompt += (
+            "\n\nCONTEXT MANAGEMENT: Your conversation context is automatically "
+            "compacted after each response — older messages are summarized to save "
+            "tokens. If you need to recall earlier messages, decisions, file paths, "
+            "or anything from the conversation history, use the read_history tool:\n"
+            "- read_history(action='search', query='database schema') — find messages\n"
+            "- read_history(action='recent', offset=10, limit=5) — browse older messages\n"
+            "- read_history(action='count') — total message count\n"
+            "Do NOT assume information is lost — it is always accessible via read_history."
+        )
+
         # Resilience style directive
         resilience = self.config.get("resilience_style", "balanced")
         if resilience == "cautious":
@@ -615,14 +658,19 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             str(self.config.get("tools_mode", "")).lower()
             or str((_selected_agent_def or {}).get("tools_mode", "")).lower()
         )
+        # Estimate how much context is already used by messages
+        _msg_tokens = self._estimate_tokens(messages) if messages else 0
+        _msg_pct = (_msg_tokens / _resolved_max_ctx * 100) if _resolved_max_ctx else 0
+
         _lazy_tools = (
             _forced_mode == "lazy"
             or (
                 _forced_mode != "full"
                 and len(tool_defs) > 4
                 and (
-                    _resolved_max_ctx < 16000           # small context model
-                    or _tools_pct > 10                  # tools > 10% of context budget
+                    _resolved_max_ctx < 32000           # small/medium context model
+                    or _tools_pct > 5                   # tools > 5% of context budget
+                    or _msg_pct > 60                    # messages already use 60%+ of context
                 )
             )
         )
@@ -704,7 +752,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "channel": channel,
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
-            "narrator_service": self.config.get("narrator_service", ""),
+            "narrator_service": self._resolve_service_param("narrator_service", user_id),
             "resolved_svc": resolved_svc,
             "default_client": self._get_default_client(user_id),
             "summarizer": self._get_summarizer_client(user_id),

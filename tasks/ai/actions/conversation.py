@@ -261,4 +261,69 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
 
         return self._run_bg_context_op(conv_id, "clear", _do_clear, flowfile)
 
+    if action == "clear_store":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.file_store import FileStore
+        fs = FileStore.instance()
+        scope = body.get("scope", "")
+        agent_name = body.get("agent_name", "")
+        if agent_name:
+            # Delete tool results for a specific agent
+            count = fs.delete_by(category="tool_result",
+                                 conversation_id=conv_id, agent_name=agent_name)
+            flowfile.set_content(json.dumps({
+                "deleted": count, "scope": f"agent:{agent_name}",
+            }).encode())
+        elif scope == "all_agents":
+            # Delete all tool results for all agents in this conversation
+            count = fs.delete_by(category="tool_result", conversation_id=conv_id)
+            flowfile.set_content(json.dumps({
+                "deleted": count, "scope": "all_agents",
+            }).encode())
+        else:
+            # Delete ALL filestore files for this conversation
+            count = fs.delete_by(conversation_id=conv_id)
+            flowfile.set_content(json.dumps({
+                "deleted": count, "scope": "conversation",
+            }).encode())
+        return [flowfile]
+
+    if action == "loop_start":
+        conv_id = body.get("conversation_id", "")
+        interval = body.get("interval_seconds", 600)
+        prompt = body.get("prompt", "")
+        if not conv_id or not prompt:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or prompt"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.poll_scheduler import PollScheduler
+        key = PollScheduler.instance().schedule_loop(
+            conv_id, interval, prompt=prompt, user_id=user_id)
+        flowfile.set_content(json.dumps({
+            "started": True, "key": key, "interval": interval, "prompt": prompt,
+        }).encode())
+        return [flowfile]
+
+    if action == "loop_stop":
+        key = body.get("key", "")
+        if not key:
+            flowfile.set_content(json.dumps({"error": "Missing key"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.poll_scheduler import PollScheduler
+        ok = PollScheduler.instance().cancel(key)
+        flowfile.set_content(json.dumps({"stopped": ok, "key": key}).encode())
+        return [flowfile]
+
+    if action == "loop_list":
+        conv_id = body.get("conversation_id", "")
+        from core.poll_scheduler import PollScheduler
+        loops = PollScheduler.instance().list_loops(conv_id)
+        flowfile.set_content(json.dumps({"loops": loops}).encode())
+        return [flowfile]
+
     return None

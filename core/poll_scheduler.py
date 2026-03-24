@@ -99,18 +99,54 @@ class PollScheduler:
         self.schedule(conversation_id, recheck_at, user_id, reason, key=key)
         return recheck_at
 
-    def cancel(self, conversation_id: str) -> bool:
-        """Cancel a scheduled recheck. Returns True if it existed."""
+    def schedule_loop(
+        self, conversation_id: str, interval_seconds: int,
+        prompt: str = "", user_id: str = "", key: str = "",
+    ) -> str:
+        """Schedule a recurring prompt loop. Returns the loop key."""
+        import hashlib
+        loop_key = key or f"loop::{conversation_id}::{hashlib.md5(prompt.encode()).hexdigest()[:6]}"
+        recheck_at = time.time() + interval_seconds
         with self._lock:
-            if conversation_id in self._schedules:
-                del self._schedules[conversation_id]
+            self._schedules[loop_key] = {
+                "conversation_id": conversation_id,
+                "key": loop_key,
+                "recheck_at": recheck_at,
+                "user_id": user_id,
+                "reason": f"[loop] {prompt[:60]}",
+                "created_at": time.time(),
+                "recurring": True,
+                "interval_seconds": interval_seconds,
+                "prompt": prompt,
+            }
+            self._save()
+        logger.info(f"[poll_scheduler] Loop started: {loop_key} every {interval_seconds}s")
+        return loop_key
+
+    def cancel(self, key: str) -> bool:
+        """Cancel a scheduled recheck by key. Returns True if it existed."""
+        with self._lock:
+            if key in self._schedules:
+                del self._schedules[key]
                 self._save()
-                logger.info(f"[poll_scheduler] Cancelled recheck for {conversation_id[:8]}")
+                logger.info(f"[poll_scheduler] Cancelled: {key}")
                 return True
         return False
 
+    def list_loops(self, conversation_id: str = "") -> list:
+        """List active recurring loops, optionally filtered by conversation."""
+        with self._lock:
+            return [
+                v for v in self._schedules.values()
+                if v.get("recurring")
+                and (not conversation_id or v.get("conversation_id") == conversation_id)
+            ]
+
     def get_due(self) -> List[Dict[str, Any]]:
-        """Return all entries whose recheck_at <= now, removing them from schedule."""
+        """Return all entries whose recheck_at <= now, removing them from schedule.
+
+        Recurring entries are automatically re-scheduled.
+        """
         now = time.time()
         due: List[Dict[str, Any]] = []
         with self._lock:
@@ -119,7 +155,18 @@ class PollScheduler:
                 if v["recheck_at"] <= now
             ]
             for k in expired_keys:
-                due.append(self._schedules.pop(k))
+                entry = self._schedules.pop(k)
+                due.append(entry)
+                # Re-schedule recurring entries
+                if entry.get("recurring") and entry.get("interval_seconds"):
+                    next_at = now + entry["interval_seconds"]
+                    self._schedules[k] = {
+                        **entry,
+                        "recheck_at": next_at,
+                        "created_at": now,
+                    }
+                    logger.info(f"[poll_scheduler] Re-scheduled recurring {k} "
+                                f"in {entry['interval_seconds']}s")
             if expired_keys:
                 self._save()
         return due

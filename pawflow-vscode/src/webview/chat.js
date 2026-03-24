@@ -13,6 +13,14 @@ var activeAgents = {};
 var _resData = null;
 var _replyTo = null; // {raw_index, role, agent, text_preview}
 var _msgRawIndex = 0; // tracks raw message index for reply-to
+
+function openFileInEditor(filePath) {
+  vscode.postMessage({ type: 'openFile', path: filePath });
+}
+function fileLink(path) {
+  var fname = path.split('/').pop() || path;
+  return '<a href="#" style="color:#6c5ce7;text-decoration:underline;cursor:pointer" onclick="event.preventDefault();openFileInEditor(\'' + esc(path).replace(/'/g, "\\'") + '\')">' + esc(fname) + '</a>';
+}
 var thinkingBlocks = {}; // agentKey → {el, content, summary, text, start}
 var streamEls = {};      // agentKey → live stream element
 
@@ -200,7 +208,11 @@ function renderToolResult(content) {
       return '<span class="diff-ctx">' + esc(l) + '</span>';
     }).join('\n') + '</pre>';
   }
-  return esc(text.slice(0, 300));
+  if (text.length > 300) {
+    var firstLine = esc(text.split('\n')[0].slice(0, 200));
+    return '<details><summary style="cursor:pointer">' + firstLine + '</summary><pre style="font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:300px;overflow-y:auto">' + esc(text) + '</pre></details>';
+  }
+  return esc(text);
 }
 
 function addMsg(type, content, meta) {
@@ -238,7 +250,19 @@ function addMsg(type, content, meta) {
     div.innerHTML = actionsHtml + replyQuoteHtml + '<span class="agent-badge" style="background:' + color + '">'
       + esc(agent) + (svc ? ' via ' + esc(svc) : '') + '</span>' + renderMd(content);
   } else if (type === 'tool_call') {
-    div.innerHTML = '&#9889; ' + esc(content);
+    // Check if content has diff lines (edit preview)
+    if (content.indexOf('\n- ') !== -1 || content.indexOf('\n+ ') !== -1) {
+      var tcLines = content.split('\n');
+      var tcHeader = esc(tcLines[0]);
+      var tcDiff = tcLines.slice(1).map(function(l) {
+        if (l.startsWith('+ ')) return '<span style="color:#3fb950">' + esc(l) + '</span>';
+        if (l.startsWith('- ')) return '<span style="color:#f85149">' + esc(l) + '</span>';
+        return '<span style="color:#8b949e">' + esc(l) + '</span>';
+      }).join('\n');
+      div.innerHTML = '&#9998; ' + tcHeader + (tcDiff ? '<pre style="margin:2px 0 0 0;font-size:11px">' + tcDiff + '</pre>' : '');
+    } else {
+      div.innerHTML = '&#9889; ' + esc(content);
+    }
   } else if (type === 'tool_result') {
     div.innerHTML = '&#10003; ' + renderToolResult(content);
   } else if (type === 'sub_agent_trace') {
@@ -277,10 +301,15 @@ function addMsg(type, content, meta) {
   return div;
 }
 
-function addToolResult(tool, result) {
+function addToolResult(tool, result, filePath, fsAction) {
   var div = document.createElement('div');
   div.className = 'msg tool_result';
-  div.innerHTML = renderToolResult(result);
+  // Add clickable file link for filesystem operations
+  var pathLink = '';
+  if (filePath && (fsAction === 'read_file' || fsAction === 'edit' || fsAction === 'write_file')) {
+    pathLink = '&#128196; ' + fileLink(filePath) + ' ';
+  }
+  div.innerHTML = pathLink + renderToolResult(result);
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -413,15 +442,35 @@ function handleSSE(event) {
 
     case 'tool_call':
       finalizeThinking(agent);
-      _lastToolCall = agent + ' ' + (data.tool || '') + '(' +
-        JSON.stringify(data.arguments || {}).slice(0, 100) + ')';
-      addMsg('tool_call', _lastToolCall, data);
+      var tcArgs = data.arguments || {};
+      if (data.tool === 'filesystem' && tcArgs.action === 'edit' && tcArgs.path) {
+        // Render edit as inline diff preview with clickable file path
+        var editPath = tcArgs.path || '?';
+        var editHeader = '&#9998; ' + esc(agent) + ' Edit(' + fileLink(editPath) + ')';
+        if (tcArgs.start_line && tcArgs.end_line) editHeader += ' <span style="color:#8b949e">lines ' + tcArgs.start_line + '-' + tcArgs.end_line + '</span>';
+        var diffLines = [];
+        if (tcArgs.old_string) tcArgs.old_string.split('\n').slice(0, 6).forEach(function(l) {
+          diffLines.push('<span style="color:#f85149">- ' + esc(l) + '</span>');
+        });
+        if (tcArgs.new_string) tcArgs.new_string.split('\n').slice(0, 6).forEach(function(l) {
+          diffLines.push('<span style="color:#3fb950">+ ' + esc(l) + '</span>');
+        });
+        var editDiv = document.createElement('div');
+        editDiv.className = 'msg tool_call';
+        editDiv.innerHTML = editHeader + (diffLines.length ? '<pre style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('\n') + '</pre>' : '');
+        messagesEl.appendChild(editDiv);
+        _lastToolCall = agent + ' Edit(' + editPath + ')';
+      } else {
+        _lastToolCall = agent + ' ' + (data.tool || '') + '(' +
+          JSON.stringify(tcArgs).slice(0, 100) + ')';
+        addMsg('tool_call', _lastToolCall, data);
+      }
       _hadToolCalls = true;
       updateActiveAgents(agent, data.tool || 'tool');
       break;
 
     case 'tool_result':
-      addToolResult(data.tool || '', data.result || '');
+      addToolResult(data.tool || '', data.result || '', data.path || '', data.fs_action || '');
       break;
 
     case 'done': {

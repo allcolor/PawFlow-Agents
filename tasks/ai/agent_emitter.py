@@ -82,6 +82,7 @@ class StreamEmitter(AgentEmitter):
         self._agent_svc = ctx.get("active_llm_service", "")
         self._user_id = ctx.get("user_id", "")
         self._use_conv_store = ctx.get("use_conv_store", False)
+        self._current_msg_id = ""  # pre-generated per iteration for dedup
         self._conv_ttl = ctx.get("conv_ttl", 0)
         self._channel = ctx.get("channel", "")
         self._last_token_time = time.time()
@@ -117,6 +118,9 @@ class StreamEmitter(AgentEmitter):
 
     def on_iteration_start(self, iteration, round_num, max_iterations,
                            max_rounds, tools_called, poll_silent):
+        # Pre-generate msg_id for this iteration — shared across token/done events
+        import uuid
+        self._current_msg_id = uuid.uuid4().hex[:12]
         logger.info(
             f"[agent:{self.conversation_id[:8]}] round {round_num}/{max_rounds}, "
             f"iteration {iteration}/{max_iterations}, "
@@ -151,8 +155,9 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_done(self, result: AgentResult) -> None:
-        # Extract msg_id from the last assistant message for client-side dedup
-        _msg_id = ""
+        # Use the msg_id from the actual persisted assistant message
+        # (matches what the store has, so client dedup works across SSE + poll)
+        _msg_id = self._current_msg_id
         for m in reversed(result.new_messages):
             if m.role == "assistant" and m.msg_id:
                 _msg_id = m.msg_id
@@ -217,13 +222,16 @@ class StreamEmitter(AgentEmitter):
         generation = self.generation
         agent = self.agent
 
+        _emitter = self  # capture for closure
+
         def on_token(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
-            self._last_token_time = time.time()
+            _emitter._last_token_time = time.time()
             if not poll_silent:
                 bus.publish_event(cid, "token", {
                     "text": text,
+                    "msg_id": _emitter._current_msg_id,
                     "agent_name": agent_name or "",
                     "source": source,
                 })

@@ -68,11 +68,12 @@
     streamingAgent = agent;  // legacy global
     const s = getStream(agent);
     s.text += data.text;
+    s.msg_id = data.msg_id || s.msg_id || '';  // track msg_id from tokens
     streamingText = s.text;  // legacy global
     // Always have a source — every response comes from an agent
     const src = data.source || {type: 'agent', name: agent};
     if (!s.el) {
-      s.el = addMsg('assistant', '', {source: src});
+      s.el = addMsg('assistant', '', {source: src, msg_id: s.msg_id});
       // Apply subagent class if not main assistant
       const srcName = (src.name || '').toLowerCase();
       if (srcName) {
@@ -554,6 +555,10 @@
       s.el.classList.remove('streaming');
       s.el.classList.add('msg', 'assistant');
       s.el.dataset.rawText = finalText.substring(0, 500);
+      // Register msg_id so poll/replay won't re-add this message
+      if (extra.msg_id && typeof _seenMsgIds !== 'undefined') {
+        _seenMsgIds.add(extra.msg_id);
+      }
       const meta = buildMetaLine(extra);
       if (meta) s.el.insertAdjacentHTML('beforeend', meta);
     } else if (finalText) {

@@ -48,12 +48,18 @@ class AgentCompactionMixin:
 
         safe_end = max(1, len(messages) - keep_recent)
 
+        def _is_clear_ref(content):
+            """Don't re-truncate already-cleared results (they contain critical info)."""
+            return "[Result cleared" in content or "[...truncated]" in content or "[...cleared]" in content
+
         # Pass 1: truncate long tool results to 200 chars
         for i in range(1, safe_end):
             if current_tokens <= target_tokens:
                 break
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            if _is_clear_ref(m.content):
                 continue
             if len(m.content) > 500:
                 _saved = len(m.content) - 200
@@ -63,12 +69,14 @@ class AgentCompactionMixin:
         if current_tokens <= target_tokens:
             return current_tokens
 
-        # Pass 2: shrink to 50 chars
+        # Pass 2: shrink to 50 chars (skip already-cleared refs)
         for i in range(1, safe_end):
             if current_tokens <= target_tokens:
                 break
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
+                continue
+            if _is_clear_ref(m.content):
                 continue
             if len(m.content) > 100:
                 _saved = len(m.content) - 50

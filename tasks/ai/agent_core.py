@@ -312,8 +312,8 @@ class AgentCoreMixin:
                     finish_reason = response.finish_reason
 
                     self._deflate_image_messages(messages)
-                    # Aggressive clearing like Claude Code: keep only last 2 results
-                    _keep = 2
+                    # Clear old tool results — keep last 3 (2 was too aggressive, caused repeats)
+                    _keep = 3
                     self._clear_seen_tool_results(
                         messages, keep_recent=_keep,
                         conversation_id=conversation_id, user_id=user_id,
@@ -395,7 +395,7 @@ class AgentCoreMixin:
 
                     # Mid-turn compaction: every 5 iterations, progressively clear
                     # old tool results on the canonical messages to stop context growth
-                    if iteration % 3 == 0 and len(messages) > 15:
+                    if iteration % 5 == 0 and len(messages) > 20:
                         _cpt = ctx.get("chars_per_token", 0) or 3.5
                         _mid_est = self._estimate_tokens(messages, chars_per_token=_cpt)
                         _mid_target = int(ctx.get("max_context_size", 200000) * 0.5)

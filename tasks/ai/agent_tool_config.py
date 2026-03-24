@@ -231,6 +231,8 @@ class AgentToolConfigMixin:
             elif isinstance(h, FilesystemToolHandler):
                 if user_id:
                     h.set_user_id(user_id)
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
                 # Try to inject filesystem service (Plan B: cross-channel)
                 fs_svc = self._find_filesystem_service(user_id)
                 if fs_svc:

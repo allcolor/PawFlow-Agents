@@ -63,6 +63,130 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         except Exception:
             return flow_default
 
+    # ── /rewind ──
+    if action == "rewind":
+        conv_id = body.get("conversation_id", "")
+        checkpoint_arg = body.get("checkpoint", "").strip()
+        mode = body.get("mode", "")  # "code", "conversation", "both", "summarize"
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+
+        from core.checkpoint import CheckpointManager
+        checkpoints = CheckpointManager.list_checkpoints(conv_id)
+
+        if not checkpoint_arg:
+            # List available checkpoints
+            if not checkpoints:
+                flowfile.set_content(json.dumps({
+                    "message": "No checkpoints available. Checkpoints are created automatically on each user message.",
+                    "checkpoints": [],
+                }).encode())
+                return [flowfile]
+            # Include message preview for each checkpoint
+            cp_list = []
+            for i, cp in enumerate(checkpoints):
+                from datetime import datetime
+                ts = datetime.fromtimestamp(cp.get("timestamp", 0)).strftime("%H:%M:%S")
+                cp_list.append({
+                    "index": i + 1,
+                    "id": cp["id"],
+                    "timestamp": ts,
+                    "message_count": cp.get("message_count", 0),
+                })
+            lines = ["## Checkpoints\n"]
+            for c in cp_list:
+                lines.append(f"  {c['index']}. `{c['id']}` ({c['timestamp']}) — {c['message_count']} messages")
+            lines.append(f"\nUse `/rewind <number>` to rewind to a checkpoint.")
+            flowfile.set_content(json.dumps({
+                "message": "\n".join(lines),
+                "checkpoints": cp_list,
+            }).encode())
+            return [flowfile]
+
+        # Resolve checkpoint: by index or by ID
+        target_cp = None
+        if checkpoint_arg.isdigit():
+            idx = int(checkpoint_arg) - 1
+            if 0 <= idx < len(checkpoints):
+                target_cp = checkpoints[idx]
+        else:
+            for cp in checkpoints:
+                if cp["id"] == checkpoint_arg or cp["id"].startswith(checkpoint_arg):
+                    target_cp = cp
+                    break
+
+        if not target_cp:
+            flowfile.set_content(json.dumps({
+                "error": f"Checkpoint '{checkpoint_arg}' not found. Use /rewind to list.",
+            }).encode())
+            return [flowfile]
+
+        results = {"checkpoint": target_cp["id"]}
+
+        # Default mode: both code and conversation
+        if not mode:
+            mode = "both"
+
+        # Rewind files
+        if mode in ("code", "both"):
+            def _svc_resolver(svc_id):
+                if svc_id:
+                    try:
+                        from gui.services.global_service_registry import GlobalServiceRegistry
+                        return GlobalServiceRegistry.get_instance().get_live_instance(svc_id)
+                    except Exception:
+                        pass
+                # Default: try to find any filesystem service
+                try:
+                    return self._find_filesystem_service(user_id)
+                except Exception:
+                    return None
+
+            file_result = CheckpointManager.rewind_files(
+                conv_id, target_cp["id"], service_resolver=_svc_resolver)
+            results["files"] = file_result
+
+        # Rewind conversation
+        if mode in ("conversation", "both"):
+            target_msg_count = target_cp.get("message_count", 0)
+            if target_msg_count > 0:
+                # Truncate transcript to checkpoint point
+                all_msgs = store.load(conv_id, user_id=user_id)
+                if all_msgs and len(all_msgs) > target_msg_count:
+                    store.save(conv_id, all_msgs[:target_msg_count], user_id=user_id)
+                # Clear agent contexts (they'll be rebuilt on next message)
+                extras = store.get_extras(conv_id, user_id=user_id) or {}
+                for k in list(extras.keys()):
+                    if k.startswith("agent_context:") or k == "agent_context":
+                        store.set_extra(conv_id, k, None, user_id=user_id)
+                results["conversation"] = {
+                    "messages_before": len(all_msgs) if all_msgs else 0,
+                    "messages_after": target_msg_count,
+                }
+
+        # Summarize mode (compact from checkpoint point)
+        if mode == "summarize":
+            # TODO: implement summarize-from-here
+            results["summarize"] = "Not implemented yet"
+
+        # Build response message
+        lines = [f"## Rewound to checkpoint {target_cp['id']}"]
+        if "files" in results:
+            fr = results["files"]
+            lines.append(f"Files: {fr.get('restored', 0)} restored, "
+                         f"{fr.get('deleted', 0)} deleted")
+            if fr.get("errors"):
+                for e in fr["errors"][:5]:
+                    lines.append(f"  ⚠ {e}")
+        if "conversation" in results:
+            cr = results["conversation"]
+            lines.append(f"Conversation: {cr['messages_before']} → "
+                         f"{cr['messages_after']} messages")
+        results["message"] = "\n".join(lines)
+        flowfile.set_content(json.dumps(results).encode())
+        return [flowfile]
+
     if action == "compact":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")

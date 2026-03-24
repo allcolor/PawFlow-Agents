@@ -109,6 +109,21 @@ class AgentCoreMixin:
             except Exception:
                 ctx["_last_known_msg_count"] = 0
 
+        # Start file checkpoint for /rewind support
+        _cp_id = ""
+        if use_conv_store and conversation_id and not ctx.get("is_poll"):
+            try:
+                from core.checkpoint import CheckpointManager
+                _cp_id = CheckpointManager.start_checkpoint(conversation_id)
+                # Set checkpoint_id on FilesystemToolHandler
+                from core.handlers.filesystem import FilesystemToolHandler as _FSH
+                for _h in registry.list_tools():
+                    if isinstance(_h, _FSH):
+                        _h.set_checkpoint_id(_cp_id)
+                        break
+            except Exception as _cp_err:
+                logger.debug(f"[checkpoint] init failed: {_cp_err}")
+
         emitter.on_loop_start(ctx)
         _flush()
         _summ = ctx.get("summarizer", (None, 0, ""))

@@ -273,6 +273,20 @@ class FileStore:
             except Exception:
                 pass
 
+    def list_by_category(self, category: str,
+                         conversation_id: str = "") -> List[Dict[str, Any]]:
+        """List files matching category (and optionally conversation_id)."""
+        result = []
+        with self._store_lock:
+            self._ensure_loaded()
+            for fid, entry in self._entries.items():
+                if entry.get("category") != category:
+                    continue
+                if conversation_id and entry.get("conversation_id") != conversation_id:
+                    continue
+                result.append({"id": fid, **entry})
+        return result
+
     def list_files(self, user_id: str = "") -> List[Dict[str, Any]]:
         """List stored files, filtered by user access.
 

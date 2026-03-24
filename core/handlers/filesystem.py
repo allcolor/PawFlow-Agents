@@ -21,6 +21,8 @@ class FilesystemToolHandler(ToolHandler):
     """
 
     _user_id: str = ""
+    _conversation_id: str = ""
+    _checkpoint_id: str = ""
     _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
 
     # Filesystem service types (checked in order for auto-detection)
@@ -281,6 +283,12 @@ class FilesystemToolHandler(ToolHandler):
     def set_user_id(self, user_id: str):
         self._user_id = user_id
 
+    def set_conversation_id(self, conversation_id: str):
+        self._conversation_id = conversation_id
+
+    def set_checkpoint_id(self, checkpoint_id: str):
+        self._checkpoint_id = checkpoint_id
+
     def set_available_services(self, services: List[Dict[str, Any]]) -> None:
         """Plan D: set list of available filesystem services for multi-service selection."""
         self._available_services = services
@@ -413,6 +421,25 @@ class FilesystemToolHandler(ToolHandler):
                 return only
 
         return None
+
+    def _checkpoint_before(self, svc, path: str, content_after: bytes = None,
+                           is_delete: bool = False, service_name: str = "") -> None:
+        """Capture file state for /rewind support (if checkpointing is active)."""
+        if not self._conversation_id or not self._checkpoint_id:
+            return
+        try:
+            from core.checkpoint import CheckpointManager
+            if is_delete:
+                CheckpointManager.capture_before_delete(
+                    svc, path, self._conversation_id, self._checkpoint_id,
+                    service_name)
+            else:
+                CheckpointManager.capture_before_write(
+                    svc, path, content_after or b"",
+                    self._conversation_id, self._checkpoint_id,
+                    service_name)
+        except Exception as e:
+            logger.debug(f"[checkpoint] capture failed for {path}: {e}")
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         result = self._execute_inner(arguments)
@@ -575,6 +602,12 @@ class FilesystemToolHandler(ToolHandler):
                 return f"Notebook {op}: cell {idx} ({total} cells total)"
 
             elif action == "write_file":
+                # Checkpoint before write
+                _wf_content = (arguments.get("content") or arguments.get("command")
+                               or arguments.get("data") or arguments.get("text") or "")
+                self._checkpoint_before(svc, path,
+                    _wf_content.encode("utf-8") if isinstance(_wf_content, str) else _wf_content,
+                    service_name=service_name)
                 file_id = arguments.get("file_id", "")
                 if file_id:
                     # Extract file_id from URL if the LLM passed one
@@ -609,6 +642,8 @@ class FilesystemToolHandler(ToolHandler):
                 return f"Written {len(content)} chars to {path}"
 
             elif action == "delete_file":
+                self._checkpoint_before(svc, path, is_delete=True,
+                                        service_name=service_name)
                 svc.delete_file(path)
                 return f"Deleted: {path}"
 
@@ -643,12 +678,14 @@ class FilesystemToolHandler(ToolHandler):
                 return "\n".join(lines) if lines else "(no matches)"
 
             elif action == "find_replace":
+                self._checkpoint_before(svc, path, service_name=service_name)
                 pattern = arguments.get("pattern", "")
                 replacement = arguments.get("replacement", "")
                 result = svc.find_replace(path, pattern, replacement)
                 return f"Replaced {result.get('replacements', 0)} occurrences in {result.get('path', path)}"
 
             elif action == "edit":
+                self._checkpoint_before(svc, path, service_name=service_name)
                 old_string = arguments.get("old_string", "")
                 new_string = arguments.get("new_string", "")
                 replace_all = arguments.get("replace_all", False)
@@ -843,12 +880,19 @@ class FilesystemToolHandler(ToolHandler):
 
             elif action == "batch_edit":
                 edits = arguments.get("edits", [])
+                # Checkpoint each file that will be edited
+                for _be in (edits if isinstance(edits, list) else []):
+                    _be_path = _be.get("path", "") if isinstance(_be, dict) else ""
+                    if _be_path:
+                        self._checkpoint_before(svc, _be_path,
+                                                service_name=service_name)
                 result = svc._request("batch_edit", ".", edits=edits)
                 n = result.get("edits_applied", 0)
                 files = result.get("files_modified", [])
                 return f"Batch edit: {n} edits applied across {len(files)} file(s): {', '.join(files)}"
 
             elif action == "apply_patch":
+                self._checkpoint_before(svc, path, service_name=service_name)
                 patch = arguments.get("patch", "")
                 result = svc._request("apply_patch", path, patch=patch)
                 method = result.get("method", "?")

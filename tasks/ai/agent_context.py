@@ -243,25 +243,24 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _context_diverged = True
                     logger.info(f"[context:{conversation_id[:8]}] loaded diverged context: "
                                 f"{len(messages)} messages")
-                    # Auto-compact on load: if context is large, shrink it NOW
-                    # instead of sending 100+ messages to the LLM on first call
-                    if len(messages) > 20:
-                        try:
-                            _ac_client = self._get_default_client(
-                                flowfile.get_attribute("http.auth.principal") or "")
-                            if _ac_client:
-                                _ac_max = 200000  # will be refined later
-                                messages = self._compact_post_response(
-                                    messages, _ac_client, _ac_max,
-                                    keep_recent=6,
-                                    conversation_id=conversation_id,
-                                    agent_name=_context_agent)
-                                logger.info(f"[context:{conversation_id[:8]}] auto-compacted on load: "
-                                            f"{len(messages)} messages")
-                        except Exception as _ac_err:
-                            logger.debug(f"[context] auto-compact failed: {_ac_err}")
                 except (KeyError, TypeError) as deser_err:
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
+                # Auto-compact on load (OUTSIDE the deserialize try/except)
+                if len(messages) > 20:
+                    try:
+                        _ac_client = self._get_default_client(
+                            flowfile.get_attribute("http.auth.principal") or "")
+                        if _ac_client:
+                            _before = len(messages)
+                            messages = self._compact_post_response(
+                                messages, _ac_client, 200000,
+                                keep_recent=6,
+                                conversation_id=conversation_id,
+                                agent_name=_context_agent)
+                            logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
+                                        f"{_before} → {len(messages)} messages")
+                    except Exception as _ac_err:
+                        logger.warning(f"[context] auto-compact failed: {_ac_err}")
             else:
                 # No divergence — use messages as context
                 existing = store.load(conversation_id)
@@ -272,22 +271,23 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
                         logger.info(f"[context:{conversation_id[:8]}] loaded messages as context: "
                                     f"{len(messages)} messages")
-                        # Auto-compact on load
-                        if len(messages) > 20:
-                            try:
-                                _ac_client = self._get_default_client(
-                                    flowfile.get_attribute("http.auth.principal") or "")
-                                if _ac_client:
-                                    messages = self._compact_post_response(
-                                        messages, _ac_client, 200000,
-                                        keep_recent=6, conversation_id=conversation_id,
-                                        agent_name=_context_agent)
-                                    logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
-                                                f"{len(messages)} messages")
-                            except Exception as _ac_err:
-                                logger.debug(f"[context] auto-compact failed: {_ac_err}")
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
+                    # Auto-compact on load (OUTSIDE deserialize try/except)
+                    if len(messages) > 20:
+                        try:
+                            _ac_client = self._get_default_client(
+                                flowfile.get_attribute("http.auth.principal") or "")
+                            if _ac_client:
+                                _before = len(messages)
+                                messages = self._compact_post_response(
+                                    messages, _ac_client, 200000,
+                                    keep_recent=6, conversation_id=conversation_id,
+                                    agent_name=_context_agent)
+                                logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
+                                            f"{_before} → {len(messages)} messages")
+                        except Exception as _ac_err:
+                            logger.warning(f"[context] auto-compact failed: {_ac_err}")
                 else:
                     logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                    f"starting fresh conversation")

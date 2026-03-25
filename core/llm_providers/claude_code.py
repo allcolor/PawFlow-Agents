@@ -793,7 +793,7 @@ class LLMClaudeCodeMixin:
                     #  waiting for more messages — we must break here)
                     _flush_turn()
                     result_text = event.get("result", "")
-                    if result_text and not content_parts:
+                    if not turn_callback and result_text and not content_parts:
                         content_parts.append(result_text)
                         if callback:
                             callback(result_text)
@@ -804,7 +804,14 @@ class LLMClaudeCodeMixin:
                     _total_out = _usage.get("output_tokens", 0)
                     _result_model = event.get("model", model)
                     if _total_in or _total_out:
+                        # Get the msg_id of the last assistant message (from turn_callback)
+                        _last_msg_id = ""
+                        try:
+                            _last_msg_id = getattr(self, '_last_turn_msg_id', "") or ""
+                        except Exception:
+                            pass
                         _pub("message_meta", {
+                            "msg_id": _last_msg_id,
                             "agent_name": agent_name,
                             "source": {
                                 "type": "agent", "name": agent_name,
@@ -839,7 +846,9 @@ class LLMClaudeCodeMixin:
                 f"Claude CLI stream exited with code {proc.returncode}"
                 + (f": {_stderr[:200]}" if _stderr else ""))
 
-        full_content = "".join(content_parts)
+        # If turn_callback handled all turns, don't return content
+        # (prevents agent loop from persisting the same text again)
+        full_content = "" if turn_callback else "".join(content_parts)
 
         new_session = last_data.get("session_id", "")
         if new_session:

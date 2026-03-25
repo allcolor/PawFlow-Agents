@@ -364,6 +364,8 @@ class AgentCoreMixin:
                                 "source": _src,
                                 "msg_id": getattr(msg, "msg_id", None),
                             })
+                            # Store msg_id for token stats attachment
+                            client._last_turn_msg_id = getattr(msg, "msg_id", "")
 
                         # Thinking/narration (display_only — rendered as narration)
                         if tool_calls:

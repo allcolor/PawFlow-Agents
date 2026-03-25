@@ -203,6 +203,21 @@ class AgentSerializationMixin:
                     "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
                 })
+            elif role in ("tool_call", "tool_result", "narration"):
+                # display_only messages from claude-code turns — pass through as-is
+                entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
+                         "display_only": True}
+                if m.get("source"):
+                    entry["source"] = m["source"]
+                if m.get("tool_name"):
+                    entry["tool_name"] = m["tool_name"]
+                if m.get("tool_args"):
+                    entry["tool_args"] = m["tool_args"]
+                if m.get("tool_call_id"):
+                    entry["tool_call_id"] = m["tool_call_id"]
+                if m.get("display_type"):
+                    entry["display_type"] = m["display_type"]
+                result.append(entry)
             elif role in ("user", "assistant"):
                 # Skip internal system instructions injected as user messages
                 if role == "user" and content.startswith("[System:"):

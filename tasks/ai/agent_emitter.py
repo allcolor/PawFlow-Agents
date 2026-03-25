@@ -430,19 +430,11 @@ class StreamEmitter(AgentEmitter):
 
         all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
 
-        # Transcript: user + assistant text responses (visible in chat)
-        transcript = [
-            m for m in _persist
-            if m.role == "user"
-            or (m.role == "assistant" and m.content
-                and not str(m.content).startswith("[TOOL OUTPUT"))
-        ]
-        transcript_ser = self.agent._serialize_messages(transcript, channel=self._channel) if transcript else []
-
         store = ConversationStore.instance()
-        if transcript_ser:
+        # Persist ALL messages to transcript (no filtering — write everything)
+        if all_serialized:
             store.append_messages(
-                self.conversation_id, transcript_ser,
+                self.conversation_id, all_serialized,
                 ttl=self._conv_ttl, user_id=self._user_id,
             )
 

@@ -384,7 +384,7 @@ The prompt task output flows as FlowFile content → tool.generate_image reads `
 - Tasks read config via `self.config.get("key")`
 - Use expressions like `${attribute_name}` in parameter values
 - Use `${key}` for secrets and variables (auto-cascades: flow → conv → user → global)
-- Use `${env.VAR_NAME}` for environment variables
+- Environment variables are in the cascade: ${VAR_NAME} checks env after global
 - No scope prefix needed — `${api_key}` finds it wherever it's defined
 
 ## IMPORTANT: Before using any task, ALWAYS call pawflow_help with topic 'task:<type>'
@@ -473,7 +473,8 @@ PawFlow expressions use `${...}` syntax and are resolved at parse/runtime.
 - `${key}` — From the flow's parameter context
 
 ## Environment Variables
-- `${env.VAR_NAME}` — System environment variable
+- `${VAR_NAME}` — Also checks OS environment (last in cascade)
+- `${VAR_NAME:!important(env)}` — Force OS environment only
 
 ## Special Variables
 - `${now}` — Current ISO timestamp

@@ -30,6 +30,7 @@ STRIP_PREFIXES = [
     'user.',
     'global.',
     'var.',
+    'env.',
 ]
 
 # Regex: match ${prefix.name} but NOT ${env.X}

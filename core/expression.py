@@ -143,24 +143,25 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     Résoudre toutes les expressions ${...} dans un template.
 
     Simplified syntax: ${name} — no scope prefix needed.
-    Resolution order: secrets cascade → params cascade → env → attrs.
+    Resolution order: secrets → params → legacy vars → attrs.
 
-    Secrets cascade:  conv → user → global (no flow-level secrets)
-    Params cascade:   flow → conv → user → global
+    Secrets cascade:  conv → user → global
+    Params cascade:   flow → conv → user → global → env
+    (env = OS environment variables, last fallback in params cascade)
 
     Examples:
-        ${api_key}           → secrets first, then params, all scopes
-        ${fast_model}        → same cascade for everything
+        ${api_key}           → secrets first, then params, then env
+        ${PATH}              → found in env if not in secrets/params
         ${api_key:default("sk-xxx")} → with fallback
-        ${env.PATH}          → OS environment (only prefix kept)
+        ${PATH:!important(env)} → OS env ONLY, skip other scopes
 
     Force exact scope:
-        ${api_key:!important(global)}  → global params ONLY
-        ${api_key:!important(user)}    → user params ONLY
-        ${api_key:!important(conv)}    → conv params ONLY
+        ${key:!important(global)}  → global params ONLY
+        ${key:!important(user)}    → user params ONLY
+        ${key:!important(conv)}    → conv params ONLY
+        ${key:!important(env)}     → OS environment ONLY
 
-    Old prefixes (global., user., secrets.) are NOT supported.
-    Use tools/migrate_expressions.py --apply to migrate existing data.
+    No prefixes — ${name} resolves everything through the cascade.
 
     Résolution récursive : si la valeur résolue contient des ${...},
     elles sont résolues à leur tour (max 10 niveaux).
@@ -258,9 +259,9 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         return conv_secrets or {}
 
     def _cascade_param(key, exact_scope=None):
-        """Full cascade: flow → conv → user → global params. Returns (value, found).
+        """Full cascade: flow → conv → user → global → env. Returns (value, found).
 
-        If exact_scope is set (via :!important), only look in that specific scope.
+        If exact_scope is set (via :!important(scope)), only look in that scope.
         """
         if exact_scope:
             if exact_scope == "flow":
@@ -283,9 +284,13 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                     resolved = _resolve_value(gp[key])
                     if resolved is not None:
                         return resolved, True
+            elif exact_scope == "env":
+                val = os.environ.get(key)
+                if val is not None:
+                    return val, True
             return None, False
 
-        # Full cascade: flow → conv → user → global
+        # Full cascade: flow → conv → user → global → env
         if key in params:
             return str(params[key]), True
         cp = _get_conv_params()
@@ -302,6 +307,10 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             resolved = _resolve_value(gp[key])
             if resolved is not None:
                 return resolved, True
+        # env: OS environment as last fallback
+        val = os.environ.get(key)
+        if val is not None:
+            return val, True
         return None, False
 
     def _cascade_secret(key, exact_scope=None):
@@ -398,16 +407,6 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
 
         # Parse :!important modifier
         expr, exact_scope = _parse_important(expr)
-
-        # env.X is the ONLY prefix — OS environment access
-        if expr.startswith('env.'):
-            var = expr[len('env.'):]
-            val = os.environ.get(var)
-            if val is not None:
-                return _return_val(val)
-            if operations:
-                return evaluate_pipeline("", operations, resolve_fn=_resolve_single)
-            return "${" + scope_key + "}"
 
         key = expr
 

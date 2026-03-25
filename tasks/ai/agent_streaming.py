@@ -236,6 +236,26 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             t.is_alive() and t.name == f"agent-stream-{conversation_id}"
             for t in threading.enumerate())
         if _already_active:
+            # Extract user text from the new message
+            _user_text = ""
+            _user_msgs = [m for m in ctx.get("messages", []) if m.role == "user"]
+            if _user_msgs:
+                _last = _user_msgs[-1]
+                _user_text = _last.content if isinstance(_last.content, str) else str(_last.content)
+
+            # Claude-code preempt: inject directly into running subprocess
+            _active_client = getattr(self, '_active_claude_client', {}).get(conversation_id)
+            if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
+                if _active_client.send_user_message(_user_text):
+                    logger.info(f"[agent:{conversation_id[:8]}] preempt via claude-code stdin")
+                    from core.conversation_store import ConversationStore as _CSq
+                    ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
+                                      "message_count": _CSq.instance().message_count(conversation_id)})
+                    flowfile.set_content(ack.encode("utf-8"))
+                    flowfile.set_attribute("agent.conversation_id", conversation_id)
+                    return [flowfile]
+
+            # Other providers: queue for drain_pending between iterations
             logger.info(f"[agent:{conversation_id[:8]}] already active — queueing")
             _queued_key = f"_queued_msgs:{conversation_id}"
             if not hasattr(self, '_pending_user_msgs'):

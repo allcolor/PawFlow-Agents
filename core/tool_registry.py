@@ -237,11 +237,17 @@ class UseToolHandler(ToolHandler):
         tool_name = arguments.get("tool_name", "")
         tool_args = arguments.get("arguments", {})
         # LLM sometimes sends arguments as JSON string instead of dict
-        if isinstance(tool_args, str):
-            try:
-                tool_args = json.loads(tool_args)
-            except (json.JSONDecodeError, TypeError):
-                return f"Error: invalid arguments format for '{tool_name}' — expected JSON object, got string"
+        # (can be double-encoded — keep parsing until we get a dict)
+        for _ in range(3):  # max 3 levels of JSON encoding
+            if isinstance(tool_args, str):
+                try:
+                    tool_args = json.loads(tool_args)
+                except (json.JSONDecodeError, TypeError):
+                    return f"Error: invalid arguments format for '{tool_name}' — expected JSON object, got string: {tool_args[:200]}"
+            else:
+                break
+        if not isinstance(tool_args, dict):
+            return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool — call it directly "
                     f"as a top-level tool call, not via use_tool.")

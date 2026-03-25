@@ -354,6 +354,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             _ctx_save(conv_id, _rb_msgs, _rb_agent)
             deserialized = self._deserialize_messages(_rb_msgs)
             estimated = self._estimate_tokens(deserialized)
+            # If agent context == shared context after rebuild, remove the
+            # agent context (it'll fall back to shared automatically)
+            if _rb_agent and _rb_agent != "shared":
+                shared_ctx = store.load_context(conv_id)
+                if shared_ctx is not None and shared_ctx == _rb_msgs:
+                    # Identical — remove agent diverged context
+                    # (write empty replace that vacuum will clean)
+                    store.save_agent_context(conv_id, _rb_agent, shared_ctx)
+                    logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
             return {"before": len(_rb_msgs), "after": len(_rb_msgs),
                     "tokens_after": estimated,
                     "agent": _rb_agent or "shared"}

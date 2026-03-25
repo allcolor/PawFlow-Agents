@@ -515,6 +515,11 @@ class AgentLoopTask(
                     "agent_name": agent_name if _is_named else "all",
                 }
             )
+        # Kill any running Claude Code subprocess for this conversation
+        if hasattr(self, '_active_claude_client'):
+            client = self._active_claude_client.get(conversation_id)
+            if client and hasattr(client, 'cancel_claude_code'):
+                client.cancel_claude_code()
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()

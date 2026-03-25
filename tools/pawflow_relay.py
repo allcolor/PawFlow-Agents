@@ -786,6 +786,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             if b"101" not in resp.split(b"\r\n")[0]:
                 raise ConnectionError(f"Handshake failed: {resp.split(b'\\r\\n')[0]}")
 
+            # Any bytes after \r\n\r\n are the start of the first WS frame
+            # — push them back into the socket buffer via a wrapper
+            _header_end = resp.index(b"\r\n\r\n") + 4
+            _leftover = resp[_header_end:]
+            if _leftover:
+                _orig_recv = sock.recv
+                _buf = [_leftover]
+                def _patched_recv(n, _flags=0):
+                    if _buf:
+                        data = _buf.pop(0)
+                        return data[:n]  # may need to re-buffer if data > n
+                    return _orig_recv(n)
+                sock.recv = _patched_recv
+
             sys.stderr.write(f"[FSRelay] Connected to {url}\n")
 
             reg_msg = json.dumps({
@@ -806,9 +820,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
             reconnect_delay = 1
             sock.settimeout(60)
+            import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
-            _send_lock = threading.Lock()
+            _send_lock = _threading.Lock()
 
             while True:
                 try:

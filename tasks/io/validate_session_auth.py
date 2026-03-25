@@ -101,9 +101,11 @@ class ValidateSessionAuthTask(BaseTask):
                 return [self._auth_failed(flowfile, "Invalid session token")]
 
         if session.is_expired:
+            expired_username = session.username
             sm._sessions.pop(token, None)
             # Try silent refresh before failing
-            refreshed_session = self._try_silent_refresh(flowfile, sm)
+            refreshed_session = self._try_silent_refresh(
+                flowfile, sm, username=expired_username)
             if refreshed_session:
                 session = refreshed_session
                 cookie_name = self.config.get("cookie_name", "pawflow_token")
@@ -148,10 +150,11 @@ class ValidateSessionAuthTask(BaseTask):
 
         return ""
 
-    def _try_silent_refresh(self, flowfile: FlowFile, sm) -> object:
+    def _try_silent_refresh(self, flowfile: FlowFile, sm,
+                            username: str = "") -> object:
         """Try to silently refresh the OAuth session using stored refresh tokens.
 
-        1. Find the user from the expired/invalid session token
+        1. Use the provided username (from the expired session)
         2. Find their OAuth provider via IdentityService
         3. Use AuthGateway to refresh the access token
         4. Create a new session
@@ -159,15 +162,6 @@ class ValidateSessionAuthTask(BaseTask):
         Returns a new Session on success, or None on failure.
         """
         try:
-            # Find username from the old (expired) session
-            cookie_name = self.config.get("cookie_name", "pawflow_token")
-            old_token = self._extract_token(flowfile, cookie_name)
-            username = None
-            for sid, sess in list(sm._sessions.items()):
-                if sid == old_token:
-                    username = sess.username
-                    break
-
             if not username:
                 return None
 

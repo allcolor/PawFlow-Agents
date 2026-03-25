@@ -35,6 +35,17 @@ class AgentCoreMixin:
         conversation_id = ctx.get("conversation_id", "")
         use_conv_store = ctx.get("use_conv_store", False)
         user_id = ctx.get("user_id", "")
+
+        # Set context on client for providers that need it (claude-code)
+        client._conversation_id = conversation_id
+        client._user_id = user_id
+        client._agent_name = ctx.get("active_agent_name", "")
+
+        # Register active claude-code client for preempt (stdin injection)
+        if hasattr(client, 'send_user_message') and conversation_id:
+            if not hasattr(self, '_active_claude_client'):
+                self._active_claude_client = {}
+            self._active_claude_client[conversation_id] = client
         max_rounds = int(ctx.get("max_rounds", 1)) if emitter.is_streaming else 1
         _consecutive_tool: Dict[str, int] = {}
         _max_consec = ctx.get("max_consecutive_tool_calls", 100)
@@ -105,11 +116,11 @@ class AgentCoreMixin:
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
             messages.append(msg)
             new_messages.append(msg)
-            # Publish per-message metadata (model, tokens) so client can
-            # attach it to the correct element by msg_id
+            # Publish per-message metadata (model, tokens, service) so client
+            # can attach badge + info to the correct element by msg_id
             if msg.role == "assistant" and msg.source and emitter.is_streaming:
                 _src = msg.source
-                if _src.get("tokens_in") or _src.get("tokens_out"):
+                if _src.get("tokens_in") or _src.get("tokens_out") or _src.get("llm_service"):
                     from core.conversation_event_bus import ConversationEventBus
                     try:
                         ConversationEventBus.instance().publish_event(
@@ -321,6 +332,109 @@ class AgentCoreMixin:
 
                     # LLM call
                     _tb = ctx.get("thinking_budget", 0)
+                    _is_claude_code = _client_provider == "claude-code"
+
+                    def _claude_code_turn_callback(text, tool_calls):
+                        """Called by claude-code at each internal turn boundary.
+
+                        Persists everything the user sees in the transcript:
+                        - Assistant text → real message (in context)
+                        - Tool calls → display_only (visible but not in LLM context)
+                        - Tool results → display_only, truncated to 300 chars
+                        - Thinking → display_only
+
+                        Persisted IMMEDIATELY so they survive interrupts/cancels.
+                        """
+                        nonlocal tools_called
+                        from core.llm_client import LLMToolCall
+
+                        # Messages for the agent loop (in-memory context)
+                        turn_msgs = []
+                        # All messages for transcript (includes display_only)
+                        transcript_msgs = []
+                        _src = _agent_source()
+
+                        if text:
+                            msg = LLMMessage(
+                                role="assistant", content=text, source=_src)
+                            _append(msg)
+                            turn_msgs.append(msg)
+                            transcript_msgs.append({
+                                "role": "assistant", "content": text,
+                                "source": _src,
+                                "msg_id": getattr(msg, "msg_id", None),
+                            })
+
+                        # Thinking (display_only — visible to user, not in LLM context)
+                        if tool_calls:
+                            _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
+                            if _thinking:
+                                transcript_msgs.append({
+                                    "role": "assistant",
+                                    "content": f"💭 {_thinking[:500]}",
+                                    "display_only": True,
+                                    "source": _src,
+                                })
+
+                        if tool_calls:
+                            tc_objects = [
+                                LLMToolCall(
+                                    id=tc.get("id", ""),
+                                    name=tc.get("name", ""),
+                                    arguments=tc.get("arguments", {}),
+                                ) for tc in tool_calls
+                            ]
+                            for tc_obj in tc_objects:
+                                tools_called.append(tc_obj.name)
+
+                            # Tool call message (in context for LLM)
+                            tc_msg = LLMMessage(
+                                role="assistant", content="",
+                                tool_calls=tc_objects, source=_src)
+                            _append(tc_msg)
+                            turn_msgs.append(tc_msg)
+
+                            for i, tc_obj in enumerate(tc_objects):
+                                tc_raw = tool_calls[i] if i < len(tool_calls) else {}
+                                _result = tc_raw.get("result") or ""
+
+                                # Tool call display (display_only — not in LLM context)
+                                _args_preview = json.dumps(tc_raw.get("arguments", {}))[:200]
+                                transcript_msgs.append({
+                                    "role": "assistant",
+                                    "content": f"🔧 {tc_obj.name}({_args_preview})",
+                                    "display_only": True,
+                                    "source": _src,
+                                })
+
+                                # Tool result (in context for LLM)
+                                tr_content = _result or "(no output)"
+                                tr_msg = LLMMessage(
+                                    role="tool", content=tr_content,
+                                    tool_call_id=tc_obj.id)
+                                _append(tr_msg)
+                                turn_msgs.append(tr_msg)
+
+                                # Tool result display (display_only, truncated)
+                                transcript_msgs.append({
+                                    "role": "tool",
+                                    "content": (tr_content[:300] + "..."
+                                                if len(tr_content) > 300
+                                                else tr_content),
+                                    "display_only": True,
+                                    "tool_call_id": tc_obj.id,
+                                })
+
+                        # Persist to transcript immediately
+                        if transcript_msgs and use_conv_store and conversation_id:
+                            try:
+                                from core.conversation_store import ConversationStore
+                                cstore = ConversationStore.instance()
+                                cstore.append_messages(
+                                    conversation_id, transcript_msgs,
+                                    user_id=user_id)
+                            except Exception as e:
+                                logger.warning("Failed to persist claude-code turn: %s", e)
 
                     def _llm_call(msgs, ps=poll_silent):
                         if emitter.is_streaming:
@@ -330,7 +444,8 @@ class AgentCoreMixin:
                                 tools=tool_defs if tool_defs else None,
                                 callback=emitter.get_token_callback(ps),
                                 thinking_budget=_tb,
-                                thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None)
+                                thinking_callback=emitter.get_thinking_callback(ps) if _tb > 0 else None,
+                                turn_callback=_claude_code_turn_callback if _is_claude_code else None)
                         return client.complete(
                             messages=msgs, model=model or None,
                             temperature=ctx["temperature"], max_tokens=ctx["max_tokens"],

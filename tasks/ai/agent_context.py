@@ -728,12 +728,60 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _msg_tokens = self._estimate_tokens(messages) if messages else 0
         _msg_pct = (_msg_tokens / _resolved_max_ctx * 100) if _resolved_max_ctx else 0
 
-        # Lazy tools: like Claude Code, default ON when many tools.
+        # Claude-code: tools come via MCP, not via prompt. Clear tool_defs
+        # entirely so no tool instructions leak into the system prompt.
+        _is_claude_code = (_client_provider_name or "").lower() == "claude-code"
+        if _is_claude_code:
+            logger.info("Claude-code provider: tools via MCP, clearing %d tool_defs from prompt",
+                        len(tool_defs))
+            tool_defs = []
+            # Find available filesystem services for this user
+            _fs_services_info = ""
+            try:
+                _fs_svcs = []
+                from gui.services.user_service_registry import UserServiceRegistry
+                _ureg = UserServiceRegistry.get_instance()
+                _uid = ctx.get("user_id", "") if hasattr(ctx, 'get') else user_id
+                if _uid:
+                    for _sid, _sdef in _ureg.get_all_for_user(_uid).items():
+                        if getattr(_sdef, "service_type", "") in (
+                            "filesystem", "browserFilesystem", "serverFilesystem"):
+                            _fs_svcs.append(_sid)
+                if _fs_svcs:
+                    _fs_services_info = (
+                        "\n- Available filesystem services: "
+                        + ", ".join(f"'{s}'" for s in _fs_svcs)
+                        + ". Use the 'service' parameter with this exact name "
+                        "for filesystem operations."
+                    )
+            except Exception:
+                pass
+
+            system_prompt += (
+                "\n\nCRITICAL TOOL RULES:"
+                "\n- You MUST ONLY use MCP tools from the 'pawflow' server: "
+                "mcp__pawflow__get_tool_schema and mcp__pawflow__use_tool."
+                "\n- NEVER use built-in tools (Read, Write, Edit, Bash, Glob, "
+                "Grep, Agent, Task, ToolSearch, etc.) — they access the wrong "
+                "filesystem (server, not the user's machine)."
+                "\n- Call mcp__pawflow__get_tool_schema() first to discover "
+                "available tools, then mcp__pawflow__use_tool(tool_name, arguments) "
+                "to execute them."
+                "\n- For filesystem operations, use the 'filesystem' tool with "
+                "the 'service' parameter set to the relay name."
+                "\n- The user's files are ONLY accessible through the MCP pawflow tools."
+                + _fs_services_info
+            )
+
+        # Lazy tools: default ON when many tools.
         # Only send 2 meta-tools (get_tool_schema, use_tool) instead of all 48.
         # Saves ~12K tokens per request.
         _lazy_tools = (
-            _forced_mode == "lazy"
-            or (_forced_mode != "full" and len(tool_defs) > 4)
+            not _is_claude_code
+            and (
+                _forced_mode == "lazy"
+                or (_forced_mode != "full" and len(tool_defs) > 4)
+            )
         )
         if _lazy_tools and tool_defs:
             logger.info("Lazy tools: %d tools = ~%d tokens (%.1f%%) → 2 meta-tools",

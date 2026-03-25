@@ -380,11 +380,16 @@ class LLMClient(
         callback=None,
         thinking_budget: int = 0,
         thinking_callback=None,
+        turn_callback=None,
     ) -> LLMResponse:
         """Streaming completion — calls callback(token: str) for each token.
 
         Also returns the full LLMResponse at the end.  If callback is None,
         behaves like complete() but uses the streaming API under the hood.
+
+        turn_callback(text, tool_calls): called by multi-turn providers
+        (claude-code) at the end of each internal turn. Allows the agent
+        loop to persist intermediate messages.
 
         Supports both OpenAI and Anthropic streaming.
         """
@@ -402,7 +407,8 @@ class LLMClient(
                     result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback,
                                                   thinking_callback=thinking_callback)
                 elif self.provider == "claude-code":
-                    result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
+                    result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback,
+                                                      turn_callback=turn_callback)
                 elif self.provider == "gemini-cli":
                     result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
                 elif self.provider == "anthropic":

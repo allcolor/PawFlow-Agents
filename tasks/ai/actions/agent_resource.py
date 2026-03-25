@@ -153,6 +153,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({
             "selected": agent_name,
+            "display": f"Agent selected: {agent_name}",
+            "state_update": {"selected_agent": agent_name},
         }).encode())
         return [flowfile]
 

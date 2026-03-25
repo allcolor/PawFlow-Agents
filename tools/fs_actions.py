@@ -1196,12 +1196,7 @@ ACTIONS = {
     "screen_move": action_screen_move,
     "screen_scroll": action_screen_scroll,
     "screen_mouse_position": action_screen_mouse_position,
-    # MCP stdio proxy
-    "mcp_start": action_mcp_start,
-    "mcp_call": action_mcp_call,
-    "mcp_discover": action_mcp_discover,
-    "mcp_stop": action_mcp_stop,
-    "mcp_list": action_mcp_list,
+    # MCP stdio proxy — registered after definition (see below)
 }
 
 

@@ -881,7 +881,8 @@ def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
     if subcmd == "create":
         return {"action": "create_agent_interactive", **base}
     if subcmd == "select":
-        return {"action": "select_agent", "agent_name": p[1] if len(p) > 1 else "",
+        _name = p[1] if len(p) > 1 else ""
+        return {"action": "select_agent", "agent_name": _name, "name": _name,
                 **base}
     if subcmd == "delete":
         return {"action": "delete_agent", "agent_name": p[1] if len(p) > 1 else "",

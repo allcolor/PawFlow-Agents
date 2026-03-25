@@ -9,6 +9,8 @@
     showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
+    // New turn starting — clear cancel suppression so tool events show again
+    if (agentName) _cancelledAgents.delete(agentName.toLowerCase());
     trackAgentStart(agentName);
     const wait = data.waiting_seconds || 0;
     const verb = randomVerb();
@@ -255,8 +257,9 @@
   eventSource.addEventListener('tool_call', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Suppress events from cancelled agents
-    if (_cancelledAgents.has((data.agent_name || '').toLowerCase())) return;
+    // Suppress events from cancelled agents (but NOT claude-code — its events
+    // come from the active subprocess, not a stale agent loop iteration)
+    if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     // Finalize thinking block before showing tool call
     finalizeThinking(data.agent_name || '');
     console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
@@ -362,7 +365,7 @@
   eventSource.addEventListener('tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (_cancelledAgents.has((data.agent_name || '').toLowerCase())) return;
+    if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     console.log('[SSE] tool_result received:', data.tool, (data.result || '').substring(0, 100));
     // spawn_agents: responses are shown via sub_agent_done events in real-time
     // tool_result just shows a compact summary (don't duplicate responses)
@@ -670,11 +673,17 @@
       _cancelledAgents.add(cancelAgent.toLowerCase());
     }
     if (cancelAgent === 'all') {
-      // Clear all interactions
       activeInteractions = {};
       updateActivePanel();
+      // Clean up all narrations + thinking
+      document.querySelectorAll('#messages .narration').forEach(el => el.remove());
+      document.querySelectorAll('#messages .thinking-block').forEach(el => el.remove());
     } else {
       trackAgentDone(cancelAgent);
+      // Clean up this agent's narrations
+      document.querySelectorAll('#messages .narration').forEach(el => {
+        if (el.dataset.finalizedAgent === cancelAgent.toLowerCase()) el.remove();
+      });
     }
     hideTyping();
     // Remove streaming chunks for the cancelled agent(s)

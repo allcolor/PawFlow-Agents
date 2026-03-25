@@ -353,6 +353,9 @@ class AgentUtilsMixin:
             gen_key = ctx.get("_gen_key", conversation_id)
             with self._interactions_lock:
                 self._active_interactions.pop(gen_key, None)
+        # Clean up active claude-code client reference
+        if hasattr(self, '_active_claude_client'):
+            self._active_claude_client.pop(conversation_id, None)
 
 
     def _calibrate_cpt(self, service_id: str, total_chars: int,

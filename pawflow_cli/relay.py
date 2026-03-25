@@ -139,7 +139,7 @@ class RelayThread:
         _real_write = sys.stderr.write
         def _filtered_write(s):
             if isinstance(s, str) and "[FSRelay]" in s:
-                return len(s)  # pretend we wrote it
+                return len(s)
             return _real_write(s)
         sys.stderr.write = _filtered_write
 

@@ -70,7 +70,7 @@ class AgentSerializationMixin:
                         name=tc["name"],
                         arguments=tc.get("arguments", {}),
                     )
-                    for tc in entry["tool_calls"]
+                    for tc in (entry["tool_calls"] or [])
                 ]
             messages.append(LLMMessage(
                 role=entry["role"],

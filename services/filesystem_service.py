@@ -223,7 +223,50 @@ class FilesystemWSListener:
                 "type": "registered", "relay_id": relay_id,
             }).encode())
 
-            # Store relay connection on the service
+            # Tool relay vs filesystem relay
+            if hasattr(service, 'handle_tool_request'):
+                _user_id = reg.get("user_id", "")
+                _conv_id = reg.get("conversation_id", "")
+                _agent_name = reg.get("agent_name", "")
+                logger.info("Tool relay connected: user=%s conv=%s agent=%s addr=%s",
+                             _user_id, _conv_id, _agent_name, tag)
+                while True:
+                    try:
+                        opcode, payload = await asyncio.wait_for(
+                            self._ws_recv(reader), timeout=120)
+                    except asyncio.TimeoutError:
+                        await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
+                        continue
+                    if opcode == 0x08:
+                        break
+                    if opcode == 0x09:
+                        await self._ws_send(writer, payload, opcode=0x0A)
+                        continue
+                    if opcode != 0x01:
+                        continue
+                    msg = json.loads(payload.decode("utf-8"))
+                    if msg.get("type") == "ping":
+                        await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
+                        continue
+                    if msg.get("type") != "request":
+                        continue
+                    import threading as _th
+                    def _exec(m=msg):
+                        try:
+                            resp = service.handle_tool_request(
+                                m, _user_id, _conv_id, _agent_name)
+                        except Exception as e:
+                            resp = {"type": "error",
+                                    "request_id": m.get("request_id", ""),
+                                    "error": str(e)}
+                        asyncio.run_coroutine_threadsafe(
+                            self._ws_send(writer, json.dumps(resp).encode("utf-8")),
+                            self._loop)
+                    _th.Thread(target=_exec, daemon=True,
+                               name=f"tool-relay-{msg.get('method', '?')}").start()
+                return  # tool relay done
+
+            # Filesystem relay
             service._set_relay(reader, writer, self._loop)
 
             # Auto-fetch project context in background
@@ -266,10 +309,10 @@ class FilesystemWSListener:
                     await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
 
         except Exception as e:
-            logger.debug("Relay connection error (%s): %s", tag, e)
+            logger.error("Relay connection error (%s): %s", tag, e)
         finally:
             if service:
-                service._clear_relay()
+                service._clear_relay(reader=reader)
             try:
                 writer.close()
             except Exception:
@@ -329,11 +372,10 @@ class FilesystemService(BaseService):
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
 
-        # Relay state
-        self._relay_reader: Optional[asyncio.StreamReader] = None
-        self._relay_writer: Optional[asyncio.StreamWriter] = None
-        self._relay_loop: Optional[asyncio.AbstractEventLoop] = None
-        self._relay_lock = threading.Lock()
+        # Relay connection pool — supports multiple connections for resilience
+        self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
+        self._relay_pool_lock = threading.Lock()
+        self._relay_idx = 0
 
         # Pending requests: {request_id: (Event, result_holder)}
         self._pending: Dict[str, tuple] = {}
@@ -401,22 +443,26 @@ class FilesystemService(BaseService):
     # ── Relay connection management ──
 
     def _set_relay(self, reader, writer, loop):
-        with self._relay_lock:
-            self._relay_reader = reader
-            self._relay_writer = writer
-            self._relay_loop = loop
+        """Add a relay connection to the pool."""
+        with self._relay_pool_lock:
+            self._relay_pool.append({"reader": reader, "writer": writer, "loop": loop})
+            count = len(self._relay_pool)
+        logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
 
-    def _clear_relay(self):
-        with self._relay_lock:
-            self._relay_reader = None
-            self._relay_writer = None
-            self._relay_loop = None
-        # Cancel pending requests
-        with self._pending_lock:
-            for rid, (evt, holder) in self._pending.items():
-                holder["error"] = "Relay disconnected"
-                evt.set()
-            self._pending.clear()
+    def _clear_relay(self, reader=None):
+        """Remove a connection from the pool (by reader), or all if None."""
+        with self._relay_pool_lock:
+            if reader:
+                self._relay_pool = [c for c in self._relay_pool if c["reader"] is not reader]
+            else:
+                self._relay_pool.clear()
+            alive = len(self._relay_pool)
+        if alive == 0:
+            with self._pending_lock:
+                for rid, (evt, holder) in self._pending.items():
+                    holder["error"] = "Relay disconnected"
+                    evt.set()
+                self._pending.clear()
 
     def _resolve_pending(self, msg: dict):
         request_id = msg.get("request_id", "")
@@ -431,11 +477,13 @@ class FilesystemService(BaseService):
             evt.set()
 
     def _request(self, action: str, path: str = ".", **kwargs) -> Any:
-        """Send a command to the relay and wait for the result (sync)."""
-        with self._relay_lock:
-            writer = self._relay_writer
-            loop = self._relay_loop
-        if not writer or not loop:
+        """Send a command to the relay and wait for the result (sync).
+
+        Uses connection pool with round-robin + failover.
+        """
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        if not pool:
             raise Exception(
                 f"Relay not connected to '{self._service_id}'. "
                 f"Start: python tools/pawflow_relay.py "
@@ -450,7 +498,6 @@ class FilesystemService(BaseService):
         with self._pending_lock:
             self._pending[request_id] = (evt, holder)
 
-        # Send command via WS (async→sync bridge)
         payload = json.dumps({
             "type": "command",
             "request_id": request_id,
@@ -459,19 +506,32 @@ class FilesystemService(BaseService):
             **kwargs,
         }).encode("utf-8")
 
-        async def _send():
-            listener = self._connection
-            if listener:
-                await listener._ws_send(writer, payload)
+        # Round-robin with failover
+        last_err = None
+        for attempt in range(len(pool)):
+            idx = (self._relay_idx + attempt) % len(pool)
+            conn = pool[idx]
+            writer, loop = conn["writer"], conn["loop"]
 
-        try:
-            asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-        except Exception as e:
+            async def _send(w=writer):
+                listener = self._connection
+                if listener:
+                    await listener._ws_send(w, payload)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+                self._relay_idx = idx + 1
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                continue
+
+        if last_err:
             with self._pending_lock:
                 self._pending.pop(request_id, None)
-            raise Exception(f"Failed to send to relay: {e}")
+            raise Exception(f"Failed to send to relay: {last_err}")
 
-        # Wait for result
         if not evt.wait(timeout=60):
             with self._pending_lock:
                 self._pending.pop(request_id, None)

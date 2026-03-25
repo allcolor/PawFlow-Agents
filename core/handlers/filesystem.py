@@ -360,11 +360,16 @@ class FilesystemToolHandler(ToolHandler):
     def _find_service(self, service_name: str = ""):
         """Find a filesystem service by name or auto-detect.
 
-        Search order: GlobalServiceRegistry → UserServiceRegistry.
-        If service_name is given, resolve that specific service.
-        If empty, find the first available filesystem service.
-        Fallback: if service_name not found but only one FS exists, use it.
+        Search order: injected _fs_service → GlobalServiceRegistry → UserServiceRegistry.
         """
+        # If a service was injected (tool relay), use it directly
+        if hasattr(self, '_fs_service') and self._fs_service:
+            if not service_name or service_name == getattr(
+                    self._fs_service, '_service_id', ''):
+                logger.info("[fs] using injected service '%s'",
+                            getattr(self._fs_service, '_service_id', '?'))
+                return self._fs_service
+
         # "workspace" alias — always resolves to the first available FS
         if service_name.lower() in ("workspace", "ws", "local"):
             return self._find_service("")  # auto-detect

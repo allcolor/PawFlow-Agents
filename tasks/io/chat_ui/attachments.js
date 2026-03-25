@@ -208,7 +208,17 @@ async function send() {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
   }
   scrollBottom(true);  // Force scroll when user sends
-  clearStream(targetAgent);
+  // Finalize all active streaming elements so the user message
+  // appears BELOW them (not interleaved above ongoing text)
+  for (const key of Object.keys(streams)) {
+    const s = streams[key];
+    if (s && s.el) {
+      s.el.classList.add('finalized');
+      s.el.dataset.finalizedAgent = key;
+      s.lastEl = s.el;
+      s.el = null; s.text = '';
+    }
+  }
   showTyping();
 
   try {

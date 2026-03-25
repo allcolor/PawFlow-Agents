@@ -548,11 +548,70 @@ class PawCode:
             self.renderer.print_error(f"Approval error: {e}")
 
     def _handle_command(self, text: str):
-        """Handle slash commands — thin dispatcher to sub-modules."""
+        """Handle slash commands — server-first, client-only exceptions.
+
+        ALL commands go to the server except UI-specific ones that
+        only make sense client-side (clear, quit, file upload, etc.).
+        """
         parts = text.split(None, 1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
 
+        # Client-only commands (UI-specific, never sent to server)
+        if cmd == "/clear":
+            os.system("cls" if os.name == "nt" else "clear")
+            return
+        if cmd in ("/quit", "/exit"):
+            raise KeyboardInterrupt()
+
+        # File/relay/session commands — need local state
+        from pawflow_cli.commands.files import handle_files_commands
+        from pawflow_cli.commands.session import handle_session_commands
+        for handler in (handle_files_commands, handle_session_commands):
+            if handler(self, cmd, arg, text):
+                return
+
+        # Everything else → server (single source of truth)
+        try:
+            data = self.api.send_action("command", text=text,
+                                         agent_name=self.selected_agent or "",
+                                         conversation_id=self.conversation_id or "")
+            if isinstance(data, dict):
+                # Apply state updates from server
+                if data.get("state_update"):
+                    for k, v in data["state_update"].items():
+                        if hasattr(self, k):
+                            setattr(self, k, v)
+                # Display
+                if data.get("client_only"):
+                    self.renderer.print_system(f"Client-only command: {cmd}")
+                elif data.get("help"):
+                    self.renderer.print_markdown(data["help"])
+                elif data.get("display"):
+                    self.renderer.print_system(data["display"])
+                elif data.get("message"):
+                    self.renderer.print_system(data["message"])
+                elif data.get("conversations"):
+                    # Conversation list
+                    for c in data["conversations"][:20]:
+                        cid = c.get("id", "?")[:8]
+                        title = c.get("title") or c.get("preview", "")[:60] or "(empty)"
+                        count = c.get("message_count", 0)
+                        self.renderer.print_system(f"  {cid}  {title}  ({count} msgs)")
+                elif data.get("error"):
+                    self.renderer.print_error(data["error"])
+                elif data.get("status") in ("ok", "accepted"):
+                    # Silent success (agent action dispatched)
+                    pass
+                else:
+                    self.renderer.print_system(str(data))
+            else:
+                self.renderer.print_error(f"Unknown command: {cmd}. Type /help for available commands.")
+        except Exception as e:
+            self.renderer.print_error(f"Command failed: {e}")
+        return
+
+        # ── LEGACY: below is kept for reference but never reached ──
         # /help stays here (lists all commands)
         if cmd == "/help":
             self.renderer.print_markdown(
@@ -720,7 +779,7 @@ class PawCode:
                                          conversation_id=self.conversation_id or "")
             if isinstance(data, dict):
                 if data.get("client_only"):
-                    self._send_message(text)  # Fall back to message
+                    self.renderer.print_system(f"Client-only command: {cmd}")  # Fall back to message
                 elif data.get("help"):
                     self.renderer.print_markdown(data["help"])
                 elif data.get("message"):
@@ -776,10 +835,16 @@ class PawCode:
         return ""
 
     def _signal_handler(self, sig, frame):
+        if getattr(self, '_shutting_down', False):
+            os._exit(1)  # Force exit on second Ctrl-C
+        self._shutting_down = True
         self.renderer.print_system("\nShutting down...")
         self._running = False
-        self._cleanup()
-        sys.exit(0)
+        try:
+            self._cleanup()
+        except Exception:
+            pass
+        os._exit(0)
 
     def run_prompt(self, prompt: str, conversation_id: str = None,
                    output_format: str = "text"):

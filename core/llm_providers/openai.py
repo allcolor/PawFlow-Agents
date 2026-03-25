@@ -320,8 +320,18 @@ class LLMOpenaiMixin:
         # Extract reasoning content if present (o-series models)
         reasoning = message.get("reasoning_content", "") or ""
 
+        # Debug: log raw message keys for diagnosis
+        _content = message.get("content", "") or ""
+        if not _content and usage.get("completion_tokens", 0) > 10:
+            import logging as _log
+            _log.getLogger(__name__).warning(
+                f"[openai] LLM produced {usage.get('completion_tokens')} tokens but "
+                f"content is empty. message keys: {list(message.keys())}, "
+                f"reasoning={len(reasoning)} chars, "
+                f"message preview: {str(message)[:300]}")
+
         return LLMResponse(
-            content=message.get("content", "") or "",
+            content=_content,
             model=data.get("model", model),
             tokens_in=usage.get("prompt_tokens", 0),
             tokens_out=usage.get("completion_tokens", 0),

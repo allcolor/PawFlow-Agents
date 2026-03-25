@@ -818,9 +818,15 @@
     hideTyping();
     const data = JSON.parse(e.data);
     addMsg('error', data.message || t('unknownError'));
-    // Error could be from any agent — clear the agent's stream if specified
+    // Error could be from any agent — clear the agent's stream + active interaction
     const errAgent = data.agent_name || '';
     clearStream(errAgent);
+    if (errAgent) {
+      trackAgentDone(errAgent);
+    } else {
+      activeInteractions = {};
+      updateActivePanel();
+    }
     sending = false;
     document.getElementById('sendBtn').disabled = false;
     document.getElementById('stopBtn').style.display = 'none';

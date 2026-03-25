@@ -423,7 +423,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 sdef.config["claude_access_token"] = access_token
                 sdef.config["claude_refresh_token"] = refresh_token
                 sdef.config["claude_expires_at"] = expires_at
-                greg.save()
+                greg._save_to_disk()
                 logger.info("Claude Code credentials stored for service '%s'", service_id)
 
             # Cleanup

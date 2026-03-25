@@ -236,9 +236,27 @@ class UseToolHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         tool_name = arguments.get("tool_name", "")
         tool_args = arguments.get("arguments", {})
+        # LLM sometimes sends arguments as JSON string instead of dict
+        if isinstance(tool_args, str):
+            try:
+                tool_args = json.loads(tool_args)
+            except (json.JSONDecodeError, TypeError):
+                return f"Error: invalid arguments format for '{tool_name}' — expected JSON object, got string"
         if tool_name in ("get_tool_schema", "use_tool"):
             return (f"Error: '{tool_name}' is a meta-tool — call it directly "
                     f"as a top-level tool call, not via use_tool.")
+        # Validate arguments against tool schema
+        handler = self._registry.get(tool_name)
+        if handler:
+            schema = handler.parameters_schema or {}
+            props = schema.get("properties", {})
+            if props and isinstance(tool_args, dict):
+                unknown = [k for k in tool_args if k not in props]
+                if unknown:
+                    valid = list(props.keys())
+                    return (f"Error: unknown argument(s) {unknown} for tool '{tool_name}'. "
+                            f"Valid arguments: {valid}. "
+                            f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
         return self._registry.execute(tool_name, tool_args)
 
 

@@ -641,6 +641,18 @@ class AgentLoopTask(
                     })
                     return
 
+                # Repair orphan tool_calls before sending to LLM
+                for i, m in enumerate(messages):
+                    if m.role == "assistant" and m.tool_calls:
+                        tc_ids = {tc.id for tc in m.tool_calls}
+                        found = set()
+                        for j in range(i + 1, min(i + len(tc_ids) + 2, len(messages))):
+                            if messages[j].role == "tool" and messages[j].tool_call_id in tc_ids:
+                                found.add(messages[j].tool_call_id)
+                        for tc_id in tc_ids - found:
+                            messages.insert(i + 1, LLMMessage(
+                                role="tool", content="[Unavailable]", tool_call_id=tc_id))
+
                 # Compact + call LLM (stream tokens to user)
                 compact_msgs = self._compact_if_needed(
                     messages, client,

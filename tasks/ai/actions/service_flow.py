@@ -12,6 +12,9 @@ from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+# Pending OAuth flows (in-memory, keyed by service_id)
+_oauth_pending: Dict[str, Dict[str, str]] = {}
+
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
@@ -311,13 +314,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         state = _secrets.token_urlsafe(32)
 
         # Store for the exchange step
-        _pending_key = f"_claude_oauth_pending:{service_id}"
-        store.set_extra("__global__", _pending_key, {
+        _oauth_pending[service_id] = {
             "code_verifier": code_verifier,
             "state": state,
             "service_id": service_id,
             "user_id": user_id,
-        })
+        }
 
         from urllib.parse import urlencode
         params = urlencode({
@@ -355,8 +357,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         # Retrieve stored PKCE verifier
-        _pending_key = f"_claude_oauth_pending:{service_id}"
-        pending = store.get_extra("__global__", _pending_key) or {}
+        pending = _oauth_pending.get(service_id, {})
         code_verifier = pending.get("code_verifier", "")
         if not code_verifier:
             flowfile.set_content(json.dumps({"error": "No pending login. Click Login first."}).encode())
@@ -418,7 +419,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 logger.info("Claude Code OAuth tokens stored for service '%s'", service_id)
 
             # Clean up pending
-            store.set_extra("__global__", _pending_key, None)
+            _oauth_pending.pop(service_id, None)
 
             flowfile.set_content(json.dumps({
                 "ok": True,

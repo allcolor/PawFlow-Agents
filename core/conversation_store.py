@@ -222,10 +222,12 @@ class ConversationStore:
         #
         # We stream line by line to keep RAM low.
 
-        current_agent_ctx: Dict[str, List[dict]] = {}  # agent -> current ctx messages
-        shared_ctx: List[dict] = []
-        transcript_msgs_after: Dict[str, List[dict]] = {}  # for merge tracking
-        all_transcript_msgs: List[dict] = []  # only public transcript msgs
+        # Lightweight tracking — only msg_ids and sources, not full messages
+        shared_ctx_ids: List[str] = []  # msg_ids of shared context
+        # For merge: transcript msg_ids + source agent (lightweight)
+        transcript_index: List[dict] = []  # [{"msg_id":"...", "source_agent":"...", "line_num":N}]
+        # For merge: we need the FULL lines of missed messages — but only the missed ones
+        # So we track where they are (line numbers) and re-read them in a second pass if needed
 
         tmp = path.with_suffix(".tmp")
         try:
@@ -244,27 +246,26 @@ class ConversationStore:
                             t = line.get("t", "")
                             agent = line.get("agent", "")
 
-                            # Collect transcript messages (public)
+                            # Lightweight transcript index (msg_id + source only)
                             if t == "msg" and not line.get("private"):
-                                all_transcript_msgs.append(line)
+                                src_dict = line.get("source", {})
+                                src_name = src_dict.get("name", "") if isinstance(src_dict, dict) else ""
+                                transcript_index.append({
+                                    "msg_id": line.get("msg_id", ""),
+                                    "source_agent": src_name,
+                                    "line": line,  # keep ref for merge (streaming — already parsed)
+                                })
 
-                            # Collect shared context
+                            # Track shared context msg_ids
                             if t == "ctx" and agent == "":
                                 if line.get("op") == "replace":
-                                    shared_ctx = list(line.get("data", []))
+                                    shared_ctx_ids = [m.get("msg_id", "") for m in line.get("data", [])]
                                 elif line.get("op") == "append":
-                                    shared_ctx.extend(line.get("data", []))
+                                    shared_ctx_ids.extend(m.get("msg_id", "") for m in line.get("data", []))
 
                             # Skip ctx lines for agents being replaced or deleted
                             if t == "ctx" and (agent in replacements or agent in deletes):
-                                # Collect current ctx for merge calculation
-                                if agent in replacements:
-                                    if line.get("op") == "replace":
-                                        current_agent_ctx[agent] = list(line.get("data", []))
-                                    elif line.get("op") == "append":
-                                        current_agent_ctx.setdefault(agent, []).extend(
-                                            line.get("data", []))
-                                continue  # don't write this line
+                                continue  # vacuum: don't write old ctx lines
 
                             # Write all other lines as-is
                             dst.write(json.dumps(line, ensure_ascii=False) + "\n")
@@ -272,14 +273,11 @@ class ConversationStore:
                 # Now handle replacements with merge
                 for agent, new_data in replacements.items():
                     final_data = self._merge_ctx_replace(
-                        agent, new_data,
-                        current_agent_ctx.get(agent, []),
-                        all_transcript_msgs,
-                    )
+                        agent, new_data, transcript_index)
                     # Check if final == shared → delete instead of replace
-                    if shared_ctx and self._ctx_equals(final_data, shared_ctx):
+                    final_ids = [m.get("msg_id", "") for m in final_data]
+                    if shared_ctx_ids and final_ids == shared_ctx_ids:
                         logger.info(f"[convstore] ctx '{agent}' == shared after replace, removing")
-                        # Don't write — effectively deleted
                     else:
                         dst.write(json.dumps({
                             "t": "ctx", "agent": agent, "op": "replace",
@@ -298,47 +296,45 @@ class ConversationStore:
 
     @staticmethod
     def _merge_ctx_replace(agent: str, new_data: List[dict],
-                           current_ctx: List[dict],
-                           transcript_msgs: List[dict]) -> List[dict]:
+                           transcript_index: List[dict]) -> List[dict]:
         """Merge missed messages into a context replacement.
 
-        Find the last transcript msg_id in new_data that is NOT from this agent.
-        Then find transcript msgs AFTER that point that are NOT from this agent
-        and NOT already in new_data. Those are missed → merge them.
+        transcript_index: lightweight list of {"msg_id", "source_agent", "line"}
+        from the streaming pass.
+
+        Logic:
+        1. Find cutoff: last transcript msg_id in new_data that is NOT from this agent
+        2. Find transcript msgs AFTER cutoff not from this agent and not in new_data
+        3. Those are missed → merge
         """
-        if not transcript_msgs:
+        if not transcript_index:
             return new_data
 
-        # Find the "cutoff" — last msg_id in new_data that comes from transcript
-        # and is not from this agent
         new_ids = {m.get("msg_id") for m in new_data if m.get("msg_id")}
+        agent_lower = agent.lower()
+
+        # Find cutoff
         cutoff_idx = -1
-        for i, tm in enumerate(transcript_msgs):
-            mid = tm.get("msg_id", "")
-            src = tm.get("source", {})
-            src_name = src.get("name", "") if isinstance(src, dict) else ""
-            if mid and mid in new_ids and src_name.lower() != agent.lower():
+        for i, ti in enumerate(transcript_index):
+            if (ti["msg_id"] and ti["msg_id"] in new_ids
+                    and ti["source_agent"].lower() != agent_lower):
                 cutoff_idx = i
 
         if cutoff_idx < 0:
-            return new_data  # can't find cutoff, no merge
+            return new_data
 
-        # Find transcript msgs AFTER cutoff that are:
-        # - not from this agent
-        # - not already in new_data
+        # Collect missed
         missed = []
-        for tm in transcript_msgs[cutoff_idx + 1:]:
-            mid = tm.get("msg_id", "")
-            src = tm.get("source", {})
-            src_name = src.get("name", "") if isinstance(src, dict) else ""
-            if src_name.lower() == agent.lower():
-                continue  # agent's own msg — already in ctx
-            if mid and mid in new_ids:
-                continue  # already in replacement
-            # Convert transcript line to ctx message format
-            msg = {k: v for k, v in tm.items() if k not in ("t", "ts", "private")}
-            if "ts" in tm:
-                msg["timestamp"] = tm["ts"]
+        for ti in transcript_index[cutoff_idx + 1:]:
+            if ti["source_agent"].lower() == agent_lower:
+                continue
+            if ti["msg_id"] and ti["msg_id"] in new_ids:
+                continue
+            # Convert line to message format
+            line = ti["line"]
+            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+            if "ts" in line:
+                msg["timestamp"] = line["ts"]
             missed.append(msg)
 
         if missed:
@@ -347,14 +343,6 @@ class ConversationStore:
             return list(new_data) + missed
         return new_data
 
-    @staticmethod
-    def _ctx_equals(a: List[dict], b: List[dict]) -> bool:
-        """Check if two context message lists are equivalent (by msg_ids)."""
-        if len(a) != len(b):
-            return False
-        a_ids = [m.get("msg_id", "") for m in a]
-        b_ids = [m.get("msg_id", "") for m in b]
-        return a_ids == b_ids
 
     # ══════════════════════════════════════════════════════════════════
     #  CACHE
@@ -569,16 +557,31 @@ class ConversationStore:
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "") -> Optional[Dict]:
-        all_msgs = self.load(cid, user_id=user_id)
-        if all_msgs is None:
+        """Stream transcript, count total, return only the requested page."""
+        if not self.exists(cid):
             return None
-        total = len(all_msgs)
-        end = total - offset
-        start = max(0, end - limit)
-        while start > 0 and all_msgs[start].get("role") == "tool":
-            start -= 1
-        return {"messages": all_msgs[start:end], "total_count": total,
-                "offset": offset, "limit": limit, "has_more": start > 0}
+        if user_id:
+            cache = self._load_cache(cid)
+            if cache["user_id"] and cache["user_id"] != user_id:
+                return None
+        def _scan(lines):
+            # Stream: collect only msg_ids/indices, then re-read page
+            msgs = []
+            for line in lines:
+                if line.get("t") != "msg" or line.get("private"):
+                    continue
+                msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+                if "ts" in line:
+                    msg["timestamp"] = line["ts"]
+                msgs.append(msg)
+            total = len(msgs)
+            end = total - offset
+            start = max(0, end - limit)
+            while start > 0 and msgs[start].get("role") == "tool":
+                start -= 1
+            return {"messages": msgs[start:end], "total_count": total,
+                    "offset": offset, "limit": limit, "has_more": start > 0}
+        return self._read(cid, _scan)
 
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)

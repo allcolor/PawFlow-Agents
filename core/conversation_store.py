@@ -102,32 +102,35 @@ class ConversationStore:
 
     # ── SINGLE read point ─────────────────────────────────────────────
 
-    def _read_lines(self, conversation_id: str,
-                    filter_fn: Optional[Callable[[dict], bool]] = None
-                    ) -> Iterator[dict]:
-        """THE ONLY method that reads from disk. Lock, stream, release.
-
-        Yields parsed JSON lines, optionally filtered.
-        """
-        lock = self._get_conv_lock(conversation_id)
+    def _read_lines_unlocked(self, conversation_id: str,
+                              filter_fn: Optional[Callable[[dict], bool]] = None
+                              ) -> Iterator[dict]:
+        """Read lines WITHOUT locking (caller must hold the lock)."""
         path = self._conv_path(conversation_id)
         if not path.exists():
             return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                for raw_line in f:
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        obj = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if filter_fn is None or filter_fn(obj):
+                        yield obj
+        except OSError as e:
+            logger.error(f"[convstore] read failed {conversation_id}: {e}")
+
+    def _read_lines(self, conversation_id: str,
+                    filter_fn: Optional[Callable[[dict], bool]] = None
+                    ) -> Iterator[dict]:
+        """Read lines with lock. For public API methods."""
+        lock = self._get_conv_lock(conversation_id)
         with lock:
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    for raw_line in f:
-                        raw_line = raw_line.strip()
-                        if not raw_line:
-                            continue
-                        try:
-                            obj = json.loads(raw_line)
-                        except json.JSONDecodeError:
-                            continue
-                        if filter_fn is None or filter_fn(obj):
-                            yield obj
-            except OSError as e:
-                logger.error(f"[convstore] read failed {conversation_id}: {e}")
+            yield from self._read_lines_unlocked(conversation_id, filter_fn)
 
     def _read_lines_reversed(self, conversation_id: str,
                               filter_fn: Optional[Callable[[dict], bool]] = None,
@@ -368,35 +371,56 @@ class ConversationStore:
 
     def save_agent_context(self, conversation_id: str,
                            agent_name: str,
-                           context_messages: List[Dict[str, Any]],
-                           snapshot_msg_count: int = 0) -> bool:
+                           context_messages: List[Dict[str, Any]]) -> bool:
         """Replace agent context (compact/rebuild). Atomic. Auto-vacuums.
 
-        If snapshot_msg_count > 0, checks for new public messages appended
-        to the transcript AFTER the snapshot was taken. These are merged
-        into the context so no messages are lost during compact.
+        Automatically merges any new transcript messages that arrived
+        between when the caller loaded the context and now. This prevents
+        message loss during long-running compaction.
         """
         if not self.exists(conversation_id):
             return False
 
-        lines = []
+        # Load the CURRENT agent context to find new appends since caller read it
+        lock = self._get_conv_lock(conversation_id)
+        with lock:
+            # Read existing ctx for this agent (under lock)
+            current_ctx = []
+            for line in self._read_lines_unlocked(conversation_id,
+                                                   lambda l: l.get("t") == "ctx" and l.get("agent") == agent_name):
+                if line.get("op") == "replace":
+                    current_ctx = list(line.get("data", []))
+                elif line.get("op") == "append":
+                    current_ctx.extend(line.get("data", []))
 
-        # Check for messages added between snapshot and now
-        if snapshot_msg_count > 0:
-            current_count = self.message_count(conversation_id)
-            if current_count > snapshot_msg_count:
-                # New messages arrived during compact — load them
-                all_msgs = self.load(conversation_id)
-                if all_msgs and len(all_msgs) > snapshot_msg_count:
-                    missed = all_msgs[snapshot_msg_count:]
-                    context_messages = list(context_messages) + missed
-                    logger.info(f"[convstore] save_agent_context: merged "
-                                f"{len(missed)} new messages into context "
-                                f"(snapshot={snapshot_msg_count}, current={current_count})")
+            # Find messages in current ctx that are NOT in the replacement
+            # (these were appended between when caller read and now)
+            replacement_ids = set()
+            for m in context_messages:
+                mid = m.get("msg_id", "")
+                if mid:
+                    replacement_ids.add(mid)
+            missed = []
+            for m in current_ctx:
+                mid = m.get("msg_id", "")
+                if mid and mid not in replacement_ids:
+                    missed.append(m)
+            if missed:
+                context_messages = list(context_messages) + missed
+                logger.info(f"[convstore] save_agent_context: merged "
+                            f"{len(missed)} new message(s) into replacement context")
 
-        lines.append({"t": "ctx", "agent": agent_name or "", "op": "replace",
-                       "data": context_messages})
-        self._commit(conversation_id, lines)
+            # Write under the SAME lock
+            path = self._conv_path(conversation_id)
+            line = {"t": "ctx", "agent": agent_name or "", "op": "replace",
+                    "data": context_messages}
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            except OSError as e:
+                logger.error(f"[convstore] write failed: {e}")
+                return False
+            self._update_cache(conversation_id, [line])
 
         # Auto-vacuum: the replace makes all prior ctx lines obsolete
         try:

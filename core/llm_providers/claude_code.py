@@ -183,6 +183,49 @@ class LLMClaudeCodeMixin:
         with open(creds_path, "w", encoding="utf-8") as f:
             json.dump(creds, f)
 
+    def _recover_tokens(self, workdir: str):
+        """Read back tokens from workdir after a run.
+
+        Claude Code may have refreshed the access_token during the run.
+        If tokens changed, update the service config so next run uses them.
+        """
+        creds_path = os.path.join(workdir, ".credentials.json")
+        if not os.path.exists(creds_path):
+            return
+        try:
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds = json.load(f)
+            oauth = creds.get("claudeAiOauth", {})
+            new_access = oauth.get("accessToken", "")
+            new_refresh = oauth.get("refreshToken", "")
+            new_expires = oauth.get("expiresAt", 0)
+            if not new_access:
+                return
+
+            # Check if tokens changed
+            old_access = getattr(self, 'claude_access_token', '')
+            if new_access == old_access:
+                return
+
+            # Update in-memory
+            self.claude_access_token = new_access
+            self.claude_refresh_token = new_refresh
+            self.claude_expires_at = new_expires
+
+            # Persist to service config
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
+                cfg = getattr(sdef, "config", {}) or {}
+                if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token") == old_access:
+                    cfg["claude_access_token"] = new_access
+                    cfg["claude_refresh_token"] = new_refresh
+                    cfg["claude_expires_at"] = new_expires
+                    GlobalServiceRegistry.get_instance()._save_to_disk()
+                    logger.info("Recovered refreshed Claude Code tokens for '%s'", sid)
+                    break
+        except Exception as e:
+            logger.debug("Token recovery failed: %s", e)
+
     def _setup_mcp_config(self, workdir: str, user_id: str = "",
                           conversation_id: str = "",
                           agent_name: str = "") -> str:
@@ -783,6 +826,8 @@ class LLMClaudeCodeMixin:
         finally:
             self._cleanup_proc(proc)
             _stderr = ""
+            # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
+            self._recover_tokens(workdir)
 
         if proc.returncode and proc.returncode != 0:
             if _stderr:

@@ -151,6 +151,11 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
         resp = svc.complete(
             [LLMMessage(role="user", content=prompt)],
             max_tokens=150)
+        logging.getLogger(__name__).info(
+            f"[narrator] LLM response: content={len(resp.content or '')} chars, "
+            f"thinking={len(getattr(resp, 'thinking', '') or '')} chars, "
+            f"tokens_in={resp.tokens_in}, tokens_out={resp.tokens_out}, "
+            f"model={resp.model}")
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
         logging.getLogger(__name__).info(

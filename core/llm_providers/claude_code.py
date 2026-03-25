@@ -12,12 +12,20 @@ logger = logging.getLogger(__name__)
 class LLMClaudeCodeMixin:
     """Claude Code CLI provider methods: complete and stream."""
 
-    def _claude_code_env(self) -> dict:
+    def _claude_code_env(self, relay_service: str = "",
+                         user_id: str = "", conversation_id: str = "",
+                         agent_name: str = "") -> dict:
         """Build environment for claude subprocess.
 
-        Claude CLI uses its own auth (claude login). Just inherit env.
+        Claude CLI uses its own auth (claude login). Passes PawFlow
+        context to the MCP bridge via env vars.
         """
-        return os.environ.copy()
+        env = os.environ.copy()
+        env["PAWFLOW_RELAY_SERVICE"] = relay_service or ""
+        env["PAWFLOW_USER_ID"] = user_id or ""
+        env["PAWFLOW_CONVERSATION_ID"] = conversation_id or ""
+        env["PAWFLOW_AGENT_NAME"] = agent_name or ""
+        return env
 
     @staticmethod
     def _build_stdin_with_system(system_prompt: str, user_text: str) -> str:
@@ -35,6 +43,30 @@ class LLMClaudeCodeMixin:
             + user_text
         )
 
+    def _get_mcp_bridge_path(self) -> str:
+        """Path to the MCP bridge script."""
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                            "tools", "mcp_bridge.py")
+
+    def _build_claude_cmd(self, model: str, output_format: str = "json",
+                          session_id: str = "") -> list:
+        """Build claude CLI command with MCP bridge."""
+        cmd = [
+            self.claude_binary, "-p",
+            "--output-format", output_format,
+            "--model", model or "sonnet",
+            "--dangerously-skip-permissions",
+            "--max-turns", "100",
+        ]
+        # MCP bridge for PawFlow tools
+        mcp_bridge = self._get_mcp_bridge_path()
+        if os.path.exists(mcp_bridge):
+            cmd.extend(["--mcp-server", f"python {mcp_bridge}"])
+        # Session resume for context continuity
+        if session_id:
+            cmd.extend(["--resume", session_id])
+        return cmd
+
     def _complete_claude_code(
         self, messages, model, temperature, max_tokens, tools=None,
     ):
@@ -44,18 +76,14 @@ class LLMClaudeCodeMixin:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
         stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
-        cmd = [
-            self.claude_binary, "-p",
-            "--output-format", "json",
-            "--model", model or "sonnet",
-            "--max-turns", "1",
-            # Disable all native Claude Code tools -- the model must only
-            # respond with text (and optionally <tool_call> tags that we
-            # parse ourselves).  Without this, Claude Code tries to execute
-            # tools interactively (Read, Write, Bash...) which triggers
-            # permission prompts and causes timeouts.
-            "--allowedTools", "",
-        ]
+        # Check for session_id (set by agent context for resume)
+        session_id = getattr(self, '_claude_session_id', "")
+        relay_svc = getattr(self, '_relay_service_id', "")
+        user_id = getattr(self, '_user_id', "")
+        conv_id = getattr(self, '_conversation_id', "")
+        agent_name = getattr(self, '_agent_name', "")
+
+        cmd = self._build_claude_cmd(model, "json", session_id)
         # Note: Claude CLI has no --max-tokens flag (only --max-budget-usd)
 
         logger.debug("claude-code cmd: %s", " ".join(cmd[:6]) + "...")
@@ -68,7 +96,7 @@ class LLMClaudeCodeMixin:
                 capture_output=True,
                 text=True,
                 timeout=self.timeout,
-                env=self._claude_code_env(),
+                env=self._claude_code_env(relay_svc, user_id, conv_id, agent_name),
                 encoding="utf-8",
             )
         except FileNotFoundError:
@@ -112,6 +140,11 @@ class LLMClaudeCodeMixin:
 
         clean, tc = self._extract_tool_calls(content)
 
+        # Extract session_id for resume on next call
+        new_session = data.get("session_id", "")
+        if new_session:
+            self._claude_session_id = new_session
+
         return LLMResponse(
             content=clean,
             model=data.get("model", model),
@@ -135,14 +168,13 @@ class LLMClaudeCodeMixin:
         system_prompt, user_text = self._serialize_messages_for_cli(messages, tools)
         stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
-        cmd = [
-            self.claude_binary, "-p",
-            "--output-format", "stream-json",
-            "--verbose",
-            "--model", model or "sonnet",
-            "--max-turns", "1",
-        ]
-        # Note: Claude CLI has no --max-tokens flag (only --max-budget-usd)
+        session_id = getattr(self, '_claude_session_id', "")
+        relay_svc = getattr(self, '_relay_service_id', "")
+        user_id = getattr(self, '_user_id', "")
+        conv_id = getattr(self, '_conversation_id', "")
+        agent_name = getattr(self, '_agent_name', "")
+
+        cmd = self._build_claude_cmd(model, "stream-json", session_id)
 
         try:
             proc = subprocess.Popen(
@@ -151,7 +183,7 @@ class LLMClaudeCodeMixin:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                env=self._claude_code_env(),
+                env=self._claude_code_env(relay_svc, user_id, conv_id, agent_name),
                 encoding="utf-8",
             )
         except FileNotFoundError:
@@ -226,6 +258,11 @@ class LLMClaudeCodeMixin:
 
         full_content = "".join(content_parts)
         clean, tc = self._extract_tool_calls(full_content)
+
+        # Extract session_id for resume on next call
+        new_session = last_data.get("session_id", "")
+        if new_session:
+            self._claude_session_id = new_session
 
         usage = last_data.get("usage", {})
         return LLMResponse(

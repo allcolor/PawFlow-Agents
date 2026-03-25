@@ -363,6 +363,25 @@ class AgentActionsMixin:
         return (min_interval, max_interval)
 
 
+    @staticmethod
+    def _clear_claude_session(conv_id: str, agent_name: str):
+        """Clear Claude Code session_id so next call starts fresh with new context.
+
+        Called after rebuild/compact/summary/restart — the context changed,
+        so Claude Code must start a new session with the updated context.
+        """
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            key = f"claude_session:{agent_name or 'default'}"
+            old = store.get_extra(conv_id, key)
+            if old:
+                store.set_extra(conv_id, key, "")
+                logger.info("Cleared Claude Code session for %s/%s",
+                            conv_id[:8], agent_name or "default")
+        except Exception:
+            pass
+
     def _run_bg_context_op(self, conv_id: str, op_name: str, fn, flowfile):
         """Run a context operation in background with lock + SSE progress.
 
@@ -389,6 +408,14 @@ class AgentActionsMixin:
                     "stage": "start", "detail": op_name,
                 })
                 result = fn()
+                # Clear Claude Code session so next call starts fresh
+                # with the new context (rebuilt/compacted/summarized)
+                _agent = result.get("agent", "")
+                if _agent:
+                    _clear_claude_session(conv_id, _agent)
+                else:
+                    # Shared context changed — clear all agent sessions
+                    _clear_claude_session(conv_id, "")
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "done", **result,
                 })

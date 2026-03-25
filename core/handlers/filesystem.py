@@ -366,8 +366,6 @@ class FilesystemToolHandler(ToolHandler):
         if hasattr(self, '_fs_service') and self._fs_service:
             if not service_name or service_name == getattr(
                     self._fs_service, '_service_id', ''):
-                logger.info("[fs] using injected service '%s'",
-                            getattr(self._fs_service, '_service_id', '?'))
                 return self._fs_service
 
         # "workspace" alias — always resolves to the first available FS

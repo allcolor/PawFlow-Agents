@@ -120,14 +120,12 @@ class LLMClaudeCodeMixin:
                           agent_name: str = "") -> str:
         """Write MCP config to workdir and return the file path."""
         mcp_bridge = self._get_mcp_bridge_path()
-        logger.info("MCP bridge path: %s (exists=%s)", mcp_bridge, os.path.exists(mcp_bridge))
         if not os.path.exists(mcp_bridge):
             return ""
         import sys as _sys
         python_bin = _sys.executable or "python"
 
         relay_url, relay_token = self._get_tool_relay_info()
-        logger.info("Tool relay: url=%s token=%s", relay_url, "yes" if relay_token else "no")
         if not relay_url:
             logger.warning("No toolRelay service — MCP bridge will have no tools")
 
@@ -193,7 +191,6 @@ class LLMClaudeCodeMixin:
         ]
         if mcp_config_path:
             cmd.extend(["--mcp-config", mcp_config_path])
-            logger.info("claude-code MCP config: %s", mcp_config_path)
         if session_id:
             cmd.extend(["--resume", session_id])
         return cmd
@@ -536,13 +533,10 @@ class LLMClaudeCodeMixin:
                 return
             try:
                 from core.conversation_event_bus import ConversationEventBus
-                bus = ConversationEventBus.instance()
-                subs = bus.subscriber_count(conv_id)
-                logger.info("[claude-code] _pub %s to conv=%s (%d subscribers)",
-                            event_type, conv_id[:8], subs)
-                bus.publish_event(conv_id, event_type, data)
-            except Exception as e:
-                logger.error("[claude-code] _pub error: %s", e)
+                ConversationEventBus.instance().publish_event(
+                    conv_id, event_type, data)
+            except Exception:
+                pass
 
         # Read streaming output — accumulate per turn
         content_parts: List[str] = []  # final result text

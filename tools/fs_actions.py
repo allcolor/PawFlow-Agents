@@ -1463,3 +1463,11 @@ def action_mcp_list(root_dir, abs_path, req, **kwargs):
         for sid in dead:
             _mcp_servers.pop(sid, None)
     return {"servers": result}
+
+
+# Register MCP actions (defined after ACTIONS dict — avoids NameError)
+ACTIONS["mcp_start"] = action_mcp_start
+ACTIONS["mcp_call"] = action_mcp_call
+ACTIONS["mcp_discover"] = action_mcp_discover
+ACTIONS["mcp_stop"] = action_mcp_stop
+ACTIONS["mcp_list"] = action_mcp_list

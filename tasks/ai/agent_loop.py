@@ -601,8 +601,8 @@ class AgentLoopTask(
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 # Resolve user_id from conversation metadata
-                _conv_entry = store._conversations.get(conversation_id, {})
-                user_id = _conv_entry.get("user_id", "")
+                _meta = store.get_metadata(conversation_id)
+                user_id = _meta.get("user_id", "") if _meta else ""
                 _agent = agent_name or "assistant"
                 ctx_data = store.load_agent_context(conversation_id, _agent)
                 if not ctx_data:

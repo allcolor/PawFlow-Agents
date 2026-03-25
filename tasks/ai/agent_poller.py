@@ -578,8 +578,7 @@ class AgentPollerMixin:
         count = 0
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
-            entry = store._conversations.get(cid, {})
-            all_tasks = entry.get("extra", {}).get("agent_tasks", {})
+            all_tasks = store.get_extra(cid, "agent_tasks") or {}
             if not isinstance(all_tasks, dict):
                 continue
             for task_id, task in all_tasks.items():
@@ -619,8 +618,7 @@ class AgentPollerMixin:
         store = ConversationStore.instance()
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
-            entry = store._conversations.get(cid, {})
-            all_tasks = entry.get("extra", {}).get("agent_tasks", {})
+            all_tasks = store.get_extra(cid, "agent_tasks") or {}
             if not isinstance(all_tasks, dict):
                 continue
             for tid, task in all_tasks.items():
@@ -660,8 +658,7 @@ class AgentPollerMixin:
         store = ConversationStore.instance()
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
-            entry = store._conversations.get(cid, {})
-            extra = entry.get("extra", {})
+            extra = store.get_extras(cid) or {}
             for key, val in extra.items():
                 if not key.startswith("random_thought::") or not isinstance(val, dict):
                     continue

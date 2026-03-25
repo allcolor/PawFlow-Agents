@@ -470,24 +470,20 @@ class FilesystemToolHandler(ToolHandler):
         if service_name.lower() in _fs_aliases:
             return self._execute_filestore(action, path, arguments)
 
-        # Plan D: try explicit service first, then injected, then search
+        # Service is REQUIRED — no silent fallback
         svc = None
         if service_name:
             svc = self._find_service(service_name)
-            # Check if fallback was used (service found under different name)
-            if svc:
-                actual_id = getattr(svc, 'service_id', '') or getattr(svc, '_service_id', '')
-                if actual_id and actual_id != service_name:
-                    self._last_service_hint = f"\n[Note: '{service_name}' not found — using '{actual_id}'. Use service='{actual_id}' in future calls.]"
         if svc is None:
-            svc = getattr(self, '_fs_service', None)
-        if svc is None:
+            # List available services for the LLM to pick
+            available = self._available_services or []
+            if not available:
+                return "Error: 'service' parameter is required. No filesystem services available."
+            names = [s.get("id", "?") for s in available]
             return (
-                "Error: No filesystem service configured. "
-                "Install one with: /service install localFilesystem <name> "
-                "host=localhost,port=9876,secret=<secret>,mode=readwrite\n"
-                "Then run: python tools/pawflow_relay.py --port 9876 "
-                "--dir <path> --secret <secret>"
+                f"Error: 'service' parameter is required. "
+                f"Available: {', '.join(names)}. "
+                f"Use service='{names[0]}' in your call."
             )
 
         # Normalize common LLM aliases

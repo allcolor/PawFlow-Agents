@@ -189,11 +189,19 @@ def _respond(req_id, result=None, error=None):
     sys.stdout.flush()
 
 
+def _log(msg):
+    """Log to stderr (stdout is for MCP JSON-RPC)."""
+    sys.stderr.write(f"[mcp-bridge] {msg}\n")
+    sys.stderr.flush()
+
+
 def main():
     relay_svc = _get_relay_service()
     registry = _get_tool_registry()
     tools = _build_tools(registry, relay_svc)
     tool_names = {t["name"] for t in tools}
+    _log(f"Started: {len(tools)} tools, relay={'yes' if relay_svc else 'no'}, "
+         f"registry={'yes' if registry else 'no'}")
 
     for line in sys.stdin:
         line = line.strip()
@@ -208,6 +216,8 @@ def main():
         req_id = request.get("id")
         params = request.get("params", {})
 
+        _log(f"<< {method} (id={req_id})")
+
         if method == "initialize":
             _respond(req_id, {
                 "protocolVersion": "2024-11-05",
@@ -215,12 +225,14 @@ def main():
                 "serverInfo": {"name": "pawflow-mcp-bridge", "version": "1.0"},
             })
         elif method == "notifications/initialized":
-            pass
+            _log("MCP initialized")
         elif method == "tools/list":
+            _log(f"Returning {len(tools)} tools")
             _respond(req_id, {"tools": tools})
         elif method == "tools/call":
             name = params.get("name", "")
             args = params.get("arguments", {})
+            _log(f"CALL {name}({json.dumps(args)[:200]})")
             if name == "filesystem" and relay_svc:
                 action = args.get("action", "")
                 result = _execute_fs(relay_svc, action, args)
@@ -228,11 +240,13 @@ def main():
                 result = _execute_tool(registry, name, args)
             else:
                 result = f"Error: unknown tool '{name}'"
+            _log(f"RESULT {name}: {result[:100]}")
             _respond(req_id, {
                 "content": [{"type": "text", "text": result}],
                 "isError": result.startswith("Error:"),
             })
         else:
+            _log(f"Unknown method: {method}")
             _respond(req_id, None,
                      error={"code": -32601, "message": f"Unknown method: {method}"})
 

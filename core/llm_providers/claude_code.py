@@ -239,6 +239,8 @@ class LLMClaudeCodeMixin:
                     continue
 
                 etype = event.get("type", "")
+                logger.info(f"[claude-code stream] event: {etype} "
+                            f"{json.dumps(event)[:200]}")
                 if etype == "assistant":
                     # Content message
                     msg = event.get("message", {})

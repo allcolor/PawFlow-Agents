@@ -240,11 +240,14 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             # Clear shared context
             store.save_agent_context(conv_id, "", serialized_ctx)
             # Clear all agent-specific contexts
-            extras = store.get_extras(conv_id, user_id=user_id) or {}
-            agent_contexts = [k for k in extras if k.startswith("agent_context:")]
-            for k in agent_contexts:
-                store.set_extra(conv_id, k, None, user_id=user_id)
-            return {"cleared": True, "agents_reset": len(agent_contexts) + 1}
+            agent_ctxs = store.list_agent_contexts(conv_id)
+            count = 0
+            for agent_name in agent_ctxs:
+                if agent_name == "*":
+                    continue
+                store.save_agent_context(conv_id, agent_name, serialized_ctx)
+                count += 1
+            return {"cleared": True, "agents_reset": count + 1}
 
         return self._run_bg_context_op(conv_id, "clear", _do_clear, flowfile)
 

@@ -368,15 +368,37 @@ class ConversationStore:
 
     def save_agent_context(self, conversation_id: str,
                            agent_name: str,
-                           context_messages: List[Dict[str, Any]]) -> bool:
-        """Replace agent context (compact/rebuild). Atomic. Auto-vacuums."""
+                           context_messages: List[Dict[str, Any]],
+                           snapshot_msg_count: int = 0) -> bool:
+        """Replace agent context (compact/rebuild). Atomic. Auto-vacuums.
+
+        If snapshot_msg_count > 0, checks for new public messages appended
+        to the transcript AFTER the snapshot was taken. These are merged
+        into the context so no messages are lost during compact.
+        """
         if not self.exists(conversation_id):
             return False
-        self._commit(conversation_id, [
-            {"t": "ctx", "agent": agent_name or "", "op": "replace",
-             "data": context_messages}
-        ])
-        # Auto-vacuum: the replace makes all prior ctx lines for this agent obsolete
+
+        lines = []
+
+        # Check for messages added between snapshot and now
+        if snapshot_msg_count > 0:
+            current_count = self.message_count(conversation_id)
+            if current_count > snapshot_msg_count:
+                # New messages arrived during compact — load them
+                all_msgs = self.load(conversation_id)
+                if all_msgs and len(all_msgs) > snapshot_msg_count:
+                    missed = all_msgs[snapshot_msg_count:]
+                    context_messages = list(context_messages) + missed
+                    logger.info(f"[convstore] save_agent_context: merged "
+                                f"{len(missed)} new messages into context "
+                                f"(snapshot={snapshot_msg_count}, current={current_count})")
+
+        lines.append({"t": "ctx", "agent": agent_name or "", "op": "replace",
+                       "data": context_messages})
+        self._commit(conversation_id, lines)
+
+        # Auto-vacuum: the replace makes all prior ctx lines obsolete
         try:
             self.vacuum(conversation_id)
         except Exception as e:

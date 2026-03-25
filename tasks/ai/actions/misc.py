@@ -156,17 +156,17 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         # Copy extras (active_resources, nicknames, overrides, etc.)
         src_extras = store.get_extras(conv_id, user_id=user_id) or {}
         for key, val in src_extras.items():
-            if key.startswith("agent_context:") or key == "agent_context":
-                # Copy agent contexts too
+            if not key.startswith("cancel_checkpoint:"):
                 store.set_extra(new_id, key, val, user_id=user_id)
-            elif not key.startswith("cancel_checkpoint:"):
-                store.set_extra(new_id, key, val, user_id=user_id)
-        # Copy per-agent diverged contexts
-        for key in list(src_extras.keys()):
-            if key.startswith("agent_context:"):
-                ctx_data = store.load_agent_context(conv_id, key.split(":", 1)[1])
+        # Copy agent contexts
+        agent_ctxs = store.list_agent_contexts(conv_id)
+        for agent_name, status in agent_ctxs.items():
+            if agent_name == "*":
+                continue  # skip shared status marker
+            if status == "diverged":
+                ctx_data = store.load_agent_context(conv_id, agent_name)
                 if ctx_data:
-                    store.save_agent_context(new_id, key.split(":", 1)[1], ctx_data)
+                    store.save_agent_context(new_id, agent_name, ctx_data)
         # Set fork name via extra
         if fork_name:
             store.set_extra(new_id, "title", fork_name, user_id=user_id)

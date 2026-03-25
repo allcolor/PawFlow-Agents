@@ -54,9 +54,17 @@ class LLMClaudeCodeMixin:
         os.makedirs(workdir, exist_ok=True)
         return workdir
 
-    def _claude_code_env(self) -> dict:
-        """Build environment for claude subprocess."""
-        return os.environ.copy()
+    def _claude_code_env(self, workdir: str = "") -> dict:
+        """Build environment for claude subprocess.
+
+        Sets CLAUDE_CONFIG_DIR to the session workdir so Claude Code
+        reads credentials from our managed .credentials.json instead
+        of the user's ~/.claude/.credentials.json.
+        """
+        env = os.environ.copy()
+        if workdir:
+            env["CLAUDE_CONFIG_DIR"] = workdir
+        return env
 
     # Cached tool relay info (shared across all claude-code agents)
     _tool_relay_cache: Optional[tuple] = None
@@ -114,6 +122,46 @@ class LLMClaudeCodeMixin:
         except Exception as e:
             logger.error("Failed to get/create tool relay: %s", e)
         return "", ""
+
+    def _setup_credentials(self, workdir: str):
+        """Write .credentials.json in session workdir for Claude Code auth.
+
+        Reads tokens from the service config (stored in PawFlow secrets).
+        NO fallback to local ~/.claude/ — each service must have its own
+        credentials configured via the admin panel login flow.
+
+        Raises LLMClientError if no credentials configured.
+        """
+        from core.llm_client import LLMClientError
+
+        access_token = getattr(self, 'claude_access_token', '') or ''
+        refresh_token = getattr(self, 'claude_refresh_token', '') or ''
+        expires_at = getattr(self, 'claude_expires_at', 0) or 0
+
+        if not access_token:
+            raise LLMClientError(
+                "Claude Code credentials not configured. "
+                "Go to Admin → Services → claude_code_llm_service → Login "
+                "to authenticate with your Claude subscription.")
+
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": access_token,
+                "refreshToken": refresh_token,
+                "expiresAt": int(expires_at),
+                "scopes": [
+                    "org:create_api_key",
+                    "user:profile",
+                    "user:inference",
+                    "user:sessions:claude_code",
+                    "user:mcp_servers",
+                    "user:file_upload",
+                ],
+            }
+        }
+        creds_path = os.path.join(workdir, ".credentials.json")
+        with open(creds_path, "w", encoding="utf-8") as f:
+            json.dump(creds, f)
 
     def _setup_mcp_config(self, workdir: str, user_id: str = "",
                           conversation_id: str = "",
@@ -316,7 +364,7 @@ class LLMClaudeCodeMixin:
             result = subprocess.run(
                 cmd, input=stdin_text, capture_output=True, text=True,
                 timeout=self.timeout, cwd=workdir,
-                env=self._claude_code_env(), encoding="utf-8",
+                env=self._claude_code_env(workdir), encoding="utf-8",
             )
         except FileNotFoundError:
             raise LLMClientError(
@@ -459,7 +507,6 @@ class LLMClaudeCodeMixin:
         from core.llm_client import LLMClientError, LLMResponse
 
         # Replace inline images with FileStore links BEFORE serialization
-        # (prevents base64 data from bloating the prompt)
         self._externalize_attachments(messages)
 
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
@@ -487,6 +534,7 @@ class LLMClaudeCodeMixin:
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
         workdir = self._get_session_workdir(conv_id, agent_name)
+        self._setup_credentials(workdir)
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
         cmd = self._build_claude_cmd(model, session_id, mcp_config_path=mcp_path)
 
@@ -500,7 +548,7 @@ class LLMClaudeCodeMixin:
                 stderr=subprocess.PIPE,
                 text=True,
                 cwd=workdir,
-                env=self._claude_code_env(),
+                env=self._claude_code_env(workdir),
                 encoding="utf-8",
             )
             self._claude_proc = proc

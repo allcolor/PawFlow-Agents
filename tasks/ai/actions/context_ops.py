@@ -350,24 +350,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _rb_max = _ctx_max_tokens(_rb_agent)
 
         def _do_rebuild():
+            # /rebuild = context = full conversation transcript. No compaction.
+            _ctx_save(conv_id, _rb_msgs, _rb_agent)
             deserialized = self._deserialize_messages(_rb_msgs)
             estimated = self._estimate_tokens(deserialized)
-            limit = int(_rb_max * 0.8)
-            if estimated <= limit:
-                _ctx_save(conv_id, _rb_msgs, _rb_agent)
-                return {"action": "full_restore", "before": len(_rb_msgs),
-                        "after": len(_rb_msgs), "tokens_after": estimated,
-                        "agent": _rb_agent or "shared"}
-            if not _rb_client:
-                raise ValueError("No LLM service for compaction")
-            compacted = self._compact_if_needed(
-                deserialized, _rb_client, _rb_max, 0.8,
-                int(self.config.get("context_keep_recent", 6)),
-                conversation_id=conv_id, agent_name=_rb_agent,
-            )
-            return {"action": "compacted", "before": len(_rb_msgs),
-                    "after": len(compacted),
-                    "tokens_after": self._estimate_tokens(compacted),
+            return {"before": len(_rb_msgs), "after": len(_rb_msgs),
+                    "tokens_after": estimated,
                     "agent": _rb_agent or "shared"}
 
         return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)

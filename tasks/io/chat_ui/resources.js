@@ -940,39 +940,58 @@ function _renderServiceActions(actions, serviceId) {
 }
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
+  const btn = event && event.target ? event.target : null;
   if (flow === 'oauth_code') {
-    // Step 1: get auth URL
     try {
+      // Step 1: get auth URL
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: serverAction, service_id: serviceId })
       }).then(r => r.json());
       if (resp.error) { addMsg('error', resp.error); return; }
 
-      // Step 2: open URL
+      // Step 2: open URL in new tab
       window.open(resp.url, '_blank');
 
-      // Step 3: prompt for code
-      const code = prompt('After login, paste the authorization code here:');
-      if (!code) return;
+      // Step 3: show inline code input (replaces the button)
+      const container = btn ? btn.parentElement : null;
+      if (container) {
+        const codeDiv = document.createElement('div');
+        codeDiv.style.cssText = 'margin-top:8px;display:flex;gap:4px;align-items:center;';
+        codeDiv.innerHTML = '<input id="svc-oauth-code" type="text" placeholder="Paste authorization code here..." '
+          + 'style="' + _svcInputStyle + 'flex:1;"/>'
+          + '<button type="button" id="svc-oauth-submit" style="background:#6c5ce7;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;">Submit</button>';
+        container.appendChild(codeDiv);
+        document.getElementById('svc-oauth-code').focus();
 
-      // Step 4: exchange code
-      const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
-                               service_id: serviceId, code: code, state: resp.state })
-      }).then(r => r.json());
-
-      if (result.ok) addMsg('system', result.message || 'Login successful!');
-      else addMsg('error', result.error || 'Login failed');
+        // Step 4: on submit, exchange code
+        const submitBtn = document.getElementById('svc-oauth-submit');
+        const doSubmit = async () => {
+          const code = document.getElementById('svc-oauth-code').value.trim();
+          if (!code) return;
+          submitBtn.textContent = '...';
+          submitBtn.disabled = true;
+          try {
+            const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+              body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
+                                     service_id: serviceId, code: code, state: resp.state })
+            }).then(r => r.json());
+            if (result.ok) {
+              codeDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Login successful!') + '</span>';
+            } else {
+              codeDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + (result.error || 'Failed') + '</span>';
+            }
+          } catch (e) {
+            codeDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
+          }
+        };
+        submitBtn.addEventListener('click', doSubmit);
+        document.getElementById('svc-oauth-code').addEventListener('keydown', (e) => {
+          if (e.key === 'Enter') doSubmit();
+        });
+      }
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
-  } else if (flow === 'confirm') {
-    if (!confirm('Execute ' + actionId + '?')) return;
-    try {
-      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction, service_id: serviceId })
-      }).then(r => r.json());
-      addMsg('system', resp.message || resp.error || JSON.stringify(resp));
-    } catch (e) { addMsg('error', e.message); }
   } else {
+    if (flow === 'confirm' && !confirm('Execute ' + actionId + '?')) return;
     try {
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: serverAction, service_id: serviceId })

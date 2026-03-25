@@ -384,49 +384,68 @@ class ConversationStore:
         # Load the CURRENT agent context to find new appends since caller read it
         lock = self._get_conv_lock(conversation_id)
         with lock:
-            # Read existing ctx for this agent (under lock)
-            current_ctx = []
-            for line in self._read_lines_unlocked(conversation_id,
-                                                   lambda l: l.get("t") == "ctx" and l.get("agent") == agent_name):
-                if line.get("op") == "replace":
-                    current_ctx = list(line.get("data", []))
-                elif line.get("op") == "append":
-                    current_ctx.extend(line.get("data", []))
+            path = self._conv_path(conversation_id)
+            if not path.exists():
+                return False
 
-            # Find messages in current ctx that are NOT in the replacement
-            # (these were appended between when caller read and now)
-            replacement_ids = set()
-            for m in context_messages:
-                mid = m.get("msg_id", "")
-                if mid:
-                    replacement_ids.add(mid)
-            missed = []
-            for m in current_ctx:
-                mid = m.get("msg_id", "")
-                if mid and mid not in replacement_ids:
-                    missed.append(m)
+            # 1. Read ALL lines + current ctx for this agent
+            all_lines = []
+            current_ctx = []
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for raw in f:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            all_lines.append(json.loads(raw))
+                        except json.JSONDecodeError:
+                            continue
+            except OSError as e:
+                logger.error(f"[convstore] read failed: {e}")
+                return False
+
+            for line in all_lines:
+                if line.get("t") == "ctx" and line.get("agent") == agent_name:
+                    if line.get("op") == "replace":
+                        current_ctx = list(line.get("data", []))
+                    elif line.get("op") == "append":
+                        current_ctx.extend(line.get("data", []))
+
+            # 2. Merge missed messages
+            replacement_ids = {m.get("msg_id", "") for m in context_messages if m.get("msg_id")}
+            missed = [m for m in current_ctx
+                      if m.get("msg_id") and m["msg_id"] not in replacement_ids]
             if missed:
                 context_messages = list(context_messages) + missed
                 logger.info(f"[convstore] save_agent_context: merged "
                             f"{len(missed)} new message(s) into replacement context")
 
-            # Write under the SAME lock
-            path = self._conv_path(conversation_id)
-            line = {"t": "ctx", "agent": agent_name or "", "op": "replace",
-                    "data": context_messages}
-            try:
-                with open(path, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(line, ensure_ascii=False) + "\n")
-            except OSError as e:
-                logger.error(f"[convstore] write failed: {e}")
-                return False
-            self._update_cache(conversation_id, [line])
+            # 3. Vacuum + replace in ONE atomic rewrite
+            #    Remove old ctx lines for this agent, keep everything else
+            kept = [l for l in all_lines
+                    if not (l.get("t") == "ctx" and l.get("agent") == agent_name)]
+            # Add the new replace line
+            kept.append({"t": "ctx", "agent": agent_name or "", "op": "replace",
+                         "data": context_messages})
 
-        # Auto-vacuum: the replace makes all prior ctx lines obsolete
-        try:
-            self.vacuum(conversation_id)
-        except Exception as e:
-            logger.debug(f"[convstore] auto-vacuum failed: {e}")
+            # 4. Atomic rewrite
+            tmp = path.with_suffix(".tmp")
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    for line in kept:
+                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                tmp.replace(path)
+            except OSError as e:
+                tmp.unlink(missing_ok=True)
+                logger.error(f"[convstore] rewrite failed: {e}")
+                return False
+
+            # 5. Rebuild cache
+            with self._cache_lock:
+                self._cache.pop(conversation_id, None)
+
+        self._load_cache(conversation_id)
         return True
 
     def append_to_agent_context(self, conversation_id: str,

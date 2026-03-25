@@ -444,18 +444,22 @@
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.stage === 'start') {
-      showContextOp('Compacting ' + (data.agent || '') + ' (' + data.messages + ' messages, ~' + data.tokens + ' tokens)');
+      var opLabel = data.detail || 'compact';
+      showContextOp(opLabel.charAt(0).toUpperCase() + opLabel.slice(1) + ' ' + (data.agent || '') + '...');
     } else if (data.stage === 'chunking' || data.stage === 'summarizing') {
-      showContextOp('Compacting: ' + (data.detail || data.stage));
+      showContextOp((data.detail || data.stage) + '...');
     } else if (data.stage === 'done') {
       hideContextOp();
       contextOpInProgress = false;
       const agent = data.agent || 'shared';
-      addMsg('system', 'Compacted (' + agent + '): ' + data.before + ' messages \u2192 ' + data.after + ' messages (~' + data.tokens_after + ' tokens)');
+      const before = data.before !== undefined ? data.before : '?';
+      const after = data.after !== undefined ? data.after : '?';
+      const tokAfter = data.tokens_after !== undefined ? data.tokens_after : '?';
+      addMsg('system', agent + ': ' + before + ' messages \u2192 ' + after + ' messages (~' + tokAfter + ' tokens)');
     } else if (data.stage === 'error') {
       hideContextOp();
       contextOpInProgress = false;
-      addMsg('error', 'Compaction failed: ' + data.error);
+      addMsg('error', 'Context operation failed: ' + data.error);
     }
   });
 

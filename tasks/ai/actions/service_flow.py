@@ -282,6 +282,149 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    # ── Claude Code OAuth login ──────────────────────────────────────
+
+    if action == "claude_code_login_url":
+        """Generate OAuth URL for Claude Code subscription login.
+
+        Returns {url, state} — user opens URL in browser, logs in,
+        gets a code, then calls claude_code_login_code.
+        """
+        import hashlib
+        import base64
+        import secrets as _secrets
+
+        service_id = body.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+
+        # PKCE: generate code_verifier + code_challenge
+        code_verifier = _secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = _secrets.token_urlsafe(32)
+
+        # Store for the exchange step
+        _pending_key = f"_claude_oauth_pending:{service_id}"
+        store.set_extra("__global__", _pending_key, {
+            "code_verifier": code_verifier,
+            "state": state,
+            "service_id": service_id,
+            "user_id": user_id,
+        })
+
+        from urllib.parse import urlencode
+        params = urlencode({
+            "code": "true",
+            "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+            "response_type": "code",
+            "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+            "scope": "org:create_api_key user:profile user:inference "
+                     "user:sessions:claude_code user:mcp_servers user:file_upload",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+        })
+        url = f"https://claude.ai/oauth/authorize?{params}"
+
+        flowfile.set_content(json.dumps({
+            "url": url,
+            "state": state,
+            "message": "Open this URL in your browser. After login, copy the code and submit it.",
+        }).encode())
+        return [flowfile]
+
+    if action == "claude_code_login_code":
+        """Exchange OAuth code for tokens and store in service config."""
+        import http.client
+        import ssl
+        from urllib.parse import urlencode
+
+        service_id = body.get("service_id", "")
+        code = body.get("code", "").strip()
+        state = body.get("state", "").strip()
+
+        if not service_id or not code:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or code"}).encode())
+            return [flowfile]
+
+        # Retrieve stored PKCE verifier
+        _pending_key = f"_claude_oauth_pending:{service_id}"
+        pending = store.get_extra("__global__", _pending_key) or {}
+        code_verifier = pending.get("code_verifier", "")
+        if not code_verifier:
+            flowfile.set_content(json.dumps({"error": "No pending login. Click Login first."}).encode())
+            return [flowfile]
+        if state and pending.get("state") and state != pending.get("state"):
+            flowfile.set_content(json.dumps({"error": "State mismatch"}).encode())
+            return [flowfile]
+
+        # Exchange code for tokens
+        try:
+            token_body = urlencode({
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": "https://platform.claude.com/oauth/code/callback",
+                "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                "code_verifier": code_verifier,
+            }).encode()
+
+            ctx = ssl.create_default_context()
+            conn = http.client.HTTPSConnection("claude.ai", timeout=30, context=ctx)
+            conn.request("POST", "/oauth/token", body=token_body, headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Length": str(len(token_body)),
+            })
+            resp = conn.getresponse()
+            resp_body = resp.read().decode("utf-8")
+            conn.close()
+
+            if resp.status >= 400:
+                flowfile.set_content(json.dumps({
+                    "error": f"Token exchange failed ({resp.status}): {resp_body[:300]}"
+                }).encode())
+                return [flowfile]
+
+            import json as _json
+            token_data = _json.loads(resp_body)
+            access_token = token_data.get("access_token", "")
+            refresh_token = token_data.get("refresh_token", "")
+            expires_in = int(token_data.get("expires_in", 3600))
+
+            if not access_token:
+                flowfile.set_content(json.dumps({
+                    "error": f"No access_token in response: {resp_body[:300]}"
+                }).encode())
+                return [flowfile]
+
+            import time
+            expires_at = int(time.time() * 1000) + (expires_in * 1000)
+
+            # Store tokens in service config
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            sdef = greg.get_definition(service_id)
+            if sdef:
+                sdef.config["claude_access_token"] = access_token
+                sdef.config["claude_refresh_token"] = refresh_token
+                sdef.config["claude_expires_at"] = expires_at
+                greg.save()
+                logger.info("Claude Code OAuth tokens stored for service '%s'", service_id)
+
+            # Clean up pending
+            store.set_extra("__global__", _pending_key, None)
+
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": "Login successful! Tokens stored.",
+                "expires_at": expires_at,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Token exchange error: {e}"}).encode())
+        return [flowfile]
+
     if action in ("start_flow", "stop_flow", "undeploy_flow"):
         iid = body.get("instance_id", "")
         if not iid:

@@ -152,6 +152,9 @@ class LLMClient(
         timeout: int = 60,
         max_retries: int = 2,
         claude_binary: str = "claude",
+        claude_access_token: str = "",
+        claude_refresh_token: str = "",
+        claude_expires_at: float = 0.0,
         gemini_binary: str = "gemini",
         refresh_token: str = "",
         token_expires_at: float = 0.0,
@@ -165,6 +168,9 @@ class LLMClient(
         self.timeout = timeout
         self.max_retries = max_retries
         self.claude_binary = claude_binary
+        self.claude_access_token = claude_access_token
+        self.claude_refresh_token = claude_refresh_token
+        self.claude_expires_at = claude_expires_at
         self.gemini_binary = gemini_binary
         self.refresh_token = refresh_token
         self.token_expires_at = token_expires_at
@@ -245,6 +251,9 @@ class LLMClient(
             timeout=int(config.get("timeout", 60)),
             max_retries=int(config.get("max_retries", 2)),
             claude_binary=config.get("claude_binary", "claude"),
+            claude_access_token=config.get("claude_access_token", ""),
+            claude_refresh_token=config.get("claude_refresh_token", ""),
+            claude_expires_at=float(config.get("claude_expires_at", 0)),
             gemini_binary=config.get("gemini_binary", "gemini"),
             refresh_token=config.get("refresh_token", ""),
             token_expires_at=float(config.get("token_expires_at", 0)),

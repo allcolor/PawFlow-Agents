@@ -176,10 +176,13 @@ class AgentCompactionMixin:
             logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)
             return messages
 
-        # Guard: empty summary = LLM returned nothing → don't compact
+        # Guard: empty summary = LLM returned nothing → critical error
         if not summary or len(summary.strip()) < 20:
-            logger.warning(f"[compact-post] Summary too short ({len(summary)} chars), keeping original")
-            return messages
+            logger.error(f"[compact-post] CRITICAL: Summary too short ({len(summary)} chars) — "
+                         f"summarizer LLM returned empty. Check service config (temperature, model).")
+            raise RuntimeError(
+                f"Compaction failed: summarizer returned {len(summary)} chars. "
+                f"Service: {llm_service or 'default'}")
 
         # Build compacted context
         compacted: List[LLMMessage] = []

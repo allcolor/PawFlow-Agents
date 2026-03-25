@@ -27,18 +27,13 @@ class BaseService(VariableResolverMixin, Service, ABC):
             config: Configuration du service (may be LazyResolveDict)
         """
         from core.expression import LazyResolveDict
-        if isinstance(config, LazyResolveDict):
-            # LazyResolveDict resolves expressions on every access —
-            # don't copy or pre-resolve, keep the lazy behavior.
-            self._original_config = config
-            super().__init__(config)
-            self.config = config
-        else:
-            # Regular dict: resolve variables once (legacy behavior)
-            self._original_config = config.copy()
-            resolved_config = self._resolve_variables(config)
-            super().__init__(resolved_config)
-            self.config = resolved_config
+        # ALWAYS wrap config in LazyResolveDict — every .get() resolves
+        # expressions automatically. No service needs manual resolution.
+        self._original_config = config if isinstance(config, dict) else {}
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
+        super().__init__(config)
+        self.config = config
 
         # État de la connexion
         self._connection: Optional[Any] = None

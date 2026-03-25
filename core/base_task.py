@@ -27,17 +27,14 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         Args:
             config: Configuration de la tâche
         """
-        # Sauvegarder la configuration originale (avant toute résolution)
-        self._original_config = config.copy()
-
-        # Résoudre les variables dans la configuration
-        resolved_config = self._resolve_variables(config)
-
-        # Appeler l'initialisation de la sous-classe
-        super().__init__(resolved_config)
-
-        # Stocker la configuration résolue
-        self.config = resolved_config
+        # ALWAYS wrap config in LazyResolveDict — every .get() resolves
+        # expressions automatically. No task needs manual resolution.
+        from core.expression import LazyResolveDict
+        self._original_config = config if isinstance(config, dict) else {}
+        if not isinstance(config, LazyResolveDict):
+            config = LazyResolveDict(config or {})
+        super().__init__(config)
+        self.config = config
 
         # Controller services (injected by the executor)
         self._services: Dict[str, Any] = {}

@@ -89,16 +89,14 @@ class LLMConnectionService(BaseService):
         default_temperature: numeric value to override, "none" to skip entirely,
         absent = use caller's value as-is.
         """
-        # Resolve ALL config expressions at point of use
-        from core.expression import resolve_value
-        cfg = resolve_value(self.config)
-        cfg_temp = cfg.get("default_temperature")
+        # self.config is LazyResolveDict — resolves expressions on .get()
+        cfg_temp = self.config.get("default_temperature")
         if cfg_temp is not None:
             if str(cfg_temp).strip().lower() == "none":
                 temperature = None  # don't send temperature at all
             else:
                 temperature = float(cfg_temp)
-        cfg_max = cfg.get("default_max_tokens")
+        cfg_max = self.config.get("default_max_tokens")
         if cfg_max is not None and int(cfg_max) > 0:
             max_tokens = int(cfg_max)
         return temperature, max_tokens, model

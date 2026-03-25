@@ -1,9 +1,9 @@
 # Expression Language
 
-"""
-Moteur de résolution d'expressions ${...} pour PawFlow.
-Résout les variables depuis les attributs FlowFile, les paramètres de flow,
-l'environnement, et les secrets chiffrés.
+"""Expression resolution engine for PawFlow.
+
+Resolves ${...} expressions from secrets, parameters, environment
+variables, and FlowFile attributes through a unified cascade.
 """
 
 import json
@@ -139,38 +139,24 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
                        owner: Optional[str] = None,
                        conversation_id: Optional[str] = None,
                        _depth: int = 0) -> str:
-    """
-    Résoudre toutes les expressions ${...} dans un template.
+    """Resolve all ${...} expressions in a template string.
 
-    Simplified syntax: ${name} — no scope prefix needed.
-    Resolution order: secrets → params → legacy vars → attrs.
-
-    Secrets cascade:  conv → user → global
-    Params cascade:   flow → conv → user → global → env
-    (env = OS environment variables, last fallback in params cascade)
+    Resolution: secrets (conv→user→global) → params (flow→conv→user→global→env)
+    → legacy vars → FlowFile attributes.
 
     Examples:
-        ${api_key}           → secrets first, then params, then env
-        ${PATH}              → found in env if not in secrets/params
-        ${api_key:default("sk-xxx")} → with fallback
-        ${PATH:!important(env)} → OS env ONLY, skip other scopes
+        ${api_key}                     → cascade through all scopes
+        ${PATH}                        → env is last in params cascade
+        ${api_key:default("fallback")} → with default
+        ${key:!important(env)}         → force specific scope
 
-    Force exact scope:
-        ${key:!important(global)}  → global params ONLY
-        ${key:!important(user)}    → user params ONLY
-        ${key:!important(conv)}    → conv params ONLY
-        ${key:!important(env)}     → OS environment ONLY
-
-    No prefixes — ${name} resolves everything through the cascade.
-
-    Résolution récursive : si la valeur résolue contient des ${...},
-    elles sont résolues à leur tour (max 10 niveaux).
+    Recursive up to 10 levels.
 
     Args:
-        template: Chaîne avec expressions ${...}
-        attributes: Attributs du FlowFile
-        parameters: Paramètres du flow
-        owner: Owner username for user-level resolution (None = skip user-level)
+        template: String with ${...} expressions
+        attributes: FlowFile attributes
+        parameters: Flow parameters
+        owner: Username for user-level resolution
         conversation_id: Conversation ID for conv-level resolution
 
     Returns:

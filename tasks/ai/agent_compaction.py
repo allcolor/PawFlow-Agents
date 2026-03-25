@@ -793,6 +793,10 @@ class AgentCompactionMixin:
                 ],
                 max_tokens=min(target_tokens * 2, 4000),
             )
+            logger.info(f"[compact] LLM response: content={len(response.content or '')} chars, "
+                        f"thinking={len(getattr(response, 'thinking', '') or '')} chars, "
+                        f"tokens_in={response.tokens_in}, tokens_out={response.tokens_out}, "
+                        f"model={response.model}")
         except Exception as e:
             err_str = str(e)
             if "parse" in err_str.lower() or "500" in err_str:

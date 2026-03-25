@@ -277,6 +277,9 @@ class PawCode:
                         continue
                     try:
                         self._handle_input(text)
+                    except KeyboardInterrupt:
+                        self._running = False
+                        break
                     except Exception as e:
                         self.renderer.print_error(f"Unexpected error: {e}")
         else:
@@ -291,6 +294,9 @@ class PawCode:
                     continue
                 try:
                     self._handle_input(text)
+                except KeyboardInterrupt:
+                    self._running = False
+                    break
                 except Exception as e:
                     self.renderer.print_error(f"Unexpected error: {e}")
 

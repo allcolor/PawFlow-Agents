@@ -250,11 +250,20 @@ class LLMClaudeCodeMixin:
                     last_data = event
         finally:
             proc.stdout.close()
+            _stderr = ""
+            try:
+                _stderr = proc.stderr.read()
+            except Exception:
+                pass
             proc.stderr.close()
             proc.wait(timeout=5)
 
         if proc.returncode and proc.returncode != 0:
-            raise LLMClientError(f"Claude CLI stream exited with code {proc.returncode}")
+            if _stderr:
+                logger.error(f"Claude CLI stderr: {_stderr[:500]}")
+            raise LLMClientError(
+                f"Claude CLI stream exited with code {proc.returncode}"
+                + (f": {_stderr[:200]}" if _stderr else ""))
 
         full_content = "".join(content_parts)
         clean, tc = self._extract_tool_calls(full_content)

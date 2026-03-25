@@ -330,8 +330,9 @@ class ConversationStore:
                 continue
             if ti["msg_id"] and ti["msg_id"] in new_ids:
                 continue
-            # Convert line to message format
             line = ti["line"]
+            if line.get("display_only"):
+                continue  # NEVER merge display_only into contexts
             msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
             if "ts" in line:
                 msg["timestamp"] = line["ts"]
@@ -453,16 +454,19 @@ class ConversationStore:
         if lines:
             ops.append({"op": "append", "lines": lines})
 
-        all_agent = public_messages + private_messages
+        # Filter display_only — NEVER goes into any context
+        ctx_public = [m for m in public_messages if not m.get("display_only")]
+        ctx_private = [m for m in private_messages if not m.get("display_only")]
+        all_agent = ctx_public + ctx_private
         if all_agent:
             ops.append({"op": "ctx_append", "agent": agent_name, "data": all_agent})
 
-        if public_messages:
+        if ctx_public:
             cache = self._load_cache(cid)
             for other in cache.get("agents", set()):
                 if other and other != agent_name:
                     ops.append({"op": "ctx_append", "agent": other,
-                                "data": public_messages})
+                                "data": ctx_public})
 
         self._commit(cid, ops)
 
@@ -515,16 +519,21 @@ class ConversationStore:
                            context_messages: List[Dict]) -> bool:
         if not self.exists(cid):
             return False
+        # NEVER put display_only messages in contexts
+        clean = [m for m in context_messages if not m.get("display_only")]
         self._commit(cid, [{"op": "ctx_replace", "agent": agent_name or "",
-                            "data": context_messages}])
+                            "data": clean}])
         return True
 
     def append_to_agent_context(self, cid: str, agent_name: str,
                                 new_messages: List[Dict]) -> bool:
         if not self.exists(cid):
             return False
+        clean = [m for m in new_messages if not m.get("display_only")]
+        if not clean:
+            return True
         self._commit(cid, [{"op": "ctx_append", "agent": agent_name,
-                            "data": new_messages}])
+                            "data": clean}])
         return True
 
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:

@@ -292,130 +292,46 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     # ── Claude Code OAuth login ──────────────────────────────────────
 
     if action == "claude_code_login_url":
-        """Start Claude Code login by running `claude auth login` on the server.
+        """Return instructions for Claude Code login.
 
-        Returns {url} — the auth URL for the user to open in their browser.
-        Claude Code handles the entire OAuth flow (PKCE, token exchange).
-        We just capture the URL and wait for credentials to appear.
+        The user runs `claude auth login` on their own machine, then
+        pastes the credentials JSON content.
         """
-        import subprocess
-        import shutil
-
-        service_id = body.get("service_id", "")
-        if not service_id:
-            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
-            return [flowfile]
-
-        claude_bin = "claude"
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            sdef = GlobalServiceRegistry.get_instance().get_definition(service_id)
-            if sdef:
-                claude_bin = sdef.config.get("claude_binary", "claude")
-        except Exception:
-            pass
-        if not shutil.which(claude_bin):
-            flowfile.set_content(json.dumps({"error": f"Claude CLI '{claude_bin}' not found"}).encode())
-            return [flowfile]
-
-        # Create a temp config dir for this login
-        import tempfile
-        login_dir = tempfile.mkdtemp(prefix="claude_login_")
-        _oauth_pending[service_id] = {"login_dir": login_dir, "proc": None}
-
-        # Launch claude auth login in background
-        import os
-        env = os.environ.copy()
-        env["CLAUDE_CONFIG_DIR"] = login_dir
-
-        try:
-            proc = subprocess.Popen(
-                [claude_bin, "auth", "login", "--claudeai"],
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, env=env, encoding="utf-8",
-            )
-            _oauth_pending[service_id]["proc"] = proc
-
-            # Read output until we get the URL (or timeout)
-            url = ""
-            import select
-            for _ in range(50):  # 5 seconds max
-                line = proc.stdout.readline()
-                if not line:
-                    break
-                if "claude.ai/oauth/authorize" in line:
-                    # Extract URL from the line
-                    import re
-                    match = re.search(r'(https://claude\.ai/oauth/authorize\S+)', line)
-                    if match:
-                        url = match.group(1)
-                        break
-
-            if not url:
-                proc.kill()
-                flowfile.set_content(json.dumps({"error": "Could not get auth URL from Claude CLI"}).encode())
-                return [flowfile]
-
-            flowfile.set_content(json.dumps({
-                "url": url,
-                "message": "Open this URL, log in, then click 'Check Login' to verify.",
-            }).encode())
-        except Exception as e:
-            flowfile.set_content(json.dumps({"error": f"Failed to start login: {e}"}).encode())
+        flowfile.set_content(json.dumps({
+            "flow": "paste_credentials",
+            "message": (
+                "Run this on your machine:\n\n"
+                "  claude auth login\n\n"
+                "Then paste the content of:\n\n"
+                "  ~/.claude/.credentials.json\n\n"
+                "(macOS/Linux) or %USERPROFILE%\\.claude\\.credentials.json (Windows)"
+            ),
+        }).encode())
         return [flowfile]
 
     if action == "claude_code_login_code":
-        """Check if Claude Code login completed and save credentials.
-
-        After the user logs in via the browser, Claude Code's `auth login`
-        process saves credentials to the temp dir. We poll for them and
-        copy to the service config.
-        """
+        """Receive pasted credentials JSON and store tokens in service config."""
         service_id = body.get("service_id", "")
-        if not service_id:
-            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+        credentials_json = body.get("credentials", "").strip()
+
+        if not service_id or not credentials_json:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or credentials"}).encode())
             return [flowfile]
 
-        pending = _oauth_pending.get(service_id, {})
-        login_dir = pending.get("login_dir", "")
-        proc = pending.get("proc")
-
-        if not login_dir:
-            flowfile.set_content(json.dumps({"error": "No pending login. Click Login first."}).encode())
-            return [flowfile]
-
-        # Check if credentials file appeared
-        import os
-        creds_path = os.path.join(login_dir, ".credentials.json")
-        if not os.path.exists(creds_path):
-            # Still waiting — check if process is alive
-            if proc and proc.poll() is None:
-                flowfile.set_content(json.dumps({
-                    "error": "Login not completed yet. Open the URL and log in first.",
-                    "still_waiting": True,
-                }).encode())
-            else:
-                flowfile.set_content(json.dumps({
-                    "error": "Login process ended without credentials. Try again.",
-                }).encode())
-                _oauth_pending.pop(service_id, None)
-            return [flowfile]
-
-        # Read credentials
         try:
-            with open(creds_path, "r", encoding="utf-8") as f:
-                creds = json.load(f)
-
+            creds = json.loads(credentials_json)
             oauth = creds.get("claudeAiOauth", {})
             access_token = oauth.get("accessToken", "")
             refresh_token = oauth.get("refreshToken", "")
             expires_at = oauth.get("expiresAt", 0)
 
             if not access_token:
-                flowfile.set_content(json.dumps({"error": "Credentials file has no access token"}).encode())
+                flowfile.set_content(json.dumps({
+                    "error": "Invalid credentials: no accessToken found. "
+                             "Expected format: {\"claudeAiOauth\": {\"accessToken\": \"...\", ...}}"
+                }).encode())
                 return [flowfile]
 
-            # Store in service config
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
             sdef = greg.get_definition(service_id)
@@ -426,22 +342,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 greg._save_to_disk()
                 logger.info("Claude Code credentials stored for service '%s'", service_id)
 
-            # Cleanup
-            if proc and proc.poll() is None:
-                proc.kill()
-            _oauth_pending.pop(service_id, None)
-            try:
-                import shutil
-                shutil.rmtree(login_dir, ignore_errors=True)
-            except Exception:
-                pass
-
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": "Login successful! Credentials saved.",
+                "message": "Credentials saved successfully!",
             }).encode())
+        except json.JSONDecodeError:
+            flowfile.set_content(json.dumps({"error": "Invalid JSON. Paste the raw content of .credentials.json"}).encode())
         except Exception as e:
-            flowfile.set_content(json.dumps({"error": f"Failed to read credentials: {e}"}).encode())
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
     if action in ("start_flow", "stop_flow", "undeploy_flow"):

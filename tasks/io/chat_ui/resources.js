@@ -943,47 +943,46 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
   if (flow === 'oauth_code') {
     try {
-      // Step 1: get auth URL
+      // Step 1: get instructions
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: serverAction, service_id: serviceId })
       }).then(r => r.json());
       if (resp.error) { addMsg('error', resp.error); return; }
 
-      // Step 2: open URL in new tab
-      window.open(resp.url, '_blank');
-
-      // Step 3: show "Check Login" button (polls for credentials)
+      // Step 2: show instructions + textarea for credentials
       const container = btn ? btn.parentElement : null;
       if (container) {
-        const statusDiv = document.createElement('div');
-        statusDiv.style.cssText = 'margin-top:8px;';
-        statusDiv.innerHTML = '<span style="color:#888;font-size:12px;">Waiting for login... </span>'
-          + '<button type="button" id="svc-oauth-check" style="background:#6c5ce7;color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;">Check Login</button>';
-        container.appendChild(statusDiv);
+        const loginDiv = document.createElement('div');
+        loginDiv.style.cssText = 'margin-top:8px;';
+        loginDiv.innerHTML = '<div style="color:#aaa;font-size:11px;white-space:pre-line;margin-bottom:6px;">' + escapeHtml(resp.message) + '</div>'
+          + '<textarea id="svc-creds-input" placeholder="Paste .credentials.json content here..." '
+          + 'style="' + _svcInputStyle + 'min-height:80px;font-family:monospace;font-size:11px;"></textarea>'
+          + '<button type="button" id="svc-creds-submit" style="background:#6c5ce7;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;margin-top:4px;">Save Credentials</button>';
+        container.appendChild(loginDiv);
 
-        const checkBtn = document.getElementById('svc-oauth-check');
-        const doCheck = async () => {
-          checkBtn.textContent = '...';
-          checkBtn.disabled = true;
+        const submitBtn = document.getElementById('svc-creds-submit');
+        submitBtn.addEventListener('click', async () => {
+          const creds = document.getElementById('svc-creds-input').value.trim();
+          if (!creds) return;
+          submitBtn.textContent = '...';
+          submitBtn.disabled = true;
           try {
             const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
               body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
-                                     service_id: serviceId })
+                                     service_id: serviceId, credentials: creds })
             }).then(r => r.json());
             if (result.ok) {
-              statusDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Login successful!') + '</span>';
-            } else if (result.still_waiting) {
-              checkBtn.textContent = 'Check Login';
-              checkBtn.disabled = false;
-              statusDiv.querySelector('span').textContent = 'Not yet... Open the URL and log in, then check again. ';
+              loginDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Saved!') + '</span>';
             } else {
-              statusDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + (result.error || 'Failed') + '</span>';
+              submitBtn.textContent = 'Save Credentials';
+              submitBtn.disabled = false;
+              loginDiv.insertAdjacentHTML('beforeend',
+                '<div style="color:#e94560;font-size:11px;margin-top:4px;">' + escapeHtml(result.error) + '</div>');
             }
           } catch (e) {
-            statusDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
+            loginDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
           }
-        };
-        checkBtn.addEventListener('click', doCheck);
+        });
       }
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else {

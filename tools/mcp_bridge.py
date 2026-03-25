@@ -108,28 +108,74 @@ def _build_tools(registry, relay_svc) -> list:
     return tools
 
 
+def _publish_event(event_type: str, data: dict):
+    """Publish SSE event to the conversation (if context available)."""
+    conv_id = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
+    if not conv_id:
+        return
+    try:
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(conv_id, event_type, data)
+    except Exception:
+        pass
+
+
 def _execute_fs(relay_svc, action: str, arguments: dict) -> str:
     """Execute a filesystem action via the relay."""
+    agent_name = os.environ.get("PAWFLOW_AGENT_NAME", "")
     path = arguments.get("path", ".")
+
+    # Publish tool_call event
+    _publish_event("tool_call", {
+        "tool": f"filesystem.{action}",
+        "arguments": arguments,
+        "agent_name": agent_name,
+        "via": "claude-code-mcp",
+    })
+
     try:
         result = relay_svc._request(action, path, **{
             k: v for k, v in arguments.items()
             if k not in ("action", "path")
         })
-        if isinstance(result, dict):
-            return json.dumps(result)
-        return str(result) if result else "(no output)"
+        result_str = json.dumps(result) if isinstance(result, dict) else (str(result) if result else "(no output)")
     except Exception as e:
-        return f"Error: {e}"
+        result_str = f"Error: {e}"
+
+    # Publish tool_result event
+    _publish_event("tool_result", {
+        "tool": f"filesystem.{action}",
+        "result": result_str[:500],
+        "agent_name": agent_name,
+        "via": "claude-code-mcp",
+    })
+    return result_str
 
 
 def _execute_tool(registry, name: str, arguments: dict) -> str:
     """Execute a PawFlow tool via the registry."""
+    agent_name = os.environ.get("PAWFLOW_AGENT_NAME", "")
+
+    _publish_event("tool_call", {
+        "tool": name,
+        "arguments": arguments,
+        "agent_name": agent_name,
+        "via": "claude-code-mcp",
+    })
+
     try:
         result = registry.execute(name, arguments)
-        return str(result) if result else "(no output)"
+        result_str = str(result) if result else "(no output)"
     except Exception as e:
-        return f"Error: {e}"
+        result_str = f"Error: {e}"
+
+    _publish_event("tool_result", {
+        "tool": name,
+        "result": result_str[:500],
+        "agent_name": agent_name,
+        "via": "claude-code-mcp",
+    })
+    return result_str
 
 
 def _respond(req_id, result=None, error=None):

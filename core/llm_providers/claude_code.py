@@ -18,13 +18,32 @@ class LLMClaudeCodeMixin:
         """Build environment for claude subprocess.
 
         Claude CLI uses its own auth (claude login). Passes PawFlow
-        context to the MCP bridge via env vars.
+        context to the MCP bridge via env vars. Configures MCP server
+        inline via CLAUDE_MCP_SERVERS env var.
         """
         env = os.environ.copy()
         env["PAWFLOW_RELAY_SERVICE"] = relay_service or ""
         env["PAWFLOW_USER_ID"] = user_id or ""
         env["PAWFLOW_CONVERSATION_ID"] = conversation_id or ""
         env["PAWFLOW_AGENT_NAME"] = agent_name or ""
+        # Configure MCP bridge as a stdio server
+        mcp_bridge = self._get_mcp_bridge_path()
+        if os.path.exists(mcp_bridge):
+            import sys as _sys
+            python_bin = _sys.executable or "python"
+            env["CLAUDE_MCP_SERVERS"] = json.dumps({
+                "pawflow": {
+                    "command": python_bin,
+                    "args": [mcp_bridge],
+                    "type": "stdio",
+                    "env": {
+                        "PAWFLOW_RELAY_SERVICE": relay_service or "",
+                        "PAWFLOW_USER_ID": user_id or "",
+                        "PAWFLOW_CONVERSATION_ID": conversation_id or "",
+                        "PAWFLOW_AGENT_NAME": agent_name or "",
+                    },
+                }
+            })
         return env
 
     @staticmethod
@@ -59,10 +78,7 @@ class LLMClaudeCodeMixin:
             "--max-turns", "100",
             "--verbose",
         ]
-        # MCP bridge for PawFlow tools
-        mcp_bridge = self._get_mcp_bridge_path()
-        if os.path.exists(mcp_bridge):
-            cmd.extend(["--mcp-server", f"python {mcp_bridge}"])
+        # MCP bridge configured via CLAUDE_MCP_SERVERS env var (see _claude_code_env)
         # Session resume for context continuity
         if session_id:
             cmd.extend(["--resume", session_id])

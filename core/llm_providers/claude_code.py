@@ -57,6 +57,7 @@ class LLMClaudeCodeMixin:
             "--model", model or "sonnet",
             "--dangerously-skip-permissions",
             "--max-turns", "100",
+            "--verbose",
         ]
         # MCP bridge for PawFlow tools
         mcp_bridge = self._get_mcp_bridge_path()

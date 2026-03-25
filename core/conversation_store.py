@@ -356,7 +356,7 @@ class ConversationStore:
         def _scan(lines):
             c = {"user_id": "", "status": "idle", "created_at": 0,
                  "updated_at": 0, "expires_at": 0, "msg_count": 0,
-                 "agents": set(), "extra_keys": set()}
+                 "agents": set(), "extra_keys": set(), "preview": ""}
             for line in lines:
                 t = line.get("t", "")
                 if t == "meta":
@@ -366,6 +366,11 @@ class ConversationStore:
                     c["expires_at"] = line.get("expires_at", 0)
                 elif t == "msg" and not line.get("private"):
                     c["msg_count"] += 1
+                    # First user message = preview
+                    if not c["preview"] and line.get("role") == "user":
+                        content = line.get("content", "")
+                        if isinstance(content, str) and content.strip():
+                            c["preview"] = content[:80]
                 elif t == "ctx":
                     a = line.get("agent", "")
                     if a:
@@ -676,7 +681,8 @@ class ConversationStore:
                 if c.get("expires_at", 0) > 0 and c["expires_at"] < time.time():
                     continue
                 result.append({
-                    "conversation_id": cid, "preview": "",
+                    "conversation_id": cid,
+                    "preview": c.get("preview", ""),
                     "message_count": c.get("msg_count", 0),
                     "status": c.get("status", "idle"),
                     "user_id": c.get("user_id", ""),

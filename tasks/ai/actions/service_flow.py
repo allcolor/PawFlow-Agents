@@ -368,19 +368,20 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         # Exchange code for tokens
         try:
-            token_body = urlencode({
+            token_body = json.dumps({
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": "https://platform.claude.com/oauth/code/callback",
                 "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
                 "code_verifier": code_verifier,
-            }).encode()
+            }).encode("utf-8")
 
             ctx = ssl.create_default_context()
             conn = http.client.HTTPSConnection("console.anthropic.com", timeout=30, context=ctx)
             conn.request("POST", "/v1/oauth/token", body=token_body, headers={
-                "Content-Type": "application/x-www-form-urlencoded",
+                "Content-Type": "application/json",
                 "Content-Length": str(len(token_body)),
+                "User-Agent": "claude-code/2.1.83",
             })
             resp = conn.getresponse()
             resp_body = resp.read().decode("utf-8")

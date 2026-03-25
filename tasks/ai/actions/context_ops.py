@@ -285,7 +285,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Not enough messages to compact"}).encode())
             return [flowfile]
         # Resolve client
-        _summ_client, _ = self._get_summarizer_client(user_id)
+        _summ_client, _, _ = self._get_summarizer_client(user_id)
         if _summ_client:
             _compact_client = _summ_client
         else:
@@ -342,7 +342,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
         # Resolve client for potential compaction
-        _summ_client, _ = self._get_summarizer_client(user_id)
+        _summ_client, _, _ = self._get_summarizer_client(user_id)
         _rb_client = _summ_client
         if not _rb_client:
             _rb_svc = self._resolve_service_param("llm_service", user_id) or "default"

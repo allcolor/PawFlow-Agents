@@ -907,7 +907,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     "tokens_after": _tok_after,
                 })
         except Exception as e:
-            logger.warning(f"[context] auto-compact failed: {e}")
+            logger.error(f"[context] auto-compact FAILED: {e}")
+            raise  # compaction failure is critical — do not continue with bloated context
         return messages
 
     # ── Context operation pause/resume ─────────────────────────────────

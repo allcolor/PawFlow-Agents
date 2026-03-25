@@ -137,6 +137,28 @@ class AgentCoreMixin:
             except Exception:
                 ctx["_last_known_msg_count"] = 0
 
+        # Repair orphan tool_calls — assistant messages with tool_calls
+        # whose tool results are missing (broken by compact/clear)
+        _repaired = False
+        for i, m in enumerate(messages):
+            if m.role == "assistant" and m.tool_calls:
+                tc_ids = {tc.id for tc in m.tool_calls}
+                # Check if all tool_call_ids have responses after this message
+                found_ids = set()
+                for j in range(i + 1, min(i + len(tc_ids) + 2, len(messages))):
+                    if messages[j].role == "tool" and messages[j].tool_call_id in tc_ids:
+                        found_ids.add(messages[j].tool_call_id)
+                missing = tc_ids - found_ids
+                if missing:
+                    # Insert placeholder tool results for missing IDs
+                    for idx, tc_id in enumerate(missing):
+                        messages.insert(i + 1 + idx, LLMMessage(
+                            role="tool", content="[Result unavailable — cleared by context compaction]",
+                            tool_call_id=tc_id))
+                    _repaired = True
+        if _repaired:
+            logger.warning(f"[agent:{conversation_id[:8]}] repaired orphan tool_calls in context")
+
         # Start file checkpoint for /rewind support
         _cp_id = ""
         if use_conv_store and conversation_id and not ctx.get("is_poll"):

@@ -72,13 +72,10 @@ function addMsg(role, text, extra) {
     _seenMsgIds.add(msgId);
   }
   const el = document.createElement('div');
-  // Support classified types: tool_call, tool_result map to CSS class "tool"
-  let cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
-  // display_only messages: compact tool/thinking traces (not in LLM context)
-  if (extra && extra.display_only) {
-    cssClass = 'tool';  // same styling as tool_call/tool_result
-  }
-  // Differentiate sub-agent responses from main assistant visually
+  // Map roles to CSS classes
+  let cssClass = role;
+  if (role === 'tool_call' || role === 'tool_result') cssClass = 'tool';
+  else if (role === 'narration') cssClass = 'narration';
   else if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
     const srcName = (extra.source.name || '').toLowerCase();
     if (srcName) cssClass = 'subagent';
@@ -117,16 +114,35 @@ function addMsg(role, text, extra) {
 
   if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
-  } else if (role === 'tool' || role === 'tool_call') {
-    el.innerHTML = '<span style="color:#e94560;font-size:12px">' + escapeHtml(text) + '</span>';
-  } else if (role === 'tool_result') {
-    const toolId = (extra && extra.tool_call_id) ? extra.tool_call_id : '';
+  } else if (role === 'tool_call') {
+    // Same rendering as SSE tool_call event
+    const toolName = (extra && extra.tool_name) || text || '?';
+    const toolArgs = (extra && extra.tool_args) || {};
+    const srcLabel = (extra && extra.source) ? displayAgentName((extra.source.name || ''))
+      + (extra.source.llm_service ? ' via ' + extra.source.llm_service : '') : '';
+    let argPreview = '';
+    const argKeys = Object.keys(toolArgs);
+    if (argKeys.length > 0) {
+      argPreview = argKeys.map(k => {
+        const v = typeof toolArgs[k] === 'string' ? toolArgs[k].substring(0, 60) : JSON.stringify(toolArgs[k]).substring(0, 60);
+        return k + '=' + v;
+      }).join(', ');
+      if (argPreview.length > 120) argPreview = argPreview.substring(0, 120) + '...';
+    }
+    el.innerHTML = '\u{1F527} [' + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName)
+      + (argPreview ? '(' + escapeHtml(argPreview) + ')' : '');
+  } else if (role === 'tool' || role === 'tool_result') {
     const diffHtml = _renderDiff(text);
     if (diffHtml) {
       el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 </span>' + diffHtml;
     } else {
       el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
     }
+  } else if (role === 'narration') {
+    // Same rendering as SSE narration event (italic, ephemeral look)
+    const srcN = (extra && extra.source) ? displayAgentName(extra.source.name || '') : '';
+    const src = extra && extra.source ? extra.source : {type: 'agent', name: srcN};
+    el.innerHTML = sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {

@@ -212,6 +212,14 @@ class AgentSerializationMixin:
                     entry["msg_id"] = m["msg_id"]
                 if m.get("display_only"):
                     entry["display_only"] = True
+                    # Preserve display_type and structured data for proper rendering
+                    if m.get("display_type"):
+                        entry["type"] = m["display_type"]
+                        entry["display_type"] = m["display_type"]
+                    if m.get("tool_name"):
+                        entry["tool_name"] = m["tool_name"]
+                    if m.get("tool_args"):
+                        entry["tool_args"] = m["tool_args"]
                 if m.get("timestamp"):
                     entry["timestamp"] = m["timestamp"]
                 if m.get("channel"):

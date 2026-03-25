@@ -365,14 +365,15 @@ class AgentCoreMixin:
                                 "msg_id": getattr(msg, "msg_id", None),
                             })
 
-                        # Thinking (display_only — visible to user, not in LLM context)
+                        # Thinking/narration (display_only — rendered as narration)
                         if tool_calls:
                             _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
                             if _thinking:
                                 transcript_msgs.append({
-                                    "role": "assistant",
-                                    "content": f"💭 {_thinking[:500]}",
+                                    "role": "narration",
+                                    "content": _thinking[:500],
                                     "display_only": True,
+                                    "display_type": "narration",
                                     "source": _src,
                                 })
 
@@ -387,7 +388,7 @@ class AgentCoreMixin:
                             for tc_obj in tc_objects:
                                 tools_called.append(tc_obj.name)
 
-                            # Tool call message (in context for LLM)
+                            # Tool call message (in LLM context)
                             tc_msg = LLMMessage(
                                 role="assistant", content="",
                                 tool_calls=tc_objects, source=_src)
@@ -398,16 +399,18 @@ class AgentCoreMixin:
                                 tc_raw = tool_calls[i] if i < len(tool_calls) else {}
                                 _result = tc_raw.get("result") or ""
 
-                                # Tool call display (display_only — not in LLM context)
-                                _args_preview = json.dumps(tc_raw.get("arguments", {}))[:200]
+                                # Tool call (display_only — rendered like SSE tool_call)
                                 transcript_msgs.append({
-                                    "role": "assistant",
-                                    "content": f"🔧 {tc_obj.name}({_args_preview})",
+                                    "role": "tool_call",
                                     "display_only": True,
+                                    "display_type": "tool_call",
+                                    "content": tc_obj.name,
+                                    "tool_name": tc_obj.name,
+                                    "tool_args": tc_obj.arguments,
                                     "source": _src,
                                 })
 
-                                # Tool result (in context for LLM)
+                                # Tool result (in LLM context)
                                 tr_content = _result or "(no output)"
                                 tr_msg = LLMMessage(
                                     role="tool", content=tr_content,
@@ -415,13 +418,15 @@ class AgentCoreMixin:
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
 
-                                # Tool result display (display_only, truncated)
+                                # Tool result (display_only — rendered like SSE tool_result)
                                 transcript_msgs.append({
-                                    "role": "tool",
+                                    "role": "tool_result",
+                                    "display_only": True,
+                                    "display_type": "tool_result",
                                     "content": (tr_content[:300] + "..."
                                                 if len(tr_content) > 300
                                                 else tr_content),
-                                    "display_only": True,
+                                    "tool_name": tc_obj.name,
                                     "tool_call_id": tc_obj.id,
                                 })
 

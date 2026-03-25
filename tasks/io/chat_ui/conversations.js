@@ -233,9 +233,16 @@ async function _recoverConversation(cid) {
     // Only clear streams that have no active chunks being appended.
 
     // Display the new messages, skipping messages already shown locally
+    // Skip ALL assistant messages while an agent is actively streaming
+    // (SSE handles display, poll would create duplicates)
+    const _anyAgentActive = Object.keys(activeInteractions || {}).length > 0;
     const msgContainer = document.getElementById('messages');
     for (const m of newMsgs) {
       const mType = m.type || m.role;
+      // Skip assistant messages during active streaming
+      if (_anyAgentActive && (mType === 'assistant' || mType === 'tool_call' || mType === 'tool_result')) {
+        continue;
+      }
       if (mType === 'user') {
         // Check if this user message is already displayed (sent locally by send())
         const existing = msgContainer.querySelectorAll('.msg.user');

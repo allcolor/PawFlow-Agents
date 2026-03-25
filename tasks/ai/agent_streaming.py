@@ -148,18 +148,20 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
             "IMPORTANT: You MUST output a response. Even a single sentence is fine. "
             "Do NOT output nothing.")
 
-        resp = svc.complete(
-            [LLMMessage(role="user", content=prompt)],
-            max_tokens=150)
-        logging.getLogger(__name__).info(
-            f"[narrator] LLM response: content={len(resp.content or '')} chars, "
-            f"thinking={len(getattr(resp, 'thinking', '') or '')} chars, "
-            f"tokens_in={resp.tokens_in}, tokens_out={resp.tokens_out}, "
-            f"model={resp.model}")
+        # Sync call with short timeout — narrator must not block the agent loop
+        import concurrent.futures
+        _NARRATOR_TIMEOUT = 4  # seconds
+        with concurrent.futures.ThreadPoolExecutor(1) as pool:
+            future = pool.submit(svc.complete,
+                                 [LLMMessage(role="user", content=prompt)],
+                                 None, 0.3, 150)
+            try:
+                resp = future.result(timeout=_NARRATOR_TIMEOUT)
+            except concurrent.futures.TimeoutError:
+                logging.getLogger(__name__).info("[narrator] timed out (>%ds), skipping", _NARRATOR_TIMEOUT)
+                return ""
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
-        logging.getLogger(__name__).info(
-            f"[narrator] result: {len(text)} chars: {text[:80]!r}")
         return text + "\n" if text and not text.endswith("\n") else text
     except Exception as e:
         logging.getLogger(__name__).warning("[narrator] service '%s' failed: %s", svc_name, e)

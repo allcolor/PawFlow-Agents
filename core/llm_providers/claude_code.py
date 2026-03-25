@@ -829,7 +829,10 @@ class LLMClaudeCodeMixin:
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
             self._recover_tokens(workdir)
 
-        if proc.returncode and proc.returncode != 0:
+        # Don't error on non-zero exit if we got a successful result
+        # (process was killed after break on result event — that's expected)
+        _got_result = bool(last_data.get("session_id") or last_data.get("result"))
+        if proc.returncode and proc.returncode != 0 and not _got_result:
             if _stderr:
                 logger.error("Claude CLI stderr: %.500s", _stderr)
             raise LLMClientError(

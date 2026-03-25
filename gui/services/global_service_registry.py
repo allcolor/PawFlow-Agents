@@ -140,7 +140,9 @@ class GlobalServiceRegistry:
             # Disconnect if live (config changed)
             if service_id in self._live_instances:
                 self._disconnect_one(service_id)
-            svc_def.config = config
+            # Merge: new config overwrites, but preserve keys not in the new config
+            # (e.g., oauth tokens set by login flow that aren't in the edit form)
+            svc_def.config.update(config)
 
         self._save_to_disk()
 

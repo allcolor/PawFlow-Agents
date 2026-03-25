@@ -1,52 +1,56 @@
-"""ConversationStore — Thread-safe conversation persistence with TTL.
+"""ConversationStore v2 — JSONL append-only with single commit point.
 
-Used by agentLoop to maintain multi-turn conversations across HTTP requests.
-Each conversation is identified by a conversation_id and has a configurable TTL.
+Each conversation is a .jsonl file with one JSON object per line.
+ALL writes go through _commit(). ALL reads go through _read_lines().
+Per-conversation locks ensure atomicity.
 
-The conversation history is append-only: new messages are appended atomically
-and never overwritten by concurrent threads.  Context compaction (for the LLM
-context window) is done on a *copy* by the agent loop — the canonical history
-stored here is never compacted.
+Line types:
+  {"t":"meta", "user_id":"...", "status":"idle", "created_at":N, "expires_at":N}
+  {"t":"msg", "role":"user", "content":"...", "msg_id":"...", "source":{}, "ts":N}
+  {"t":"msg", "role":"assistant", "content":"...", "msg_id":"...", "source":{}, "private":true, "ts":N}
+  {"t":"ctx", "agent":"name", "op":"replace", "data":[...]}
+  {"t":"ctx", "agent":"name", "op":"append", "data":[...]}
+  {"t":"extra", "key":"...", "value":...}
+  {"t":"status", "status":"active"}
+  {"t":"delete_msg", "index":N}
 
-Persists conversations to JSON files on disk so they survive restarts.
-
-Each conversation entry has a ``status`` field for autonomous agent tracking:
-- ``idle``    — normal chat, no autonomous work in progress
-- ``active``  — agent is working or has pending work
-- ``complete``— agent finished all work
-- ``blocked`` — agent is stuck and needs user input
+Transcript = all t=msg lines where private!=true (append-only, never modified)
+Agent context = last t=ctx replace + subsequent appends for that agent
+Extras = last value per key
 """
-
-# Valid conversation statuses
-CONV_STATUSES = ("idle", "active", "complete", "blocked")
 
 import json
 import logging
+import os
 import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DIR = "data/conversations"
 
+# Valid conversation statuses
+CONV_STATUSES = ("idle", "active", "complete", "blocked")
+
 
 class ConversationStore:
-    """Singleton store for agent conversations with disk persistence."""
+    """Singleton JSONL-based conversation store. Thread-safe, append-only."""
 
     _instance: Optional["ConversationStore"] = None
     _lock = threading.Lock()
 
     def __init__(self, store_dir: str = ""):
-        self._conversations: Dict[str, Dict[str, Any]] = {}
-        self._deleted: set = set()  # explicitly deleted conversation IDs
-        self._store_lock = threading.Lock()
-        self._write_locks: Dict[str, threading.Lock] = {}  # per-conversation write serialization
-        self._write_locks_lock = threading.Lock()  # protects _write_locks dict itself
         self._store_dir = Path(store_dir or _DEFAULT_DIR)
         self._store_dir.mkdir(parents=True, exist_ok=True)
+        # Per-conversation locks (one lock per conv, all ops serialized)
+        self._conv_locks: Dict[str, threading.Lock] = {}
+        self._conv_locks_lock = threading.Lock()
+        # Lightweight cache: meta + extras + message_count + agent list
+        self._cache: Dict[str, Dict[str, Any]] = {}
+        self._cache_lock = threading.Lock()
         self._loaded = False
 
     @classmethod
@@ -59,764 +63,677 @@ class ConversationStore:
 
     @classmethod
     def reset(cls):
-        """Reset singleton (for testing)."""
         with cls._lock:
             cls._instance = None
 
-    _last_cleanup: float = 0.0
+    # ── Lock management ───────────────────────────────────────────────
+
+    def _get_conv_lock(self, conversation_id: str) -> threading.Lock:
+        with self._conv_locks_lock:
+            if conversation_id not in self._conv_locks:
+                self._conv_locks[conversation_id] = threading.Lock()
+            return self._conv_locks[conversation_id]
+
+    # ── Path ──────────────────────────────────────────────────────────
+
+    def _conv_path(self, conversation_id: str) -> Path:
+        safe_id = "".join(c for c in conversation_id if c.isalnum() or c in "-_:")
+        safe_id = safe_id.replace(":", "__")
+        return self._store_dir / f"{safe_id}.jsonl"
+
+    # ── SINGLE write point ────────────────────────────────────────────
+
+    def _commit(self, conversation_id: str, lines: List[dict]) -> None:
+        """THE ONLY method that writes to disk. Lock, append, release."""
+        if not lines:
+            return
+        lock = self._get_conv_lock(conversation_id)
+        with lock:
+            path = self._conv_path(conversation_id)
+            try:
+                with open(path, "a", encoding="utf-8") as f:
+                    for line in lines:
+                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            except OSError as e:
+                logger.error(f"[convstore] write failed {conversation_id}: {e}")
+                raise
+        # Update cache
+        self._update_cache(conversation_id, lines)
+
+    # ── SINGLE read point ─────────────────────────────────────────────
+
+    def _read_lines(self, conversation_id: str,
+                    filter_fn: Optional[Callable[[dict], bool]] = None
+                    ) -> Iterator[dict]:
+        """THE ONLY method that reads from disk. Lock, stream, release.
+
+        Yields parsed JSON lines, optionally filtered.
+        """
+        lock = self._get_conv_lock(conversation_id)
+        path = self._conv_path(conversation_id)
+        if not path.exists():
+            return
+        with lock:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for raw_line in f:
+                        raw_line = raw_line.strip()
+                        if not raw_line:
+                            continue
+                        try:
+                            obj = json.loads(raw_line)
+                        except json.JSONDecodeError:
+                            continue
+                        if filter_fn is None or filter_fn(obj):
+                            yield obj
+            except OSError as e:
+                logger.error(f"[convstore] read failed {conversation_id}: {e}")
+
+    def _read_lines_reversed(self, conversation_id: str,
+                              filter_fn: Optional[Callable[[dict], bool]] = None,
+                              max_lines: int = 0) -> List[dict]:
+        """Read lines from end of file (for finding last ctx replace etc.)."""
+        lock = self._get_conv_lock(conversation_id)
+        path = self._conv_path(conversation_id)
+        if not path.exists():
+            return []
+        results = []
+        with lock:
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    all_lines = f.readlines()  # TODO: optimize with seek from end
+                for raw_line in reversed(all_lines):
+                    raw_line = raw_line.strip()
+                    if not raw_line:
+                        continue
+                    try:
+                        obj = json.loads(raw_line)
+                    except json.JSONDecodeError:
+                        continue
+                    if filter_fn is None or filter_fn(obj):
+                        results.append(obj)
+                        if max_lines and len(results) >= max_lines:
+                            break
+            except OSError:
+                pass
+        results.reverse()
+        return results
+
+    # ── Cache management ──────────────────────────────────────────────
+
+    def _update_cache(self, conversation_id: str, new_lines: List[dict]) -> None:
+        with self._cache_lock:
+            c = self._cache.setdefault(conversation_id, {
+                "user_id": "", "status": "idle", "created_at": 0,
+                "updated_at": 0, "expires_at": 0, "msg_count": 0,
+                "agents": set(), "extra_keys": set(),
+            })
+            for line in new_lines:
+                t = line.get("t", "")
+                if t == "meta":
+                    c["user_id"] = line.get("user_id", c["user_id"])
+                    c["status"] = line.get("status", c["status"])
+                    c["created_at"] = line.get("created_at", c["created_at"])
+                    c["expires_at"] = line.get("expires_at", c["expires_at"])
+                elif t == "msg" and not line.get("private"):
+                    c["msg_count"] = c.get("msg_count", 0) + 1
+                elif t == "ctx":
+                    agent = line.get("agent", "")
+                    if agent:
+                        c["agents"].add(agent)
+                elif t == "extra":
+                    c["extra_keys"].add(line.get("key", ""))
+                elif t == "status":
+                    c["status"] = line.get("status", c["status"])
+                c["updated_at"] = time.time()
+
+    def _load_cache(self, conversation_id: str) -> dict:
+        """Load or return cached metadata."""
+        with self._cache_lock:
+            if conversation_id in self._cache:
+                return self._cache[conversation_id]
+        # Build cache by scanning file
+        c = {
+            "user_id": "", "status": "idle", "created_at": 0,
+            "updated_at": 0, "expires_at": 0, "msg_count": 0,
+            "agents": set(), "extra_keys": set(),
+        }
+        for line in self._read_lines(conversation_id):
+            t = line.get("t", "")
+            if t == "meta":
+                c["user_id"] = line.get("user_id", "")
+                c["status"] = line.get("status", "idle")
+                c["created_at"] = line.get("created_at", 0)
+                c["expires_at"] = line.get("expires_at", 0)
+            elif t == "msg" and not line.get("private"):
+                c["msg_count"] += 1
+            elif t == "ctx":
+                agent = line.get("agent", "")
+                if agent:
+                    c["agents"].add(agent)
+            elif t == "extra":
+                c["extra_keys"].add(line.get("key", ""))
+            elif t == "status":
+                c["status"] = line.get("status", c["status"])
+            c["updated_at"] = line.get("ts", c["updated_at"])
+        with self._cache_lock:
+            self._cache[conversation_id] = c
+        return c
 
     def _ensure_loaded(self):
-        """Load conversations from disk on first access."""
+        """Scan all .jsonl files to build cache on first access."""
         if self._loaded:
-            # Periodic lightweight cleanup (at most once per hour)
-            now = time.time()
-            if now - self.__class__._last_cleanup > 3600:
-                self.__class__._last_cleanup = now
-                self._cleanup_expired()
             return
         self._loaded = True
-        self._load_from_disk()
-        self.__class__._last_cleanup = time.time()
+        count = 0
+        for path in self._store_dir.glob("*.jsonl"):
+            cid = path.stem.replace("__", ":")
+            self._load_cache(cid)
+            count += 1
+        if count:
+            logger.info(f"ConversationStore: loaded {count} conversations from disk")
 
-    def _cleanup_expired(self):
-        """Lightweight removal of expired entries from memory (no disk I/O).
-
-        Called periodically from _ensure_loaded under _store_lock.
-        """
-        now = time.time()
-        expired = [cid for cid, e in self._conversations.items()
-                   if e["expires_at"] > 0 and e["expires_at"] < now]
-        for cid in expired:
-            self._conversations.pop(cid, None)
-        if expired:
-            logger.info("ConversationStore: cleaned up %d expired conversations "
-                        "(memory)", len(expired))
+    # ── Public API: IDs ───────────────────────────────────────────────
 
     def generate_id(self) -> str:
         return uuid.uuid4().hex[:16]
 
-    def load(self, conversation_id: str,
-             user_id: str = "") -> Optional[List[Dict[str, Any]]]:
-        """Load conversation messages. Returns None if not found, expired, or
-        if *user_id* is given and doesn't match the conversation owner."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return None
-            if entry["expires_at"] > 0 and entry["expires_at"] < time.time():
-                del self._conversations[conversation_id]
-                self._delete_from_disk(conversation_id)
-                return None
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return None  # access denied
-            # Return a copy so callers can't corrupt the canonical history
-            return list(entry["messages"])
+    def exists(self, conversation_id: str) -> bool:
+        return self._conv_path(conversation_id).exists()
 
-    def load_page(self, conversation_id: str, limit: int = 50, offset: int = 0,
-                  user_id: str = "") -> Optional[Dict[str, Any]]:
-        """Load a page of messages from the end of conversation.
-
-        Args:
-            limit: max messages to return (default 50)
-            offset: skip this many messages from the end (0 = most recent)
-            user_id: access control
-
-        Returns:
-            {messages: [...], total_count: int, offset: int, limit: int, has_more: bool}
-            or None if not found/denied
-        """
-        all_messages = self.load(conversation_id, user_id=user_id)
-        if all_messages is None:
-            return None
-
-        total = len(all_messages)
-
-        # Slice from the end: offset=0 means last `limit` messages
-        end_idx = total - offset
-        start_idx = max(0, end_idx - limit)
-
-        # Boundary safety: don't split tool_call from its tool_results
-        # If start_idx lands on a "tool" role message, extend backward to include
-        # the preceding assistant message with tool_calls
-        if start_idx > 0:
-            while start_idx > 0:
-                msg = all_messages[start_idx]
-                role = msg.get("role", "") if isinstance(msg, dict) else getattr(msg, "role", "")
-                if role == "tool":
-                    start_idx -= 1  # include the tool_call that triggered this result
-                else:
-                    break
-
-        page = all_messages[start_idx:end_idx]
-        has_more = start_idx > 0
-
-        return {
-            "messages": page,
-            "total_count": total,
-            "offset": offset,
-            "limit": limit,
-            "has_more": has_more,
-        }
+    # ── Public API: Create / Save ─────────────────────────────────────
 
     def save(self, conversation_id: str, messages: List[Dict[str, Any]],
              ttl: int = 0, user_id: str = "", status: str = ""):
-        """Replace conversation messages (full overwrite).
+        """Create or overwrite a conversation. Writes meta + all messages."""
+        lines = [{"t": "meta", "user_id": user_id, "status": status or "idle",
+                  "created_at": time.time(),
+                  "expires_at": time.time() + ttl if ttl > 0 else 0}]
+        for m in messages:
+            line = {"t": "msg", **m}
+            if "ts" not in line and "timestamp" not in line:
+                line["ts"] = time.time()
+            lines.append(line)
+        # Overwrite = delete existing file first
+        path = self._conv_path(conversation_id)
+        lock = self._get_conv_lock(conversation_id)
+        with lock:
+            if path.exists():
+                path.unlink()
+            with self._cache_lock:
+                self._cache.pop(conversation_id, None)
+        self._commit(conversation_id, lines)
 
-        Prefer append_messages() for incremental updates from agent loops.
+    # ── Public API: Agent flush (THE main write operation) ────────────
 
-        Args:
-            ttl: Time to live in seconds. 0 = no expiry (default).
-            user_id: Owner of the conversation (e.g. OAuth principal).
-                     If empty, the conversation has no access restriction.
-            status: Conversation status (idle/active/complete/blocked).
-                    Empty string preserves existing status.
+    def agent_flush(self, conversation_id: str, agent_name: str,
+                    public_messages: List[Dict[str, Any]],
+                    private_messages: List[Dict[str, Any]],
+                    user_id: str = "", ttl: int = 0) -> None:
+        """Atomic: append public to transcript + all contexts,
+        append all to agent context. Single _commit call.
+
+        public_messages: user + assistant TEXT → transcript + all contexts
+        private_messages: tool_calls + tool results → agent context only
         """
-        with self._store_lock:
-            self._ensure_loaded()
-            if conversation_id in self._deleted:
-                logger.info(f"ConversationStore: refusing to save deleted conversation "
-                            f"{conversation_id}")
-                return
-            existing = self._conversations.get(conversation_id)
-            entry = {
-                "messages": messages,
-                "user_id": user_id or (existing["user_id"] if existing else ""),
-                "status": status or (existing.get("status", "idle") if existing else "idle"),
-                "created_at": existing["created_at"] if existing else time.time(),
-                "expires_at": time.time() + ttl if ttl > 0 else 0,
-                "updated_at": time.time(),
-                "context": existing.get("context") if existing else None,
-            }
-            self._conversations[conversation_id] = entry
-        self._save_to_disk(conversation_id)
+        now = time.time()
+        lines: List[dict] = []
+
+        # Ensure conversation exists
+        if not self.exists(conversation_id):
+            lines.append({"t": "meta", "user_id": user_id,
+                          "status": "idle", "created_at": now,
+                          "expires_at": now + ttl if ttl > 0 else 0})
+
+        # 1. Transcript: public messages (not private)
+        for m in public_messages:
+            line = {"t": "msg", **m}
+            if "ts" not in line:
+                line["ts"] = now
+            lines.append(line)
+
+        # 2. Private messages (tool calls, tool results) — transcript with private flag
+        for m in private_messages:
+            line = {"t": "msg", "private": True, **m}
+            if "ts" not in line:
+                line["ts"] = now
+            lines.append(line)
+
+        # 3. Agent context: append all (public + private)
+        all_agent = public_messages + private_messages
+        if all_agent:
+            lines.append({"t": "ctx", "agent": agent_name, "op": "append",
+                          "data": all_agent})
+
+        # 4. Other agents' contexts: append public only
+        if public_messages:
+            cache = self._load_cache(conversation_id)
+            for other in cache.get("agents", set()):
+                if other and other != agent_name:
+                    lines.append({"t": "ctx", "agent": other, "op": "append",
+                                  "data": public_messages})
+
+        self._commit(conversation_id, lines)
+
+    # ── Public API: Append messages (simple, for non-agent callers) ───
 
     def append_messages(self, conversation_id: str,
                         new_messages: List[Dict[str, Any]],
                         ttl: int = 0, user_id: str = "",
-                        status: str = ""):
-        """Atomically append messages to the canonical conversation history.
-
-        If the conversation doesn't exist yet, it is created.
-        This is the preferred method for agent loops — it never overwrites
-        existing messages, only appends.
-
-        Args:
-            new_messages: Messages to append (list of dicts with role/content).
-            ttl: Time to live in seconds. 0 = no expiry (default).
-            user_id: Owner of the conversation.
-            status: Conversation status update. Empty = preserve existing.
-        """
+                        status: str = "") -> None:
+        """Append messages to transcript. No context update."""
         if not new_messages:
             return
-        with self._store_lock:
-            self._ensure_loaded()
-            if conversation_id in self._deleted:
-                logger.info(f"ConversationStore: refusing to append to deleted "
-                            f"conversation {conversation_id}")
-                return
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                entry = {
-                    "messages": [],
-                    "user_id": user_id,
-                    "status": status or "idle",
-                    "created_at": time.time(),
-                    "expires_at": time.time() + ttl if ttl > 0 else 0,
-                    "updated_at": time.time(),
-                    "context": None,
-                }
-                self._conversations[conversation_id] = entry
-            now = time.time()
-            # Dedup by msg_id: check last messages for duplicates
-            existing = entry["messages"]
-            _recent_ids = set()
-            for m in existing[-10:]:
-                _mid = m.get("msg_id")
-                if _mid:
-                    _recent_ids.add(_mid)
-            for msg in new_messages:
-                if "timestamp" not in msg:
-                    msg["timestamp"] = now
-                _mid = msg.get("msg_id")
-                if _mid and _mid in _recent_ids:
-                    continue  # skip duplicate
-                existing.append(msg)
-                if _mid:
-                    _recent_ids.add(_mid)
-            entry["updated_at"] = time.time()
-            if user_id:
-                entry["user_id"] = user_id
-            if status:
-                entry["status"] = status
-            if ttl > 0:
-                entry["expires_at"] = time.time() + ttl
-        self._save_to_disk(conversation_id)
+        now = time.time()
+        lines: List[dict] = []
+        if not self.exists(conversation_id):
+            lines.append({"t": "meta", "user_id": user_id,
+                          "status": status or "idle", "created_at": now,
+                          "expires_at": now + ttl if ttl > 0 else 0})
+        for m in new_messages:
+            line = {"t": "msg", **m}
+            if "ts" not in line:
+                line["ts"] = now
+            lines.append(line)
+        if status:
+            lines.append({"t": "status", "status": status})
+        self._commit(conversation_id, lines)
 
-    def create_display_trace(self, conversation_id: str, trace_id: str,
-                             source: Dict[str, Any],
-                             user_id: str = "") -> bool:
-        """Create a display-only trace message for a sub-agent run.
-
-        Display-only messages are shown in the chat UI but NEVER included
-        in any agent's LLM context (skipped during rebuild/compact/summary).
-
-        Args:
-            trace_id: Unique ID for this sub-agent run (e.g. task_id).
-            source: Metadata dict with name, parent_agent, task_id, depth.
-        """
-        msg = {
-            "role": "sub_agent_trace",
-            "display_only": True,
-            "trace_id": trace_id,
-            "source": source,
-            "content": "",
-            "trace": [],
-            "timestamp": time.time(),
-        }
-        with self._store_lock:
-            self._ensure_loaded()
-            if conversation_id in self._deleted:
-                return False
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return False
-            entry["messages"].append(msg)
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
-        return True
-
-    def append_display_trace(self, conversation_id: str, trace_id: str,
-                             entry_data: Dict[str, Any],
-                             content_update: str = "") -> bool:
-        """Atomically append a trace entry to a display-only message.
-
-        This is append-only: the trace list only grows, never shrinks.
-        If content_update is provided, the message's content field is also updated
-        (used when sub_agent_done provides the final response).
-
-        Args:
-            trace_id: The trace_id of the target display message.
-            entry_data: Dict to append to the trace array (e.g. {"type": "tool_call", ...}).
-            content_update: If non-empty, replace the message's content field.
-        """
-        entry_data.setdefault("ts", time.time())
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            # Find the trace message by trace_id (scan from end, usually recent)
-            target = None
-            for msg in reversed(entry["messages"]):
-                if isinstance(msg, dict) and msg.get("trace_id") == trace_id:
-                    target = msg
-                    break
-            if target is None:
-                return False
-            target["trace"].append(entry_data)
-            if content_update:
-                target["content"] = content_update
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
-        return True
-
-    @staticmethod
-    def filter_display_only(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Return messages excluding display_only entries (for LLM context building)."""
-        return [m for m in messages if not (isinstance(m, dict) and m.get("display_only"))]
-
-    def message_count(self, conversation_id: str) -> int:
-        """Return the current number of messages in a conversation."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            return len(entry["messages"]) if entry else 0
-
-    def set_status(self, conversation_id: str, status: str,
-                   user_id: str = "") -> bool:
-        """Update conversation status. Returns True if updated.
-
-        Args:
-            status: One of idle, active, complete, blocked.
-            user_id: If given, must match owner.
-        """
-        if status not in CONV_STATUSES:
-            return False
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return False
-            entry["status"] = status
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
-        return True
-
-    def get_metadata(self, conversation_id: str) -> Optional[Dict[str, Any]]:
-        """Return conversation metadata without loading all messages.
-
-        Returns dict with user_id, status, created_at, updated_at, expires_at,
-        message_count.  Returns None if not found or expired.
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return None
-            if entry["expires_at"] > 0 and entry["expires_at"] < time.time():
-                return None
-            return {
-                "user_id": entry.get("user_id", ""),
-                "status": entry.get("status", "idle"),
-                "created_at": entry.get("created_at", 0),
-                "updated_at": entry.get("updated_at", 0),
-                "expires_at": entry.get("expires_at", 0),
-                "message_count": len(entry.get("messages", [])),
-            }
-
-    def load_context(self, conversation_id: str,
-                     user_id: str = "") -> Optional[List[Dict[str, Any]]]:
-        """Return the persisted LLM context, or None if not yet diverged.
-
-        When context is None the caller should fall back to using messages.
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return None
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return None
-            ctx = entry.get("context")
-            if ctx is None:
-                return None
-            return list(ctx)
-
-    def save_context(self, conversation_id: str,
-                     context_messages: List[Dict[str, Any]]) -> bool:
-        """Overwrite the persisted LLM context (after compact/resume/restart_from/rebuild)."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            entry["context"] = list(context_messages)
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
-        return True
-
-    def append_to_context(self, conversation_id: str,
-                          new_messages: List[Dict[str, Any]]) -> bool:
-        """Append to the persisted context. No-op if context is None (not diverged)."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if entry.get("context") is None:
-                return False
-            entry["context"].extend(new_messages)
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
-        return True
-
-    # ── Per-agent context ──────────────────────────────────────────
+    # ── Public API: Context operations ────────────────────────────────
 
     def load_agent_context(self, conversation_id: str,
                            agent_name: str) -> Optional[List[Dict[str, Any]]]:
-        """Load per-agent context, falling back to shared context then messages.
-
-        Resolution order:
-        1. agent_contexts[agent_name] (if exists and not None)
-        2. entry["context"] (shared diverged context)
-        3. None (caller should use messages)
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return None
-            # 1. Per-agent context
-            agent_ctxs = entry.get("agent_contexts") or {}
-            agent_ctx = agent_ctxs.get(agent_name)
-            if agent_ctx is not None:
-                return list(agent_ctx)
-            # 2. Shared context
-            shared = entry.get("context")
-            if shared is not None:
-                return list(shared)
-            # 3. Not diverged
+        """Load per-agent context: last replace + subsequent appends."""
+        if not self.exists(conversation_id):
             return None
+        # Scan for ctx lines for this agent
+        replace_data = None
+        appends: List[List[dict]] = []
+        found_replace = False
+        # Read all ctx lines, keep last replace + appends after it
+        for line in self._read_lines(conversation_id,
+                                      lambda l: l.get("t") == "ctx" and l.get("agent") == agent_name):
+            if line.get("op") == "replace":
+                replace_data = line.get("data", [])
+                appends = []  # reset appends after each replace
+                found_replace = True
+            elif line.get("op") == "append" and found_replace:
+                appends.append(line.get("data", []))
+        if replace_data is None and not found_replace:
+            return None  # no context for this agent
+        result = list(replace_data or [])
+        for batch in appends:
+            result.extend(batch)
+        return result
 
     def save_agent_context(self, conversation_id: str,
                            agent_name: str,
                            context_messages: List[Dict[str, Any]]) -> bool:
-        """Save diverged context for a specific agent.
-
-        If agent_name is empty, saves to the shared context (backward compat).
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if not agent_name:
-                entry["context"] = list(context_messages)
-            else:
-                agent_ctxs = entry.setdefault("agent_contexts", {})
-                agent_ctxs[agent_name] = list(context_messages)
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
+        """Replace agent context (compact/rebuild). Atomic. Auto-vacuums."""
+        if not self.exists(conversation_id):
+            return False
+        self._commit(conversation_id, [
+            {"t": "ctx", "agent": agent_name or "", "op": "replace",
+             "data": context_messages}
+        ])
+        # Auto-vacuum: the replace makes all prior ctx lines for this agent obsolete
+        try:
+            self.vacuum(conversation_id)
+        except Exception as e:
+            logger.debug(f"[convstore] auto-vacuum failed: {e}")
         return True
 
     def append_to_agent_context(self, conversation_id: str,
                                 agent_name: str,
                                 new_messages: List[Dict[str, Any]]) -> bool:
-        """Append to an agent's diverged context.
-
-        If the agent has its own context → append there.
-        If shared context exists → fork it for this agent, then append.
-        If no context diverged → no-op (returns False).
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            agent_ctxs = entry.get("agent_contexts") or {}
-            agent_ctx = agent_ctxs.get(agent_name)
-            if agent_ctx is not None:
-                # Agent has its own context — append (dedup by msg_id)
-                _ctx_ids = set(m.get("msg_id") for m in agent_ctx[-10:] if m.get("msg_id"))
-                for msg in new_messages:
-                    _mid = msg.get("msg_id")
-                    if _mid and _mid in _ctx_ids:
-                        continue
-                    agent_ctx.append(msg)
-                    if _mid:
-                        _ctx_ids.add(_mid)
-                entry["updated_at"] = time.time()
-            elif entry.get("context") is not None:
-                # Shared context exists — fork for this agent
-                agent_ctxs = entry.setdefault("agent_contexts", {})
-                agent_ctxs[agent_name] = list(entry["context"]) + list(new_messages)
-                entry["updated_at"] = time.time()
-            else:
-                return False
-        self._save_to_disk(conversation_id)
+        """Append to agent context. Creates context if it doesn't exist."""
+        if not self.exists(conversation_id):
+            return False
+        self._commit(conversation_id, [
+            {"t": "ctx", "agent": agent_name, "op": "append",
+             "data": new_messages}
+        ])
         return True
 
-    def list_agent_contexts(self, conversation_id: str) -> Dict[str, str]:
-        """Return {agent_name: status} where status is 'diverged', 'shared', or 'messages'.
+    # ── Public API: Read transcript ───────────────────────────────────
 
-        Also includes '*' for the shared context status.
-        """
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return {}
-            result = {}
-            has_shared = entry.get("context") is not None
-            result["*"] = "diverged" if has_shared else "messages"
-            agent_ctxs = entry.get("agent_contexts") or {}
-            for name, ctx in agent_ctxs.items():
-                result[name] = "diverged" if ctx is not None else (
-                    "shared" if has_shared else "messages"
-                )
-            return result
+    def load(self, conversation_id: str,
+             user_id: str = "") -> Optional[List[Dict[str, Any]]]:
+        """Load transcript messages (public only). Returns None if not found."""
+        if not self.exists(conversation_id):
+            return None
+        if user_id:
+            cache = self._load_cache(conversation_id)
+            if cache["user_id"] and cache["user_id"] != user_id:
+                return None
+        messages = []
+        for line in self._read_lines(conversation_id,
+                                      lambda l: l.get("t") == "msg" and not l.get("private")):
+            # Convert to message dict (strip JSONL metadata)
+            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+            if "ts" in line:
+                msg["timestamp"] = line["ts"]
+            messages.append(msg)
+        return messages
 
-    def set_extra(self, conversation_id: str, key: str, value: Any,
-                  user_id: str = "") -> bool:
-        """Store arbitrary extra data on a conversation (plan, state, etc.)."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            # Access control
-            entry_owner = entry.get("user_id", "")
-            if user_id and entry_owner and entry_owner != user_id:
-                return False
-            extra = entry.setdefault("extra", {})
-            extra[key] = value
-        self._save_to_disk(conversation_id)
+    def load_page(self, conversation_id: str, limit: int = 50, offset: int = 0,
+                  user_id: str = "") -> Optional[Dict[str, Any]]:
+        """Load a page of transcript messages from the end."""
+        all_msgs = self.load(conversation_id, user_id=user_id)
+        if all_msgs is None:
+            return None
+        total = len(all_msgs)
+        end_idx = total - offset
+        start_idx = max(0, end_idx - limit)
+        # Don't split tool_call from tool_results
+        if start_idx > 0:
+            while start_idx > 0:
+                msg = all_msgs[start_idx]
+                if msg.get("role") == "tool":
+                    start_idx -= 1
+                else:
+                    break
+        page = all_msgs[start_idx:end_idx]
+        return {
+            "messages": page,
+            "total_count": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": start_idx > 0,
+        }
+
+    def message_count(self, conversation_id: str) -> int:
+        cache = self._load_cache(conversation_id)
+        return cache.get("msg_count", 0)
+
+    # ── Public API: Metadata ──────────────────────────────────────────
+
+    def get_metadata(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        if not self.exists(conversation_id):
+            return None
+        cache = self._load_cache(conversation_id)
+        return {
+            "user_id": cache.get("user_id", ""),
+            "status": cache.get("status", "idle"),
+            "created_at": cache.get("created_at", 0),
+            "updated_at": cache.get("updated_at", 0),
+            "expires_at": cache.get("expires_at", 0),
+            "message_count": cache.get("msg_count", 0),
+        }
+
+    def set_status(self, conversation_id: str, status: str,
+                   user_id: str = "") -> bool:
+        if status not in CONV_STATUSES:
+            return False
+        if not self.exists(conversation_id):
+            return False
+        self._commit(conversation_id, [{"t": "status", "status": status}])
         return True
+
+    # ── Public API: Extras ────────────────────────────────────────────
 
     def get_extra(self, conversation_id: str, key: str,
                   default: Any = None, user_id: str = "") -> Any:
-        """Retrieve extra data stored on a conversation."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return default
-            # Access control
-            entry_owner = entry.get("user_id", "")
-            if user_id and entry_owner and entry_owner != user_id:
-                return default
-            return entry.get("extra", {}).get(key, default)
+        """Get the latest value for an extra key (scans from end)."""
+        if not self.exists(conversation_id):
+            return default
+        result = default
+        for line in self._read_lines(conversation_id,
+                                      lambda l: l.get("t") == "extra" and l.get("key") == key):
+            result = line.get("value", default)
+        return result
 
     def get_extras(self, conversation_id: str, user_id: str = "") -> Optional[dict]:
-        """Get all extras for a conversation. Returns None if not found or access denied."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if not entry:
-                return None
-            # Access control
-            entry_owner = entry.get("user_id", "")
-            if user_id and entry_owner and entry_owner != user_id:
-                return None
-            return dict(entry.get("extra", {}))
+        """Get all extras (latest value per key)."""
+        if not self.exists(conversation_id):
+            return None
+        extras = {}
+        for line in self._read_lines(conversation_id,
+                                      lambda l: l.get("t") == "extra"):
+            extras[line["key"]] = line.get("value")
+        return extras
+
+    def set_extra(self, conversation_id: str, key: str, value: Any,
+                  user_id: str = "") -> bool:
+        if not self.exists(conversation_id):
+            return False
+        self._commit(conversation_id, [{"t": "extra", "key": key, "value": value}])
+        return True
+
+    # ── Public API: Delete ────────────────────────────────────────────
+
+    def delete(self, conversation_id: str, user_id: str = "") -> bool:
+        if not self.exists(conversation_id):
+            return False
+        lock = self._get_conv_lock(conversation_id)
+        with lock:
+            path = self._conv_path(conversation_id)
+            path.unlink(missing_ok=True)
+        with self._cache_lock:
+            self._cache.pop(conversation_id, None)
+        # Cascade delete sub-conversations
+        prefix = f"{conversation_id}::task::"
+        for path in self._store_dir.glob("*.jsonl"):
+            cid = path.stem.replace("__", ":")
+            if cid.startswith(prefix):
+                sub_lock = self._get_conv_lock(cid)
+                with sub_lock:
+                    path.unlink(missing_ok=True)
+                with self._cache_lock:
+                    self._cache.pop(cid, None)
+        return True
 
     def delete_message(self, conversation_id: str, index: int,
                        user_id: str = "") -> bool:
-        """Delete a single message by index. Returns True if deleted."""
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return False
-            msgs = entry["messages"]
-            if index < 0 or index >= len(msgs):
-                return False
-            msgs.pop(index)
-            entry["updated_at"] = time.time()
-        self._save_to_disk(conversation_id)
+        """Mark a message as deleted (append a delete_msg line)."""
+        self._commit(conversation_id, [{"t": "delete_msg", "index": index}])
         return True
 
-    def delete(self, conversation_id: str, user_id: str = "") -> bool:
-        """Delete a conversation. Returns True if deleted.
-
-        If *user_id* is given, only deletes if it matches the owner.
-        Also cascade-deletes sub-conversations (task contexts) that start
-        with ``{conversation_id}::task::``.
-        """
-        sub_ids: list = []
-        with self._store_lock:
-            self._ensure_loaded()
-            entry = self._conversations.get(conversation_id)
-            if entry is None:
-                return False
-            if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                return False
-            del self._conversations[conversation_id]
-            self._deleted.add(conversation_id)
-            # Cascade delete sub-conversations (task contexts)
-            prefix = f"{conversation_id}::task::"
-            sub_ids = [cid for cid in self._conversations
-                       if cid.startswith(prefix)]
-            for sub_id in sub_ids:
-                self._conversations.pop(sub_id, None)
-                self._deleted.add(sub_id)
-        self._delete_from_disk(conversation_id)
-        for sub_id in sub_ids:
-            self._delete_from_disk(sub_id)
-        return True
+    # ── Public API: List ──────────────────────────────────────────────
 
     def list_conversations(self, user_id: str = "") -> List[Dict[str, Any]]:
-        """List active (non-expired) conversations, optionally filtered by user_id."""
-        now = time.time()
+        self._ensure_loaded()
         result = []
-        with self._store_lock:
-            self._ensure_loaded()
-            for cid, entry in self._conversations.items():
-                if entry["expires_at"] > 0 and entry["expires_at"] < now:
-                    continue
-                if user_id and entry.get("user_id") and entry["user_id"] != user_id:
-                    continue
-                # Hide sub-conversations (task contexts)
+        with self._cache_lock:
+            for cid, c in self._cache.items():
                 if ":task:" in cid:
                     continue
-                # Build a preview from the first user message
-                preview = ""
-                for msg in entry.get("messages", []):
-                    if msg.get("role") == "user":
-                        preview = msg.get("content", "")[:80]
-                        break
+                if user_id and c.get("user_id") and c["user_id"] != user_id:
+                    continue
+                if c.get("expires_at", 0) > 0 and c["expires_at"] < time.time():
+                    continue
                 result.append({
                     "conversation_id": cid,
-                    "preview": preview,
-                    "message_count": len(entry["messages"]),
-                    "status": entry.get("status", "idle"),
-                    "user_id": entry.get("user_id", ""),
-                    "created_at": entry.get("created_at", entry["updated_at"]),
-                    "updated_at": entry["updated_at"],
-                    "expires_at": entry["expires_at"],
+                    "preview": "",  # lazy — don't scan file for preview
+                    "message_count": c.get("msg_count", 0),
+                    "status": c.get("status", "idle"),
+                    "user_id": c.get("user_id", ""),
+                    "created_at": c.get("created_at", 0),
+                    "updated_at": c.get("updated_at", 0),
+                    "expires_at": c.get("expires_at", 0),
                 })
-        # Most recent first
         result.sort(key=lambda x: x["updated_at"], reverse=True)
         return result
 
+    def list_agent_contexts(self, conversation_id: str) -> Dict[str, str]:
+        cache = self._load_cache(conversation_id)
+        result = {"*": "messages"}
+        for agent in cache.get("agents", set()):
+            result[agent] = "diverged"
+        return result
+
+    # ── Public API: Context compatibility ─────────────────────────────
+    # These exist for backward compat with callers that use save_context/load_context
+
+    def save_context(self, conversation_id: str,
+                     context_messages: List[Dict[str, Any]]) -> bool:
+        """Save shared context (agent_name="")."""
+        return self.save_agent_context(conversation_id, "", context_messages)
+
+    def load_context(self, conversation_id: str,
+                     user_id: str = "") -> Optional[List[Dict[str, Any]]]:
+        """Load shared context."""
+        return self.load_agent_context(conversation_id, "")
+
+    # ── Display trace (sub-agent) ─────────────────────────────────────
+
+    def create_display_trace(self, conversation_id: str, trace_id: str,
+                             source: Dict[str, Any],
+                             user_id: str = "") -> bool:
+        self._commit(conversation_id, [{
+            "t": "msg", "role": "sub_agent_trace", "display_only": True,
+            "trace_id": trace_id, "source": source, "content": "",
+            "trace": [], "ts": time.time(),
+        }])
+        return True
+
+    def append_display_trace(self, conversation_id: str, trace_id: str,
+                             entry_data: Dict[str, Any],
+                             content_update: str = "") -> bool:
+        """Append to display trace — reads existing trace, appends, writes update."""
+        # This is the ONE case where we need read-modify-write
+        # We append a trace_update line that the reader merges
+        entry_data.setdefault("ts", time.time())
+        self._commit(conversation_id, [{
+            "t": "trace_update", "trace_id": trace_id,
+            "entry": entry_data,
+            "content_update": content_update,
+        }])
+        return True
+
+    # ── Vacuum (compact file, remove obsolete lines) ───────────────────
+
+    def vacuum(self, conversation_id: str) -> dict:
+        """Rewrite the JSONL file, removing obsolete lines.
+
+        Removes:
+        - ctx append/replace lines before the LAST replace per agent
+        - extra lines superseded by a later extra with the same key
+        - status lines superseded by a later status
+        - delete_msg markers (applied to messages)
+
+        Like PostgreSQL VACUUM — reclaims space without changing semantics.
+        """
+        lock = self._get_conv_lock(conversation_id)
+        path = self._conv_path(conversation_id)
+        if not path.exists():
+            return {"status": "not_found"}
+
+        with lock:
+            # Read all lines
+            lines = []
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    for raw in f:
+                        raw = raw.strip()
+                        if raw:
+                            try:
+                                lines.append(json.loads(raw))
+                            except json.JSONDecodeError:
+                                continue
+            except OSError:
+                return {"status": "read_error"}
+
+            before = len(lines)
+
+            # Find last ctx replace per agent
+            last_replace_idx: Dict[str, int] = {}
+            for i, line in enumerate(lines):
+                if line.get("t") == "ctx" and line.get("op") == "replace":
+                    last_replace_idx[line.get("agent", "")] = i
+
+            # Find last extra per key
+            last_extra_idx: Dict[str, int] = {}
+            for i, line in enumerate(lines):
+                if line.get("t") == "extra":
+                    last_extra_idx[line.get("key", "")] = i
+
+            # Find last status
+            last_status_idx = -1
+            for i, line in enumerate(lines):
+                if line.get("t") == "status":
+                    last_status_idx = i
+
+            # Find deleted message indices
+            deleted_indices = set()
+            for line in lines:
+                if line.get("t") == "delete_msg":
+                    deleted_indices.add(line.get("index", -1))
+
+            # Filter
+            kept = []
+            msg_idx = 0
+            for i, line in enumerate(lines):
+                t = line.get("t", "")
+                if t == "ctx":
+                    agent = line.get("agent", "")
+                    if agent in last_replace_idx and i < last_replace_idx[agent]:
+                        continue  # obsolete ctx line
+                elif t == "extra":
+                    key = line.get("key", "")
+                    if key in last_extra_idx and i < last_extra_idx[key]:
+                        continue  # superseded extra
+                elif t == "status":
+                    if i < last_status_idx:
+                        continue  # superseded status
+                elif t == "delete_msg":
+                    continue  # marker consumed
+                elif t == "msg" and not line.get("private"):
+                    if msg_idx in deleted_indices:
+                        msg_idx += 1
+                        continue  # deleted message
+                    msg_idx += 1
+                kept.append(line)
+
+            after = len(kept)
+            if after == before:
+                return {"status": "clean", "lines": before}
+
+            # Rewrite atomically
+            tmp = path.with_suffix(".tmp")
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    for line in kept:
+                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+                tmp.replace(path)
+            except OSError as e:
+                tmp.unlink(missing_ok=True)
+                return {"status": "write_error", "error": str(e)}
+
+            # Rebuild cache
+            with self._cache_lock:
+                self._cache.pop(conversation_id, None)
+            self._load_cache(conversation_id)
+
+            return {"status": "vacuumed", "before": before, "after": after,
+                    "removed": before - after}
+
+    # ── Cleanup ───────────────────────────────────────────────────────
+
     def cleanup(self) -> int:
         """Remove expired conversations. Returns count removed."""
-        now = time.time()
+        self._ensure_loaded()
         removed = 0
-        with self._store_lock:
-            self._ensure_loaded()
-            expired = [cid for cid, e in self._conversations.items()
-                       if e["expires_at"] > 0 and e["expires_at"] < now]
-            for cid in expired:
-                del self._conversations[cid]
-                self._delete_from_disk(cid)
-                removed += 1
-        if removed:
-            logger.info(f"ConversationStore: cleaned up {removed} expired conversations")
+        now = time.time()
+        with self._cache_lock:
+            expired = [cid for cid, c in self._cache.items()
+                       if c.get("expires_at", 0) > 0 and c["expires_at"] < now]
+        for cid in expired:
+            self.delete(cid)
+            removed += 1
         return removed
 
     def count(self) -> int:
-        with self._store_lock:
-            self._ensure_loaded()
-            return len(self._conversations)
+        self._ensure_loaded()
+        with self._cache_lock:
+            return len(self._cache)
 
-    # -- Disk persistence --
+    # ── Compat helpers ────────────────────────────────────────────────
 
-    def _conv_path(self, conversation_id: str) -> Path:
-        """Path for a conversation's JSON file."""
-        # Sanitize conversation_id for filesystem safety
-        safe_id = "".join(c for c in conversation_id if c.isalnum() or c in "-_:")
-        # ':' is invalid in Windows file paths — replace with '__'
-        safe_id = safe_id.replace(":", "__")
-        return self._store_dir / f"{safe_id}.json"
+    @staticmethod
+    def filter_display_only(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return [m for m in messages if not (isinstance(m, dict) and m.get("display_only"))]
 
-    def _get_write_lock(self, conversation_id: str) -> threading.Lock:
-        """Get or create a per-conversation write lock."""
-        with self._write_locks_lock:
-            if conversation_id not in self._write_locks:
-                self._write_locks[conversation_id] = threading.Lock()
-            return self._write_locks[conversation_id]
-
-    def _save_to_disk(self, conversation_id: str, entry: Dict[str, Any] = None):
-        """Persist a conversation to disk (serialized per conversation).
-
-        If *entry* is None, re-reads the current in-memory state under lock
-        to guarantee the latest version is written.  When *entry* is provided
-        it is used as-is (caller already holds a consistent snapshot).
-        """
-        if conversation_id in self._deleted:
-            return
-        write_lock = self._get_write_lock(conversation_id)
-        with write_lock:
-            if conversation_id in self._deleted:
-                return
-            # Re-snapshot from memory to guarantee latest state
-            if entry is None:
-                with self._store_lock:
-                    mem = self._conversations.get(conversation_id)
-                    if mem is None:
-                        return
-                    entry = {
-                        "messages": list(mem.get("messages", [])),
-                        "user_id": mem.get("user_id", ""),
-                        "status": mem.get("status", "idle"),
-                        "created_at": mem.get("created_at", 0),
-                        "updated_at": mem.get("updated_at", 0),
-                        "expires_at": mem.get("expires_at", 0),
-                        "context": list(mem["context"]) if mem.get("context") is not None else None,
-                    }
-                    if mem.get("agent_contexts"):
-                        entry["agent_contexts"] = {
-                            k: list(v) if v is not None else None
-                            for k, v in mem["agent_contexts"].items()
-                        }
-                    if mem.get("extra"):
-                        entry["extra"] = dict(mem["extra"])
-            try:
-                path = self._conv_path(conversation_id)
-                data = {
-                    "conversation_id": conversation_id,
-                    "user_id": entry.get("user_id", ""),
-                    "status": entry.get("status", "idle"),
-                    "created_at": entry.get("created_at", 0),
-                    "updated_at": entry.get("updated_at", 0),
-                    "expires_at": entry.get("expires_at", 0),
-                    "messages": entry.get("messages", []),
-                    "context": entry.get("context"),
-                }
-                if entry.get("agent_contexts"):
-                    data["agent_contexts"] = entry["agent_contexts"]
-                if entry.get("extra"):
-                    data["extra"] = entry["extra"]
-                tmp = path.with_suffix(".tmp")
-                tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-                tmp.replace(path)
-            except OSError as e:
-                logger.error("ConversationStore: failed to save %s to disk: %s",
-                             conversation_id, e)
-                # Try to free space by cleaning up expired conversations
-                try:
-                    with self._store_lock:
-                        self._cleanup_expired()
-                except Exception:
-                    pass
-            except Exception as e:
-                logger.error(f"ConversationStore: failed to save {conversation_id}: {e}")
-
-    def _delete_from_disk(self, conversation_id: str):
-        """Remove a conversation file from disk.
-
-        Also removes any .tmp file that might have been written concurrently.
-        """
-        try:
-            path = self._conv_path(conversation_id)
-            tmp = path.with_suffix(".tmp")
-            existed = path.exists()
-            path.unlink(missing_ok=True)
-            tmp.unlink(missing_ok=True)
-            if existed:
-                logger.info(f"ConversationStore: deleted {conversation_id} from disk")
-            # Brief sleep + re-check to catch concurrent _save_to_disk race
-            import time as _time
-            _time.sleep(0.05)
-            if path.exists():
-                path.unlink(missing_ok=True)
-                logger.warning(f"ConversationStore: re-deleted {conversation_id} "
-                               f"(concurrent write race)")
-        except Exception as e:
-            logger.error(f"ConversationStore: failed to delete {conversation_id}: {e}")
-
-    def _load_from_disk(self):
-        """Load all conversations from disk on startup."""
-        if not self._store_dir.exists():
-            return
-        now = time.time()
-        loaded = 0
-        expired = 0
-        for path in self._store_dir.glob("*.json"):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                cid = data.get("conversation_id", path.stem)
-                # Skip expired (expires_at=0 means no expiry)
-                exp = data.get("expires_at", 0)
-                if exp > 0 and exp < now:
-                    path.unlink(missing_ok=True)
-                    expired += 1
-                    continue
-                entry = {
-                    "messages": data.get("messages", []),
-                    "user_id": data.get("user_id", ""),
-                    "status": data.get("status", "idle"),
-                    "created_at": data.get("created_at", 0),
-                    "updated_at": data.get("updated_at", 0),
-                    "expires_at": data.get("expires_at", 0),
-                    "context": data.get("context"),  # None for old files = not diverged
-                }
-                if data.get("agent_contexts"):
-                    entry["agent_contexts"] = data["agent_contexts"]
-                if data.get("extra"):
-                    entry["extra"] = data["extra"]
-                self._conversations[cid] = entry
-                loaded += 1
-            except Exception as e:
-                logger.warning(f"ConversationStore: failed to load {path.name}: {e}")
-        if loaded or expired:
-            logger.info(f"ConversationStore: loaded {loaded} conversations from disk"
-                        f" ({expired} expired removed)")
+    def set_metadata_field(self, conversation_id: str, field: str, value: Any) -> bool:
+        """Set a metadata field (status, user_id, etc.)."""
+        return self.set_extra(conversation_id, field, value)

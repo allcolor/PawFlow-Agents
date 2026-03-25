@@ -430,22 +430,28 @@ class StreamEmitter(AgentEmitter):
 
         all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
 
-        store = ConversationStore.instance()
-        # Persist ALL messages to transcript (no filtering — write everything)
-        if all_serialized:
-            store.append_messages(
-                self.conversation_id, all_serialized,
-                ttl=self._conv_ttl, user_id=self._user_id,
-            )
+        # Split: public (user + assistant text) vs private (tools)
+        public = [m for m in all_serialized
+                  if m.get("role") in ("user", "assistant") and not m.get("tool_calls")]
+        private = [m for m in all_serialized if m not in public]
 
         _agent_n = self.ctx.get("active_agent_name") or ""
-        store.append_to_agent_context(self.conversation_id, _agent_n, all_serialized)
+        store = ConversationStore.instance()
+
+        # ONE atomic operation: transcript + all contexts
+        store.agent_flush(
+            self.conversation_id, _agent_n,
+            public_messages=public,
+            private_messages=private,
+            user_id=self._user_id,
+            ttl=self._conv_ttl,
+        )
         self.ctx["_context_diverged"] = True
 
-        # Sub-conversations: append to parent
-        if "::task::" in self.conversation_id and transcript_ser:
+        # Sub-conversations: append public to parent
+        if "::task::" in self.conversation_id and public:
             _parent = self.conversation_id.split("::task::")[0]
-            store.append_messages(_parent, transcript_ser,
+            store.append_messages(_parent, public,
                                  ttl=self._conv_ttl, user_id=self._user_id)
 
         self.ctx["_last_known_msg_count"] = store.message_count(self.conversation_id)

@@ -809,12 +809,10 @@ function _renderSchemaFields(schema, values, readonly) {
   const dis = readonly ? ' disabled' : '';
   const roS = readonly ? 'opacity:0.7;cursor:not-allowed;' : '';
   for (const [pname, pdef] of Object.entries(schema)) {
-    const req = pdef.required && !readonly ? ' <span style="color:#e94560;">*</span>' : '';
     const val = (values && values[pname] != null) ? values[pname] : (pdef.default != null ? pdef.default : '');
     const escaped = typeof val === 'string' ? val.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;') : val;
-    const showWhen = pdef.show_when ? ` data-show-when="${pdef.show_when.field}" data-show-value="${pdef.show_when.value}"` : '';
-    html += '<div class="svc-field" style="margin-bottom:8px;"' + showWhen + '>';
-    html += '<label style="' + _svcLabelStyle + '">' + pname + req + '</label>';
+    html += '<div class="svc-field" data-field="' + pname + '" style="margin-bottom:8px;">';
+    html += '<label style="' + _svcLabelStyle + '">' + pname + '</label>';
     if (pdef.description) html += '<div style="' + _svcDescStyle + '">' + pdef.description + '</div>';
     const ptype = pdef.type || 'string';
     if (ptype === 'boolean') {
@@ -864,25 +862,128 @@ function _collectSchemaValues(schema) {
   return config;
 }
 
-function _applyShowWhen(container) {
-  const fields = container.querySelectorAll('.svc-field[data-show-when]');
-  const update = () => {
-    fields.forEach(f => {
-      const dep = f.dataset.showWhen;
-      const val = f.dataset.showValue;
-      const depEl = container.querySelector('#svc-p-' + dep);
-      if (depEl) {
-        const match = depEl.type === 'checkbox' ? (depEl.checked ? 'true' : 'false') === val : depEl.value === val;
-        f.style.display = match ? '' : 'none';
+function _applyRules(container, rules, actions, serviceId) {
+  if (!rules || !rules.length) return;
+  const getVal = (name) => {
+    const el = container.querySelector('#svc-p-' + name);
+    if (!el) return null;
+    return el.type === 'checkbox' ? String(el.checked) : el.value;
+  };
+  const _matchWhen = (when) => Object.entries(when).every(([field, values]) =>
+    Array.isArray(values) ? values.includes(getVal(field)) : getVal(field) === values
+  );
+
+  const apply = () => {
+    // Reset: all fields visible, none required
+    container.querySelectorAll('.svc-field').forEach(f => {
+      f.style.display = '';
+      const lbl = f.querySelector('label');
+      if (lbl) lbl.querySelector('.svc-req')?.remove();
+    });
+    // Evaluate rules in order
+    for (const rule of rules) {
+      if (!_matchWhen(rule.when)) continue;
+      for (const [field, effects] of Object.entries(rule.set || {})) {
+        const wrapper = container.querySelector('[data-field="' + field + '"]');
+        if (!wrapper) continue;
+        if (effects.visible === false) wrapper.style.display = 'none';
+        if (effects.visible === true) wrapper.style.display = '';
+        if (effects.required) {
+          const lbl = wrapper.querySelector('label');
+          if (lbl && !lbl.querySelector('.svc-req'))
+            lbl.insertAdjacentHTML('beforeend', ' <span class="svc-req" style="color:#e94560">*</span>');
+        }
+        if (effects.default !== undefined) {
+          const input = wrapper.querySelector('input,select,textarea');
+          if (input && !input.value) input.value = effects.default;
+        }
+        if (effects.options) {
+          const sel = wrapper.querySelector('select');
+          if (sel) {
+            const cur = sel.value;
+            sel.innerHTML = effects.options.map(o =>
+              '<option value="' + o + '"' + (o === cur ? ' selected' : '') + '>' + o + '</option>').join('');
+          }
+        }
       }
+    }
+    // Show/hide action buttons based on when conditions
+    container.querySelectorAll('[data-action-when]').forEach(btn => {
+      try {
+        const when = JSON.parse(btn.dataset.actionWhen);
+        btn.style.display = _matchWhen(when) ? '' : 'none';
+      } catch { btn.style.display = ''; }
     });
   };
-  container.querySelectorAll('input,select,textarea').forEach(el => {
-    el.addEventListener('change', update);
-    el.addEventListener('input', update);
+
+  // Listen to trigger fields
+  const triggers = new Set(rules.flatMap(r => Object.keys(r.when)));
+  if (actions) actions.forEach(a => { if (a.when) Object.keys(a.when).forEach(k => triggers.add(k)); });
+  triggers.forEach(name => {
+    const el = container.querySelector('#svc-p-' + name);
+    if (el) el.addEventListener('change', apply);
   });
-  update();
+  apply();
 }
+
+function _renderServiceActions(actions, serviceId) {
+  if (!actions || !actions.length) return '';
+  let html = '<div class="svc-actions" style="margin-top:12px;padding-top:8px;border-top:1px solid #333;">';
+  for (const a of actions) {
+    const whenAttr = a.when ? ' data-action-when=\'' + JSON.stringify(a.when).replace(/'/g, '&#39;') + '\'' : '';
+    html += '<button type="button" onclick="_executeServiceAction(\'' + a.id + '\',\'' + serviceId + '\',\'' + (a.flow || 'simple') + '\',\'' + (a.server_action || '') + '\')"'
+      + whenAttr + ' style="background:#1a1a3e;color:#6c5ce7;border:1px solid #6c5ce7;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;margin-right:8px;">'
+      + (a.icon || '') + ' ' + (a.label || a.id) + '</button>';
+  }
+  html += '</div>';
+  return html;
+}
+
+async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
+  if (flow === 'oauth_code') {
+    // Step 1: get auth URL
+    try {
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction, service_id: serviceId })
+      }).then(r => r.json());
+      if (resp.error) { addMsg('error', resp.error); return; }
+
+      // Step 2: open URL
+      window.open(resp.url, '_blank');
+
+      // Step 3: prompt for code
+      const code = prompt('After login, paste the authorization code here:');
+      if (!code) return;
+
+      // Step 4: exchange code
+      const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
+                               service_id: serviceId, code: code, state: resp.state })
+      }).then(r => r.json());
+
+      if (result.ok) addMsg('system', result.message || 'Login successful!');
+      else addMsg('error', result.error || 'Login failed');
+    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+  } else if (flow === 'confirm') {
+    if (!confirm('Execute ' + actionId + '?')) return;
+    try {
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction, service_id: serviceId })
+      }).then(r => r.json());
+      addMsg('system', resp.message || resp.error || JSON.stringify(resp));
+    } catch (e) { addMsg('error', e.message); }
+  } else {
+    try {
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction, service_id: serviceId })
+      }).then(r => r.json());
+      addMsg('system', resp.message || resp.error || JSON.stringify(resp));
+    } catch (e) { addMsg('error', e.message); }
+  }
+}
+
+// Legacy compat
+function _applyShowWhen(container) { /* replaced by _applyRules */ }
 
 let _svcSchemaCache = {};
 
@@ -893,10 +994,14 @@ async function _fetchServiceSchema(serviceType) {
       body: JSON.stringify({ action: 'get_service_schema', service_type: serviceType }),
     });
     const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return {}; }
-    _svcSchemaCache[serviceType] = data.parameters || {};
+    if (data.error) { addMsg('error', data.error); return {parameters: {}, rules: [], actions: []}; }
+    _svcSchemaCache[serviceType] = {
+      parameters: data.parameters || {},
+      rules: data.rules || [],
+      actions: data.actions || [],
+    };
     return _svcSchemaCache[serviceType];
-  } catch (e) { addMsg('error', e.message); return {}; }
+  } catch (e) { addMsg('error', e.message); return {parameters: {}, rules: [], actions: []}; }
 }
 
 async function showServiceInstallForm() {
@@ -950,13 +1055,18 @@ async function showServiceInstallForm() {
   const loadParams = async () => {
     const paramsDiv = document.getElementById('svc-install-params');
     paramsDiv.innerHTML = '<div style="color:#666;font-size:11px;">Loading parameters...</div>';
-    const schema = await _fetchServiceSchema(typeSelect.value);
-    panel.dataset.schema = JSON.stringify(schema);
-    if (Object.keys(schema).length === 0) {
+    const schemaData = await _fetchServiceSchema(typeSelect.value);
+    panel.dataset.schema = JSON.stringify(schemaData.parameters || {});
+    panel.dataset.rules = JSON.stringify(schemaData.rules || []);
+    panel.dataset.actions = JSON.stringify(schemaData.actions || []);
+    const params = schemaData.parameters || {};
+    if (Object.keys(params).length === 0) {
       paramsDiv.innerHTML = '<div style="color:#666;font-size:11px;">No configurable parameters for this service type.</div>';
     } else {
-      paramsDiv.innerHTML = '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>' + _renderSchemaFields(schema, {});
-      _applyShowWhen(paramsDiv);
+      paramsDiv.innerHTML = '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
+        + _renderSchemaFields(params, {})
+        + _renderServiceActions(schemaData.actions || [], '');
+      _applyRules(paramsDiv, schemaData.rules || [], schemaData.actions || [], '');
     }
   };
   typeSelect.addEventListener('change', loadParams);
@@ -997,7 +1107,10 @@ async function showServiceEditForm(serviceId, scope, readonly) {
 
     const svcType = data.service_type || '';
     const config = data.config || {};
-    const schema = await _fetchServiceSchema(svcType);
+    const schemaData = await _fetchServiceSchema(svcType);
+    const schema = schemaData.parameters || schemaData;  // compat: old format was just params
+    const rules = schemaData.rules || [];
+    const actions = schemaData.actions || [];
     const ro = !!readonly;
     const disabledAttr = ro ? ' disabled' : '';
     const roStyle = ro ? 'opacity:0.7;cursor:not-allowed;' : '';
@@ -1022,6 +1135,7 @@ async function showServiceEditForm(serviceId, scope, readonly) {
       formHtml += '<div style="border-top:1px solid #333;padding-top:8px;margin-top:8px;">'
         + '<div style="color:#8888aa;font-size:11px;margin-bottom:6px;font-weight:600;">Parameters</div>'
         + _renderSchemaFields(schema, config, ro)
+        + (ro ? '' : _renderServiceActions(actions, serviceId))
         + '</div>';
     } else {
       for (const [k, v] of Object.entries(config)) {
@@ -1058,7 +1172,9 @@ async function showServiceEditForm(serviceId, scope, readonly) {
     panel.dataset.schema = JSON.stringify(effectiveSchema);
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
-    _applyShowWhen(panel);
+    panel.dataset.rules = JSON.stringify(rules);
+    panel.dataset.actions = JSON.stringify(actions);
+    _applyRules(panel, rules, actions, serviceId);
   } catch (e) { addMsg('error', e.message); }
 }
 

@@ -357,10 +357,25 @@ class Service:
     
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {}
-    
+
+    def get_parameter_rules(self) -> list:
+        """Declarative rules for conditional visibility, required, defaults, options.
+
+        Each rule: {"when": {"field": ["val1", "val2"]}, "set": {"other_field": {"visible": bool, "required": bool, "default": val, "options": [...]}}}
+        Rules evaluated in order — last match wins per field.
+        """
+        return []
+
+    def get_service_actions(self) -> list:
+        """Custom actions (buttons in the edit form).
+
+        Each: {"id": str, "label": str, "icon": str, "when": {field: [vals]}, "server_action": str, "flow": "simple"|"confirm"|"oauth_code"}
+        """
+        return []
+
     def connect(self):
         pass
-    
+
     def disconnect(self):
         pass
     

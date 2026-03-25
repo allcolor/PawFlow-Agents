@@ -66,11 +66,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             instance = object.__new__(cls)
             instance.config = {}
             schema = instance.get_parameter_schema()
+            rules = instance.get_parameter_rules() if hasattr(instance, 'get_parameter_rules') else []
+            actions = instance.get_service_actions() if hasattr(instance, 'get_service_actions') else []
             flowfile.set_content(json.dumps({
                 "type": svc_type,
                 "name": getattr(cls, "NAME", svc_type),
                 "description": getattr(cls, "DESCRIPTION", ""),
                 "parameters": schema,
+                "rules": rules,
+                "actions": actions,
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

@@ -199,92 +199,115 @@ class LLMConnectionService(BaseService):
         return False
 
     def get_parameter_schema(self) -> Dict[str, Any]:
+        """Parameters — no conditional logic here (rules handle that)."""
         return {
             "provider": {
-                "type": "select",
-                "required": True,
-                "default": "openai",
+                "type": "select", "required": True, "default": "openai",
                 "options": list(self.PROVIDERS),
                 "description": "LLM provider",
             },
             "api_key": {
-                "type": "string",
-                "required": {"provider": ["openai", "anthropic"]},
-                "sensitive": True,
+                "type": "string", "sensitive": True,
                 "description": "API key for the provider",
-                "show_when": {"provider": ["openai", "anthropic", "gemini-cli"]},
             },
             "base_url": {
-                "type": "string",
-                "required": {"provider": ["openai", "anthropic"]},
-                "default": "",
+                "type": "string", "default": "",
                 "description": "Base URL (override for self-hosted/compatible APIs)",
-                "show_when": {"provider": ["openai", "anthropic"]},
             },
             "default_model": {
-                "type": "string",
-                "required": False,
-                "default": "",
+                "type": "string", "default": "",
                 "description": "Default model name",
             },
             "fallback_model": {
-                "type": "string",
-                "required": False,
-                "default": "",
-                "description": "Fallback model to try when the primary model fails after all retries",
+                "type": "string", "default": "",
+                "description": "Fallback model (used when primary fails)",
             },
             "timeout": {
-                "type": "integer",
-                "required": False,
-                "default": 60,
+                "type": "integer", "default": 60,
                 "description": "Request timeout in seconds",
             },
             "max_retries": {
-                "type": "integer",
-                "required": False,
-                "default": 2,
+                "type": "integer", "default": 2,
                 "description": "Number of retries on transient errors",
-                "show_when": {"provider": ["openai", "anthropic"]},
             },
             "max_context_size": {
-                "type": "integer",
-                "required": False,
-                "default": 0,
-                "description": "Context window size in tokens (0 = use model default). Used for automatic compaction.",
+                "type": "integer", "default": 0,
+                "description": "Context window in tokens (0 = model default)",
             },
             "max_concurrent": {
-                "type": "integer",
-                "required": False,
-                "default": 0,
+                "type": "integer", "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",
             },
             "cost_per_1m_input": {
-                "type": "string",
-                "required": False,
-                "default": "0",
-                "description": "Cost per 1M input tokens ($), e.g. 0.20",
+                "type": "string", "default": "0",
+                "description": "Cost per 1M input tokens ($)",
             },
             "cost_per_1m_output": {
-                "type": "string",
-                "required": False,
-                "default": "0",
-                "description": "Cost per 1M output tokens ($), e.g. 0.50",
+                "type": "string", "default": "0",
+                "description": "Cost per 1M output tokens ($)",
             },
             "claude_binary": {
-                "type": "string",
-                "required": {"provider": ["claude-code"]},
-                "default": "claude",
-                "description": "Path to Claude CLI binary (uses `claude login` auth)",
-                "show_when": {"provider": ["claude-code"]},
+                "type": "string", "default": "claude",
+                "description": "Path to Claude CLI binary",
             },
             "gemini_binary": {
-                "type": "string",
-                "required": {"provider": ["gemini-cli"]},
-                "default": "gemini",
+                "type": "string", "default": "gemini",
                 "description": "Path to Gemini CLI binary",
-                "show_when": {"provider": ["gemini-cli"]},
             },
         }
+
+    def get_parameter_rules(self) -> list:
+        """Rules for conditional visibility, required, and defaults."""
+        return [
+            {
+                "when": {"provider": ["openai", "anthropic"]},
+                "set": {
+                    "api_key":       {"visible": True, "required": True},
+                    "base_url":      {"visible": True},
+                    "max_retries":   {"visible": True},
+                    "fallback_model": {"visible": True},
+                    "claude_binary": {"visible": False},
+                    "gemini_binary": {"visible": False},
+                }
+            },
+            {
+                "when": {"provider": ["claude-code"]},
+                "set": {
+                    "claude_binary": {"visible": True, "required": True},
+                    "api_key":       {"visible": False},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "max_concurrent": {"visible": False},
+                    "gemini_binary": {"visible": False},
+                    "timeout":       {"default": 600},
+                }
+            },
+            {
+                "when": {"provider": ["gemini-cli"]},
+                "set": {
+                    "gemini_binary": {"visible": True, "required": True},
+                    "api_key":       {"visible": True},
+                    "base_url":      {"visible": False},
+                    "max_retries":   {"visible": False},
+                    "fallback_model": {"visible": False},
+                    "claude_binary": {"visible": False},
+                }
+            },
+        ]
+
+    def get_service_actions(self) -> list:
+        """Custom actions for the admin UI."""
+        return [
+            {
+                "id": "claude_code_login",
+                "label": "Login with Claude subscription",
+                "icon": "\U0001f511",
+                "when": {"provider": ["claude-code"]},
+                "server_action": "claude_code_login_url",
+                "flow": "oauth_code",
+            },
+        ]
 
 
 ServiceFactory.register(LLMConnectionService)

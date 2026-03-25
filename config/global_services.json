@@ -116,7 +116,7 @@
       "claude_binary": "claude",
       "gemini_binary": "gemini",
       "default_temperature": "none",
-      "reasoning_effort": "none"
+      "reasoning_effort": "minimal"
     },
     "enabled": true,
     "description": "",

@@ -150,17 +150,9 @@ def _call_narrator(svc_name: str, tool_calls, ctx) -> str:
 
         resp = svc.complete(
             [LLMMessage(role="user", content=prompt)],
-            max_tokens=150, temperature=0.3)
+            max_tokens=150)
         _track_narrator(resp, ctx)
         text = (resp.content or "").strip()
-        # Retry once if empty (reasoning models sometimes output nothing)
-        if not text:
-            resp = svc.complete(
-                [LLMMessage(role="user", content=(
-                    "In ONE sentence, what are these tools doing?\n" + tools_desc))],
-                max_tokens=100, temperature=0.5)
-            _track_narrator(resp, ctx)
-            text = (resp.content or "").strip()
         logging.getLogger(__name__).info(
             f"[narrator] result: {len(text)} chars: {text[:80]!r}")
         return text + "\n" if text and not text.endswith("\n") else text

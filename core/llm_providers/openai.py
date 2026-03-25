@@ -21,9 +21,10 @@ class LLMOpenaiMixin:
         body = {
             "model": model,
             "messages": self._build_openai_messages(messages),
-            "temperature": temperature,
             "stream": True,
         }
+        if temperature is not None:
+            body["temperature"] = temperature
         if max_tokens > 0:
             tokens_key = self._openai_tokens_key(model, self.base_url)
             body[tokens_key] = max_tokens
@@ -272,8 +273,9 @@ class LLMOpenaiMixin:
         body = {
             "model": model,
             "messages": self._build_openai_messages(messages),
-            "temperature": temperature,
         }
+        if temperature is not None:
+            body["temperature"] = temperature
         if max_tokens > 0:
             tokens_key = self._openai_tokens_key(model, self.base_url)
             body[tokens_key] = max_tokens

@@ -115,7 +115,7 @@
       "cost_per_1m_output": "0,40",
       "claude_binary": "claude",
       "gemini_binary": "gemini",
-      "default_temperature": 1.0
+      "default_temperature": "none"
     },
     "enabled": true,
     "description": "",

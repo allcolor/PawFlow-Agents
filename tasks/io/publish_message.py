@@ -69,11 +69,14 @@ class PublishMessageTask(BaseTask):
         # 1. Persist to ConversationStore
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
+        import uuid as _uuid_pm
+        _pm_msg_id = _uuid_pm.uuid4().hex[:12]
         source = {"type": "agent", "name": agent_name}
         store.append_messages(conv_id, [{
             "role": role,
             "content": text,
             "source": source,
+            "msg_id": _pm_msg_id,
             "timestamp": time.time(),
         }])
 
@@ -82,6 +85,8 @@ class PublishMessageTask(BaseTask):
         bus = ConversationEventBus.instance()
         bus.publish_event(conv_id, "done", {
             "response": text,
+            "msg_id": _pm_msg_id,
+            "all_msg_ids": [_pm_msg_id],
             "conversation_id": conv_id,
             "agent_name": agent_name,
             "source": source,

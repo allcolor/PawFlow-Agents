@@ -150,14 +150,19 @@ class SpawnAgentTask(BaseTask):
             source = {"type": "agent", "name": agent_name}
 
             if result.status == "completed" and result.response:
+                import uuid as _uuid_sa
+                _sa_msg_id = _uuid_sa.uuid4().hex[:12]
                 ConversationStore.instance().append_messages(conv_id, [{
                     "role": "assistant",
                     "content": result.response,
                     "source": source,
+                    "msg_id": _sa_msg_id,
                     "timestamp": time.time(),
                 }])
                 ConversationEventBus.instance().publish_event(conv_id, "done", {
                     "response": result.response,
+                    "msg_id": _sa_msg_id,
+                    "all_msg_ids": [_sa_msg_id],
                     "conversation_id": conv_id,
                     "agent_name": agent_name,
                     "source": source,

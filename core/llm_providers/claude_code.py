@@ -126,17 +126,37 @@ class LLMClaudeCodeMixin:
     def _setup_credentials(self, workdir: str):
         """Write .credentials.json in session workdir for Claude Code auth.
 
-        Reads tokens from the service config (stored in PawFlow secrets).
-        NO fallback to local ~/.claude/ — each service must have its own
-        credentials configured via the admin panel login flow.
+        Reads tokens from the LIVE service config (not cached attrs —
+        tokens may have been added after the client was created).
+        NO fallback to local ~/.claude/.
 
         Raises LLMClientError if no credentials configured.
         """
         from core.llm_client import LLMClientError
 
+        # Read from live service config (may have been updated since client creation)
         access_token = getattr(self, 'claude_access_token', '') or ''
         refresh_token = getattr(self, 'claude_refresh_token', '') or ''
         expires_at = getattr(self, 'claude_expires_at', 0) or 0
+
+        if not access_token:
+            # Try live config from registry (tokens added after client init)
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
+                    if getattr(sdef, "service_type", "") == "llmConnection":
+                        cfg = getattr(sdef, "config", {}) or {}
+                        if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token"):
+                            access_token = cfg["claude_access_token"]
+                            refresh_token = cfg.get("claude_refresh_token", "")
+                            expires_at = cfg.get("claude_expires_at", 0)
+                            # Update self for next call
+                            self.claude_access_token = access_token
+                            self.claude_refresh_token = refresh_token
+                            self.claude_expires_at = expires_at
+                            break
+            except Exception:
+                pass
 
         if not access_token:
             raise LLMClientError(

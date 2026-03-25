@@ -661,11 +661,73 @@ class ConversationStore:
                     self._cache.pop(sub_cid, None)
         return True
 
-    def delete_message(self, cid: str, index: int, user_id: str = "") -> bool:
-        # Not ideal for JSONL but rare operation — mark and vacuum later
-        self._commit(cid, [{"op": "append", "lines": [
-            {"t": "delete_msg", "index": index}]}])
-        return True
+    def delete_message(self, cid: str, msg_id: str = "", index: int = -1,
+                       user_id: str = "") -> bool:
+        """Delete a message by msg_id from transcript + all contexts. Atomic."""
+        if not msg_id and index < 0:
+            return False
+        if not self.exists(cid):
+            return False
+
+        # If we only have index, resolve to msg_id first
+        if not msg_id and index >= 0:
+            def _find_id(lines):
+                count = 0
+                for line in lines:
+                    if line.get("t") == "msg" and not line.get("private"):
+                        if count == index:
+                            return line.get("msg_id", "")
+                        count += 1
+                return ""
+            msg_id = self._read(cid, _find_id)
+            if not msg_id:
+                return False
+
+        # Rewrite: remove this msg_id from transcript and all contexts
+        def _remove_from_ctx(data: list) -> list:
+            return [m for m in data if m.get("msg_id") != msg_id]
+
+        # Use a custom rewrite that streams and filters
+        lock = self._get_conv_lock(cid)
+        path = self._conv_path(cid)
+        with lock:
+            if not path.exists():
+                return False
+            tmp = path.with_suffix(".tmp")
+            removed = False
+            try:
+                with open(path, "r", encoding="utf-8") as src, \
+                     open(tmp, "w", encoding="utf-8") as dst:
+                    for raw in src:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            line = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        t = line.get("t", "")
+                        # Remove from transcript
+                        if t == "msg" and line.get("msg_id") == msg_id:
+                            removed = True
+                            continue
+                        # Remove from contexts
+                        if t == "ctx" and "data" in line:
+                            old_len = len(line["data"])
+                            line["data"] = _remove_from_ctx(line["data"])
+                            if len(line["data"]) != old_len:
+                                removed = True
+                        dst.write(json.dumps(line, ensure_ascii=False) + "\n")
+                tmp.replace(path)
+            except OSError as e:
+                tmp.unlink(missing_ok=True)
+                logger.error(f"[convstore] delete_message rewrite failed: {e}")
+                return False
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+        if removed:
+            self._load_cache(cid)
+        return removed
 
     # ── List ──────────────────────────────────────────────────────────
 

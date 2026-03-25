@@ -92,7 +92,27 @@
     const badge = sourceBadge(src);
     const displayText = s.text.replace(/^\[[^\]]+\]:\s*/, '');
     const shouldScroll = isNearBottom();
-    s.el.innerHTML = badge + renderMarkdown(displayText);
+    // Update content area only — preserve action buttons
+    let contentEl = s.el.querySelector('.msg-content');
+    if (!contentEl) {
+      // First update: wrap existing content in a content div
+      const actions = s.el.querySelector('.msg-actions');
+      contentEl = document.createElement('span');
+      contentEl.className = 'msg-content';
+      s.el.innerHTML = '';
+      s.el.appendChild(contentEl);
+      if (actions) s.el.appendChild(actions);
+      // Re-add action buttons if missing
+      if (!actions) {
+        s.el.insertAdjacentHTML('beforeend',
+          '<span class="msg-actions">'
+          + '<button onclick="setReplyTo(this)" title="Reply">\u21A9</button>'
+          + '<button onclick="copyMsg(this)" title="Copy">\uD83D\uDCCB</button>'
+          + '<button onclick="deleteMsg(this)" title="Delete">\uD83D\uDDD1</button>'
+          + '</span>');
+      }
+    }
+    contentEl.innerHTML = badge + renderMarkdown(displayText);
     scrollBottom(shouldScroll);
     document.getElementById('status').textContent = t('streaming');
   });

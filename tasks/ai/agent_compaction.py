@@ -176,10 +176,19 @@ class AgentCompactionMixin:
             logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)
             return messages
 
-        # Guard: empty summary = LLM returned nothing → don't compact
+        # Guard: empty summary → retry with simpler prompt
         if not summary or len(summary.strip()) < 20:
-            logger.warning(f"[compact-post] Summary too short ({len(summary)} chars), keeping original")
-            return messages
+            logger.warning(f"[compact-post] Summary too short ({len(summary)} chars), retrying...")
+            try:
+                summary = self._call_summarize(client, _text_to_summarize,
+                                                target_tokens=500,
+                                                agent_name=agent_name,
+                                                llm_service=llm_service)
+            except Exception:
+                pass
+            if not summary or len(summary.strip()) < 20:
+                logger.warning(f"[compact-post] Retry also empty, keeping original")
+                return messages
 
         # Build compacted context
         compacted: List[LLMMessage] = []
@@ -774,7 +783,8 @@ class AgentCompactionMixin:
         clean_text = self._sanitize_for_llm(text)
         target_instruction = (
             f"STRICT LIMIT: maximum {target_tokens} tokens. Be concise. "
-            f"Prioritize: current state, files modified, last action, pending work."
+            f"Prioritize: current state, files modified, last action, pending work. "
+            f"You MUST output a summary. Do NOT output nothing."
         )
         try:
             response = client.complete(

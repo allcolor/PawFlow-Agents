@@ -50,6 +50,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             task_llm_service, _user_id_for_svc,
             raise_on_missing=True, default_model=model,
         )
+        # Early provider detection (needed before compact decision)
+        _early_provider = (getattr(resolved_svc, 'provider', "") or
+                          (getattr(resolved_svc, 'config', {}) or {}).get("provider", "") or
+                          getattr(client, 'provider', ""))
+        _skip_compact = _early_provider == "claude-code"
 
         registry = self.get_tool_registry()
         # Handlers are fully configured later (after conversation_id/user_id are known)
@@ -246,8 +251,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             f"{len(messages)} messages")
             except (KeyError, TypeError) as e:
                 logger.error(f"[context] preloaded messages deser failed: {e}")
-            # Auto-compact on preloaded messages too
-            if messages:
+            # Auto-compact on preloaded messages (skip for claude-code — manages own context)
+            if messages and not _skip_compact:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
                     messages, conversation_id or "", _context_agent, _uid_pl)
@@ -266,10 +271,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 f"{len(messages)} messages")
                 except (KeyError, TypeError) as deser_err:
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
-                # Auto-compact on load (OUTSIDE the deserialize try/except)
-                _uid = flowfile.get_attribute("http.auth.principal") or ""
-                messages = self._auto_compact_messages(
-                    messages, conversation_id, _context_agent, _uid)
+                # Auto-compact on load (skip for claude-code)
+                if not _skip_compact:
+                    _uid = flowfile.get_attribute("http.auth.principal") or ""
+                    messages = self._auto_compact_messages(
+                        messages, conversation_id, _context_agent, _uid)
             else:
                 # No divergence — use messages as context
                 existing = store.load(conversation_id)
@@ -282,10 +288,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
-                    # Auto-compact on load (OUTSIDE deserialize try/except)
-                    _uid2 = flowfile.get_attribute("http.auth.principal") or ""
-                    messages = self._auto_compact_messages(
-                        messages, conversation_id, _context_agent, _uid2)
+                    # Auto-compact on load (skip for claude-code)
+                    if not _skip_compact:
+                        _uid2 = flowfile.get_attribute("http.auth.principal") or ""
+                        messages = self._auto_compact_messages(
+                            messages, conversation_id, _context_agent, _uid2)
                 else:
                     logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                    f"starting fresh conversation")

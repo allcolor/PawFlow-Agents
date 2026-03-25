@@ -789,13 +789,13 @@ class AgentCompactionMixin:
         try:
             response = client.complete(
                 messages=[
-                    LLMMessage(role="system", content=(
-                        "Summarize this agent work session concisely. Preserve: "
-                        "project state, files modified (with paths), decisions, "
-                        "last action, pending work. Skip tool details. "
-                        + target_instruction
+                    LLMMessage(role="user", content=(
+                        "Summarize this work session. Preserve: project state, "
+                        "files modified (with paths), decisions, last action, "
+                        "pending work. Skip tool details.\n\n"
+                        + target_instruction + "\n\n"
+                        "SESSION:\n" + clean_text
                     )),
-                    LLMMessage(role="user", content=clean_text),
                 ],
                 temperature=0.3,
                 max_tokens=min(target_tokens * 2, 4000),

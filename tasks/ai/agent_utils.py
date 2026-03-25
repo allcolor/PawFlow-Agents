@@ -175,15 +175,20 @@ class AgentUtilsMixin:
     def _get_summarizer_client(self, user_id: str = ""):
         """Resolve a dedicated summarizer LLM service for compaction/summary.
 
-        Returns (client, max_context_tokens, service_id) or (None, 0, "").
+        Returns (service_or_client, max_context_tokens, service_id) or (None, 0, "").
+        The returned object has .complete() — prefer service (has _apply_defaults).
         """
         svc_id = self._resolve_service_param("summarizer_service", user_id)
         if not svc_id:
             return None, 0, ""
         logger.debug(f"[summarizer] resolved to '{svc_id}'")
         client, svc = self._resolve_llm_service(svc_id, user_id)
-        if client and svc:
+        if svc and hasattr(svc, 'complete'):
+            # Return the SERVICE (has _apply_defaults for temperature etc.)
             ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
+            return svc, ctx_max, svc_id
+        if client:
+            ctx_max = 0
             return client, ctx_max, svc_id
         return None, 0, ""
 

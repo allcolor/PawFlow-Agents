@@ -25,6 +25,10 @@ class LLMOpenaiMixin:
         }
         if temperature is not None:
             body["temperature"] = temperature
+        # reasoning_effort for reasoning models (gpt-5*, o-series)
+        _re = getattr(self, '_reasoning_effort', None)
+        if _re:
+            body["reasoning_effort"] = _re
         if max_tokens > 0:
             tokens_key = self._openai_tokens_key(model, self.base_url)
             body[tokens_key] = max_tokens
@@ -276,6 +280,9 @@ class LLMOpenaiMixin:
         }
         if temperature is not None:
             body["temperature"] = temperature
+        _re = getattr(self, '_reasoning_effort', None)
+        if _re:
+            body["reasoning_effort"] = _re
         if max_tokens > 0:
             tokens_key = self._openai_tokens_key(model, self.base_url)
             body[tokens_key] = max_tokens
@@ -320,15 +327,13 @@ class LLMOpenaiMixin:
         # Extract reasoning content if present (o-series models)
         reasoning = message.get("reasoning_content", "") or ""
 
-        # Debug: log raw message keys for diagnosis
         _content = message.get("content", "") or ""
         if not _content and usage.get("completion_tokens", 0) > 10:
             import logging as _log
             _log.getLogger(__name__).warning(
-                f"[openai] LLM produced {usage.get('completion_tokens')} tokens but "
-                f"content is empty. message keys: {list(message.keys())}, "
-                f"reasoning={len(reasoning)} chars, "
-                f"message preview: {str(message)[:300]}")
+                f"[openai] {usage.get('completion_tokens')} tokens produced but content empty. "
+                f"message={json.dumps(message, default=str)[:500]}, "
+                f"usage={json.dumps(usage, default=str)}")
 
         return LLMResponse(
             content=_content,

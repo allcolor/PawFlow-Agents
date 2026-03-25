@@ -252,6 +252,10 @@ class LLMClient(
             fallback_model=config.get("fallback_model", ""),
         )
         client._config_ref = config
+        # reasoning_effort for reasoning models (read from service config)
+        _re = config.get("reasoning_effort", "")
+        if _re:
+            client._reasoning_effort = _re
         return client
 
     def complete(

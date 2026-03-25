@@ -105,8 +105,6 @@
     if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
     // Find the element by data-msgid and add metadata
     const el = document.querySelector('#messages [data-msgid="' + data.msg_id + '"]');
-    console.log('[message_meta] msg_id=' + data.msg_id + ' found=' + !!el +
-      ' existing_meta=' + (el ? !!el.querySelector('.msg-meta') : 'N/A'));
     if (el && !el.querySelector('.msg-meta')) {
       const meta = buildMetaLine(data);
       if (meta) el.insertAdjacentHTML('beforeend', meta);
@@ -602,8 +600,6 @@
     }
     // Done does NOT add messages or meta — message_meta handles that.
     // Done only creates a message if NOTHING was ever streamed (poll wakeup).
-    console.log('[done] agent=' + doneAgent + ' s.el=' + !!s.el +
-      ' allIds=' + JSON.stringify(allIds) + ' finalText=' + (finalText || '').substring(0, 50));
     let anyExists = !!s.el;
     if (!anyExists) {
       for (const mid of allIds) {

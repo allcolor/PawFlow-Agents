@@ -307,9 +307,6 @@ class StreamEmitter(AgentEmitter):
                 "llm_service": self._agent_svc or "",
             })
         # Narration: ONLY if LLM said absolutely nothing
-        logger.info(f"[narration check] content={bool(response_content)} "
-                    f"({len(response_content) if response_content else 0} chars), "
-                    f"thinking={bool(thinking)}, tools={len(tool_calls)}")
         if not response_content and not thinking and tool_calls:
             _nsvc = self.ctx.get("narrator_service", "")
             logger.info(f"[narration] triggering narrator_service='{_nsvc}'")

@@ -608,9 +608,13 @@ class AgentLoopTask(
                 if not ctx_data:
                     ctx_data = store.load(conversation_id) or []
                 messages = self._deserialize_messages(ctx_data) if ctx_data else []
+                import uuid as _uuid_synth
+                _synth_msg_id = _uuid_synth.uuid4().hex[:12]
                 if not messages:
                     bus.publish_event(conversation_id, "done", {
                         "response": "[Interrupted — no context available]",
+                        "msg_id": _synth_msg_id,
+                        "all_msg_ids": [_synth_msg_id],
                         "agent_name": agent_name or "",
                     })
                     return
@@ -631,6 +635,8 @@ class AgentLoopTask(
                 if not client:
                     bus.publish_event(conversation_id, "done", {
                         "response": "[Interrupted — no LLM client available]",
+                        "msg_id": _synth_msg_id,
+                        "all_msg_ids": [_synth_msg_id],
                         "agent_name": agent_name or "",
                     })
                     return
@@ -641,21 +647,24 @@ class AgentLoopTask(
                     ctx.get("max_context_size", 64000) if 'ctx' in dir() else 64000,
                     0.6, 6, conversation_id=conversation_id)
 
+
                 def _on_token(text):
                     bus.publish_event(conversation_id, "token", {
                         "text": text,
+                        "msg_id": _synth_msg_id,
                         "agent_name": agent_name or "",
                         "source": {"type": "agent", "name": agent_name or ""},
                     })
 
                 resp = client.complete_stream(
                     messages=compact_msgs,
-                    temperature=0.7, max_tokens=500,
+                    max_tokens=500,
                     tools=None, callback=_on_token)
 
-                # Save to both transcript (visible on reload) and agent context
+                # Save to both transcript and agent context
                 _interrupt_msg = LLMMessage(
                     role="assistant", content=resp.content,
+                    msg_id=_synth_msg_id,
                     source={"type": "agent", "name": agent_name or "",
                             "tokens_in": resp.tokens_in, "tokens_out": resp.tokens_out,
                             "model": resp.model})
@@ -667,6 +676,8 @@ class AgentLoopTask(
 
                 bus.publish_event(conversation_id, "done", {
                     "response": resp.content,
+                    "msg_id": _synth_msg_id,
+                    "all_msg_ids": [_synth_msg_id],
                     "model": resp.model,
                     "tokens_in": resp.tokens_in,
                     "tokens_out": resp.tokens_out,
@@ -682,6 +693,8 @@ class AgentLoopTask(
                 logger.error(f"[interrupt synthesis] failed: {e}", exc_info=True)
                 bus.publish_event(conversation_id, "done", {
                     "response": f"[Interrupted — synthesis failed: {e}]",
+                    "msg_id": _synth_msg_id,
+                    "all_msg_ids": [_synth_msg_id],
                     "agent_name": agent_name or "",
                 })
                 try:

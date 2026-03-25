@@ -473,8 +473,21 @@ class LLMClaudeCodeMixin:
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")
         agent_name = getattr(self, '_agent_name', "")
-        logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s'",
-                     conv_id, user_id, agent_name)
+
+        # Restore session_id from conversation store if not in memory
+        if not session_id and conv_id:
+            try:
+                from core.conversation_store import ConversationStore
+                session_id = ConversationStore.instance().get_extra(
+                    conv_id, f"claude_session:{agent_name or 'default'}") or ""
+                if session_id:
+                    self._claude_session_id = session_id
+                    logger.info("Restored claude session: %s", session_id)
+            except Exception:
+                pass
+
+        logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s' session='%s'",
+                     conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
         workdir = self._get_session_workdir(conv_id, agent_name)
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
@@ -586,6 +599,13 @@ class LLMClaudeCodeMixin:
                 etype = event.get("type", "")
                 logger.info("[claude-code] %s %.200s", etype, json.dumps(event))
 
+                if etype == "system":
+                    # Capture session_id from init event (for --resume on next call)
+                    sid = event.get("session_id", "")
+                    if sid:
+                        self._claude_session_id = sid
+                    continue
+
                 if etype == "assistant":
                     # New assistant turn — flush previous turn first
                     if _turn_count > 0:
@@ -673,6 +693,29 @@ class LLMClaudeCodeMixin:
                         if callback:
                             callback(result_text)
                     last_data = event
+                    # Publish token stats for the webchat
+                    _usage = event.get("usage", {})
+                    _total_in = _usage.get("input_tokens", 0)
+                    _total_out = _usage.get("output_tokens", 0)
+                    _result_model = event.get("model", model)
+                    if _total_in or _total_out:
+                        _pub("message_meta", {
+                            "agent_name": agent_name,
+                            "source": {
+                                "type": "agent", "name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
+                                "provider": "claude-code",
+                                "model": _result_model,
+                                "tokens_in": _total_in,
+                                "tokens_out": _total_out,
+                            },
+                            "model": _result_model,
+                            "provider": "claude-code",
+                            "tokens_in": _total_in,
+                            "tokens_out": _total_out,
+                            "num_turns": event.get("num_turns", _turn_count),
+                            "duration_ms": event.get("duration_ms", 0),
+                        })
                     break
 
         finally:
@@ -691,6 +734,15 @@ class LLMClaudeCodeMixin:
         new_session = last_data.get("session_id", "")
         if new_session:
             self._claude_session_id = new_session
+            # Persist session_id in conversation store for resume after restart
+            if conv_id:
+                try:
+                    from core.conversation_store import ConversationStore
+                    ConversationStore.instance().set_extra(
+                        conv_id, f"claude_session:{agent_name or 'default'}",
+                        new_session)
+                except Exception:
+                    pass
 
         usage = last_data.get("usage", {})
         return LLMResponse(

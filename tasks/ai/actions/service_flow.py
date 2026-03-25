@@ -292,123 +292,130 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     # ── Claude Code OAuth login ──────────────────────────────────────
 
     if action == "claude_code_login_url":
-        """Generate OAuth URL for Claude Code subscription login.
+        """Start Claude Code login by running `claude auth login` on the server.
 
-        Returns {url, state} — user opens URL in browser, logs in,
-        gets a code, then calls claude_code_login_code.
+        Returns {url} — the auth URL for the user to open in their browser.
+        Claude Code handles the entire OAuth flow (PKCE, token exchange).
+        We just capture the URL and wait for credentials to appear.
         """
-        import hashlib
-        import base64
-        import secrets as _secrets
+        import subprocess
+        import shutil
 
         service_id = body.get("service_id", "")
         if not service_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
 
-        # PKCE: generate code_verifier + code_challenge
-        code_verifier = _secrets.token_urlsafe(64)
-        code_challenge = base64.urlsafe_b64encode(
-            hashlib.sha256(code_verifier.encode()).digest()
-        ).rstrip(b"=").decode()
-        state = _secrets.token_urlsafe(32)
+        claude_bin = "claude"
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            sdef = GlobalServiceRegistry.get_instance().get_definition(service_id)
+            if sdef:
+                claude_bin = sdef.config.get("claude_binary", "claude")
+        except Exception:
+            pass
+        if not shutil.which(claude_bin):
+            flowfile.set_content(json.dumps({"error": f"Claude CLI '{claude_bin}' not found"}).encode())
+            return [flowfile]
 
-        # Store for the exchange step
-        _oauth_pending[service_id] = {
-            "code_verifier": code_verifier,
-            "state": state,
-            "service_id": service_id,
-            "user_id": user_id,
-        }
+        # Create a temp config dir for this login
+        import tempfile
+        login_dir = tempfile.mkdtemp(prefix="claude_login_")
+        _oauth_pending[service_id] = {"login_dir": login_dir, "proc": None}
 
-        from urllib.parse import urlencode
-        params = urlencode({
-            "code": "true",
-            "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-            "response_type": "code",
-            "redirect_uri": "https://platform.claude.com/oauth/code/callback",
-            "scope": "org:create_api_key user:profile user:inference "
-                     "user:sessions:claude_code user:mcp_servers user:file_upload",
-            "code_challenge": code_challenge,
-            "code_challenge_method": "S256",
-            "state": state,
-        })
-        url = f"https://claude.ai/oauth/authorize?{params}"
+        # Launch claude auth login in background
+        import os
+        env = os.environ.copy()
+        env["CLAUDE_CONFIG_DIR"] = login_dir
 
-        flowfile.set_content(json.dumps({
-            "url": url,
-            "state": state,
-            "message": "Open this URL in your browser. After login, copy the code and submit it.",
-        }).encode())
+        try:
+            proc = subprocess.Popen(
+                [claude_bin, "auth", "login", "--claudeai"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env, encoding="utf-8",
+            )
+            _oauth_pending[service_id]["proc"] = proc
+
+            # Read output until we get the URL (or timeout)
+            url = ""
+            import select
+            for _ in range(50):  # 5 seconds max
+                line = proc.stdout.readline()
+                if not line:
+                    break
+                if "claude.ai/oauth/authorize" in line:
+                    # Extract URL from the line
+                    import re
+                    match = re.search(r'(https://claude\.ai/oauth/authorize\S+)', line)
+                    if match:
+                        url = match.group(1)
+                        break
+
+            if not url:
+                proc.kill()
+                flowfile.set_content(json.dumps({"error": "Could not get auth URL from Claude CLI"}).encode())
+                return [flowfile]
+
+            flowfile.set_content(json.dumps({
+                "url": url,
+                "message": "Open this URL, log in, then click 'Check Login' to verify.",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Failed to start login: {e}"}).encode())
         return [flowfile]
 
     if action == "claude_code_login_code":
-        """Exchange OAuth code for tokens and store in service config."""
-        import http.client
-        import ssl
-        from urllib.parse import urlencode
+        """Check if Claude Code login completed and save credentials.
 
+        After the user logs in via the browser, Claude Code's `auth login`
+        process saves credentials to the temp dir. We poll for them and
+        copy to the service config.
+        """
         service_id = body.get("service_id", "")
-        code = body.get("code", "").strip()
-        state = body.get("state", "").strip()
-
-        if not service_id or not code:
-            flowfile.set_content(json.dumps({"error": "Missing service_id or code"}).encode())
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
 
-        # Retrieve stored PKCE verifier
         pending = _oauth_pending.get(service_id, {})
-        code_verifier = pending.get("code_verifier", "")
-        if not code_verifier:
+        login_dir = pending.get("login_dir", "")
+        proc = pending.get("proc")
+
+        if not login_dir:
             flowfile.set_content(json.dumps({"error": "No pending login. Click Login first."}).encode())
             return [flowfile]
-        if state and pending.get("state") and state != pending.get("state"):
-            flowfile.set_content(json.dumps({"error": "State mismatch"}).encode())
+
+        # Check if credentials file appeared
+        import os
+        creds_path = os.path.join(login_dir, ".credentials.json")
+        if not os.path.exists(creds_path):
+            # Still waiting — check if process is alive
+            if proc and proc.poll() is None:
+                flowfile.set_content(json.dumps({
+                    "error": "Login not completed yet. Open the URL and log in first.",
+                    "still_waiting": True,
+                }).encode())
+            else:
+                flowfile.set_content(json.dumps({
+                    "error": "Login process ended without credentials. Try again.",
+                }).encode())
+                _oauth_pending.pop(service_id, None)
             return [flowfile]
 
-        # Exchange code for tokens
+        # Read credentials
         try:
-            token_body = json.dumps({
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": "https://platform.claude.com/oauth/code/callback",
-                "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
-                "code_verifier": code_verifier,
-            }).encode("utf-8")
+            with open(creds_path, "r", encoding="utf-8") as f:
+                creds = json.load(f)
 
-            ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection("console.anthropic.com", timeout=30, context=ctx)
-            conn.request("POST", "/v1/oauth/token", body=token_body, headers={
-                "Content-Type": "application/json",
-                "Content-Length": str(len(token_body)),
-                "User-Agent": "claude-code/2.1.83",
-            })
-            resp = conn.getresponse()
-            resp_body = resp.read().decode("utf-8")
-            conn.close()
-
-            if resp.status >= 400:
-                flowfile.set_content(json.dumps({
-                    "error": f"Token exchange failed ({resp.status}): {resp_body[:300]}"
-                }).encode())
-                return [flowfile]
-
-            import json as _json
-            token_data = _json.loads(resp_body)
-            access_token = token_data.get("access_token", "")
-            refresh_token = token_data.get("refresh_token", "")
-            expires_in = int(token_data.get("expires_in", 3600))
+            oauth = creds.get("claudeAiOauth", {})
+            access_token = oauth.get("accessToken", "")
+            refresh_token = oauth.get("refreshToken", "")
+            expires_at = oauth.get("expiresAt", 0)
 
             if not access_token:
-                flowfile.set_content(json.dumps({
-                    "error": f"No access_token in response: {resp_body[:300]}"
-                }).encode())
+                flowfile.set_content(json.dumps({"error": "Credentials file has no access token"}).encode())
                 return [flowfile]
 
-            import time
-            expires_at = int(time.time() * 1000) + (expires_in * 1000)
-
-            # Store tokens in service config
+            # Store in service config
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
             sdef = greg.get_definition(service_id)
@@ -417,18 +424,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 sdef.config["claude_refresh_token"] = refresh_token
                 sdef.config["claude_expires_at"] = expires_at
                 greg.save()
-                logger.info("Claude Code OAuth tokens stored for service '%s'", service_id)
+                logger.info("Claude Code credentials stored for service '%s'", service_id)
 
-            # Clean up pending
+            # Cleanup
+            if proc and proc.poll() is None:
+                proc.kill()
             _oauth_pending.pop(service_id, None)
+            try:
+                import shutil
+                shutil.rmtree(login_dir, ignore_errors=True)
+            except Exception:
+                pass
 
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": "Login successful! Tokens stored.",
-                "expires_at": expires_at,
+                "message": "Login successful! Credentials saved.",
             }).encode())
         except Exception as e:
-            flowfile.set_content(json.dumps({"error": f"Token exchange error: {e}"}).encode())
+            flowfile.set_content(json.dumps({"error": f"Failed to read credentials: {e}"}).encode())
         return [flowfile]
 
     if action in ("start_flow", "stop_flow", "undeploy_flow"):

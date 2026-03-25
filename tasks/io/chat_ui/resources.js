@@ -952,42 +952,38 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
       // Step 2: open URL in new tab
       window.open(resp.url, '_blank');
 
-      // Step 3: show inline code input (replaces the button)
+      // Step 3: show "Check Login" button (polls for credentials)
       const container = btn ? btn.parentElement : null;
       if (container) {
-        const codeDiv = document.createElement('div');
-        codeDiv.style.cssText = 'margin-top:8px;display:flex;gap:4px;align-items:center;';
-        codeDiv.innerHTML = '<input id="svc-oauth-code" type="text" placeholder="Paste authorization code here..." '
-          + 'style="' + _svcInputStyle + 'flex:1;"/>'
-          + '<button type="button" id="svc-oauth-submit" style="background:#6c5ce7;color:white;border:none;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;">Submit</button>';
-        container.appendChild(codeDiv);
-        document.getElementById('svc-oauth-code').focus();
+        const statusDiv = document.createElement('div');
+        statusDiv.style.cssText = 'margin-top:8px;';
+        statusDiv.innerHTML = '<span style="color:#888;font-size:12px;">Waiting for login... </span>'
+          + '<button type="button" id="svc-oauth-check" style="background:#6c5ce7;color:white;border:none;padding:4px 10px;border-radius:4px;cursor:pointer;font-size:12px;">Check Login</button>';
+        container.appendChild(statusDiv);
 
-        // Step 4: on submit, exchange code
-        const submitBtn = document.getElementById('svc-oauth-submit');
-        const doSubmit = async () => {
-          const code = document.getElementById('svc-oauth-code').value.trim();
-          if (!code) return;
-          submitBtn.textContent = '...';
-          submitBtn.disabled = true;
+        const checkBtn = document.getElementById('svc-oauth-check');
+        const doCheck = async () => {
+          checkBtn.textContent = '...';
+          checkBtn.disabled = true;
           try {
             const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
               body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
-                                     service_id: serviceId, code: code, state: resp.state })
+                                     service_id: serviceId })
             }).then(r => r.json());
             if (result.ok) {
-              codeDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Login successful!') + '</span>';
+              statusDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Login successful!') + '</span>';
+            } else if (result.still_waiting) {
+              checkBtn.textContent = 'Check Login';
+              checkBtn.disabled = false;
+              statusDiv.querySelector('span').textContent = 'Not yet... Open the URL and log in, then check again. ';
             } else {
-              codeDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + (result.error || 'Failed') + '</span>';
+              statusDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + (result.error || 'Failed') + '</span>';
             }
           } catch (e) {
-            codeDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
+            statusDiv.innerHTML = '<span style="color:#e94560;font-size:12px;">\u2718 ' + e.message + '</span>';
           }
         };
-        submitBtn.addEventListener('click', doSubmit);
-        document.getElementById('svc-oauth-code').addEventListener('keydown', (e) => {
-          if (e.key === 'Enter') doSubmit();
-        });
+        checkBtn.addEventListener('click', doCheck);
       }
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else {

@@ -393,79 +393,62 @@ class LLMClient(
 
         model = model or self.default_model
 
-        try:
-            start = time.time()
+        last_error = None
+        for attempt in range(1, self.max_retries + 1):
+            try:
+                start = time.time()
 
-            if self.provider == "openai":
-                result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback,
-                                              thinking_callback=thinking_callback)
-            elif self.provider == "claude-code":
-                result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
-            elif self.provider == "gemini-cli":
-                result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
-            elif self.provider == "anthropic":
-                result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
-            else:
-                raise LLMClientError(f"Unknown provider '{self.provider}'")
+                if self.provider == "openai":
+                    result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback,
+                                                  thinking_callback=thinking_callback)
+                elif self.provider == "claude-code":
+                    result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback)
+                elif self.provider == "gemini-cli":
+                    result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
+                elif self.provider == "anthropic":
+                    result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
+                else:
+                    raise LLMClientError(f"Unknown provider '{self.provider}'")
 
-            result.duration_ms = (time.time() - start) * 1000
-            # Estimate tokens only if provider didn't return them
-            if not result.tokens_in and messages:
-                result.tokens_in = sum(
-                    len(m.content) if isinstance(m.content, str) else
-                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                    else 0 for m in messages) // 4
-            if not result.tokens_out and result.content:
-                result.tokens_out = len(result.content) // 4
-            self._report_tokens(result, messages)
-            return result
-        except LLMClientError as e:
-            # Auto-retry on rate limit (429) for streaming too
-            if "429" in str(e) or "rate_limit" in str(e).lower():
-                wait = self._parse_retry_after(str(e))
-                logger.warning(f"Rate limited (stream), retrying in {wait:.1f}s")
-                time.sleep(wait)
-                return self.complete_stream(messages, model, temperature, max_tokens,
-                                            tools, callback, thinking_budget, thinking_callback)
-            raise
-        except Exception as primary_err:
-            # Don't fallback on cancellation — re-raise immediately
-            from tasks.ai.agent_exceptions import AgentCancelled as _AC
-            if isinstance(primary_err, _AC):
-                raise
-            if self.fallback_model and self.fallback_model != model:
-                logger.warning(
-                    "Streaming with primary model '%s' failed, trying fallback '%s'",
-                    model, self.fallback_model,
-                )
-                try:
-                    start = time.time()
-                    fb = self.fallback_model
-                    if self.provider == "openai":
-                        result = self._stream_openai(messages, fb, temperature, max_tokens, tools, callback,
-                                                      thinking_callback=thinking_callback)
-                    elif self.provider == "claude-code":
-                        result = self._stream_claude_code(messages, fb, temperature, max_tokens, tools, callback)
-                    elif self.provider == "gemini-cli":
-                        result = self._stream_gemini_cli(messages, fb, temperature, max_tokens, tools, callback)
-                    elif self.provider == "anthropic":
-                        result = self._stream_anthropic(messages, fb, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
-                    else:
-                        raise LLMClientError(f"Unknown provider '{self.provider}'")
-                    result.duration_ms = (time.time() - start) * 1000
-                    if not result.tokens_in and messages:
-                        result.tokens_in = sum(
-                            len(m.content) if isinstance(m.content, str) else
-                            sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                            else 0 for m in messages) // 4
-                    if not result.tokens_out and result.content:
-                        result.tokens_out = len(result.content) // 4
-                    self._report_tokens(result, messages)
-                    return result
-                except Exception as fallback_err:
-                    logger.error("Fallback model '%s' streaming also failed: %s", self.fallback_model, fallback_err)
-            raise LLMClientError(
-                f"LLM streaming request failed: {type(primary_err).__name__}: {primary_err or 'no details'}")
+                result.duration_ms = (time.time() - start) * 1000
+                if not result.tokens_in and messages:
+                    result.tokens_in = sum(
+                        len(m.content) if isinstance(m.content, str) else
+                        sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                        else 0 for m in messages) // 4
+                if not result.tokens_out and result.content:
+                    result.tokens_out = len(result.content) // 4
+                self._report_tokens(result, messages)
+                return result
+            except Exception as e:
+                # Don't retry on cancellation
+                from tasks.ai.agent_exceptions import AgentCancelled as _AC
+                if isinstance(e, _AC):
+                    raise
+                last_error = e
+                err_str = str(e)
+                # Retry on transient errors (429, 503, 502, connection reset)
+                retryable = any(code in err_str for code in ("429", "503", "502", "reset", "timeout"))
+                if retryable and attempt < self.max_retries:
+                    wait = 2 ** attempt  # exponential backoff
+                    if "429" in err_str:
+                        wait = self._parse_retry_after(err_str)
+                    logger.warning(f"LLM stream attempt {attempt}/{self.max_retries} failed "
+                                   f"({type(e).__name__}), retrying in {wait:.0f}s")
+                    time.sleep(wait)
+                    continue
+                # Final attempt failed — try fallback model
+                if self.fallback_model and self.fallback_model != model:
+                    logger.warning("Streaming '%s' failed, trying fallback '%s'",
+                                   model, self.fallback_model)
+                    try:
+                        model = self.fallback_model
+                        continue  # retry with fallback model
+                    except Exception:
+                        pass
+                raise LLMClientError(
+                    f"LLM streaming failed after {attempt} attempt(s): "
+                    f"{type(e).__name__}: {e or 'no details'}")
 
     def embed(
         self,

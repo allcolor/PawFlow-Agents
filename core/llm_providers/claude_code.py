@@ -564,9 +564,13 @@ class LLMClaudeCodeMixin:
                 except Exception as e:
                     logger.error("[claude-code] turn_callback error: %s", e,
                                  exc_info=True)
+                # Tell webchat to finalize current streaming element
+                _pub("turn_complete", {
+                    "agent_name": agent_name,
+                    "turn": _turn_count,
+                })
                 # Clear content_parts — intermediate turns are persisted
                 # by turn_callback. Only the LAST turn stays in content_parts
-                # (used as LLMResponse.content for the agent loop).
                 content_parts.clear()
 
         try:

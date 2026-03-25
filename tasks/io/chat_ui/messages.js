@@ -74,8 +74,12 @@ function addMsg(role, text, extra) {
   const el = document.createElement('div');
   // Support classified types: tool_call, tool_result map to CSS class "tool"
   let cssClass = (role === 'tool_call' || role === 'tool_result') ? 'tool' : role;
+  // display_only messages: compact tool/thinking traces (not in LLM context)
+  if (extra && extra.display_only) {
+    cssClass = 'tool';  // same styling as tool_call/tool_result
+  }
   // Differentiate sub-agent responses from main assistant visually
-  if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
+  else if (role === 'assistant' && extra && extra.source && extra.source.type === 'agent') {
     const srcName = (extra.source.name || '').toLowerCase();
     if (srcName) cssClass = 'subagent';
   }

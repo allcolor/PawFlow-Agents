@@ -119,6 +119,25 @@
     document.getElementById('status').textContent = t('streaming');
   });
 
+  // Turn complete: finalize streaming element between Claude Code turns
+  // so each turn looks like a proper message (badge, background, border)
+  eventSource.addEventListener('turn_complete', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const agent = data.agent_name || '';
+    const s = streams[agent.toLowerCase()];
+    if (s && s.el) {
+      // Finalize: proper message class + keep as permanent element
+      s.el.classList.remove('streaming');
+      s.el.classList.add('finalized');
+      s.el.dataset.finalizedAgent = agent.toLowerCase();
+      s.lastEl = s.el;
+      // Reset stream so next tokens create a NEW element
+      s.el = null;
+      s.text = '';
+    }
+  });
+
   // Per-message metadata: attaches model/tokens to the correct element by msg_id
   eventSource.addEventListener('message_meta', (e) => {
     const data = JSON.parse(e.data);

@@ -377,8 +377,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             }).encode()
 
             ctx = ssl.create_default_context()
-            conn = http.client.HTTPSConnection("claude.ai", timeout=30, context=ctx)
-            conn.request("POST", "/oauth/token", body=token_body, headers={
+            conn = http.client.HTTPSConnection("console.anthropic.com", timeout=30, context=ctx)
+            conn.request("POST", "/v1/oauth/token", body=token_body, headers={
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Content-Length": str(len(token_body)),
             })

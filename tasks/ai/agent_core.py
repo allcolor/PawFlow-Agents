@@ -46,6 +46,13 @@ class AgentCoreMixin:
             if not hasattr(self, '_active_claude_client'):
                 self._active_claude_client = {}
             self._active_claude_client[conversation_id] = client
+            # Clear cancelled state from previous run
+            try:
+                from services.tool_relay_service import ToolRelayService
+                ToolRelayService.uncancel_agent(
+                    conversation_id, ctx.get("active_agent_name", ""))
+            except Exception:
+                pass
         max_rounds = int(ctx.get("max_rounds", 1)) if emitter.is_streaming else 1
         _consecutive_tool: Dict[str, int] = {}
         _max_consec = ctx.get("max_consecutive_tool_calls", 100)

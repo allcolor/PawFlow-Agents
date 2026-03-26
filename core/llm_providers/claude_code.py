@@ -332,19 +332,26 @@ class LLMClaudeCodeMixin:
             logger.warning("Failed to send to Claude Code stdin: %s", e)
             return False
 
-    def cancel_claude_code(self):
-        """Graceful interrupt then kill after timeout.
+    def cancel_claude_code(self, force: bool = False):
+        """Cancel Claude Code subprocess.
 
-        1. Send [Request interrupted by user] on stdin — Claude Code
-           finishes current turn then stops.
-        2. If still running after 5s, kill the process.
+        force=False: graceful interrupt on stdin, kill after 3s
+        force=True: kill immediately
         """
         proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
             return
-        logger.info("Interrupting Claude Code subprocess (pid=%d)", proc.pid)
 
-        # Graceful: send interrupt message
+        if force:
+            logger.info("FORCE KILLING Claude Code subprocess (pid=%d)", proc.pid)
+            self._claude_proc = None
+            try:
+                proc.kill()
+            except OSError:
+                pass
+            return
+
+        logger.info("Interrupting Claude Code subprocess (pid=%d)", proc.pid)
         try:
             if proc.stdin and not proc.stdin.closed:
                 msg = json.dumps({
@@ -357,12 +364,11 @@ class LLMClaudeCodeMixin:
         except (OSError, BrokenPipeError):
             pass
 
-        # Wait up to 5s for graceful shutdown, then kill
         def _kill_after_timeout():
             try:
-                proc.wait(timeout=5)
+                proc.wait(timeout=3)
             except Exception:
-                logger.info("Claude Code did not stop in 5s — killing pid=%d", proc.pid)
+                logger.info("Claude Code did not stop in 3s — killing pid=%d", proc.pid)
                 try:
                     proc.kill()
                 except OSError:

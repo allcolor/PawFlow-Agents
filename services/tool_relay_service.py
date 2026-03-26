@@ -102,15 +102,30 @@ class ToolRelayService(BaseService):
         """Not used — tool relay is server-side, not client-side."""
         pass
 
+    # Cancelled (conv_id, agent_name) tuples — tool calls return error immediately
+    _cancelled: set = set()
+
+    @classmethod
+    def cancel_agent(cls, conversation_id: str, agent_name: str):
+        """Mark a (conv, agent) as cancelled — tool calls return error."""
+        cls._cancelled.add((conversation_id, agent_name))
+
+    @classmethod
+    def uncancel_agent(cls, conversation_id: str, agent_name: str):
+        """Clear cancelled state (new request starting)."""
+        cls._cancelled.discard((conversation_id, agent_name))
+
     def handle_tool_request(self, msg: dict, user_id: str = "",
                             conversation_id: str = "",
                             agent_name: str = "") -> dict:
-        """Handle a tool request from the MCP bridge.
-
-        Returns a response dict to send back over WebSocket.
-        """
+        """Handle a tool request from the MCP bridge."""
         method = msg.get("method", "")
         request_id = msg.get("request_id", "")
+
+        # Reject tool calls for cancelled (conv, agent)
+        if (conversation_id, agent_name) in self._cancelled:
+            return {"type": "error", "request_id": request_id,
+                    "error": "Request cancelled by user"}
 
         if method == "list_tools":
             return self._handle_list_tools(request_id, user_id, conversation_id)

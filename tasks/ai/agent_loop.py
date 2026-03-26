@@ -515,11 +515,19 @@ class AgentLoopTask(
                     "agent_name": agent_name if _is_named else "all",
                 }
             )
+        # Cancel tool relay for this (conv, agent) — pending tool calls return error
+        try:
+            from services.tool_relay_service import ToolRelayService
+            _cancel_agent = agent_name if _is_named else ""
+            ToolRelayService.cancel_agent(conversation_id, _cancel_agent)
+        except Exception:
+            pass
         # Kill any running Claude Code subprocess for this conversation
+        _force = body.get("force", False) if isinstance(body, dict) else False
         if hasattr(self, '_active_claude_client'):
             client = self._active_claude_client.get(conversation_id)
             if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code()
+                client.cancel_claude_code(force=_force)
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()

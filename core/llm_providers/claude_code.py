@@ -673,11 +673,16 @@ class LLMClaudeCodeMixin:
             _turn_tool_calls = []
             _turn_thinking = ""
             if (text or tc) and turn_callback:
+                logger.info("[claude-code] flush turn %d: text=%d chars, tc=%d, callback=%s",
+                            _turn_count, len(text), len(tc), bool(turn_callback))
                 try:
                     turn_callback(text, tc)
                 except Exception as e:
                     logger.error("[claude-code] turn_callback error: %s", e,
                                  exc_info=True)
+            elif text or tc:
+                logger.warning("[claude-code] flush turn %d but NO turn_callback: text=%d, tc=%d",
+                               _turn_count, len(text), len(tc))
                 # Tell webchat to finalize current streaming element
                 _pub("turn_complete", {
                     "agent_name": agent_name,

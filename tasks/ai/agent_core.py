@@ -355,6 +355,8 @@ class AgentCoreMixin:
                         _src = _agent_source()
 
                         if text:
+                            logger.info("[claude-code turn] persisting text: %d chars, first 100: %.100s",
+                                        len(text), text)
                             msg = LLMMessage(
                                 role="assistant", content=text, source=_src)
                             _append(msg)
@@ -364,8 +366,9 @@ class AgentCoreMixin:
                                 "source": _src,
                                 "msg_id": getattr(msg, "msg_id", None),
                             })
-                            # Store msg_id for token stats attachment
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
+                        else:
+                            logger.warning("[claude-code turn] NO text in turn (tc=%d)", len(tool_calls))
 
                         # Thinking/narration (display_only — rendered as narration)
                         if tool_calls:

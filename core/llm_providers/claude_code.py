@@ -655,6 +655,7 @@ class LLMClaudeCodeMixin:
         _turn_tool_calls: list = []
         _turn_thinking: str = ""
         _tool_results: dict = {}  # tool_use_id → result text
+        _current_msg_id: str = ""  # track message ID to detect incremental updates
 
         def _flush_turn():
             """Emit the accumulated turn via turn_callback."""
@@ -713,12 +714,23 @@ class LLMClaudeCodeMixin:
                     continue
 
                 if etype == "assistant":
-                    # New assistant turn — flush previous turn first
-                    if _turn_count > 0:
-                        _flush_turn()
-
-                    _turn_count += 1
                     msg = event.get("message", {})
+                    msg_id = msg.get("id", "")
+
+                    # Claude Code sends incremental updates for the same message
+                    # (same msg_id, growing content array). Only flush + increment
+                    # when we see a genuinely NEW message.
+                    if msg_id and msg_id == _current_msg_id:
+                        # Same message — REPLACE accumulators (not append)
+                        _turn_text_parts.clear()
+                        _turn_tool_calls.clear()
+                        _turn_thinking = ""
+                    else:
+                        # New message — flush previous turn
+                        if _turn_count > 0:
+                            _flush_turn()
+                        _turn_count += 1
+                        _current_msg_id = msg_id
                     for block in msg.get("content", []):
                         btype = block.get("type", "")
                         if btype == "text":

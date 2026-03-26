@@ -10,6 +10,21 @@ from core.tool_handler import ToolHandler
 
 logger = logging.getLogger(__name__)
 
+# Binary/base64 content cap — these waste context tokens
+_BINARY_CAP = 2000
+
+def _cap_binary_output(text: str, cap: int) -> str:
+    """Reduce cap for output that looks like binary or base64 data."""
+    if not text or len(text) < cap:
+        return text
+    # Detect base64 blobs (long runs of [A-Za-z0-9+/=] without spaces)
+    _b64_ratio = sum(1 for c in text[:2000] if c in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=') / min(len(text), 2000)
+    if _b64_ratio > 0.85:
+        return text[:_BINARY_CAP] + f"\n\n... [base64/binary data truncated — {len(text)} chars total]"
+    # Detect binary (high ratio of non-printable or data URI)
+    if 'data:' in text[:200] and ';base64,' in text[:200]:
+        return text[:_BINARY_CAP] + f"\n\n... [data URI truncated — {len(text)} chars total]"
+    return text
 
 
 class FilesystemToolHandler(ToolHandler):
@@ -24,6 +39,7 @@ class FilesystemToolHandler(ToolHandler):
     _conversation_id: str = ""
     _checkpoint_id: str = ""
     _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
+    _tool_result_max_chars: int = 50000  # configurable via LLM service
 
     # Filesystem service types (checked in order for auto-detection)
     _FS_TYPES = ("filesystem", "browserFilesystem", "serverFilesystem",
@@ -133,6 +149,10 @@ class FilesystemToolHandler(ToolHandler):
                 "command": {
                     "type": "string",
                     "description": "Shell command to execute ON THE USER'S MACHINE (for exec action). cwd is the filesystem root. fs:// URLs are auto-resolved to real paths. $PAWFLOW_FS_ROOT env var points to the root.",
+                },
+                "shell": {
+                    "type": "string",
+                    "description": "Shell to use for exec (optional). If omitted, uses system default (cmd on Windows, sh on Unix). Use 'bash' for Unix-style commands on Windows (Git Bash), 'powershell' for PowerShell, 'python' or 'node' for script interpreters.",
                 },
                 "max_pages": {
                     "type": "integer",
@@ -274,7 +294,7 @@ class FilesystemToolHandler(ToolHandler):
                 },
                 "max_output": {
                     "type": "integer",
-                    "description": "Max output chars for exec (default: 4000). Set higher only if you need the full output.",
+                    "description": "Max output chars for exec/grep results. Default depends on service config (typically 50000). Omit for default.",
                 },
             },
             "required": ["action"],
@@ -457,6 +477,12 @@ class FilesystemToolHandler(ToolHandler):
         return result
 
     def _execute_inner(self, arguments: Dict[str, Any]) -> str:
+        # Arguments may arrive as JSON string from MCP bridge
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                return f"Error: invalid arguments (expected JSON object, got string): {arguments[:200]}"
         action = arguments.get("action", "")
         path = arguments.get("path", ".")
         service_name = arguments.get("service", "")
@@ -555,7 +581,7 @@ class FilesystemToolHandler(ToolHandler):
                         return "\n".join(lines)
                     return json.dumps(result)
                 # Text files — support offset/limit for pagination
-                _MAX_PAGE = 4096  # max chars per read — forces pagination
+                _MAX_PAGE = self._tool_result_max_chars  # max chars per read
                 try:
                     text = data.decode("utf-8")
                 except UnicodeDecodeError:
@@ -738,8 +764,10 @@ class FilesystemToolHandler(ToolHandler):
             elif action == "exec":
                 command = arguments.get("command", "")
                 timeout = arguments.get("timeout", 30)
-                _max_out = min(int(arguments.get("max_output", 4000) or 4000), 4096)
-                result = svc.exec(path, command, timeout)
+                shell = arguments.get("shell", "")
+                _cap = self._tool_result_max_chars
+                _max_out = min(int(arguments.get("max_output", _cap) or _cap), _cap)
+                result = svc.exec(path, command, timeout, shell=shell)
                 output = result.get("stdout", "")
                 if result.get("stderr"):
                     output += "\nSTDERR:\n" + result["stderr"]
@@ -747,6 +775,7 @@ class FilesystemToolHandler(ToolHandler):
                     output += f"\n(exit code: {result['returncode']})"
                 if not output:
                     return "(no output)"
+                output = _cap_binary_output(output, _max_out)
                 if len(output) > _max_out:
                     output = output[:_max_out] + f"\n\n... [{len(output) - _max_out} chars truncated — use max_output to see more]"
                 return output
@@ -764,7 +793,7 @@ class FilesystemToolHandler(ToolHandler):
 
             elif action == "git_diff":
                 ref = arguments.get("ref", "")
-                _max_out = int(arguments.get("max_output", 8000) or 8000)
+                _max_out = min(int(arguments.get("max_output", self._tool_result_max_chars) or self._tool_result_max_chars), self._tool_result_max_chars)
                 diff = svc.git_diff(path, ref) or "(no changes)"
                 if len(diff) > _max_out:
                     diff = diff[:_max_out] + f"\n\n... [{len(diff) - _max_out} chars truncated]"

@@ -309,8 +309,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
-    if action == "claude_code_login_code":
-        """Receive pasted credentials JSON and store tokens in service config."""
+    if action in ("claude_code_login_code", "claude_code_auth"):
+        """Receive pasted credentials JSON and store tokens in service config.
+
+        Supports all service scopes: global, user, conversation.
+        Permission check: admin required for global services,
+        user can auth their own services.
+        """
         service_id = body.get("service_id", "")
         credentials_json = body.get("credentials", "").strip()
 
@@ -332,24 +337,207 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 }).encode())
                 return [flowfile]
 
+            # Find the service in global or user registry and verify provider
+            _stored = False
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
             sdef = greg.get_definition(service_id)
             if sdef:
+                # Global service — check admin permission
+                _roles = flowfile.get_attribute("http.auth.roles") or ""
+                if action == "claude_code_auth" and "admin" not in _roles:
+                    flowfile.set_content(json.dumps({
+                        "error": f"Admin permission required for global service '{service_id}'"
+                    }).encode())
+                    flowfile.set_attribute("http.response.status", "403")
+                    return [flowfile]
+                _cfg = getattr(sdef, "config", {}) or {}
+                if _cfg.get("provider") != "claude-code":
+                    flowfile.set_content(json.dumps({
+                        "error": f"Service '{service_id}' is not a claude-code provider"
+                    }).encode())
+                    return [flowfile]
                 sdef.config["claude_access_token"] = access_token
                 sdef.config["claude_refresh_token"] = refresh_token
                 sdef.config["claude_expires_at"] = expires_at
                 greg._save_to_disk()
-                logger.info("Claude Code credentials stored for service '%s'", service_id)
+                _stored = True
+                logger.info("Claude Code credentials stored for global service '%s'", service_id)
+
+            if not _stored:
+                # Try user services
+                try:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    ureg = UserServiceRegistry.get_instance()
+                    usdef = ureg.get_definition(user_id, service_id)
+                    if usdef:
+                        _ucfg = getattr(usdef, "config", {}) or {}
+                        if _ucfg.get("provider") != "claude-code":
+                            flowfile.set_content(json.dumps({
+                                "error": f"Service '{service_id}' is not a claude-code provider"
+                            }).encode())
+                            return [flowfile]
+                        usdef.config["claude_access_token"] = access_token
+                        usdef.config["claude_refresh_token"] = refresh_token
+                        usdef.config["claude_expires_at"] = expires_at
+                        ureg._save_to_disk(user_id)
+                        _stored = True
+                        logger.info("Claude Code credentials stored for user service '%s'", service_id)
+                except Exception:
+                    pass
+
+            if not _stored:
+                flowfile.set_content(json.dumps({
+                    "error": f"Service '{service_id}' not found"
+                }).encode())
+                return [flowfile]
 
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": "Credentials saved successfully!",
+                "message": f"Credentials saved for '{service_id}'",
             }).encode())
         except json.JSONDecodeError:
             flowfile.set_content(json.dumps({"error": "Invalid JSON. Paste the raw content of .credentials.json"}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "relay_connect":
+        # Spawn a child relay on an existing relay for a new directory
+        relay_source = body.get("relay_source", "")
+        path = body.get("path", "")
+        if not path:
+            flowfile.set_content(json.dumps({"error": "Missing path"}).encode())
+            return [flowfile]
+
+        # Find the source relay service
+        from gui.services.user_service_registry import UserServiceRegistry
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        ureg = UserServiceRegistry.get_instance()
+        greg = GlobalServiceRegistry.get_instance()
+
+        source_svc = None
+        if relay_source:
+            # Explicit source
+            source_svc = ureg.get_live_instance(user_id, relay_source)
+            if not source_svc:
+                source_svc = greg.get_live_instance(relay_source)
+        else:
+            # Find user's first connected filesystem service
+            for sid, sdef in ureg.get_all_for_user(user_id).items():
+                if getattr(sdef, "service_type", "") in ("filesystem", "browserFilesystem", "serverFilesystem"):
+                    svc = ureg.get_live_instance(user_id, sid)
+                    if svc and hasattr(svc, '_relay_pool') and svc._relay_pool:
+                        source_svc = svc
+                        relay_source = sid
+                        break
+
+        if not source_svc:
+            flowfile.set_content(json.dumps({
+                "error": f"No connected relay found{' for ' + relay_source if relay_source else ''}. "
+                         "Connect a relay first (pawcode, vscode plugin, or python relay)."
+            }).encode())
+            return [flowfile]
+
+        # Generate IDs for the child relay
+        import hashlib
+        _dir_hash = hashlib.md5(path.encode()).hexdigest()[:8]
+        child_relay_id = f"fs_{user_id}_{_dir_hash}"
+
+        # Send spawn_relay command to the source relay
+        try:
+            import uuid as _uuid_relay
+            _req_id = _uuid_relay.uuid4().hex[:12]
+            # Use the source service's _request mechanism to send spawn_relay
+            # We need to send a raw message to the relay — use the pool's writer
+            import asyncio
+            with source_svc._relay_pool_lock:
+                if not source_svc._relay_pool:
+                    raise Exception("Relay not connected")
+                _conn = source_svc._relay_pool[0]
+                _writer = _conn["writer"]
+                _loop = _conn["loop"]
+
+            _spawn_msg = json.dumps({
+                "type": "spawn_relay",
+                "request_id": _req_id,
+                "root": path,
+                "relay_id": child_relay_id,
+                "token": source_svc.config.get("token", ""),
+                "secret": source_svc.config.get("secret", ""),
+            }).encode("utf-8")
+
+            async def _send_spawn():
+                from services.filesystem_service import FilesystemWSListener
+                await FilesystemWSListener._ws_send_raw(_writer, _spawn_msg)
+
+            asyncio.run_coroutine_threadsafe(_send_spawn(), _loop).result(timeout=5)
+
+            # Wait for the child relay to connect (it registers as a new service)
+            time.sleep(3)
+
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Relay spawned: {child_relay_id} → {path}",
+                "service_id": child_relay_id,
+            }).encode())
+        except Exception as e:
+            logger.error("relay_connect failed: %s", e, exc_info=True)
+            flowfile.set_content(json.dumps({"error": f"Failed to spawn relay: {e}"}).encode())
+        return [flowfile]
+
+    if action == "relay_disconnect":
+        service_id = body.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+
+        # Find which relay this service is connected through
+        from gui.services.user_service_registry import UserServiceRegistry
+        ureg = UserServiceRegistry.get_instance()
+        svc = ureg.get_live_instance(user_id, service_id)
+        if svc:
+            try:
+                svc.disconnect()
+            except Exception:
+                pass
+            try:
+                ureg.uninstall_service(user_id, service_id)
+            except Exception:
+                pass
+
+        # Also try to send stop_relay to all connected relays
+        try:
+            for sid, sdef in ureg.get_all_for_user(user_id).items():
+                _svc = ureg.get_live_instance(user_id, sid)
+                if _svc and hasattr(_svc, '_relay_pool') and _svc._relay_pool:
+                    try:
+                        import asyncio
+                        with _svc._relay_pool_lock:
+                            if not _svc._relay_pool:
+                                continue
+                            _conn = _svc._relay_pool[0]
+                            _writer = _conn["writer"]
+                            _loop = _conn["loop"]
+                        _stop_msg = json.dumps({
+                            "type": "stop_relay",
+                            "relay_id": service_id,
+                        }).encode("utf-8")
+
+                        async def _send_stop():
+                            from services.filesystem_service import FilesystemWSListener
+                            await FilesystemWSListener._ws_send_raw(_writer, _stop_msg)
+
+                        asyncio.run_coroutine_threadsafe(_send_stop(), _loop).result(timeout=5)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": f"Service '{service_id}' disconnected",
+        }).encode())
         return [flowfile]
 
     if action in ("start_flow", "stop_flow", "undeploy_flow"):

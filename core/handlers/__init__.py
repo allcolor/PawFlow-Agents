@@ -45,6 +45,7 @@ from core.handlers.media import (  # noqa: F401
     ImageGenerationHandler,
     ImageModelInfoHandler,
     VideoGenerationHandler,
+    AudioGenerationHandler,
 )
 from core.handlers.memory import (  # noqa: F401
     RememberHandler,

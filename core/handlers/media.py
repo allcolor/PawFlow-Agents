@@ -259,6 +259,136 @@ class VideoGenerationHandler(ToolHandler):
             return f"Error generating video: {e}"
 
 
+class AudioGenerationHandler(ToolHandler):
+    """Generate audio/music via a dynamically resolved audio generation service."""
+
+    _base_url: str = "http://localhost:9090"
+    _service_resolver = None
+    _user_id: str = ""
+
+    @property
+    def name(self) -> str:
+        return "generate_audio"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Generate audio or music from a text prompt. "
+            "Returns a download URL for the generated audio file. "
+            "Supports music generation (with lyrics or instrumental) and sound effects."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "prompt": {
+                    "type": "string",
+                    "description": "Description of the audio to generate (style, mood, instruments, genre)",
+                },
+                "lyrics": {
+                    "type": "string",
+                    "description": "Song lyrics (optional — omit for instrumental)",
+                },
+                "duration": {
+                    "type": "number",
+                    "description": "Audio duration in seconds (optional, provider-dependent)",
+                },
+                "instrumental": {
+                    "type": "boolean",
+                    "description": "Generate instrumental only, no vocals (default: false)",
+                },
+                "style": {
+                    "type": "string",
+                    "description": "Music style/genre (e.g. 'electronic', 'ambient', 'rock', 'orchestral')",
+                },
+                "destination": {
+                    "type": "string",
+                    "description": "Where to save: 'filestore' (default) or filesystem service name. When using a filesystem, also provide 'path'.",
+                },
+                "path": {
+                    "type": "string",
+                    "description": "File path when destination is a filesystem service (e.g. 'assets/music.mp3')",
+                },
+            },
+            "required": ["prompt"],
+        }
+
+    def set_base_url(self, base_url: str):
+        self._base_url = base_url.rstrip("/")
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def set_service_resolver(self, resolver):
+        """Set a resolver function: () -> (service, error_msg)."""
+        self._service_resolver = resolver
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        import time as _time
+
+        if not self._service_resolver:
+            return "Error: no audio service resolver configured"
+        service, error = self._service_resolver()
+        if not service:
+            return f"Error: {error or 'no audio generation service available'}"
+
+        prompt = arguments.get("prompt", "")
+        if not prompt:
+            return "Error: no prompt provided"
+
+        destination = arguments.get("destination", "filestore")
+
+        try:
+            gen_args = {k: v for k, v in arguments.items()
+                        if k not in ("destination", "path", "_service")}
+            result = service.generate(**gen_args)
+
+            ct = result.get("content_type", "audio/mpeg")
+            ext = {
+                "audio/mpeg": "mp3", "audio/mp3": "mp3",
+                "audio/wav": "wav", "audio/x-wav": "wav",
+                "audio/ogg": "ogg", "audio/flac": "flac",
+                "audio/aac": "aac", "audio/mp4": "m4a",
+            }.get(ct.split(";")[0].strip(), "mp3")
+            filename = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}.{ext}"
+
+            from core.storage_resolver import StorageResolver
+            resolver = StorageResolver(user_id=self._user_id)
+            write_result = resolver.write(destination, filename,
+                                           result["audio_bytes"], ct)
+
+            # Store all variations (Suno returns 2, others return 1)
+            variations = result.get("variations", [result])
+            output_lines = []
+            for i, var in enumerate(variations):
+                _vbytes = var.get("audio_bytes", result.get("audio_bytes"))
+                _vct = var.get("content_type", ct)
+                _vext = {
+                    "audio/mpeg": "mp3", "audio/mp3": "mp3",
+                    "audio/wav": "wav", "audio/ogg": "ogg",
+                }.get(_vct.split(";")[0].strip(), ext)
+                _vtitle = var.get("title", "")
+                _vdur = var.get("duration", 0)
+                if len(variations) > 1:
+                    _vname = arguments.get("path") or f"generated_{int(_time.time())}_{hash(prompt) & 0xFFFF:04x}_v{i+1}.{_vext}"
+                else:
+                    _vname = filename
+                _vresult = resolver.write(destination, _vname, _vbytes, _vct)
+                if _vresult.get("file_id"):
+                    _vurl = f"{self._base_url}/files/{_vresult['file_id']}/{_vname}"
+                    _label = f"{_vtitle} ({_vdur:.0f}s)" if _vtitle else f"variation {i+1}"
+                    output_lines.append(f"{_label}: {_vurl}\nfile_id: {_vresult['file_id']}")
+                else:
+                    output_lines.append(f"Saved to {_vresult.get('path', _vname)}")
+
+            return "Audio generated:\n" + "\n".join(output_lines)
+
+        except Exception as e:
+            return f"Error generating audio: {e}"
+
+
 class ImageModelInfoHandler(ToolHandler):
     """Return info about the active image generation model and its parameters."""
 

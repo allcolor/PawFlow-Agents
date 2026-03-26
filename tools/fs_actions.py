@@ -17,6 +17,75 @@ from typing import Any, Dict
 MAX_FILE_SIZE = 50 * 1024 * 1024    # 50 MB for read/write
 MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
 
+
+# ── Shell detection ──────────────────────────────────────────────────
+
+import shutil as _shutil
+
+def detect_available_shells() -> Dict[str, str]:
+    """Detect available shells on this system. Returns {name: path}."""
+    shells: Dict[str, str] = {}
+    if os.name == "nt":
+        # Windows shells
+        _cmd = os.environ.get("COMSPEC", r"C:\Windows\System32\cmd.exe")
+        if os.path.isfile(_cmd):
+            shells["cmd"] = _cmd
+        for _ps in ("pwsh", "powershell"):
+            _p = _shutil.which(_ps)
+            if _p:
+                shells["powershell"] = _p
+                break
+        # Git Bash: lives in Git\bin\bash.exe, NOT in PATH by default
+        _git_bash = None
+        _git = _shutil.which("git")
+        if _git:
+            _git_bin = str(Path(_git).resolve().parent.parent / "bin" / "bash.exe")
+            if os.path.isfile(_git_bin):
+                _git_bash = _git_bin
+        if not _git_bash:
+            # Fallback: common install locations
+            for _gb in (r"C:\Program Files\Git\bin\bash.exe",
+                        r"C:\Program Files (x86)\Git\bin\bash.exe"):
+                if os.path.isfile(_gb):
+                    _git_bash = _gb
+                    break
+        if _git_bash:
+            shells["bash"] = _git_bash
+        # WSL bash: system32\bash.exe
+        _wsl_bash = _shutil.which("bash")
+        if _wsl_bash:
+            _wbl = _wsl_bash.lower().replace("\\", "/")
+            if "system32" in _wbl or "wsl" in _wbl:
+                shells["wsl"] = _wsl_bash
+            elif not _git_bash:
+                # Unknown bash — register as generic
+                shells["bash"] = _wsl_bash
+    else:
+        # Unix shells
+        for _sh in ("bash", "sh", "zsh", "fish"):
+            _p = _shutil.which(_sh)
+            if _p:
+                shells[_sh] = _p
+    # Interpreters (cross-platform)
+    for _interp in ("python", "python3", "node"):
+        _p = _shutil.which(_interp)
+        if _p:
+            shells[_interp] = _p
+    return shells
+
+
+def _resolve_shell(name: str) -> str:
+    """Resolve a shell name to its executable path. Returns '' if not found."""
+    shells = detect_available_shells()
+    # Exact match
+    if name in shells:
+        return shells[name]
+    # Fuzzy match (powershell = pwsh, py = python, etc.)
+    _aliases = {"ps": "powershell", "pwsh": "powershell", "py": "python",
+                "python3": "python", "js": "node"}
+    canonical = _aliases.get(name.lower(), name.lower())
+    return shells.get(canonical, "")
+
 # Actions that require write access
 WRITE_ACTIONS = frozenset({
     "write_file", "delete_file", "mkdir", "find_replace", "edit",
@@ -584,6 +653,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
     command = req.get("command", "")
     timeout = min(req.get("timeout", 30), 120)
+    shell_name = req.get("shell", "")  # optional: powershell, bash, python, node, cmd
     if not command:
         raise ValueError("Missing 'command' parameter")
     # Resolve fs:// URLs in the command to real local paths
@@ -595,11 +665,19 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
-    if os.name == "nt":
-        # chcp 65001 = UTF-8 codepage for cmd.exe
+    # Resolve shell executable
+    executable = None
+    if shell_name:
+        executable = _resolve_shell(shell_name)
+        if not executable:
+            raise ValueError(f"Shell '{shell_name}' not found. "
+                             f"Available: {', '.join(detect_available_shells().keys())}")
+    if not executable and os.name == "nt":
+        # Default: cmd.exe with UTF-8 codepage
         command = f"chcp 65001 >nul 2>&1 & {command}"
     result = subprocess.run(
         command, shell=True,
+        executable=executable,
         capture_output=True, text=True,
         encoding="utf-8", errors="replace",
         timeout=timeout,

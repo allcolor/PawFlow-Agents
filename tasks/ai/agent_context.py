@@ -50,11 +50,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             task_llm_service, _user_id_for_svc,
             raise_on_missing=True, default_model=model,
         )
-        # Early provider detection (needed before compact decision)
-        _early_provider = (getattr(resolved_svc, 'provider', "") or
-                          (getattr(resolved_svc, 'config', {}) or {}).get("provider", "") or
-                          getattr(client, 'provider', ""))
-        _skip_compact = _early_provider == "claude-code"
+        # _is_claude_code and _skip_compact are set after agent resolution below
 
         registry = self.get_tool_registry()
         # Handlers are fully configured later (after conversation_id/user_id are known)
@@ -92,6 +88,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             _agent_names = []
 
+        # Tool result size limit — configurable from LLM service
+        _svc_cfg = getattr(resolved_svc, 'config', {}) or {}
+        _tool_max = int(_svc_cfg.get("tool_result_max_chars", 0) or
+                        self.config.get("tool_result_max_chars", 0) or 50000)
         for h in registry.list_tools():
             if isinstance(h, SpawnAgentsHandler):
                 h.set_spawn_deps(client, _client_resolver, _sub_on_event, registry=registry)
@@ -99,6 +99,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     h.set_available_agents(_agent_names)
             elif isinstance(h, UseSkillHandler):
                 h.set_spawn_deps(client, _client_resolver)
+            if hasattr(h, '_tool_result_max_chars'):
+                h._tool_result_max_chars = _tool_max
 
         user_role = flowfile.get_attribute("http.auth.roles") or ""
         if user_role:
@@ -241,6 +243,70 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 pass
         _context_agent = _early_agent or "assistant"
 
+        # ── Resolve active agent + LLM service EARLY ──
+        # Needed before message loading to know if we should skip compact
+        # (claude-code with existing session = append-only, no compact).
+        _active_agent_name = ""
+        _active_llm_service = task_llm_service
+        if use_conv_store and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore as _CSAgent
+                _ares = _CSAgent.instance().get_extra(
+                    conversation_id, "active_resources",
+                ) or {}
+                _ares = self._ensure_active_agent(
+                    conversation_id, _ares,
+                    flowfile.get_attribute("http.auth.principal") or "anonymous",
+                )
+                _active_agent_name = _early_target or _ares.get("agent", "")
+                if _active_agent_name:
+                    _rc, _rsvc_id, _rsvc = self._resolve_agent_client(
+                        _active_agent_name, _user_id_for_svc, conversation_id)
+                    if _rc and _rsvc_id != task_llm_service:
+                        client = _rc
+                        resolved_svc = _rsvc
+                        _active_llm_service = _rsvc_id
+                        model_name = ""  # Use service's default model
+                        logger.info("Agent '%s' using LLM service '%s' (provider: %s)",
+                                    _active_agent_name, _rsvc_id,
+                                    getattr(_rsvc, 'provider', '?') if _rsvc else '?')
+                    else:
+                        logger.info("Agent '%s' using task default LLM '%s'",
+                                    _active_agent_name, task_llm_service)
+            except Exception as e:
+                logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
+        if not _active_agent_name and use_conv_store and conversation_id:
+            try:
+                from core.resource_store import ResourceStore
+                _uid_fb = flowfile.get_attribute("http.auth.principal") or "anonymous"
+                _fb = ResourceStore.instance().list_all("agent", _uid_fb)
+                _active_agent_name = _fb[0]["name"] if _fb else "assistant"
+                logger.warning("Recovered _active_agent_name to '%s'", _active_agent_name)
+            except Exception:
+                _active_agent_name = "assistant"
+
+        # Provider detection (now with the correct resolved service)
+        _is_claude_code = (
+            (getattr(resolved_svc, 'provider', "") or
+             (getattr(resolved_svc, 'config', {}) or {}).get("provider", "") or
+             getattr(client, 'provider', "")) == "claude-code"
+        )
+
+        # Claude-code compact decision: skip compact if session_id exists
+        _claude_has_session = False
+        if _is_claude_code and conversation_id:
+            try:
+                from core.conversation_store import ConversationStore as _CSSession
+                _session_key = f"claude_session:{_active_agent_name or _context_agent or 'default'}"
+                _claude_has_session = bool(
+                    _CSSession.instance().get_extra(conversation_id, _session_key))
+                if _claude_has_session:
+                    logger.info("[claude-code] session exists (%s) — skipping auto-compact",
+                                _session_key)
+            except Exception:
+                pass
+        _skip_compact = _is_claude_code and _claude_has_session
+
         _context_diverged = False
         if preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
@@ -251,7 +317,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             f"{len(messages)} messages")
             except (KeyError, TypeError) as e:
                 logger.error(f"[context] preloaded messages deser failed: {e}")
-            # Auto-compact on preloaded messages (skip for claude-code — manages own context)
+            # Auto-compact on preloaded messages (skip for claude-code with session)
             if messages and not _skip_compact:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
@@ -271,7 +337,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 f"{len(messages)} messages")
                 except (KeyError, TypeError) as deser_err:
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
-                # Auto-compact on load (skip for claude-code)
+                # Auto-compact on load (skip for claude-code with session)
                 if not _skip_compact:
                     _uid = flowfile.get_attribute("http.auth.principal") or ""
                     messages = self._auto_compact_messages(
@@ -288,7 +354,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
-                    # Auto-compact on load (skip for claude-code)
+                    # Auto-compact on load (skip for claude-code with session)
                     if not _skip_compact:
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
@@ -564,51 +630,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 user_source["btw"] = True
             messages.append(LLMMessage(role="user", content=user_content, source=user_source))
 
-        # Determine active agent name and llm_service for source tracking
-        _active_agent_name = ""
-        _active_llm_service = task_llm_service
-        if use_conv_store and conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                _ares = ConversationStore.instance().get_extra(
-                    conversation_id, "active_resources",
-                ) or {}
-                _ares = self._ensure_active_agent(
-                    conversation_id, _ares,
-                    flowfile.get_attribute("http.auth.principal") or "anonymous",
-                )
-                _active_agent_name = _target_agent or _ares.get("agent", "")
-                if _active_agent_name:
-                    _rc, _rsvc_id, _rsvc = self._resolve_agent_client(
-                        _active_agent_name, user_id, conversation_id)
-                    if _rc and _rsvc_id != task_llm_service:
-                        client = _rc
-                        resolved_svc = _rsvc
-                        _active_llm_service = _rsvc_id
-                        model_name = ""  # Use service's default model
-                        logger.info("Agent '%s' using LLM service '%s' (provider: %s)",
-                                    _active_agent_name, _rsvc_id,
-                                    getattr(_rsvc, 'provider', '?') if _rsvc else '?')
-                    else:
-                        logger.info("Agent '%s' using task default LLM '%s'",
-                                    _active_agent_name, task_llm_service)
-            except Exception as e:
-                logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
-
-        # Agent name must ALWAYS be set at this point
-        if not _active_agent_name and use_conv_store and conversation_id:
-            logger.error("BUG: _active_agent_name is empty! conv=%s, target=%s — "
-                         "this means _ensure_active_agent failed or was bypassed",
-                         conversation_id, _target_agent)
-            # Force resolution as a fallback
-            try:
-                from core.resource_store import ResourceStore
-                _uid_fb = flowfile.get_attribute("http.auth.principal") or "anonymous"
-                _fb = ResourceStore.instance().list_all("agent", _uid_fb)
-                _active_agent_name = _fb[0]["name"] if _fb else "assistant"
-                logger.warning("Recovered _active_agent_name to '%s'", _active_agent_name)
-            except Exception:
-                _active_agent_name = "assistant"
+        # _active_agent_name, _active_llm_service, client, resolved_svc
+        # are resolved early (before message loading) — see above.
 
         # Resolve max_tokens for LLM output (0 = unlimited)
         # This is NOT the context size — it's the max output the LLM can generate
@@ -924,6 +947,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "_target_agent": _target_agent,
             "_context_diverged": _context_diverged,
             "_nicknames": _nicknames if conversation_id else {},
+            "_is_claude_code": _is_claude_code,
+            "_claude_has_session": _claude_has_session,
         }
 
 

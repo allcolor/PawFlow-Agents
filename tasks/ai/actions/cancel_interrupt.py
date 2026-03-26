@@ -85,9 +85,9 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     if action == "btw":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")
+        question = body.get("question", "") or body.get("message", "")
         if agent_name and agent_name.upper() != "ALL":
             agent_name = self._resolve_agent_name(agent_name, conv_id)
-        question = body.get("message", "")
         if not conv_id or not question:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or message"}).encode())
             flowfile.set_attribute("http.response.status", "400")

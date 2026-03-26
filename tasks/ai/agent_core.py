@@ -40,6 +40,7 @@ class AgentCoreMixin:
         client._conversation_id = conversation_id
         client._user_id = user_id
         client._agent_name = ctx.get("active_agent_name", "")
+        client._agent_service = ctx.get("active_llm_service", "")
 
         # Register active claude-code client for preempt (stdin injection)
         if hasattr(client, 'send_user_message') and conversation_id:
@@ -236,19 +237,23 @@ class AgentCoreMixin:
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
 
-                    # Compaction
-                    llm_context = self._compact_if_needed(
-                        copy.deepcopy(messages), compact_client,
-                        ctx.get("max_context_size", 64000),
-                        ctx.get("context_compact_threshold", 0.75),
-                        ctx.get("context_keep_recent", 6),
-                        conversation_id=conversation_id,
-                        agent_name=ctx.get("active_agent_name") or "",
-                        tool_defs=ctx.get("tool_defs"),
-                        chars_per_token=ctx.get("chars_per_token", 0),
-                    )
-                    if len(llm_context) < len(messages):
-                        ctx["_context_diverged"] = True
+                    # Compaction — claude-code manages its own context:
+                    # no per-iteration compaction (one compact at context load only)
+                    if ctx.get("_is_claude_code"):
+                        llm_context = list(messages)
+                    else:
+                        llm_context = self._compact_if_needed(
+                            copy.deepcopy(messages), compact_client,
+                            ctx.get("max_context_size", 64000),
+                            ctx.get("context_compact_threshold", 0.75),
+                            ctx.get("context_keep_recent", 6),
+                            conversation_id=conversation_id,
+                            agent_name=ctx.get("active_agent_name") or "",
+                            tool_defs=ctx.get("tool_defs"),
+                            chars_per_token=ctx.get("chars_per_token", 0),
+                        )
+                        if len(llm_context) < len(messages):
+                            ctx["_context_diverged"] = True
 
                     # Pre-injection char count for CPT calibration
                     _pre_inject_chars = self._estimate_tokens(
@@ -369,16 +374,22 @@ class AgentCoreMixin:
                         - Tool results → display_only, truncated to 300 chars
                         - Thinking → display_only
 
-                        Persisted IMMEDIATELY so they survive interrupts/cancels.
+                        SSE events (tool_call, tool_result, thinking_content) are
+                        published in real-time by claude_code.py as they arrive from
+                        the stream. This callback only persists + publishes
+                        turn_complete to finalize the streaming element.
                         """
                         nonlocal tools_called
                         from core.llm_client import LLMToolCall
 
+                        _bus = emitter.bus
+                        _cid = conversation_id
                         # Messages for the agent loop (in-memory context)
                         turn_msgs = []
                         # All messages for transcript (includes display_only)
                         transcript_msgs = []
                         _src = _agent_source()
+                        _agent = _src.get("name", "")
 
                         if text:
                             msg = LLMMessage(
@@ -387,7 +398,21 @@ class AgentCoreMixin:
                             turn_msgs.append(msg)
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
 
-                        # Thinking (display_only — rendered as collapsible thinking block)
+                        # Finalize streaming element — next turn creates a new one
+                        if text or tool_calls:
+                            # Estimate tokens from text length (real values come in done)
+                            _cpt = ctx.get("chars_per_token", 0) or 3.5
+                            _est_out = int(len(text) / _cpt) if text else 0
+                            _bus.publish_event(_cid, "turn_complete", {
+                                "agent_name": _agent,
+                                "msg_id": client._last_turn_msg_id if text else "",
+                                "source": _src,
+                                "model": _src.get("model", ""),
+                                "provider": _src.get("provider", ""),
+                                "tokens_out": _est_out,
+                            })
+
+                        # Thinking (display_only — persisted for transcript)
                         if tool_calls:
                             _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
                             if _thinking:
@@ -421,7 +446,7 @@ class AgentCoreMixin:
                                 tc_raw = tool_calls[i] if i < len(tool_calls) else {}
                                 _result = tc_raw.get("result") or ""
 
-                                # Tool call (display_only — rendered like SSE tool_call)
+                                # Tool call (display_only for transcript)
                                 transcript_msgs.append({
                                     "role": "tool_call",
                                     "display_only": True,
@@ -440,14 +465,15 @@ class AgentCoreMixin:
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
 
-                                # Tool result (display_only — rendered like SSE tool_result)
+                                # Tool result (display_only for transcript)
+                                tr_preview = (tr_content[:300] + "..."
+                                              if len(tr_content) > 300
+                                              else tr_content)
                                 transcript_msgs.append({
                                     "role": "tool_result",
                                     "display_only": True,
                                     "display_type": "tool_result",
-                                    "content": (tr_content[:300] + "..."
-                                                if len(tr_content) > 300
-                                                else tr_content),
+                                    "content": tr_preview,
                                     "tool_name": tc_obj.name,
                                     "tool_call_id": tc_obj.id,
                                 })
@@ -478,8 +504,27 @@ class AgentCoreMixin:
                             temperature=ctx["temperature"], max_tokens=ctx["max_tokens"],
                             tools=tool_defs if tool_defs else None, thinking_budget=_tb)
 
+                    # Claude-code with existing session: send only the latest
+                    # user message (session has full context via --resume)
+                    _call_context = llm_context
+                    if _is_claude_code and ctx.get("_claude_has_session"):
+                        def _is_real_user_msg(m):
+                            if m.role != "user":
+                                return False
+                            c = m.content
+                            if isinstance(c, list):
+                                return True  # multipart (text+image) = real user msg
+                            t = c or ""
+                            return not t.startswith("[System:") and not t.startswith("[Conversation summary")
+                        _new_msgs = [m for m in llm_context if _is_real_user_msg(m)]
+                        if _new_msgs:
+                            # Only the latest user message — no system prompt
+                            # (session already has it from initial context)
+                            _call_context = [_new_msgs[-1]]
+
+                    _resume_retried = False
                     try:
-                        response = _llm_call(llm_context)
+                        response = _llm_call(_call_context)
                     except AgentCancelled:
                         raise
                     except Exception as llm_err:
@@ -487,7 +532,39 @@ class AgentCoreMixin:
                         # AgentCancelled may be wrapped in LLMClientError
                         if "AgentCancelled" in err_str:
                             raise AgentCancelled()
-                        if "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
+                        # Claude-code resume failed → invalidate session, retry
+                        # with full context (first-message flow).
+                        # But NOT if the agent was cancelled (interrupt) — that's
+                        # intentional, not a connection failure.
+                        _was_cancelled = False
+                        try:
+                            emitter.check_cancelled()
+                        except AgentCancelled:
+                            _was_cancelled = True
+                        if _was_cancelled:
+                            raise AgentCancelled()
+                        if _is_claude_code and ctx.get("_claude_has_session"):
+                            logger.warning("[claude-code] resume failed (%s), "
+                                           "retrying with full context", err_str[:100])
+                            try:
+                                from core.conversation_store import ConversationStore
+                                ConversationStore.instance().invalidate_claude_sessions(
+                                    conversation_id)
+                            except Exception:
+                                pass
+                            client._claude_session_id = ""
+                            ctx["_claude_has_session"] = False
+                            try:
+                                response = _llm_call(llm_context)
+                                _resume_retried = True
+                            except Exception as retry_err:
+                                logger.error("Claude-code full-context retry failed: %s", retry_err)
+                                emitter.on_fatal_error(f"LLM call failed: {retry_err}")
+                                _fatal_error = True
+                                break
+                        if _resume_retried:
+                            pass  # resume fallback succeeded
+                        elif "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)
                             llm_context = self._compact_if_needed(
@@ -537,6 +614,14 @@ class AgentCoreMixin:
                     # No tools → final response
                     if not response.tool_calls:
                         _resp_text = response.content or ""
+                        # Claude-code: turn_callback persisted all content.
+                        # response.content is "" — don't persist an empty msg.
+                        # response_content stays "" — done event uses last turn text.
+                        if _is_claude_code:
+                            response_content = _resp_text
+                            emitter.stop_heartbeat(_iter_hb)
+                            _flush()
+                            break
                         _has_thinking = bool(getattr(response, 'thinking', ''))
                         # Empty response with thinking = LLM is stuck in reasoning
                         # Give it one more chance with explicit instruction
@@ -633,7 +718,8 @@ class AgentCoreMixin:
 
                     # Mid-turn compaction: every 5 iterations, progressively clear
                     # old tool results on the canonical messages to stop context growth
-                    if iteration % 5 == 0 and len(messages) > 20:
+                    # (skip for claude-code — manages its own context)
+                    if not ctx.get("_is_claude_code") and iteration % 5 == 0 and len(messages) > 20:
                         _cpt = ctx.get("chars_per_token", 0) or 3.5
                         _mid_est = self._estimate_tokens(messages, chars_per_token=_cpt)
                         _mid_target = int(ctx.get("max_context_size", 200000) * 0.5)
@@ -689,8 +775,9 @@ class AgentCoreMixin:
                 else:
                     break
 
-            # Empty response synthesis
-            if not response_content and not _fatal_error:
+            # Empty response synthesis (skip for claude-code — turn_callback
+            # already persisted all content, response_content is intentionally "")
+            if not response_content and not _fatal_error and not ctx.get("_is_claude_code"):
                 logger.warning(f"[agent:{conversation_id[:8]}] empty response — forcing synthesis")
                 _pre = len(messages)
                 content, ti, to, fm = self._force_synthesis(

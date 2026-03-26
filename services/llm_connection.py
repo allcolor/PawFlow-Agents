@@ -254,6 +254,10 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "gemini",
                 "description": "Path to Gemini CLI binary",
             },
+            "tool_result_max_chars": {
+                "type": "integer", "default": 50000,
+                "description": "Max chars for tool results in LLM context (0 = default 50000)",
+            },
         }
 
     def get_parameter_rules(self) -> list:

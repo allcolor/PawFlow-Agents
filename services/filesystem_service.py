@@ -216,7 +216,12 @@ class FilesystemWSListener:
                 return
 
             relay_id = reg.get("relay_id", "")
+            _reg_info = reg.get("info", {})
             logger.info("Relay connected: %s (path=%s, addr=%s)", relay_id, req_path, tag)
+
+            # Store relay metadata (shells, platform, etc.)
+            if _reg_info.get("shells") and hasattr(service, '_relay_shells'):
+                service._relay_shells = _reg_info["shells"]
 
             # Confirm registration
             await self._ws_send(writer, json.dumps({
@@ -339,6 +344,10 @@ class FilesystemWSListener:
         return opcode, payload
 
     async def _ws_send(self, writer: asyncio.StreamWriter, data: bytes, opcode=0x01):
+        await self._ws_send_raw(writer, data, opcode)
+
+    @staticmethod
+    async def _ws_send_raw(writer: asyncio.StreamWriter, data: bytes, opcode=0x01):
         frame = bytes([0x80 | opcode])
         length = len(data)
         if length < 126:
@@ -371,6 +380,7 @@ class FilesystemService(BaseService):
         self._service_id = config.get("_service_id", "")
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
+        self._relay_shells: List[str] = []  # available shells on the relay system
 
         # Relay connection pool — supports multiple connections for resilience
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]
@@ -642,8 +652,11 @@ class FilesystemService(BaseService):
                               new_source=new_source, cell_type=cell_type,
                               operation=operation)
 
-    def exec(self, path: str, command: str, timeout: int = 30):
-        return self._request("exec", path, command=command, timeout=timeout)
+    def exec(self, path: str, command: str, timeout: int = 30, shell: str = ""):
+        kwargs = {"command": command, "timeout": timeout}
+        if shell:
+            kwargs["shell"] = shell
+        return self._request("exec", path, **kwargs)
 
     # ── Git ──
 

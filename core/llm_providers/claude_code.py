@@ -314,6 +314,9 @@ class LLMClaudeCodeMixin:
         Uses stream-json input format to inject a new user message while
         Claude Code is working — enables the same preempt behavior as
         other LLM providers.
+
+        Sets _preempt_pending so _stream_claude_code knows to NOT break
+        at the next result event — it must wait for the preempt's result too.
         """
         proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
@@ -326,7 +329,9 @@ class LLMClaudeCodeMixin:
             })
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
-            logger.info("Sent preempt message to Claude Code: %.100s", text)
+            self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
+            logger.info("Sent preempt message to Claude Code (pending=%d): %.100s",
+                        self._preempt_pending, text)
             return True
         except (OSError, BrokenPipeError) as e:
             logger.warning("Failed to send to Claude Code stdin: %s", e)
@@ -335,8 +340,10 @@ class LLMClaudeCodeMixin:
     def cancel_claude_code(self, force: bool = False):
         """Cancel Claude Code subprocess.
 
-        force=False: graceful interrupt on stdin, kill after 3s
-        force=True: kill immediately
+        force=False: graceful interrupt on stdin — Claude Code acknowledges
+                     and responds with a summary, then the stream loop exits
+                     normally on the result event. No kill.
+        force=True: kill immediately.
         """
         proc = getattr(self, '_claude_proc', None)
         if not proc or proc.poll() is not None:
@@ -351,6 +358,9 @@ class LLMClaudeCodeMixin:
                 pass
             return
 
+        # Graceful interrupt: send interrupt message on stdin.
+        # Claude Code will stop what it's doing, summarize, and send
+        # a result event — the stream loop exits normally.
         logger.info("Interrupting Claude Code subprocess (pid=%d)", proc.pid)
         try:
             if proc.stdin and not proc.stdin.closed:
@@ -363,20 +373,6 @@ class LLMClaudeCodeMixin:
                 proc.stdin.flush()
         except (OSError, BrokenPipeError):
             pass
-
-        def _kill_after_timeout():
-            try:
-                proc.wait(timeout=3)
-            except Exception:
-                logger.info("Claude Code did not stop in 3s — killing pid=%d", proc.pid)
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-
-        import threading as _th
-        _th.Thread(target=_kill_after_timeout, daemon=True,
-                   name="claude-code-kill-timeout").start()
 
     def _cleanup_proc(self, proc):
         """Clean up a Claude Code subprocess."""
@@ -662,6 +658,7 @@ class LLMClaudeCodeMixin:
         _turn_thinking: str = ""
         _tool_results: dict = {}  # tool_use_id → result text
         _current_msg_id: str = ""  # track message ID to detect incremental updates
+        self._preempt_pending = 0  # reset at start of each stream
 
         def _flush_turn():
             """Emit the accumulated turn via turn_callback."""
@@ -713,10 +710,21 @@ class LLMClaudeCodeMixin:
                 logger.info("[claude-code] %s %.200s", etype, json.dumps(event))
 
                 if etype == "system":
-                    # Capture session_id from init event (for --resume on next call)
+                    # Capture AND persist session_id from init event immediately.
+                    # Must be in ConversationStore before any preempt triggers
+                    # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
                     if sid:
                         self._claude_session_id = sid
+                        if conv_id:
+                            try:
+                                from core.conversation_store import ConversationStore
+                                ConversationStore.instance().set_extra(
+                                    conv_id,
+                                    f"claude_session:{agent_name or 'default'}",
+                                    sid)
+                            except Exception:
+                                pass
                     continue
 
                 if etype == "assistant":
@@ -748,10 +756,21 @@ class LLMClaudeCodeMixin:
                                 "arguments": block.get("input", {}),
                                 "id": block.get("id", ""),
                             })
+                            # Unwrap MCP wrapper for display:
+                            # mcp__pawflow__use_tool(tool_name=X, arguments={...})
+                            # → X({...})
+                            _tc_name = block.get("name", "")
+                            _tc_args = block.get("input", {})
+                            if _tc_name == "mcp__pawflow__use_tool" and isinstance(_tc_args, dict):
+                                _tc_name = _tc_args.get("tool_name", _tc_name)
+                                _tc_args = _tc_args.get("arguments", _tc_args)
+                            elif _tc_name == "mcp__pawflow__get_tool_schema":
+                                _tc_args = _tc_args  # keep as-is
                             _pub("tool_call", {
-                                "tool": block.get("name", ""),
-                                "arguments": block.get("input", {}),
+                                "tool": _tc_name,
+                                "arguments": _tc_args,
                                 "agent_name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
                             })
                         elif btype == "thinking":
@@ -786,10 +805,20 @@ class LLMClaudeCodeMixin:
                             # Store for turn_callback persistence
                             if tc_id:
                                 _tool_results[tc_id] = result_str
+                            # Resolve tool name from turn_tool_calls
+                            _tr_name = tc_id
+                            for _tc in _turn_tool_calls:
+                                if _tc.get("id") == tc_id:
+                                    _tr_name = _tc.get("name", tc_id)
+                                    # Unwrap MCP wrapper name
+                                    if _tr_name == "mcp__pawflow__use_tool":
+                                        _tr_name = _tc.get("arguments", {}).get("tool_name", _tr_name)
+                                    break
                             _pub("tool_result", {
-                                "tool": tc_id,
+                                "tool": _tr_name,
                                 "result": result_str[:300],
                                 "agent_name": agent_name,
+                                "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
                             })
 
@@ -815,9 +844,18 @@ class LLMClaudeCodeMixin:
                     last_data = event
                     # Publish token stats for the webchat
                     _usage = event.get("usage", {})
-                    _total_in = _usage.get("input_tokens", 0)
+                    # Total input = direct + cache_read + cache_creation
+                    _total_in = (_usage.get("input_tokens", 0)
+                                 + _usage.get("cache_read_input_tokens", 0)
+                                 + _usage.get("cache_creation_input_tokens", 0))
                     _total_out = _usage.get("output_tokens", 0)
-                    _result_model = event.get("model", model)
+                    logger.info("[claude-code] result event keys: %s, usage=%s, model=%s",
+                                list(event.keys()), _usage, event.get("model", "?"))
+                    # model is in modelUsage keys, not at top level
+                    _model_usage = event.get("modelUsage", {})
+                    _result_model = (event.get("model")
+                                     or (list(_model_usage.keys())[0] if _model_usage else "")
+                                     or model)
                     if _total_in or _total_out:
                         # Get the msg_id of the last assistant message (from turn_callback)
                         _last_msg_id = ""
@@ -843,6 +881,17 @@ class LLMClaudeCodeMixin:
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
+                    # If preempt messages were injected via stdin, don't break —
+                    # Claude Code will process them and send another result.
+                    _pending = getattr(self, '_preempt_pending', 0)
+                    if _pending > 0:
+                        self._preempt_pending = _pending - 1
+                        logger.info("[claude-code] result event but preempt pending (%d) "
+                                    "— continuing stream", _pending - 1)
+                        # Reset turn state for the next message
+                        _turn_count = 0
+                        _current_msg_id = ""
+                        continue
                     break
 
         finally:
@@ -884,12 +933,16 @@ class LLMClaudeCodeMixin:
                     pass
 
         usage = last_data.get("usage", {})
+        _ti = (usage.get("input_tokens", 0)
+               + usage.get("cache_read_input_tokens", 0)
+               + usage.get("cache_creation_input_tokens", 0))
+        _to = usage.get("output_tokens", 0)
         return LLMResponse(
             content=full_content,
             model=last_data.get("model", model),
-            tokens_in=usage.get("input_tokens", 0),
-            tokens_out=usage.get("output_tokens", 0),
-            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            tokens_in=_ti,
+            tokens_out=_to,
+            total_tokens=_ti + _to,
             finish_reason="stop",
             raw=last_data,
         )

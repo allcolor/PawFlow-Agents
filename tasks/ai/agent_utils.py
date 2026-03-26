@@ -330,6 +330,14 @@ class AgentUtilsMixin:
             "video generation", "/vidservice",
         )
 
+    def _make_audio_resolver(self, user_id, conversation_id, agent_name):
+        from services.base_audio_generation import BaseAudioGenerationService
+        return self._make_media_resolver(
+            user_id, conversation_id, agent_name,
+            BaseAudioGenerationService, "audio_services",
+            "audio generation", "/audioservice",
+        )
+
 
     def _decrement_active(self, conversation_id: str, ctx: dict = None):
         """Decrement the active-conversation refcount and clean up tracking.

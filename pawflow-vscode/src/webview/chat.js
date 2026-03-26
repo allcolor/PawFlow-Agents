@@ -28,9 +28,14 @@ function finalizeThinking(agentName) {
   var aKey = (agentName || '').toLowerCase();
   var tb = thinkingBlocks[aKey];
   if (tb) {
-    var elapsed = ((Date.now() - tb.start) / 1000).toFixed(1);
-    tb.summary.textContent = 'Thought for ' + elapsed + 's';
-    tb.el.removeAttribute('open');
+    var elapsed = (Date.now() - tb.start) / 1000;
+    // Remove empty thinking blocks — keep all that have content
+    if (!tb.text.trim()) {
+      tb.el.remove();
+    } else {
+      tb.summary.textContent = 'Thought for ' + elapsed.toFixed(1) + 's';
+      tb.el.removeAttribute('open');
+    }
     delete thinkingBlocks[aKey];
   }
 }
@@ -440,6 +445,7 @@ function handleSSE(event) {
       streaming[agent] = (streaming[agent] || '') + (data.text || '');
       // Live-render streaming tokens
       var streamEl = getOrCreateStream(agent);
+      if (data.msg_id) streamEl.dataset.msgid = data.msg_id;
       streamEl.textContent = streaming[agent];
       messagesEl.scrollTop = messagesEl.scrollHeight;
       statusEl.textContent = agent + ' writing...';
@@ -490,25 +496,36 @@ function handleSSE(event) {
       for (var ii = 0; ii < allIds.length; ii++) {
         if (allIds[ii]) _seenMsgIds[allIds[ii]] = true;
       }
+      // Find existing element (streaming or finalized by turn_complete)
+      if (!existingEl) {
+        for (var mi = 0; mi < allIds.length; mi++) {
+          if (allIds[mi]) {
+            var found = document.querySelector('[data-msgid="' + allIds[mi] + '"]');
+            if (found) { existingEl = found; break; }
+          }
+        }
+      }
       if (existingEl) {
         // Convert streaming element to permanent with metadata
         existingEl.classList.remove('streaming-live');
         existingEl.style.opacity = '';
-        existingEl.className = 'msg assistant';
+        if (existingEl.className.indexOf('assistant') < 0) existingEl.className = 'msg assistant';
         existingEl.dataset.rawText = (doneText || '').substring(0, 200);
-        // Add metadata line
+        // Update metadata (replace if exists from turn_complete estimate)
         var tin = data.tokens_in || 0;
         var tout = data.tokens_out || 0;
         var mdl = data.model || '';
-        if (tin || tout) {
-          var metaSpan = document.createElement('div');
+        if (tin || tout || mdl) {
+          var existingMeta = existingEl.querySelector('.token-footer');
+          var metaSpan = existingMeta || document.createElement('div');
+          metaSpan.className = 'token-footer';
           metaSpan.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:4px;';
           metaSpan.textContent = (mdl || '?') + ' \u00b7 ' + tin + '\u2191 ' + tout + '\u2193';
-          existingEl.appendChild(metaSpan);
+          if (!existingMeta) existingEl.appendChild(metaSpan);
         }
         delete streamEls[aKey];
       } else if (doneText) {
-        // No streaming element — check msg_id dedup before adding
+        // No element found — check msg_id dedup before adding
         if (!data.msg_id || !_seenMsgIds[data.msg_id]) {
           addMsg('assistant', doneText, data);
         }
@@ -523,9 +540,51 @@ function handleSSE(event) {
       break;
     }
 
+    case 'turn_complete':
+      // Finalize streaming element between Claude Code turns
+      finalizeThinking(agent);
+      var tcAKey = (agent || '').toLowerCase();
+      var tcEl = streamEls[tcAKey];
+      if (tcEl) {
+        tcEl.classList.remove('streaming-live');
+        tcEl.style.opacity = '';
+        tcEl.className = 'msg assistant';
+        // Add metainfo if available
+        if (data.source && data.model) {
+          var metaParts = [data.model];
+          if (data.tokens_out) metaParts.push('\u2193' + data.tokens_out);
+          var metaSpan = document.createElement('div');
+          metaSpan.className = 'token-footer';
+          metaSpan.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+          metaSpan.textContent = metaParts.join(' \u00b7 ');
+          tcEl.appendChild(metaSpan);
+        }
+        delete streamEls[tcAKey];
+        delete streaming[agent];
+      }
+      break;
+
     case 'message_meta':
-      // Per-message metadata — find element by msg_id
+      // Per-message metadata — find element by msg_id and update
       if (data.msg_id) _seenMsgIds[data.msg_id] = true;
+      if (data.msg_id) {
+        var metaEl = document.querySelector('[data-msgid="' + data.msg_id + '"]');
+        if (metaEl) {
+          var parts = [];
+          var mm = data.source || data;
+          if (mm.model) parts.push(mm.model);
+          if (data.tokens_in || data.tokens_out) parts.push('\u2191' + (data.tokens_in || 0) + ' \u2193' + (data.tokens_out || 0));
+          if (data.duration_ms) parts.push((data.duration_ms / 1000).toFixed(1) + 's');
+          if (parts.length) {
+            var existing = metaEl.querySelector('.token-footer');
+            var span = existing || document.createElement('div');
+            span.className = 'token-footer';
+            span.style.cssText = 'font-size:10px;color:var(--vscode-descriptionForeground);margin-top:2px;';
+            span.textContent = parts.join(' \u00b7 ');
+            if (!existing) metaEl.appendChild(span);
+          }
+        }
+      }
       break;
 
     case 'narration':

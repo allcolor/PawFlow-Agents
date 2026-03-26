@@ -54,8 +54,14 @@ class ToolRelayClient:
         path = parsed.path or "/ws/tools"
         use_tls = parsed.scheme == "wss"
 
-        # TCP connect
+        # TCP connect with keepalive
         sock = socket.create_connection((host, port), timeout=10)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        # Windows TCP keepalive: probe after 30s, interval 10s
+        try:
+            sock.ioctl(socket.SIO_KEEPALIVE_VALS, (1, 30000, 10000))
+        except (AttributeError, OSError):
+            pass  # non-Windows or unsupported
         if use_tls:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
@@ -123,18 +129,28 @@ class ToolRelayClient:
     def request(self, method: str, **kwargs) -> any:
         """Send a request and wait for the response.
 
-        Auto-reconnects on connection failure (1 retry).
+        Auto-reconnects on connection failure with backoff (up to 3 retries).
+        The caller must never see transient connection errors.
         """
-        for attempt in range(2):
+        import time as _time
+        last_err = None
+        for attempt in range(4):
             try:
                 self._ensure_connected()
                 return self._do_request(method, **kwargs)
-            except ConnectionError as e:
-                if attempt == 0:
-                    _log(f"Connection lost, retrying: {e}")
-                    self._sock = None  # force reconnect
+            except (ConnectionError, OSError, BrokenPipeError) as e:
+                last_err = e
+                self._sock = None  # force reconnect
+                if attempt < 3:
+                    delay = min(1.0 * (2 ** attempt), 8.0)
+                    _log(f"Connection lost (attempt {attempt + 1}/4), "
+                         f"retrying in {delay}s: {e}")
+                    _time.sleep(delay)
                     continue
-                raise
+                _log(f"Connection failed after 4 attempts: {e}")
+                raise ConnectionError(
+                    f"Tool relay unavailable after 4 attempts: {last_err}"
+                ) from last_err
 
     def _do_request(self, method: str, **kwargs) -> any:
         request_id = uuid.uuid4().hex[:12]

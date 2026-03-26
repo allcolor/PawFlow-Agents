@@ -77,6 +77,7 @@ from core.handlers import (  # noqa: F401
     UseSkillHandler,
     VerifyTaskHandler,
     VideoGenerationHandler,
+    AudioGenerationHandler,
     WebFetchHandler,
     WebSearchHandler,
 )
@@ -286,6 +287,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ImageGenerationHandler())
     registry.register(ImageModelInfoHandler())
     registry.register(VideoGenerationHandler())
+    registry.register(AudioGenerationHandler())
     registry.register(RememberHandler())
     registry.register(RecallHandler())
     registry.register(SemanticRecallHandler())

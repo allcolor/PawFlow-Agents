@@ -28,6 +28,18 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             app.renderer.start_stream(agent, svc)
         app.renderer.stream_token(agent, data.get("text", ""))
 
+    elif ev_type == "turn_complete":
+        # Finalize current stream between Claude Code turns
+        agent = data.get("agent_name", "")
+        if thinking_agent:
+            app.renderer.end_thinking(thinking_agent)
+            thinking_agent = ""
+        if agent in app.renderer._streams:
+            source = data.get("source", {})
+            model = source.get("model", "") if isinstance(source, dict) else ""
+            tokens_out = data.get("tokens_out", 0)
+            app.renderer.end_stream(agent, model=model, tokens_out=tokens_out)
+
     elif ev_type == "tool_call":
         # Don't end other agents' streams — they continue independently
         agent = data.get("agent_name", "")

@@ -239,8 +239,13 @@ async function _recoverConversation(cid) {
     const msgContainer = document.getElementById('messages');
     for (const m of newMsgs) {
       const mType = m.type || m.role;
-      // Skip assistant messages during active streaming
-      if (_anyAgentActive && (mType === 'assistant' || mType === 'tool_call' || mType === 'tool_result')) {
+      // Skip display_only messages (tool_call, tool_result, thinking) —
+      // these are rendered by SSE in real-time, transcript has them for reload only.
+      // Also skip assistant messages during active streaming.
+      if (mType === 'tool_call' || mType === 'tool_result' || mType === 'thinking') {
+        continue;
+      }
+      if (_anyAgentActive && mType === 'assistant') {
         continue;
       }
       if (mType === 'user') {

@@ -578,7 +578,18 @@ class AgentLoopTask(
         """Interrupt: cancel the current LLM call and spawn a parallel synthesis.
 
         Cooldown: ignores repeated interrupts within 10 seconds.
+        No-op if no agent is actively running.
         """
+        # Check if anything is actually running for this conversation
+        with self._interactions_lock:
+            _any_active = any(
+                v.get("conversation_id") == conversation_id
+                for v in self._active_interactions.values()
+            )
+        if not _any_active:
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt ignored — no active agent")
+            return
+
         import time as _t
         _synth_key = f"{conversation_id}:{agent_name or 'all'}"
         _now = _t.time()
@@ -588,8 +599,23 @@ class AgentLoopTask(
             return
         self._interrupt_cooldowns[_synth_key] = _now
 
-        logger.info(f"[agent:{conversation_id[:8]}] interrupt → cancel + parallel synthesis "
-                    f"for '{agent_name or 'agent'}'")
+        logger.info(f"[agent:{conversation_id[:8]}] interrupt for '{agent_name or 'agent'}'")
+
+        # For claude-code: graceful interrupt only (stdin message).
+        # Claude Code will acknowledge, summarize, and exit normally.
+        # No cancel_agent (which kills the process), no parallel synthesis.
+        _is_cc = False
+        if hasattr(self, '_active_claude_client'):
+            _cc_client = self._active_claude_client.get(conversation_id)
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt: _active_claude_client={bool(_cc_client)}, "
+                        f"keys={list(self._active_claude_client.keys())[:3]}")
+            if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
+                _is_cc = True
+                _cc_client.cancel_claude_code(force=False)
+                logger.info(f"[agent:{conversation_id[:8]}] claude-code graceful interrupt sent")
+                return  # Claude Code handles its own response
+        else:
+            logger.info(f"[agent:{conversation_id[:8]}] interrupt: no _active_claude_client attr")
 
         # Cancel the current run — publish cancelled event so UI stops
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
@@ -640,9 +666,22 @@ class AgentLoopTask(
                         "what you did, what's left to do. No details, no code.]"),
                 ))
 
-                # Resolve the agent's LLM service
-                client, _agent_svc, _ = self._resolve_agent_client(
-                    _agent, user_id, conversation_id)
+                # Resolve LLM for synthesis — NEVER use claude-code
+                # (would spawn a new subprocess + MCP). Use summarizer or default.
+                _summ = ctx.get("summarizer") if 'ctx' in dir() else None
+                client = (_summ[0] if _summ and _summ[0] else None) or \
+                         (ctx.get("default_client") if 'ctx' in dir() else None)
+                _agent_svc = ""
+                if not client:
+                    # Fallback: resolve agent client but check provider
+                    client, _agent_svc, _ = self._resolve_agent_client(
+                        _agent, user_id, conversation_id)
+                    if client and getattr(client, 'provider', '') == 'claude-code':
+                        # Can't use claude-code for synthesis — try default
+                        _def = self._get_default_client(user_id) if hasattr(self, '_get_default_client') else None
+                        if _def:
+                            client = _def
+                            _agent_svc = "default"
                 logger.info(f"[interrupt synthesis] LLM service: '{_agent_svc}', "
                             f"client: {getattr(client, 'provider', '?')}/{getattr(client, 'default_model', '?')}")
                 if not client:

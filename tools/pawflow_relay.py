@@ -660,10 +660,17 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     path = parsed.path or "/ws/relay"
 
     mode = "read" if readonly else "readwrite"
+    # Detect available shells for exec
+    try:
+        from fs_actions import detect_available_shells
+        _shells = detect_available_shells()
+    except Exception:
+        _shells = {}
     info = {
         "platform": sys.platform,
         "root": root_dir,
         "mode": mode,
+        "shells": list(_shells.keys()),
     }
 
     def _resolve(rel_path):
@@ -824,6 +831,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
             _send_lock = _threading.Lock()
+            _child_relays = {}  # relay_id → thread (child relay instances)
 
             while True:
                 try:
@@ -841,7 +849,52 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     continue
 
                 msg = json.loads(payload.decode("utf-8"))
-                if msg.get("type") == "command":
+                if msg.get("type") == "spawn_relay":
+                    # Server asks us to create a child relay for a different root
+                    _sr_root = msg.get("root", "")
+                    _sr_id = msg.get("relay_id", "")
+                    _sr_token = msg.get("token", token)
+                    _sr_secret = msg.get("secret", secret)
+                    _sr_rid = msg.get("request_id", "")
+                    if not _sr_root or not os.path.isdir(_sr_root):
+                        _resp = json.dumps({"type": "result", "request_id": _sr_rid,
+                            "data": {"ok": False, "error": f"Directory not found: {_sr_root}"}}).encode("utf-8")
+                        with _send_lock:
+                            _ws_frame_send(sock, _resp)
+                    else:
+                        sys.stderr.write(f"[FSRelay] Spawning child relay: {_sr_id} -> {_sr_root}\n")
+                        def _child_relay(_url, _tok, _sec, _rid, _root):
+                            try:
+                                _ws_connect(_url, _tok, _sec, _rid, _root,
+                                            readonly=readonly, allow_exec=allow_exec)
+                            except Exception as _ce:
+                                sys.stderr.write(f"[FSRelay] Child {_rid} died: {_ce}\n")
+                        _child_thread = _threading.Thread(
+                            target=_child_relay,
+                            args=(url, _sr_token, _sr_secret, _sr_id, _sr_root),
+                            daemon=True, name=f"relay-child-{_sr_id}")
+                        _child_thread.start()
+                        _child_relays[_sr_id] = _child_thread
+                        _resp = json.dumps({"type": "result", "request_id": _sr_rid,
+                            "data": {"ok": True, "relay_id": _sr_id, "root": _sr_root}}).encode("utf-8")
+                        with _send_lock:
+                            _ws_frame_send(sock, _resp)
+
+                elif msg.get("type") == "stop_relay":
+                    # Server asks us to stop a child relay
+                    _stop_id = msg.get("relay_id", "")
+                    _stop_rid = msg.get("request_id", "")
+                    _child = _child_relays.pop(_stop_id, None)
+                    # Child relays run _ws_connect which reconnects forever.
+                    # Signal them to stop by removing from tracking.
+                    # The child will die on next reconnect failure or be cleaned up.
+                    sys.stderr.write(f"[FSRelay] Stopping child relay: {_stop_id}\n")
+                    _resp = json.dumps({"type": "result", "request_id": _stop_rid,
+                        "data": {"ok": True, "stopped": _stop_id}}).encode("utf-8")
+                    with _send_lock:
+                        _ws_frame_send(sock, _resp)
+
+                elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
                     # Execute in thread pool for parallel command handling

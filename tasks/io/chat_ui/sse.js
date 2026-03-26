@@ -38,7 +38,10 @@
       const content = document.createElement('div');
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
       details.appendChild(content);
-      document.getElementById('messages').appendChild(details);
+      const _msgContainer = document.getElementById('messages');
+      const _typingEl = document.getElementById('typing');
+      if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
+      else _msgContainer.appendChild(details);
       thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
       scrollBottom();
     }
@@ -53,9 +56,14 @@
     const aKey = agentKey(agentName || '');
     const te = thinkingElements[aKey];
     if (te) {
-      const elapsed = ((Date.now() - te.startTime) / 1000).toFixed(1);
-      te.summary.textContent = 'Thought for ' + elapsed + 's';
-      te.el.removeAttribute('open');  // collapse
+      const elapsed = (Date.now() - te.startTime) / 1000;
+      // Remove empty thinking blocks — keep all that have content
+      if (!te.text.trim()) {
+        te.el.remove();
+      } else {
+        te.summary.textContent = 'Thought for ' + elapsed.toFixed(1) + 's';
+        te.el.removeAttribute('open');  // collapse
+      }
       delete thinkingElements[aKey];
     }
   }
@@ -89,25 +97,24 @@
     const badge = sourceBadge(src);
     const displayText = s.text.replace(/^\[[^\]]+\]:\s*/, '');
     const shouldScroll = isNearBottom();
-    // Update content area only — preserve action buttons
+    // Update content area only — preserve action buttons and meta
     let contentEl = s.el.querySelector('.msg-content');
     if (!contentEl) {
-      // First update: wrap existing content in a content div
+      // First update: restructure into content + actions + meta
       const actions = s.el.querySelector('.msg-actions');
+      const meta = s.el.querySelector('.msg-meta');
       contentEl = document.createElement('span');
       contentEl.className = 'msg-content';
       s.el.innerHTML = '';
       s.el.appendChild(contentEl);
       if (actions) s.el.appendChild(actions);
-      // Re-add action buttons if missing
-      if (!actions) {
-        s.el.insertAdjacentHTML('beforeend',
+      else s.el.insertAdjacentHTML('beforeend',
           '<span class="msg-actions">'
           + '<button onclick="setReplyTo(this)" title="Reply">\u21A9</button>'
           + '<button onclick="copyMsg(this)" title="Copy">\uD83D\uDCCB</button>'
           + '<button onclick="deleteMsg(this)" title="Delete">\uD83D\uDDD1</button>'
           + '</span>');
-      }
+      if (meta) s.el.appendChild(meta);
     }
     contentEl.innerHTML = badge + renderMarkdown(displayText);
     scrollBottom(shouldScroll);
@@ -126,7 +133,18 @@
       s.el.classList.remove('streaming');
       s.el.classList.add('finalized');
       s.el.dataset.finalizedAgent = agent.toLowerCase();
+      if (data.msg_id) s.el.dataset.msgid = data.msg_id;
       s.lastEl = s.el;
+      // Update metainfo with estimated tokens (real values come in done)
+      if (data.source) {
+        const existingMeta = s.el.querySelector('.msg-meta');
+        const meta = buildMetaLine(data);
+        if (existingMeta && meta) {
+          existingMeta.outerHTML = meta;
+        } else if (meta) {
+          s.el.insertAdjacentHTML('beforeend', meta);
+        }
+      }
       // Reset stream so next tokens create a NEW element
       s.el = null;
       s.text = '';
@@ -139,11 +157,15 @@
     if (!data.msg_id) return;
     // Register msg_id to prevent poll/replay duplicates
     if (typeof _seenMsgIds !== 'undefined') _seenMsgIds.add(data.msg_id);
-    // Find the element by data-msgid and add metadata
+    // Find the element by data-msgid and update metadata (replace if exists)
     const el = document.querySelector('#messages [data-msgid="' + data.msg_id + '"]');
-    if (el && !el.querySelector('.msg-meta')) {
+    if (el) {
       const meta = buildMetaLine(data);
-      if (meta) el.insertAdjacentHTML('beforeend', meta);
+      if (meta) {
+        const existing = el.querySelector('.msg-meta');
+        if (existing) existing.outerHTML = meta;
+        else el.insertAdjacentHTML('beforeend', meta);
+      }
     }
   });
 
@@ -158,7 +180,10 @@
     el.className = 'msg narration';
     el.dataset.finalizedAgent = agent.toLowerCase();
     el.innerHTML = badge + '<em>' + escapeHtml(data.text || '') + '</em>';
-    document.getElementById('messages').appendChild(el);
+    const _narContainer = document.getElementById('messages');
+    const _narTyping = document.getElementById('typing');
+    if (_narTyping) _narContainer.insertBefore(el, _narTyping);
+    else _narContainer.appendChild(el);
     scrollBottom();
   });
 
@@ -479,19 +504,28 @@
     if (s.el && s.el.parentNode) {
       s.el.classList.remove('streaming');
     }
-    // Done does NOT add messages or meta — message_meta handles that.
-    // Done only creates a message if NOTHING was ever streamed (poll wakeup).
+    // Find existing element or create one if nothing was streamed
     let anyExists = !!s.el;
+    let existingEl = s.el;
     if (!anyExists) {
       for (const mid of allIds) {
-        if (mid && document.querySelector('#messages [data-msgid="' + mid + '"]')) {
-          anyExists = true;
-          break;
+        if (mid) {
+          const found = document.querySelector('#messages [data-msgid="' + mid + '"]');
+          if (found) { anyExists = true; existingEl = found; break; }
         }
       }
     }
     if (finalText && !anyExists) {
       addMsg('assistant', finalText, extra);
+    }
+    // Update metadata on existing element (replace estimated with real values)
+    if (existingEl) {
+      const meta = buildMetaLine(extra);
+      if (meta) {
+        const existMeta = existingEl.querySelector('.msg-meta');
+        if (existMeta) existMeta.outerHTML = meta;
+        else existingEl.insertAdjacentHTML('beforeend', meta);
+      }
     }
     clearStream(doneAgent);
     scrollBottom();

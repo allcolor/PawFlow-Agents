@@ -279,41 +279,17 @@ class ToolRelayService(BaseService):
                         conversation_id: str, agent_name: str) -> dict:
         registry = self._get_registry(user_id, conversation_id)
 
-        # Publish tool_call SSE event
-        if conversation_id:
-            try:
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    conversation_id, "tool_call", {
-                        "tool": tool_name,
-                        "arguments": arguments,
-                        "agent_name": agent_name,
-                        "via": "claude-code-mcp",
-                    })
-            except Exception:
-                pass
+        # NO SSE events here — the stream handler (claude_code.py) publishes
+        # tool_call/tool_result events from the Claude Code output stream.
+        # Publishing here would create duplicates.
 
         # Execute
         try:
             result = registry.execute(tool_name, arguments)
-            result_str = str(result) if result else "(no output)"
+            result_str = str(result) if result is not None else "(no output)"
         except Exception as e:
             result_str = f"Error: {e}"
             logger.error("Tool relay execute '%s' failed: %s", tool_name, e)
-
-        # Publish tool_result SSE event
-        if conversation_id:
-            try:
-                from core.conversation_event_bus import ConversationEventBus
-                ConversationEventBus.instance().publish_event(
-                    conversation_id, "tool_result", {
-                        "tool": tool_name,
-                        "result": result_str[:500],
-                        "agent_name": agent_name,
-                        "via": "claude-code-mcp",
-                    })
-            except Exception:
-                pass
 
         return {"type": "result", "request_id": request_id, "data": result_str}
 

@@ -197,7 +197,8 @@ class TerminalRenderer:
             active.append(f"{a} ({wc}w)")
         self._set_status(f"▶ writing: {', '.join(active)}")
 
-    def end_stream(self, agent: str, final_text: str = ""):
+    def end_stream(self, agent: str, final_text: str = "",
+                   model: str = "", tokens_out: int = 0):
         streamed = self._streams.pop(agent, "")
         text = final_text or streamed
         # Only clear status if no more active streams
@@ -212,9 +213,19 @@ class TerminalRenderer:
             except Exception:
                 body = Text(text)
             self.console.print()  # spacing
+            # Subtitle with model/tokens if available
+            subtitle = ""
+            if model or tokens_out:
+                parts = []
+                if model:
+                    parts.append(model)
+                if tokens_out:
+                    parts.append(f"~{tokens_out}\u2193")
+                subtitle = " \u00b7 ".join(parts)
             self.console.print(Panel(
                 body,
                 title=f"[bold {color}]{agent}{svc_info}[/bold {color}]",
+                subtitle=f"[dim]{subtitle}[/dim]" if subtitle else None,
                 title_align="left",
                 border_style=color,
                 padding=(0, 2),
@@ -247,8 +258,18 @@ class TerminalRenderer:
             self._set_status(f"▶ {agent}  ✶ {_random_verb()}...")
 
     def end_thinking(self, agent: str):
-        self._thinking.pop(agent, "")
+        text = self._thinking.pop(agent, "")
         self._set_status("")
+        if text.strip():
+            from rich.markup import escape
+            lines = text.strip().split("\n")
+            preview = "\n".join(lines[:8])
+            if len(lines) > 8:
+                preview += f"\n... ({len(lines) - 8} more lines)"
+            if self.console:
+                self.console.print(f"[dim italic]▼ Thought ({len(lines)} lines)\n{escape(preview)}[/dim italic]")
+            else:
+                print(f"▼ Thought ({len(lines)} lines)\n{preview}")
 
     # ── Tool calls ──
 

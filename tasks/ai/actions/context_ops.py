@@ -241,6 +241,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 for k in list(extras.keys()):
                     if k.startswith("agent_context:") or k == "agent_context":
                         store.set_extra(conv_id, k, None, user_id=user_id)
+                # Manual context modification → invalidate claude-code sessions
+                store.invalidate_claude_sessions(conv_id)
                 results["conversation"] = {
                     "messages_before": len(all_msgs) if all_msgs else 0,
                     "messages_after": target_msg_count,
@@ -319,6 +321,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 agent_name=_compact_agent_name,
             )
             after_tokens = self._estimate_tokens(compacted)
+            # Manual compact → invalidate claude-code sessions
+            store.invalidate_claude_sessions(_compact_conv)
             return {"before": before, "after": len(compacted),
                     "tokens_before": estimated, "tokens_after": after_tokens,
                     "agent": _compact_agent_name or "shared",
@@ -363,6 +367,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     # (write empty replace that vacuum will clean)
                     store.save_agent_context(conv_id, _rb_agent, shared_ctx)
                     logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
+            # Manual context modification → invalidate claude-code sessions
+            store.invalidate_claude_sessions(conv_id)
             return {"before": len(_rb_msgs), "after": len(_rb_msgs),
                     "tokens_after": estimated,
                     "agent": _rb_agent or "shared"}
@@ -397,6 +403,8 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                         store.save_agent_context(conv_id, name, list(_rf_msgs))
             else:
                 _ctx_save(conv_id, list(_rf_msgs), _rf_agent)
+            # Manual context modification → invalidate claude-code sessions
+            store.invalidate_claude_sessions(conv_id)
             return {"action": "full_restore", "before": len(_rf_msgs),
                     "after": len(_rf_msgs), "tokens_after": estimated,
                     "agent": _rf_agent or "shared"}

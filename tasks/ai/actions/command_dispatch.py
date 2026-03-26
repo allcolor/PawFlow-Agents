@@ -295,6 +295,43 @@ HELP: Dict[str, Dict[str, str]] = {
         "aliases": "/usage",
     },
 
+    "/image": {
+        "usage": "/image [@service] prompt [--width N] [--height N] [--style S] [--negative_prompt S]",
+        "short": "Generate an image",
+        "detail": "Generate an image using the configured image service. Use @service to pick a specific service.",
+    },
+    "/video": {
+        "usage": "/video [@service] prompt [--duration N] [--width N] [--height N]",
+        "short": "Generate a video",
+        "detail": "Generate a video using the configured video service. Use @service to pick a specific service.",
+    },
+    "/connect": {
+        "usage": "/connect [@relay_source] /path/to/dir",
+        "short": "Add a filesystem service from a connected relay",
+        "detail": (
+            "Spawns a new relay process on the remote machine for the given directory.\n"
+            "Use @relay to specify which connected relay to use. If omitted, uses the user's default relay."
+        ),
+    },
+    "/disconnect": {
+        "usage": "/disconnect @service",
+        "short": "Disconnect and remove a filesystem service",
+        "detail": "Stops the remote relay process and removes the service.",
+    },
+    "/audio": {
+        "usage": "/audio [@service] prompt [--duration N] [--style S] [--instrumental] [--lyrics TEXT]",
+        "short": "Generate audio/music",
+        "detail": "Generate audio or music using the configured audio service. Use @service to pick a specific service.",
+    },
+    "/claude-code-auth": {
+        "usage": "/claude-code-auth @service_name {credentials JSON}",
+        "short": "Authenticate Claude Code with subscription credentials",
+        "detail": (
+            "Paste the content of ~/.claude/.credentials.json after running `claude auth login` locally.\n"
+            "Admin required for global services. Users can auth their own services."
+        ),
+    },
+
     # ── Secrets & Variables ──
     "/secrets": {
         "usage": "/secrets",
@@ -536,12 +573,32 @@ EFFORT_MAP = {
 
 # ── Command parser ────────────────────────────────────────────────────
 
+import re as _re_cmd
+
+def _extract_at_agent(arg: str, default_agent: str) -> tuple:
+    """Extract @agent from command arguments.
+
+    Returns (agent_name, remaining_arg).
+    @agent can appear anywhere in the arg. If not present, uses default_agent.
+    "ALL" is a special target (broadcast).
+    """
+    m = _re_cmd.search(r'@(\S+)', arg)
+    if m:
+        agent = m.group(1)
+        remaining = (arg[:m.start()] + arg[m.end():]).strip()
+        return agent, remaining
+    return default_agent, arg
+
+
 def _parse_command(text: str, conversation_id: str, user_id: str,
                    agent_name: str = "") -> Optional[Dict[str, Any]]:
     """Parse a /command text into an action body dict.
 
     Returns None if the command is not recognized or is client-only.
     Returns {"_client_only": True, ...} for commands handled client-side.
+
+    Convention: @agent in any argument targets that agent.
+    If no @agent, uses the currently selected agent.
     """
     text = text.strip()
     if not text.startswith("/"):
@@ -585,31 +642,26 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     # ── Context ──
     if cmd == "/compact":
-        # Parse: /compact [agent] [-- instructions]
+        # Parse: /compact [@agent] [-- instructions]
+        agent, rest = _extract_at_agent(arg, agent_name)
         instructions = ""
-        agent = agent_name
-        if "--" in arg:
-            before_dash, instructions = arg.split("--", 1)
-            agent = before_dash.strip() or agent_name
+        if "--" in rest:
+            _, instructions = rest.split("--", 1)
             instructions = instructions.strip()
-        elif arg.strip():
-            agent = arg.strip()
         return {"action": "compact", "agent_name": agent,
                 "instructions": instructions, **base}
 
     if cmd == "/context":
-        return {"action": "view_context", "agent_name": arg.strip() or agent_name,
-                **base}
+        agent, _ = _extract_at_agent(arg, agent_name)
+        return {"action": "view_context", "agent_name": agent, **base}
 
     if cmd == "/model":
         return {"action": "model", "model": arg.strip(), "agent": agent_name,
                 **base}
 
     if cmd in ("/llm", "/set_llm_service"):
-        p = arg.split(None, 1)
-        svc = p[0] if p else ""
-        agt = p[1] if len(p) > 1 else agent_name
-        return {"action": "set_llm_service", "service": svc, "agent": agt,
+        agent, svc = _extract_at_agent(arg, agent_name)
+        return {"action": "set_llm_service", "service": svc.strip(), "agent": agent,
                 **base}
 
     if cmd == "/effort":
@@ -629,12 +681,12 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "set_fast", "enabled": True, "model": val, **base}
 
     if cmd == "/rebuild":
-        return {"action": "rebuild", "agent_name": arg.strip() or agent_name,
-                **base}
+        agt, _ = _extract_at_agent(arg, agent_name)
+        return {"action": "rebuild", "agent_name": agt, **base}
 
     if cmd == "/rebuild-full":
-        return {"action": "rebuild_full", "agent_name": arg.strip() or agent_name,
-                **base}
+        agt, _ = _extract_at_agent(arg, agent_name)
+        return {"action": "rebuild_full", "agent_name": agt, **base}
 
     if cmd in ("/restart", "/restart_from"):
         p = arg.split()
@@ -652,14 +704,11 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return {"action": "rewind", "checkpoint": arg.strip(), **base}
 
     if cmd == "/summary":
-        p = arg.split()
+        agt, rest = _extract_at_agent(arg, agent_name)
         tokens = 500
-        agt = agent_name
-        for part in p:
+        for part in rest.split():
             if part.isdigit():
                 tokens = int(part)
-            else:
-                agt = part
         return {"action": "resume_conversation", "max_tokens": tokens,
                 "agent_name": agt, **base}
 
@@ -668,38 +717,44 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return _parse_agent_command(arg, base, agent_name)
 
     if cmd in ("/msg", "/message"):
-        p = arg.split(None, 1)
-        target = p[0] if p else ""
-        message = p[1] if len(p) > 1 else ""
+        target, message = _extract_at_agent(arg, agent_name)
         if target.upper() == "ALL":
             return {"action": "broadcast", "message": message, **base}
         return {"action": "agent_msg", "target_agent": target,
                 "message": message, **base}
 
     if cmd == "/btw":
-        p = arg.split(None, 1)
-        target = p[0] if p else ""
-        question = p[1] if len(p) > 1 else ""
+        target, question = _extract_at_agent(arg, agent_name)
         return {"action": "btw", "agent_name": target, "question": question,
                 **base}
 
     if cmd == "/stop":
         force = "-f" in arg
-        agt = arg.replace("-f", "").strip() or agent_name
+        _stop_arg = arg.replace("-f", "").strip()
+        agt, _ = _extract_at_agent(_stop_arg, agent_name)
         if force:
             return {"action": "force_stop", "agent_name": agt, **base}
         return {"action": "cancel_agent", "agent_name": agt, **base}
 
     if cmd == "/resume":
-        return {"action": "resume_agent", "agent_name": arg.strip() or agent_name,
-                **base}
+        agt, _ = _extract_at_agent(arg, agent_name)
+        return {"action": "resume_agent", "agent_name": agt, **base}
 
     if cmd == "/setname":
-        p = arg.split(None, 1)
-        real = p[0] if p else ""
-        nick = p[1] if len(p) > 1 else ""
-        return {"action": "set_nickname", "agent_name": real, "nickname": nick,
+        real, nick = _extract_at_agent(arg, agent_name)
+        return {"action": "set_nickname", "agent_name": real, "nickname": nick.strip(),
                 **base}
+
+    # ── Filesystem relay ──
+    if cmd == "/connect":
+        # /connect @relay_source /path/to/dir — or just /connect /path (uses default relay)
+        svc, path = _extract_at_agent(arg, "")
+        return {"action": "relay_connect", "relay_source": svc,
+                "path": path.strip(), **base}
+
+    if cmd == "/disconnect":
+        svc, _ = _extract_at_agent(arg, "")
+        return {"action": "relay_disconnect", "service_id": svc, **base}
 
     # ── Resources ──
     if cmd == "/resources":
@@ -731,11 +786,61 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
                     **base}
         return {"action": "list_prompts", **base}
 
+    if cmd in ("/image", "/video", "/audio"):
+        # /image [@service] prompt text [--param value ...]
+        # /video [@service] prompt text [--param value ...]
+        # /audio [@service] prompt text [--param value ...]
+        _media_map = {"/image": "generate_image", "/video": "generate_video", "/audio": "generate_audio"}
+        tool_name = _media_map[cmd]
+        svc, rest = _extract_at_agent(arg, "")  # @service, not @agent
+        # Parse --key value params from the rest (supports multiline prompts)
+        params = {}
+        # Split on " --" or "\n--" to separate prompt from params
+        import re as _re_media
+        parts = _re_media.split(r'(?:^|\s)--', rest, maxsplit=0)
+        params["prompt"] = parts[0].strip()
+        for part in parts[1:]:
+            kv = part.split(None, 1)
+            if len(kv) == 2:
+                params[kv[0]] = kv[1].strip().strip('"').strip("'")
+            elif kv:
+                params[kv[0]] = "true"
+        # Convert numeric params
+        for _nk in ("width", "height", "num_inference_steps", "duration"):
+            if _nk in params:
+                try:
+                    params[_nk] = int(params[_nk])
+                except ValueError:
+                    pass
+        for _fk in ("guidance_scale",):
+            if _fk in params:
+                try:
+                    params[_fk] = float(params[_fk])
+                except ValueError:
+                    pass
+        # Convert boolean params
+        for _bk in ("instrumental",):
+            if _bk in params:
+                params[_bk] = params[_bk].lower() in ("true", "1", "yes", "")
+        if svc:
+            params["_service"] = svc
+        # Dispatch as call_tool — same path as /call
+        return {"action": "call_tool", "tool_name": tool_name,
+                "arguments": params, **base}
+
+    if cmd == "/claude-code-auth":
+        # /claude-code-auth @service_name {credentials JSON}
+        # Extract service name via @, rest is the credentials JSON
+        svc_name, creds = _extract_at_agent(arg, "")
+        return {"action": "claude_code_auth", "service_id": svc_name,
+                "credentials": creds.strip(), **base}
+
     if cmd == "/memory":
         return _parse_memory_command(arg, base, agent_name)
 
     if cmd in ("/cost", "/usage"):
-        return {"action": "cost", "agent_name": arg.strip() or "", **base}
+        agt, _ = _extract_at_agent(arg, "")
+        return {"action": "cost", "agent_name": agt, **base}
 
     # ── Secrets & Variables ──
     if cmd in ("/secrets", "/list-secrets"):
@@ -872,46 +977,42 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 # ── Sub-parsers ───────────────────────────────────────────────────────
 
 def _parse_agent_command(arg: str, base: dict, agent_name: str) -> dict:
-    """Parse /agent subcommands."""
-    p = arg.split(None, 2)
-    subcmd = p[0] if p else "list"
+    """Parse /agent subcommands. @agent convention for all agent params."""
+    p = arg.split(None, 1)
+    subcmd = (p[0] if p else "list").lower()
+    rest = p[1] if len(p) > 1 else ""
 
     if subcmd == "list":
         return {"action": "list_agents", **base}
     if subcmd == "create":
         return {"action": "create_agent_interactive", **base}
     if subcmd == "select":
-        _name = p[1] if len(p) > 1 else ""
-        return {"action": "select_agent", "agent_name": _name, "name": _name,
-                **base}
+        agt, _ = _extract_at_agent(rest, "")
+        return {"action": "select_agent", "agent_name": agt, "name": agt, **base}
     if subcmd == "delete":
-        return {"action": "delete_agent", "agent_name": p[1] if len(p) > 1 else "",
-                **base}
+        agt, _ = _extract_at_agent(rest, "")
+        return {"action": "delete_agent", "agent_name": agt, **base}
     if subcmd == "msg":
-        target = p[1] if len(p) > 1 else ""
-        msg = p[2] if len(p) > 2 else ""
+        target, msg = _extract_at_agent(rest, agent_name)
         if target.upper() == "ALL":
             return {"action": "broadcast", "message": msg, **base}
-        return {"action": "agent_msg", "target_agent": target, "message": msg,
-                **base}
+        return {"action": "agent_msg", "target_agent": target, "message": msg, **base}
     if subcmd == "interrupt":
-        return {"action": "cancel_agent", "agent_name": p[1] if len(p) > 1 else "",
-                **base}
+        agt, _ = _extract_at_agent(rest, agent_name)
+        return {"action": "cancel_agent", "agent_name": agt, **base}
     if subcmd == "btw":
-        target = p[1] if len(p) > 1 else ""
-        question = p[2] if len(p) > 2 else ""
-        return {"action": "btw", "agent_name": target, "question": question,
-                **base}
+        target, question = _extract_at_agent(rest, agent_name)
+        return {"action": "btw", "agent_name": target, "question": question, **base}
     if subcmd == "resume":
-        return {"action": "resume_agent",
-                "agent_name": p[1] if len(p) > 1 else agent_name, **base}
+        agt, _ = _extract_at_agent(rest, agent_name)
+        return {"action": "resume_agent", "agent_name": agt, **base}
     if subcmd == "setname":
-        real = p[1] if len(p) > 1 else ""
-        nick = p[2] if len(p) > 2 else ""
-        return {"action": "set_nickname", "agent_name": real, "nickname": nick,
+        real, nick = _extract_at_agent(rest, agent_name)
+        return {"action": "set_nickname", "agent_name": real, "nickname": nick.strip(),
                 **base}
-    # Unknown subcommand — treat as select
-    return {"action": "select_agent", "agent_name": subcmd, **base}
+    # Unknown subcommand — treat as select (supports @agent or plain name)
+    agt, _ = _extract_at_agent(arg, subcmd)
+    return {"action": "select_agent", "agent_name": agt, **base}
 
 
 def _parse_skill_command(arg: str, base: dict) -> dict:

@@ -476,6 +476,18 @@ class ConversationStore:
                         ttl: int = 0, user_id: str = "", status: str = ""):
         if not new_messages:
             return
+        # Dedup: skip messages whose msg_id already exists in transcript
+        if self.exists(cid):
+            existing_ids = self._get_transcript_msg_ids(cid)
+            deduped = []
+            for m in new_messages:
+                mid = m.get("msg_id")
+                if mid and mid in existing_ids:
+                    continue  # already in transcript
+                deduped.append(m)
+            if not deduped:
+                return
+            new_messages = deduped
         now = time.time()
         lines = []
         if not self.exists(cid):
@@ -491,6 +503,18 @@ class ConversationStore:
         if status:
             ops.append({"op": "status", "status": status})
         self._commit(cid, ops)
+
+    def _get_transcript_msg_ids(self, cid: str) -> set:
+        """Get all msg_ids from transcript lines (cached via _read)."""
+        def _scan(lines):
+            ids = set()
+            for line in lines:
+                if line.get("t") == "msg":
+                    mid = line.get("msg_id")
+                    if mid:
+                        ids.add(mid)
+            return ids
+        return self._read(cid, _scan) or set()
 
     # ── Context ops ───────────────────────────────────────────────────
 
@@ -648,6 +672,18 @@ class ConversationStore:
         self._commit(cid, [{"op": "extra", "key": key, "value": value}])
         return True
 
+    def invalidate_claude_sessions(self, cid: str) -> None:
+        """Clear all claude-code session IDs for this conversation.
+
+        Called when the user manually modifies context (delete message,
+        manual compact, etc.). Forces a fresh session on next message.
+        """
+        extras = self.get_extras(cid) or {}
+        for key in list(extras.keys()):
+            if key.startswith("claude_session:"):
+                self.set_extra(cid, key, "")
+                logger.info("Invalidated claude session '%s' for conv %s", key, cid[:8])
+
     # ── Delete ────────────────────────────────────────────────────────
 
     def delete(self, cid: str, user_id: str = "") -> bool:
@@ -736,6 +772,8 @@ class ConversationStore:
                 self._cache.pop(cid, None)
         if removed:
             self._load_cache(cid)
+            # Manual context modification → invalidate claude-code sessions
+            self.invalidate_claude_sessions(cid)
         return removed
 
     # ── List ──────────────────────────────────────────────────────────

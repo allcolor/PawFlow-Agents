@@ -47,7 +47,7 @@ class AgentToolConfigMixin:
             CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
             FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler,
-            ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler,
+            ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler, AudioGenerationHandler,
             LinkIdentityHandler, LocalFilesHandler, ManageResourceHandler,
             NotifyUserHandler,
             RecallHandler, RememberHandler, RemoteExecutorHandler,
@@ -106,10 +106,14 @@ class AgentToolConfigMixin:
                 h.set_service_resolver(self._make_video_resolver(
                     user_id, conversation_id, agent_name,
                 ))
-                if conversation_id or user_id:
-                    h.set_service_resolver(self._make_video_resolver(
-                        user_id, conversation_id, agent_name,
-                    ))
+            elif isinstance(h, AudioGenerationHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+                if user_id:
+                    h.set_user_id(user_id)
+                h.set_service_resolver(self._make_audio_resolver(
+                    user_id, conversation_id, agent_name,
+                ))
             elif isinstance(h, ScheduleRecheckHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)

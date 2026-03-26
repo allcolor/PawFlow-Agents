@@ -827,6 +827,11 @@ class LLMClaudeCodeMixin:
                     break
 
         finally:
+            # Flush any pending turn (ensures last text is persisted even if interrupted)
+            try:
+                _flush_turn()
+            except Exception:
+                pass
             self._cleanup_proc(proc)
             _stderr = ""
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)

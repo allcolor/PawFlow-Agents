@@ -123,6 +123,25 @@ class AgentCoreMixin:
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
             messages.append(msg)
             new_messages.append(msg)
+            # Persist immediately — visible = persisted (no exceptions)
+            if use_conv_store and conversation_id and msg.role in ("assistant", "tool"):
+                try:
+                    from core.conversation_store import ConversationStore
+                    _store_msg = {
+                        "role": msg.role, "content": msg.content,
+                        "source": msg.source,
+                        "msg_id": getattr(msg, "msg_id", None),
+                        "tool_call_id": getattr(msg, "tool_call_id", None),
+                    }
+                    if msg.tool_calls:
+                        _store_msg["tool_calls"] = [
+                            {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                            for tc in msg.tool_calls
+                        ]
+                    ConversationStore.instance().append_messages(
+                        conversation_id, [_store_msg], user_id=user_id)
+                except Exception:
+                    pass
             # Publish per-message metadata (model, tokens, service) so client
             # can attach badge + info to the correct element by msg_id
             if msg.role == "assistant" and msg.source and emitter.is_streaming:

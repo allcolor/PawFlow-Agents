@@ -76,11 +76,6 @@
     const src = data.source || {type: 'agent', name: agent};
     if (!s.el) {
       s.el = addMsg('assistant', '', {source: src, msg_id: s.msg_id});
-      // Apply subagent class if not main assistant
-      const srcName = (src.name || '').toLowerCase();
-      if (srcName) {
-        s.el.className = 'msg subagent';
-      }
       // Tag with agent name and msg_id for done/meta lookup
       if (s.el) {
         s.el.dataset.agent = (agent || '').toLowerCase();

@@ -203,7 +203,7 @@ class AgentSerializationMixin:
                     "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
                 })
-            elif role in ("tool_call", "tool_result", "narration"):
+            elif role in ("tool_call", "tool_result", "narration", "thinking"):
                 # display_only messages from claude-code turns — pass through as-is
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
                          "display_only": True}

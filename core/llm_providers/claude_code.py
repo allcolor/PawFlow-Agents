@@ -758,8 +758,8 @@ class LLMClaudeCodeMixin:
                             thinking = block.get("thinking", "")
                             if thinking:
                                 _turn_thinking = thinking
-                                _pub("narration", {
-                                    "text": thinking[:300],
+                                _pub("thinking_content", {
+                                    "text": thinking,
                                     "agent_name": agent_name,
                                 })
                     # Update turn count on status

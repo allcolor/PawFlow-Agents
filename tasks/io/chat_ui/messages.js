@@ -138,8 +138,22 @@ function addMsg(role, text, extra) {
     } else {
       el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
     }
+  } else if (role === 'thinking') {
+    // Collapsible thinking block (same as SSE thinking_content)
+    el.className = 'msg thinking-block';
+    el.style.cssText = 'margin:4px 0;border-left:3px solid #6b7280;padding:4px 8px;opacity:0.7;';
+    const details = document.createElement('details');
+    const summary = document.createElement('summary');
+    summary.style.cssText = 'cursor:pointer;font-size:12px;color:#6b7280;user-select:none;';
+    summary.textContent = 'Thought';
+    details.appendChild(summary);
+    const content = document.createElement('div');
+    content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
+    content.textContent = text;
+    details.appendChild(content);
+    el.innerHTML = '';
+    el.appendChild(details);
   } else if (role === 'narration') {
-    // Same rendering as SSE narration event (italic, ephemeral look)
     const srcN = (extra && extra.source) ? displayAgentName(extra.source.name || '') : '';
     const src = extra && extra.source ? extra.source : {type: 'agent', name: srcN};
     el.innerHTML = sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';

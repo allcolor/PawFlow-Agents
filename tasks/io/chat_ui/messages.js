@@ -114,29 +114,61 @@ function addMsg(role, text, extra) {
 
   if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
-  } else if (role === 'tool_call') {
-    // Same rendering as SSE tool_call event
-    const toolName = (extra && extra.tool_name) || text || '?';
-    const toolArgs = (extra && extra.tool_args) || {};
-    const srcLabel = (extra && extra.source) ? displayAgentName((extra.source.name || ''))
-      + (extra.source.llm_service ? ' via ' + extra.source.llm_service : '') : '';
-    let argPreview = '';
-    const argKeys = Object.keys(toolArgs);
-    if (argKeys.length > 0) {
-      argPreview = argKeys.map(k => {
-        const v = typeof toolArgs[k] === 'string' ? toolArgs[k].substring(0, 60) : JSON.stringify(toolArgs[k]).substring(0, 60);
-        return k + '=' + v;
-      }).join(', ');
-      if (argPreview.length > 120) argPreview = argPreview.substring(0, 120) + '...';
-    }
-    el.innerHTML = '\u{1F527} [' + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName)
-      + (argPreview ? '(' + escapeHtml(argPreview) + ')' : '');
-  } else if (role === 'tool' || role === 'tool_result') {
-    const diffHtml = _renderDiff(text);
-    if (diffHtml) {
-      el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 </span>' + diffHtml;
+  } else if (role === 'tool_call' || role === 'tool') {
+    // Unified tool_call rendering (used by BOTH SSE live AND transcript reload)
+    const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
+    const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
+    const srcAgent = (extra && extra.source) ? (extra.source.name || extra.agent_name || '') : (extra && extra.agent_name || '');
+    const srcSvc = (extra && extra.source) ? (extra.source.llm_service || '') : (extra && extra.llm_service || '');
+    const srcLabel = displayAgentName(srcAgent) + (srcSvc ? ' via ' + srcSvc : '');
+    // Parse args if string
+    let args = toolArgs;
+    if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+
+    if (toolName === 'spawn_agents' && args && args.tasks) {
+      const lines = args.tasks.map(task => {
+        const dst = displayAgentName(task.agent || '?');
+        const preview = (task.message || '').substring(0, 80);
+        return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
+      });
+      el.innerHTML = escapeHtml(lines.join('\n'));
+    } else if (toolName === 'filesystem' && args.action === 'edit' && args.path) {
+      el.innerHTML = _renderToolCallEdit(srcLabel, args);
     } else {
-      el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u21b3 ' + escapeHtml(text) + '</span>';
+      const argKeys = typeof args === 'object' && args ? Object.keys(args) : [];
+      let argPreview = '';
+      if (argKeys.length > 0) {
+        argPreview = argKeys.map(k => {
+          const v = typeof args[k] === 'string' ? args[k].substring(0, 60) : JSON.stringify(args[k]).substring(0, 60);
+          return k + '=' + v;
+        }).join(', ');
+        if (argPreview.length > 120) argPreview = argPreview.substring(0, 120) + '...';
+      }
+      el.innerHTML = '\u{1F527} [' + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName)
+        + (argPreview ? '(' + escapeHtml(argPreview) + ')' : '');
+    }
+  } else if (role === 'tool_result') {
+    // Unified tool_result rendering
+    const toolName = (extra && extra.tool_name) || (extra && extra.tool) || '';
+    const srcAgent = (extra && extra.source) ? (extra.source.name || '') : (extra && extra.agent_name || '');
+    const srcSvc = (extra && extra.source) ? (extra.source.llm_service || '') : (extra && extra.llm_service || '');
+    const srcLabel = displayAgentName(srcAgent) + (srcSvc ? ' via ' + srcSvc : '');
+    const resultText = text || '';
+    // Collapsible if long
+    if (resultText.length > 200) {
+      const firstLine = resultText.split('\n')[0].substring(0, 100);
+      el.innerHTML = '<details><summary style="color:#4ecdc4;font-size:11px;cursor:pointer">\u2705 ['
+        + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName || '') + ': ' + escapeHtml(firstLine)
+        + '</summary><pre style="font-size:11px;margin:4px 0 0 0;max-height:300px;overflow-y:auto"><code>'
+        + escapeHtml(resultText) + '</code></pre></details>';
+    } else {
+      const diffHtml = _renderDiff(resultText);
+      if (diffHtml) {
+        el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 </span>' + diffHtml;
+      } else {
+        el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 [' + escapeHtml(srcLabel) + '] '
+          + escapeHtml(toolName ? toolName + ': ' : '') + escapeHtml(resultText) + '</span>';
+      }
     }
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -204,6 +236,49 @@ function _synLine(code, lang) {
   if (!lang || typeof hljs === 'undefined') return escapeHtml(code);
   try { return hljs.highlight(code, {language: lang, ignoreIllegals: true}).value; }
   catch(e) { return escapeHtml(code); }
+}
+
+function _renderToolCallEdit(srcLabel, args) {
+  const fpath = args.path || '?';
+  const oldStr = args.old_string || '';
+  const newStr = args.new_string || '';
+  const startLn = args.start_line || '';
+  const endLn = args.end_line || '';
+  let editHtml = '<span style="color:#4ecdc4;font-size:11px">\u270E [' + escapeHtml(srcLabel) + '] Edit(' + escapeHtml(fpath) + ')</span>';
+  if (startLn && endLn) {
+    editHtml += '<span style="color:#8b949e;font-size:11px"> lines ' + startLn + '-' + endLn + '</span>';
+  }
+  const _ext = fpath.split('.').pop().toLowerCase();
+  const _langMap = {js:'javascript',ts:'typescript',py:'python',rb:'ruby',rs:'rust',go:'go',java:'java',cpp:'cpp',c:'c',cs:'csharp',php:'php',sh:'bash',bash:'bash',json:'json',html:'xml',xml:'xml',css:'css',sql:'sql',yaml:'yaml',yml:'yaml',md:'markdown',jsx:'javascript',tsx:'typescript',vue:'xml',svelte:'xml'};
+  const _lang = _langMap[_ext] || '';
+  const oldLines = oldStr ? oldStr.split('\n') : [];
+  const newLines = newStr ? newStr.split('\n') : [];
+  let cpx = 0;
+  while (cpx < oldLines.length && cpx < newLines.length && oldLines[cpx] === newLines[cpx]) cpx++;
+  let csx = 0;
+  while (csx < (oldLines.length - cpx) && csx < (newLines.length - cpx) && oldLines[oldLines.length - 1 - csx] === newLines[newLines.length - 1 - csx]) csx++;
+  const diffLines = [];
+  const ctxPrefix = oldLines.slice(Math.max(0, cpx - 2), cpx);
+  ctxPrefix.forEach(l => { diffLines.push('<div><span style="color:#8b949e;user-select:none">  </span>' + _synLine(l, _lang) + '</div>'); });
+  const removed = oldLines.slice(cpx, oldLines.length - csx);
+  removed.slice(0, 6).forEach(l => { diffLines.push('<div style="background:rgba(248,81,73,0.15)"><span style="color:#f85149;user-select:none">- </span>' + _synLine(l, _lang) + '</div>'); });
+  if (removed.length > 6) diffLines.push('<div style="color:#8b949e">  ... +' + (removed.length - 6) + ' lines removed</div>');
+  const added = newLines.slice(cpx, newLines.length - csx);
+  added.slice(0, 6).forEach(l => { diffLines.push('<div style="background:rgba(63,185,80,0.15)"><span style="color:#3fb950;user-select:none">+ </span>' + _synLine(l, _lang) + '</div>'); });
+  if (added.length > 6) diffLines.push('<div style="color:#8b949e">  ... +' + (added.length - 6) + ' lines added</div>');
+  const ctxSuffix = oldLines.slice(oldLines.length - csx, oldLines.length - csx + 2);
+  ctxSuffix.forEach(l => { diffLines.push('<div><span style="color:#8b949e;user-select:none">  </span>' + _synLine(l, _lang) + '</div>'); });
+  const _addedCount = added.length, _removedCount = removed.length;
+  if (_addedCount || _removedCount) {
+    const parts = [];
+    if (_addedCount) parts.push(_addedCount + ' added');
+    if (_removedCount) parts.push(_removedCount + ' removed');
+    editHtml += '<span style="color:#8b949e;font-size:10px;margin-left:8px">(' + parts.join(', ') + ')</span>';
+  }
+  if (diffLines.length > 0) {
+    editHtml += '<pre class="diff-output' + (_lang ? ' language-' + _lang : '') + '" style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('') + '</pre>';
+  }
+  return editHtml;
 }
 
 function _renderDiff(text, filePath) {

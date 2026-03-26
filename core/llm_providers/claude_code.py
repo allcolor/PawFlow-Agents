@@ -474,16 +474,17 @@ class LLMClaudeCodeMixin:
     # ── Streaming ───────────────────────────────────────────────────
 
     @staticmethod
-    def _externalize_attachments(messages):
-        """Replace inline images/attachments with FileStore links IN-PLACE.
+    def _extract_images(messages) -> list:
+        """Extract images from messages and return as Anthropic content blocks.
 
-        Modifies message content blocks: replaces image blocks with text
-        links. Must run BEFORE _serialize_messages_for_cli to prevent
-        base64 data from bloating the prompt.
+        Removes image blocks from messages (so they don't bloat the text
+        prompt) and returns them as content blocks for the stream-json
+        message. This enables native vision in Claude Code.
+
+        Returns list of {"type": "image", "source": {"type": "base64", ...}}
         """
         import base64 as _b64
-        from core.file_store import FileStore
-        store = FileStore.instance()
+        image_blocks = []
 
         for m in messages:
             if not isinstance(m.content, list):
@@ -501,46 +502,33 @@ class LLMClaudeCodeMixin:
                         try:
                             header, data_b64 = url.split(",", 1)
                             mime = header.split(":")[1].split(";")[0]
-                            data = _b64.b64decode(data_b64)
-                            ext = mime.split("/")[-1].split("+")[0]
-                            fname = f"image.{ext}"
-                            file_id = store.store(fname, data, content_type=mime)
-                            new_content.append({
-                                "type": "text",
-                                "text": (f"[Image attached: fs://filestore/{file_id}/{fname} "
-                                         f"({len(data)} bytes) — use show_file tool with "
-                                         f"file_id='{file_id}' to view, or filesystem "
-                                         f"read_file with path=fs://filestore/{file_id}/{fname}]"),
+                            image_blocks.append({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": mime,
+                                    "data": data_b64,
+                                },
                             })
-                            logger.info("Externalized image: %s (%d bytes)", file_id, len(data))
+                            logger.info("Extracted image for vision: %s (%d chars b64)",
+                                        mime, len(data_b64))
                             continue
                         except Exception as e:
-                            logger.warning("Failed to externalize image: %s", e)
+                            logger.warning("Failed to extract image: %s", e)
 
                 elif btype == "image":
                     source = block.get("source", {})
                     if source.get("type") == "base64":
-                        try:
-                            data = _b64.b64decode(source.get("data", ""))
-                            mime = source.get("media_type", "image/png")
-                            ext = mime.split("/")[-1].split("+")[0]
-                            fname = f"image.{ext}"
-                            file_id = store.store(fname, data, content_type=mime)
-                            new_content.append({
-                                "type": "text",
-                                "text": (f"[Image attached: fs://filestore/{file_id}/{fname} "
-                                         f"({len(data)} bytes) — use show_file tool with "
-                                         f"file_id='{file_id}' to view, or filesystem "
-                                         f"read_file with path=fs://filestore/{file_id}/{fname}]"),
-                            })
-                            logger.info("Externalized image: %s (%d bytes)", file_id, len(data))
-                            continue
-                        except Exception as e:
-                            logger.warning("Failed to externalize image: %s", e)
+                        image_blocks.append(block)
+                        logger.info("Extracted image for vision: %s",
+                                    source.get("media_type", "?"))
+                        continue
 
                 new_content.append(block)
 
             m.content = new_content
+
+        return image_blocks
 
     @staticmethod
     def _build_stdin_with_system(system_prompt: str, user_text: str) -> str:
@@ -569,8 +557,8 @@ class LLMClaudeCodeMixin:
         """
         from core.llm_client import LLMClientError, LLMResponse
 
-        # Replace inline images with FileStore links BEFORE serialization
-        self._externalize_attachments(messages)
+        # Extract images BEFORE serialization (they'll be sent as content blocks)
+        image_blocks = self._extract_images(messages)
 
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
 
@@ -622,10 +610,18 @@ class LLMClaudeCodeMixin:
 
         # Send initial message as stream-json (keep stdin open for preempt/interrupt)
         try:
-            msg = json.dumps({
-                "type": "user",
-                "message": {"role": "user", "content": initial_text},
-            })
+            if image_blocks:
+                # Multipart: text + images as content array (enables vision)
+                content = [{"type": "text", "text": initial_text}] + image_blocks
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": content},
+                })
+            else:
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": initial_text},
+                })
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()
         except BrokenPipeError:

@@ -723,15 +723,11 @@ class LLMClaudeCodeMixin:
                     msg = event.get("message", {})
                     msg_id = msg.get("id", "")
 
-                    # Claude Code sends incremental updates for the same message
-                    # (same msg_id, growing content array). Only flush + increment
-                    # when we see a genuinely NEW message.
-                    if msg_id and msg_id == _current_msg_id:
-                        # Same message — REPLACE accumulators (not append)
-                        _turn_text_parts.clear()
-                        _turn_tool_calls.clear()
-                        _turn_thinking = ""
-                    else:
+                    # Claude Code sends INCREMENTAL updates for the same message:
+                    # event 1: [thinking], event 2: [text], event 3: [tool_use]
+                    # Each event has ONLY the new block, not all blocks.
+                    # Same msg_id = same turn → just append (don't clear).
+                    if msg_id and msg_id != _current_msg_id:
                         # New message — flush previous turn
                         if _turn_count > 0:
                             _flush_turn()

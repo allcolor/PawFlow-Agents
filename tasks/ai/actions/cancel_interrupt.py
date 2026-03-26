@@ -27,6 +27,11 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         self.cancel_agent(conv_id, agent_name=agent_name)
+        # Force kill Claude Code subprocess
+        if hasattr(self, '_active_claude_client'):
+            client = self._active_claude_client.get(conv_id)
+            if client and hasattr(client, 'cancel_claude_code'):
+                client.cancel_claude_code(force=body.get("force", False))
         # Force mode: kill the thread and force UI cleanup
         if body.get("force"):
             # Kill agent threads for this conversation

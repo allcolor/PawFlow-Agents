@@ -523,7 +523,7 @@ class AgentLoopTask(
         except Exception:
             pass
         # Kill any running Claude Code subprocess for this conversation
-        _force = body.get("force", False) if isinstance(body, dict) else False
+        _force = False  # force stop handled separately by FORCE_STOP action
         if hasattr(self, '_active_claude_client'):
             client = self._active_claude_client.get(conversation_id)
             if client and hasattr(client, 'cancel_claude_code'):

@@ -545,7 +545,15 @@ function connectSSE(cid) {
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
-      // Belt-and-suspenders: if no more active interactions, clear timer
+      hideTyping();
+      // Force-clean all active interactions for this agent
+      if (doneAgent) {
+        trackAgentDone(doneAgent);
+      } else {
+        // No agent name — clean everything
+        activeInteractions = {};
+        updateActivePanel();
+      }
       if (Object.keys(activeInteractions).length === 0 && activeTimer) {
         clearInterval(activeTimer); activeTimer = null;
       }

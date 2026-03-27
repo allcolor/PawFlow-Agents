@@ -349,9 +349,9 @@ class LLMClaudeCodeMixin:
             "-e", f"PAWFLOW_HOST={host_addr}",
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", f"host.docker.internal:host-gateway",
-            # Security — NOT read-only: Claude Code + Node.js need to write
-            # to ~/.npm, ~/.cache, /workspace (mounted). Isolation is via
-            # network restriction and no-new-privileges.
+            # Run as non-root: Claude Code refuses --dangerously-skip-permissions as root
+            "--user", "1000:1000",
+            # Security
             "--tmpfs", "/tmp:rw,nosuid,size=256m",
             "--security-opt", "no-new-privileges",
             image,

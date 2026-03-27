@@ -13,12 +13,15 @@ COPY mcp_bridge.py /opt/pawflow/mcp_bridge.py
 COPY pawflow.py /opt/pawflow/pawflow.py
 ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
 
+# Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
+RUN groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -m -s /bin/bash pawflow
+
 # Working directory for agent sessions
-RUN mkdir -p /workspace && chmod 777 /workspace
+RUN mkdir -p /workspace && chown 1000:1000 /workspace
 WORKDIR /workspace
 
 # Claude Code expects HOME for config
-ENV HOME=/workspace
+ENV HOME=/home/pawflow
 ENV CLAUDE_CONFIG_DIR=/workspace
 
 # No interactive prompts

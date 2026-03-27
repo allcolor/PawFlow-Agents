@@ -242,7 +242,7 @@ class AgentCoreMixin:
         emitter.on_loop_start(ctx)
         _flush()
         _summ = ctx.get("summarizer", (None, 0, ""))
-        compact_client = _summ[0] if _summ[0] else (ctx.get("default_client") or client)
+        compact_client = _summ[0] if _summ[0] else client
         _compact_svc_id = _summ[2] if len(_summ) > 2 else ctx.get("active_llm_service", "")
 
         # Note: post-response compact is done by auto-compact on load

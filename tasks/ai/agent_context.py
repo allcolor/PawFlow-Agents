@@ -283,14 +283,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             except Exception as e:
                 logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
         if not _active_agent_name and use_conv_store and conversation_id:
-            try:
-                from core.resource_store import ResourceStore
-                _uid_fb = flowfile.get_attribute("http.auth.principal") or "anonymous"
-                _fb = ResourceStore.instance().list_all("agent", _uid_fb)
-                _active_agent_name = _fb[0]["name"] if _fb else "assistant"
-                logger.warning("Recovered _active_agent_name to '%s'", _active_agent_name)
-            except Exception:
-                _active_agent_name = "assistant"
+            raise ValueError(
+                "No agent configured for this conversation. "
+                "Select an agent before sending a message.")
 
         # Provider detection (now with the correct resolved service)
         _is_claude_code = (
@@ -958,7 +953,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "active_llm_service": _active_llm_service,
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
             "resolved_svc": resolved_svc,
-            "default_client": self._get_default_client(user_id),
             "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
@@ -987,8 +981,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             })
             _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
             if not _sc:
-                _sc = self._get_default_client(user_id)
-                _sc_svc = self._resolve_service_param("llm_service", user_id) or ""
+                raise RuntimeError(
+                    "No summarizer_service configured. Cannot compact context. "
+                    "Set summarizer_service in agent or flow config.")
             if _sc:
                 _before = len(messages)
                 messages = self._compact_post_response(

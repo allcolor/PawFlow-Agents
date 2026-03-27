@@ -305,6 +305,8 @@ class StreamEmitter(AgentEmitter):
         # Narration: ONLY if LLM said absolutely nothing
         if not response_content and not thinking and tool_calls:
             _nsvc = self.ctx.get("narrator_service", "")
+            if not _nsvc:
+                return  # no narrator configured → skip narration
             logger.info(f"[narration] triggering narrator_service='{_nsvc}'")
             from tasks.ai.agent_streaming import _narrate_tool_calls
             _narrate_tool_calls(

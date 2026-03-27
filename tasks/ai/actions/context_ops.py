@@ -524,6 +524,27 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "delete_agent_context":
+        conv_id = body.get("conversation_id", "")
+        agent_name = body.get("agent_name", "")
+        if not conv_id or not agent_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.conversation_writer import ConversationWriter
+            writer = ConversationWriter.for_conversation(conv_id)
+            writer.pause_for_context_op()
+            try:
+                store.delete_agent_context(conv_id, agent_name)
+                store.invalidate_claude_sessions(conv_id)
+            finally:
+                writer.resume_after_context_op()
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "delete_sub_context":
         conv_id = body.get("conversation_id", "")
         sub_name = body.get("agent_name", "")  # "task:t_xxx (AgentName)"
@@ -539,6 +560,42 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             store.set_extra(conv_id, f"_sub_sync:{_sub_cid}", None)
             store.set_extra(conv_id, f"task_log:{_sub_tid}", None)
             flowfile.set_content(json.dumps({"ok": True, "deleted": _sub_cid}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "delete_context_messages":
+        conv_id = body.get("conversation_id", "")
+        _ctx_agent = body.get("agent_name", "")
+        indices = body.get("indices", [])
+        if not conv_id or not indices:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or indices"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.conversation_writer import ConversationWriter
+            writer = ConversationWriter.for_conversation(conv_id)
+            writer.pause_for_context_op()
+            try:
+                context_data = _ctx_load(conv_id, _ctx_agent)
+                if context_data is None:
+                    context_data = store.load(conv_id, user_id=user_id) or []
+                # Remove indices in reverse order to preserve positions
+                for idx in sorted(indices, reverse=True):
+                    if 0 <= idx < len(context_data):
+                        context_data.pop(idx)
+                _ctx_save(conv_id, context_data)
+                store.invalidate_claude_sessions(conv_id)
+            finally:
+                writer.resume_after_context_op()
+            deserialized = self._deserialize_messages(context_data)
+            estimated = self._estimate_tokens(deserialized)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "deleted": len(indices),
+                "message_count": len(context_data),
+                "token_estimate": estimated,
+            }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]

@@ -200,20 +200,79 @@ async function ctxAgentChanged() {
   _ctxFullData = null;
   await cmdShowContext(_ctxAgentFilter);
 }
-async function ctxDeleteSubConv() {
-  if (!_ctxAgentFilter || !_ctxAgentFilter.startsWith('task:')) return;
-  if (!confirm('Delete this task sub-context? This cannot be undone.')) return;
+async function ctxDeleteContext() {
+  if (!_ctxAgentFilter) return;
+  if (!confirm('Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.')) return;
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_sub_context', conversation_id: conversationId, agent_name: _ctxAgentFilter }),
+      body: JSON.stringify({ action: 'delete_agent_context', conversation_id: conversationId, agent_name: _ctxAgentFilter }),
     });
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', 'Sub-context deleted.');
+    addMsg('system', 'Context "' + _ctxAgentFilter + '" deleted.');
     _ctxAgentFilter = '';
     _ctxFullData = null;
     await cmdShowContext('');
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+const _ctxSelected = new Set();
+function ctxToggleSelect(row, event) {
+  const idx = row.dataset.ctxIdx;
+  if (!idx) return;
+  if (event.shiftKey && _ctxSelected.size > 0) {
+    const rows = Array.from(document.querySelectorAll('[data-ctx-idx]'));
+    const lastSel = rows.find(r => r.classList.contains('ctx-selected'));
+    const lastIdx = lastSel ? rows.indexOf(lastSel) : -1;
+    const curIdx = rows.indexOf(row);
+    if (lastIdx >= 0 && curIdx >= 0) {
+      const [from, to] = lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
+      for (let i = from; i <= to; i++) {
+        rows[i].classList.add('ctx-selected');
+        rows[i].style.outline = '2px solid #6c5ce7';
+        _ctxSelected.add(rows[i].dataset.ctxIdx);
+      }
+    }
+  } else if (event.ctrlKey) {
+    if (_ctxSelected.has(idx)) {
+      _ctxSelected.delete(idx);
+      row.classList.remove('ctx-selected');
+      row.style.outline = '';
+    } else {
+      _ctxSelected.add(idx);
+      row.classList.add('ctx-selected');
+      row.style.outline = '2px solid #6c5ce7';
+    }
+  } else {
+    document.querySelectorAll('.ctx-selected').forEach(r => { r.classList.remove('ctx-selected'); r.style.outline = ''; });
+    _ctxSelected.clear();
+    _ctxSelected.add(idx);
+    row.classList.add('ctx-selected');
+    row.style.outline = '2px solid #6c5ce7';
+  }
+  const bar = document.getElementById('ctxSelectBar');
+  if (bar) bar.style.display = _ctxSelected.size > 0 ? 'flex' : 'none';
+  if (bar) bar.querySelector('span').textContent = _ctxSelected.size + ' selected';
+}
+async function ctxDeleteSelected() {
+  if (!_ctxSelected.size) return;
+  const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'delete_context_messages',
+        conversation_id: conversationId,
+        agent_name: _ctxAgentFilter,
+        indices: indices,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    _ctxSelected.clear();
+    _ctxFullData = null;
+    await cmdShowContext(_ctxAgentFilter);
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
 
@@ -239,7 +298,7 @@ function showContextOverlay(data) {
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + i + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      msgsHtml += '<div id="ctx-row-' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')">'
+      msgsHtml += '<div id="ctx-row-' + i + '" data-ctx-idx="' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'
@@ -253,10 +312,15 @@ function showContextOverlay(data) {
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
-    + (_ctxAgentFilter && _ctxAgentFilter.startsWith('task:') ? '<button onclick="ctxDeleteSubConv()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this sub-context">Delete</button>' : '')
+    + (_ctxAgentFilter ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
     + '<button onclick="document.getElementById(\'contextOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
+    + '<div id="ctxSelectBar" style="display:none;padding:6px 0;align-items:center;gap:8px;justify-content:center">'
+    + '<span style="color:#6c5ce7;font-size:12px">0 selected</span>'
+    + '<button onclick="ctxDeleteSelected()" style="background:#e94560;color:#fff;border:none;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px">Delete selected</button>'
+    + '<button onclick="document.querySelectorAll(\'.ctx-selected\').forEach(r=>{r.classList.remove(\'ctx-selected\');r.style.outline=\'\'});_ctxSelected.clear();document.getElementById(\'ctxSelectBar\').style.display=\'none\'" style="background:transparent;color:#aaa;border:1px solid #555;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px">Cancel</button>'
+    + '</div>'
     + '<div style="padding:8px 0 0 0;text-align:center">'
     + '<button onclick="ctxAddMessage()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:8px;padding:6px 18px;cursor:pointer;font-size:13px">+ ' + t('contextAdd') + '</button>'
     + '</div>'

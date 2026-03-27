@@ -81,11 +81,13 @@ function copyMsg(btn) {
 async function deleteMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg || !conversationId) return;
-  const mid = msg.dataset.msgid;
-  if (!mid) {
-    msg.remove();
+  // If there are selected messages, delete all selected
+  if (_selectedMsgIds.size > 0) {
+    await deleteSelectedMessages();
     return;
   }
+  const mid = msg.dataset.msgid;
+  if (!mid) { msg.remove(); return; }
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
@@ -102,9 +104,88 @@ async function deleteMsg(btn) {
       setTimeout(() => msg.remove(), 300);
       if (data.message_count !== undefined) serverMsgCount = data.message_count;
     }
-  } catch (e) {
-    console.error('Delete message failed:', e);
+  } catch (e) { console.error('Delete message failed:', e); }
+}
+
+function toggleMsgSelect(el, event) {
+  if (!el || !el.dataset.msgid) return;
+  const mid = el.dataset.msgid;
+  if (event && event.shiftKey && _selectedMsgIds.size > 0) {
+    // Range select: select all between last selected and this one
+    const msgs = Array.from(document.querySelectorAll('.msg[data-msgid]'));
+    const lastIdx = msgs.findIndex(m => m.classList.contains('msg-selected'));
+    const curIdx = msgs.indexOf(el);
+    if (lastIdx >= 0 && curIdx >= 0) {
+      const [from, to] = lastIdx < curIdx ? [lastIdx, curIdx] : [curIdx, lastIdx];
+      for (let i = from; i <= to; i++) {
+        msgs[i].classList.add('msg-selected');
+        if (msgs[i].dataset.msgid) _selectedMsgIds.add(msgs[i].dataset.msgid);
+      }
+    }
+  } else if (event && event.ctrlKey) {
+    // Toggle individual
+    if (_selectedMsgIds.has(mid)) {
+      _selectedMsgIds.delete(mid);
+      el.classList.remove('msg-selected');
+    } else {
+      _selectedMsgIds.add(mid);
+      el.classList.add('msg-selected');
+    }
+  } else {
+    // Clear all and select this one
+    clearMsgSelection();
+    _selectedMsgIds.add(mid);
+    el.classList.add('msg-selected');
   }
+  updateDeleteSelectedBar();
+}
+
+function clearMsgSelection() {
+  _selectedMsgIds.clear();
+  document.querySelectorAll('.msg-selected').forEach(m => m.classList.remove('msg-selected'));
+  updateDeleteSelectedBar();
+}
+
+function updateDeleteSelectedBar() {
+  let bar = document.getElementById('deleteSelectedBar');
+  if (_selectedMsgIds.size === 0) {
+    if (bar) bar.style.display = 'none';
+    return;
+  }
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'deleteSelectedBar';
+    bar.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#e94560;color:#fff;padding:6px 16px;border-radius:6px;font-size:13px;z-index:1000;display:flex;align-items:center;gap:10px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+    document.body.appendChild(bar);
+  }
+  bar.innerHTML = '<span>' + _selectedMsgIds.size + ' selected</span>'
+    + '<button onclick="deleteSelectedMessages()" style="background:#fff;color:#e94560;border:none;padding:3px 10px;border-radius:4px;cursor:pointer;font-weight:bold;">Delete</button>'
+    + '<button onclick="clearMsgSelection()" style="background:transparent;color:#fff;border:1px solid #fff;padding:3px 8px;border-radius:4px;cursor:pointer;">Cancel</button>';
+  bar.style.display = 'flex';
+}
+
+async function deleteSelectedMessages() {
+  if (!_selectedMsgIds.size || !conversationId) return;
+  const ids = Array.from(_selectedMsgIds);
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'delete_message', conversation_id: conversationId,
+        msg_ids: ids,
+      }),
+      credentials: 'same-origin',
+    });
+    const data = await resp.json();
+    if (data.deleted) {
+      ids.forEach(mid => {
+        const el = document.querySelector('.msg[data-msgid="' + mid + '"]');
+        if (el) { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }
+      });
+      if (data.message_count !== undefined) serverMsgCount = data.message_count;
+    }
+  } catch (e) { console.error('Batch delete failed:', e); }
+  clearMsgSelection();
 }
 
 async function cancelAgent(target, force) {

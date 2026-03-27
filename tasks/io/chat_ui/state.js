@@ -1,6 +1,7 @@
 // ── Global app state ──
 // These are shared across all JS modules via the global scope.
 const _seenMsgIds = new Set();  // dedup msg_ids across SSE + poll + replay
+const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
 let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running

@@ -776,6 +776,55 @@ class ConversationStore:
             self.invalidate_claude_sessions(cid)
         return removed
 
+    def delete_messages(self, cid: str, msg_ids: list,
+                        user_id: str = "") -> int:
+        """Delete multiple messages by msg_id. Returns count of removed messages."""
+        if not msg_ids or not self.exists(cid):
+            return 0
+        ids_to_remove = set(msg_ids)
+
+        def _filter_ctx(data: list) -> list:
+            return [m for m in data if m.get("msg_id") not in ids_to_remove]
+
+        lock = self._get_conv_lock(cid)
+        path = self._conv_path(cid)
+        removed = 0
+        with lock:
+            if not path.exists():
+                return 0
+            tmp = path.with_suffix(".tmp")
+            try:
+                with open(path, "r", encoding="utf-8") as src, \
+                     open(tmp, "w", encoding="utf-8") as dst:
+                    for raw in src:
+                        raw = raw.strip()
+                        if not raw:
+                            continue
+                        try:
+                            line = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        t = line.get("t", "")
+                        if t == "msg" and line.get("msg_id") in ids_to_remove:
+                            removed += 1
+                            continue
+                        if t == "ctx" and "data" in line:
+                            old_len = len(line["data"])
+                            line["data"] = _filter_ctx(line["data"])
+                            removed += old_len - len(line["data"])
+                        dst.write(json.dumps(line, ensure_ascii=False) + "\n")
+                tmp.replace(path)
+            except OSError as e:
+                tmp.unlink(missing_ok=True)
+                logger.error("[convstore] delete_messages rewrite failed: %s", e)
+                return 0
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+        if removed:
+            self._load_cache(cid)
+            self.invalidate_claude_sessions(cid)
+        return removed
+
     # ── List ──────────────────────────────────────────────────────────
 
     def list_conversations(self, user_id: str = "") -> List[Dict]:

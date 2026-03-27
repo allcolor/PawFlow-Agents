@@ -81,7 +81,10 @@ function addMsg(role, text, extra) {
   }
   el.className = 'msg ' + cssClass;
   if (msgId) el.dataset.msgid = msgId;
-  el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
+  el.addEventListener('click', function(e) {
+    if (e.ctrlKey || e.shiftKey) { e.preventDefault(); toggleMsgSelect(this, e); }
+  });
+  el.dataset.rawText = (text || '').substring(0, 500);
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   // Timestamp — use provided timestamp or current time

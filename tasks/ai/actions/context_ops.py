@@ -673,17 +673,22 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "delete_message":
         conv_id = body.get("conversation_id", "")
         msg_id = body.get("msg_id", "")
-        if not conv_id or not msg_id:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id"}).encode())
+        msg_ids = body.get("msg_ids", [])
+        if msg_id and not msg_ids:
+            msg_ids = [msg_id]
+        if not conv_id or not msg_ids:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or msg_id(s)"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Context-modifying operation — pause writer, delete, resume
         try:
             from core.conversation_writer import ConversationWriter
             writer = ConversationWriter.for_conversation(conv_id)
             writer.pause_for_context_op()
             try:
-                deleted = store.delete_message(conv_id, msg_id=msg_id, user_id=user_id)
+                if len(msg_ids) == 1:
+                    deleted = 1 if store.delete_message(conv_id, msg_id=msg_ids[0], user_id=user_id) else 0
+                else:
+                    deleted = store.delete_messages(conv_id, msg_ids, user_id=user_id)
             finally:
                 writer.resume_after_context_op()
         except Exception as e:

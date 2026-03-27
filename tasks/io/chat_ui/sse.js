@@ -288,6 +288,7 @@ function connectSSE(cid) {
       extra.tokens_in = data.tokens_in || 0;
       extra.tokens_out = data.tokens_out || 0;
       extra.duration_ms = (data.duration_s || 0) * 1000;
+      extra.ts = data.ts;
       addMsg('assistant', data.response, extra);
     } else if (data.error) {
       addMsg('agent-result', 'Error: ' + data.error, agent);
@@ -325,6 +326,7 @@ function connectSSE(cid) {
       source: data.source || {type: 'agent', name: tcAgent, llm_service: data.llm_service || ''},
       agent_name: tcAgent,
       llm_service: data.llm_service || '',
+      ts: data.ts,
     });
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });
@@ -343,6 +345,7 @@ function connectSSE(cid) {
       llm_service: data.llm_service || '',
       path: data.path || '',
       fs_action: data.fs_action || '',
+      ts: data.ts,
     });
     if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
   });
@@ -499,6 +502,7 @@ function connectSSE(cid) {
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
     extra.duration_ms = data.duration_ms || 0;
+    extra.ts = data.ts;
     // Register ALL msg_ids from this turn (prevents poll/replay duplicates)
     const allIds = data.all_msg_ids || [];
     if (extra.msg_id) allIds.push(extra.msg_id);
@@ -737,6 +741,7 @@ function connectSSE(cid) {
     if (data.base_url) extra.base_url = data.base_url;
     if (data.tokens_in || data.tokens_out) { extra.tokens_in = data.tokens_in || 0; extra.tokens_out = data.tokens_out || 0; }
     if (data.duration_ms) extra.duration_ms = data.duration_ms;
+    extra.ts = data.ts;
     addMsg('assistant', data.response || '', extra);
     scrollBottom();
   });

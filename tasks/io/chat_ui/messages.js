@@ -84,7 +84,8 @@ function addMsg(role, text, extra) {
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   // Timestamp — use provided timestamp or current time
-  const msgTime = (extra && extra.timestamp) ? new Date(extra.timestamp * 1000) : new Date();
+  const _ts = extra && (extra.timestamp || extra.ts);
+  const msgTime = _ts ? new Date(_ts * 1000) : new Date();
   const timeStr = msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
 

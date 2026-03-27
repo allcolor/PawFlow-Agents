@@ -130,7 +130,12 @@ class ConversationEventBus:
             writer.send(event)
 
     def publish_event(self, conversation_id: str, event_type: str, data=None):
-        """Convenience: create SSEEvent and publish."""
+        """Convenience: create SSEEvent and publish.
+
+        Auto-stamps data with ts=time.time() if missing.
+        """
+        if isinstance(data, dict) and "ts" not in data:
+            data["ts"] = time.time()
         self.publish(conversation_id, SSEEvent(event=event_type, data=data or ""))
 
     def subscriber_count(self, conversation_id: str) -> int:

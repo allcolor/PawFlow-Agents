@@ -74,19 +74,30 @@ relay = RelayThread(server_url, token, username, directory,
 
 ### Recommended images
 
-| Image | Use case |
-|-------|----------|
-| `python:3.12-slim` | Python projects |
-| `node:22-slim` | Node.js/TypeScript projects |
-| `ubuntu:24.04` | General purpose |
-| Custom | Build your own with project-specific tools |
+| Image | Size | Use case |
+|-------|------|----------|
+| `pawflow-relay-dev:latest` | ~3-4GB | Full dev environment (all languages) |
+| `python:3.12-slim` | ~150MB | Python-only projects |
+| `node:22-slim` | ~200MB | Node.js/TypeScript-only projects |
+| `ubuntu:24.04` | ~80MB | General purpose (no dev tools) |
+
+### Build the full dev image
+
+```bash
+bash docker/relay-dev/build.sh
+```
+
+Includes: Python 3, Node.js 22 + TypeScript, Rust, Go, C/C++ (gcc/g++/cmake),
+Java 21 + Kotlin + Scala, C# (.NET 9), Ruby, PHP, Perl, Lua, Zig,
+git, make, cmake, curl, wget, jq, sqlite, ssh.
 
 ### Building a custom image
 
 ```dockerfile
-FROM python:3.12-slim
-RUN pip install numpy pandas requests
-RUN apt-get update && apt-get install -y git curl
+FROM pawflow-relay-dev:latest
+# Add project-specific tools
+RUN pip install numpy pandas torch
+RUN npm install -g @angular/cli
 ```
 
 ## 3. Exec Shell Selection

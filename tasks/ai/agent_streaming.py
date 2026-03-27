@@ -263,15 +263,15 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             "conversation_id": conversation_id, "agent_name": _target or "",
         })
 
-        # Save original content before overwriting with ack
-        _original_content = flowfile.get_content()
+        # Clone flowfile for background thread (main thread overwrites with ack)
+        from core import FlowFile as _FF
+        _bg_ff = _FF(content=flowfile.get_content(),
+                      attributes=dict(flowfile.attributes))
 
         # Background thread: prepare context (may compact), then run agent loop
         def _bg_streaming():
-            # Restore original content (overwritten by ack below)
-            flowfile.set_content(_original_content)
             try:
-                ctx = self._prepare_agent_context(flowfile)
+                ctx = self._prepare_agent_context(_bg_ff)
             except Exception as e:
                 logger.error("[agent:%s] prepare_context failed: %s",
                              conversation_id[:8], e, exc_info=True)

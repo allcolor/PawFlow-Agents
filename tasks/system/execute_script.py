@@ -31,6 +31,125 @@ class ExecuteScriptTask(BaseTask):
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """Exécuter le script sur le contenu du FlowFile."""
+        if self.config.get('containerize'):
+            return self._execute_docker(flowfile)
+        return self._execute_local(flowfile)
+
+    def _execute_docker(self, flowfile: FlowFile) -> List[FlowFile]:
+        """Execute script inside a Docker container with PawFlow SDK access."""
+        import subprocess, json, tempfile, os
+
+        content = flowfile.get_content().decode('utf-8', errors='replace')
+        attributes = dict(flowfile.get_attributes())
+        image = self.config.get('docker_image', 'pawflow-relay-dev:latest')
+        timeout = int(self.config.get('docker_timeout', 120))
+
+        # Get tool relay info for SDK access
+        relay_url, relay_token = "", ""
+        try:
+            from services.tool_relay_service import ToolRelayService
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all_definitions().items():
+                if getattr(sdef, "service_type", "") == "toolRelay":
+                    svc = greg.get_live_instance(sid)
+                    if svc:
+                        relay_url = f"wss://host.docker.internal:{svc._port}/ws/tools"
+                        relay_token = getattr(svc, '_token', '') or ''
+                        break
+        except Exception:
+            pass
+
+        # Detect filesystem service for SDK
+        fs_service = self.config.get('filesystem_service_id', '')
+
+        # Write wrapper script to temp dir
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # Write the user script
+            script_path = os.path.join(tmpdir, "user_script.py")
+            wrapper_path = os.path.join(tmpdir, "wrapper.py")
+            data_path = os.path.join(tmpdir, "input.json")
+            result_path = os.path.join(tmpdir, "output.json")
+
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(self.script)
+
+            with open(data_path, "w", encoding="utf-8") as f:
+                json.dump({"content": content, "attributes": attributes}, f)
+
+            # Wrapper that sets up context and runs user script
+            wrapper = '''
+import json, sys, os
+with open("/data/input.json") as f:
+    _data = json.load(f)
+content = _data["content"]
+attributes = _data["attributes"]
+
+# PawFlow SDK available via PYTHONPATH
+try:
+    from pawflow import fs, tools
+except ImportError:
+    fs = None
+    tools = None
+
+# Execute user script
+_ns = {"content": content, "attributes": attributes, "fs": fs, "tools": tools}
+with open("/data/user_script.py") as f:
+    exec(f.read(), _ns)
+
+# Collect result
+_result = {}
+if "result" in _ns:
+    _result["result"] = str(_ns["result"])
+with open("/data/output.json", "w") as f:
+    json.dump(_result, f)
+'''
+            with open(wrapper_path, "w", encoding="utf-8") as f:
+                f.write(wrapper)
+
+            # Run in Docker
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{tmpdir}:/data",
+                "--add-host", "host.docker.internal:host-gateway",
+                "-e", f"PAWFLOW_TOOL_RELAY_URL={relay_url}",
+                "-e", f"PAWFLOW_TOOL_RELAY_TOKEN={relay_token}",
+                "-e", f"PAWFLOW_FS_SERVICE={fs_service}",
+                "-e", f"PAWFLOW_USER_ID={attributes.get('http.auth.principal', '')}",
+                "-e", "PYTHONIOENCODING=utf-8",
+                "--cpus", "2",
+                "--memory", "1g",
+                "--security-opt", "no-new-privileges",
+                image,
+                "python3", "/data/wrapper.py",
+            ]
+
+            try:
+                proc = subprocess.run(
+                    docker_cmd, capture_output=True, text=True,
+                    encoding="utf-8", errors="replace",
+                    timeout=timeout,
+                )
+                if proc.returncode != 0:
+                    raise TaskError(
+                        f"Container script failed (exit {proc.returncode}): "
+                        f"{proc.stderr[:500]}")
+
+                # Read result
+                if os.path.exists(result_path):
+                    with open(result_path, encoding="utf-8") as f:
+                        result_data = json.load(f)
+                    if "result" in result_data:
+                        flowfile.set_content(
+                            result_data["result"].encode("utf-8"))
+
+            except subprocess.TimeoutExpired:
+                raise TaskError(f"Container script timed out ({timeout}s)")
+
+        return [flowfile]
+
+    def _execute_local(self, flowfile: FlowFile) -> List[FlowFile]:
+        """Execute script in-process with Python sandbox."""
         from core.sandbox import build_sandbox_globals, make_sandbox_open
 
         try:
@@ -116,6 +235,19 @@ class ExecuteScriptTask(BaseTask):
             'filesystem_service_id': {
                 'type': 'string', 'required': False,
                 'description': 'Filesystem service ID for file access (fs.read_file(), fs.write_file(), etc.)',
+            },
+            'containerize': {
+                'type': 'boolean', 'required': False, 'default': False,
+                'description': 'Run script in Docker container for isolation (requires Docker)',
+            },
+            'docker_image': {
+                'type': 'string', 'required': False,
+                'default': 'pawflow-relay-dev:latest',
+                'description': 'Docker image for containerized execution',
+            },
+            'docker_timeout': {
+                'type': 'integer', 'required': False, 'default': 120,
+                'description': 'Timeout in seconds for containerized execution',
             },
         }
 

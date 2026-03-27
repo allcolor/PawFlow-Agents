@@ -117,7 +117,63 @@ The `exec` action supports a `shell` parameter:
 
 Docker shells (`docker-*`) create a new container per command. For persistent containers, use the relay `--docker-image` flag instead.
 
-## 4. Security Model
+## 4. ExecuteScript Containerization
+
+Run flow scripts in Docker for isolation.
+
+### Config
+
+In the flow task config:
+- **containerize**: `true`
+- **docker_image**: `pawflow-relay-dev:latest`
+- **docker_timeout**: `120` (seconds)
+
+### Script API (containerized)
+
+```python
+# Variables available in the script:
+content    # FlowFile content (str)
+attributes # FlowFile attributes (dict)
+fs         # PawFlow filesystem SDK
+tools      # PawFlow tools SDK
+
+# Filesystem operations (via MCP → tool relay)
+data = fs.read_file("config.json")
+fs.write_file("output.txt", "processed")
+fs.exec("python process.py")
+files = fs.list_dir("src/")
+
+# Any PawFlow tool
+schema = tools.get_schema("generate_image")
+result = tools.call("generate_image", prompt="a logo", width=256)
+
+# Set result (modifies FlowFile content)
+result = json.dumps({"status": "done"})
+```
+
+### How it works
+
+1. FlowFile content + attributes serialized to JSON
+2. Docker container starts with `pawflow-relay-dev` image
+3. PawFlow SDK (`from pawflow import fs, tools`) connects to tool relay
+4. User script executes with full tool access but no host access
+5. Result written back to FlowFile
+
+## 5. PawFlow SDK
+
+The `pawflow` Python module is pre-installed in all PawFlow containers.
+It provides synchronous access to PawFlow tools via the tool relay WebSocket.
+
+```python
+from pawflow import fs, tools
+
+# Works identically in:
+# - ExecuteScript (containerized)
+# - Custom Docker relay scripts
+# - Any container with PAWFLOW_TOOL_RELAY_URL set
+```
+
+## 6. Security Model
 
 | Mode | Host access | Network | Isolation |
 |------|------------|---------|-----------|

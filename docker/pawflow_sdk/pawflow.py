@@ -1,0 +1,272 @@
+"""PawFlow SDK — lightweight tool access for containerized scripts.
+
+Pre-installed in Docker containers. Connects to the PawFlow tool relay
+via WebSocket and exposes tools as simple Python function calls.
+
+Usage:
+    from pawflow import fs, tools
+
+    # Filesystem operations
+    content = fs.read_file("src/main.py")
+    fs.write_file("output.txt", "hello world")
+    result = fs.exec("ls -la")
+    files = fs.list_dir(".")
+    fs.grep("TODO", path="src/", recursive=True)
+
+    # Any tool
+    schema = tools.get_schema("generate_image")
+    result = tools.call("generate_image", prompt="a cat", width=512)
+
+Environment variables (set automatically by the container):
+    PAWFLOW_TOOL_RELAY_URL  — WebSocket URL of the tool relay
+    PAWFLOW_TOOL_RELAY_TOKEN — auth token
+    PAWFLOW_USER_ID
+    PAWFLOW_CONVERSATION_ID
+    PAWFLOW_AGENT_NAME
+    PAWFLOW_FS_SERVICE — default filesystem service name
+"""
+
+import json
+import os
+import socket
+import ssl
+import struct
+import uuid
+import base64
+from urllib.parse import urlparse
+
+_RELAY_URL = os.environ.get("PAWFLOW_TOOL_RELAY_URL", "")
+_RELAY_TOKEN = os.environ.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
+_USER_ID = os.environ.get("PAWFLOW_USER_ID", "")
+_CONV_ID = os.environ.get("PAWFLOW_CONVERSATION_ID", "")
+_AGENT_NAME = os.environ.get("PAWFLOW_AGENT_NAME", "")
+_FS_SERVICE = os.environ.get("PAWFLOW_FS_SERVICE", "")
+
+_sock = None
+_lock = None
+
+
+def _ensure_connected():
+    """Connect to the tool relay WebSocket."""
+    global _sock, _lock
+    import threading
+    if _lock is None:
+        _lock = threading.Lock()
+    if _sock is not None:
+        try:
+            _sock.getpeername()
+            return
+        except Exception:
+            _sock = None
+
+    if not _RELAY_URL:
+        raise ConnectionError(
+            "PAWFLOW_TOOL_RELAY_URL not set. "
+            "This SDK only works inside a PawFlow container.")
+
+    parsed = urlparse(_RELAY_URL)
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if parsed.scheme == "wss" else 9091)
+    path = parsed.path or "/ws/tools"
+    use_tls = parsed.scheme == "wss"
+
+    sock = socket.create_connection((host, port), timeout=10)
+    if use_tls:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        sock = ctx.wrap_socket(sock, server_hostname=host)
+
+    # WebSocket handshake
+    ws_key = base64.b64encode(os.urandom(16)).decode()
+    handshake = (
+        f"GET {path} HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\n"
+        f"Upgrade: websocket\r\n"
+        f"Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Key: {ws_key}\r\n"
+        f"Sec-WebSocket-Version: 13\r\n\r\n"
+    )
+    sock.sendall(handshake.encode())
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        resp += sock.recv(4096)
+    if b"101" not in resp.split(b"\r\n")[0]:
+        raise ConnectionError(f"WS handshake failed: {resp[:200]}")
+
+    # Register
+    reg = json.dumps({
+        "type": "register",
+        "token": _RELAY_TOKEN,
+        "secret": _RELAY_TOKEN,
+        "relay_type": "tool_client",
+        "user_id": _USER_ID,
+        "conversation_id": _CONV_ID,
+        "agent_name": _AGENT_NAME,
+    })
+    _ws_send(sock, reg.encode())
+    _ws_recv(sock)  # registered response
+    _sock = sock
+
+
+def _ws_send(sock, data):
+    """Send a WebSocket text frame (masked)."""
+    if isinstance(data, str):
+        data = data.encode()
+    mask_key = os.urandom(4)
+    masked = bytes(b ^ mask_key[i % 4] for i, b in enumerate(data))
+    length = len(data)
+    frame = bytes([0x81])  # text, fin
+    if length < 126:
+        frame += bytes([0x80 | length])
+    elif length < 65536:
+        frame += bytes([0x80 | 126]) + struct.pack("!H", length)
+    else:
+        frame += bytes([0x80 | 127]) + struct.pack("!Q", length)
+    frame += mask_key + masked
+    sock.sendall(frame)
+
+
+def _ws_recv(sock):
+    """Receive a WebSocket text frame."""
+    def _recv_exact(n):
+        data = b""
+        while len(data) < n:
+            chunk = sock.recv(n - len(data))
+            if not chunk:
+                raise ConnectionError("WS connection closed")
+            data += chunk
+        return data
+
+    hdr = _recv_exact(2)
+    opcode = hdr[0] & 0x0F
+    masked = bool(hdr[1] & 0x80)
+    length = hdr[1] & 0x7F
+    if length == 126:
+        length = struct.unpack("!H", _recv_exact(2))[0]
+    elif length == 127:
+        length = struct.unpack("!Q", _recv_exact(8))[0]
+    if masked:
+        mask = _recv_exact(4)
+        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(_recv_exact(length)))
+    else:
+        payload = _recv_exact(length)
+    # Auto-respond to pings
+    if opcode == 0x09:
+        _ws_send(sock, payload)
+        return _ws_recv(sock)
+    return payload.decode("utf-8")
+
+
+def _request(method, **kwargs):
+    """Send a request to the tool relay and return the result."""
+    _ensure_connected()
+    request_id = uuid.uuid4().hex[:12]
+    payload = json.dumps({
+        "type": "request",
+        "request_id": request_id,
+        "method": method,
+        **kwargs,
+    })
+    with _lock:
+        _ws_send(_sock, payload.encode())
+        while True:
+            raw = _ws_recv(_sock)
+            msg = json.loads(raw)
+            if msg.get("type") == "ping":
+                _ws_send(_sock, json.dumps({"type": "pong"}).encode())
+                continue
+            if msg.get("request_id") == request_id:
+                if msg.get("type") == "error":
+                    raise RuntimeError(f"Tool error: {msg.get('error', 'unknown')}")
+                return msg.get("data")
+
+
+# ── Tools API ────────────────────────────────────────────────────────
+
+class _Tools:
+    """Generic tool access."""
+
+    def get_schema(self, tool_name: str) -> dict:
+        """Get the JSON schema for a tool."""
+        result = _request("get_tool_schema", tool_name=tool_name)
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return result or {}
+
+    def call(self, tool_name: str, **arguments) -> str:
+        """Call a tool and return the result."""
+        result = _request("execute_tool",
+                          tool_name=tool_name, arguments=arguments)
+        return str(result) if result is not None else ""
+
+
+class _Filesystem:
+    """Filesystem tool shortcuts."""
+
+    def __init__(self):
+        self._service = _FS_SERVICE
+
+    def _call(self, action: str, **kwargs) -> str:
+        kwargs["action"] = action
+        if self._service:
+            kwargs.setdefault("service", self._service)
+        return tools.call("filesystem", **kwargs)
+
+    def read_file(self, path: str, **kwargs) -> str:
+        return self._call("read_file", path=path, **kwargs)
+
+    def write_file(self, path: str, content: str, **kwargs) -> str:
+        return self._call("write_file", path=path, content=content, **kwargs)
+
+    def list_dir(self, path: str = ".", **kwargs):
+        result = self._call("list_dir", path=path, **kwargs)
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return result
+
+    def exec(self, command: str, **kwargs) -> str:
+        return self._call("exec", command=command, **kwargs)
+
+    def grep(self, pattern: str, path: str = ".", **kwargs) -> str:
+        return self._call("grep", path=path, regex=pattern, **kwargs)
+
+    def stat(self, path: str, **kwargs):
+        result = self._call("stat", path=path, **kwargs)
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return result
+
+    def exists(self, path: str, **kwargs) -> bool:
+        result = self._call("exists", path=path, **kwargs)
+        return bool(result) and "true" in str(result).lower()
+
+    def delete_file(self, path: str, **kwargs) -> str:
+        return self._call("delete_file", path=path, **kwargs)
+
+    def mkdir(self, path: str, **kwargs) -> str:
+        return self._call("mkdir", path=path, **kwargs)
+
+    def edit(self, path: str, old_string: str, new_string: str, **kwargs) -> str:
+        return self._call("edit", path=path,
+                          old_string=old_string, new_string=new_string, **kwargs)
+
+    def git_status(self, path: str = ".", **kwargs) -> str:
+        return self._call("git_status", path=path, **kwargs)
+
+    def git_commit(self, path: str = ".", message: str = "", **kwargs) -> str:
+        return self._call("git_commit", path=path, message=message, **kwargs)
+
+
+# Module-level singletons
+tools = _Tools()
+fs = _Filesystem()

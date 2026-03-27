@@ -319,19 +319,31 @@ def cmd_gui(args):
     _guardian = _th_guard.Thread(target=_force_exit_guardian, daemon=True)
     _guardian.start()
 
+    # On Windows: Ctrl-C is eaten by wsl.exe subprocess.
+    # Use a dedicated thread that reads stdin for Ctrl-C detection.
+    if os.name == "nt":
+        def _ctrl_c_watcher():
+            """Watch for Ctrl-C via msvcrt on Windows."""
+            import msvcrt
+            while not _shutting_down:
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch == b'\x03':  # Ctrl-C
+                        logger.info("Ctrl-C detected via kbhit")
+                        _shutdown(None, None)
+                        return
+                time.sleep(0.1)
+        _watcher = _th_guard.Thread(target=_ctrl_c_watcher, daemon=True,
+                                     name="ctrl-c-watcher")
+        _watcher.start()
+
     try:
-        if os.name == "nt":
-            # Windows: Ctrl-C may not generate SIGINT when wsl subprocess runs.
-            # Poll with short sleep + catch GenerateConsoleCtrlEvent.
-            import ctypes
-            kernel32 = ctypes.windll.kernel32
-            # SetConsoleCtrlHandler(None, False) ensures Python handles Ctrl-C
-            kernel32.SetConsoleCtrlHandler(None, False)
         while not _shutting_down:
             time.sleep(0.5)
     except KeyboardInterrupt:
         pass
-    _shutdown(None, None)
+    if not _shutting_down:
+        _shutdown(None, None)
 
 
 def cmd_plugins(args):

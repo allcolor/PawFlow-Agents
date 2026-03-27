@@ -417,9 +417,11 @@ class AgentCoreMixin:
                         if tool_calls:
                             _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
                             if _thinking:
+                                import uuid as _uuid_th
                                 transcript_msgs.append({
                                     "role": "thinking",
                                     "content": _thinking[:500],
+                                    "msg_id": f"th_{_uuid_th.uuid4().hex[:12]}",
                                     "display_only": True,
                                     "display_type": "thinking",
                                     "source": _src,
@@ -447,14 +449,28 @@ class AgentCoreMixin:
                                 tc_raw = tool_calls[i] if i < len(tool_calls) else {}
                                 _result = tc_raw.get("result") or ""
 
+                                # Unwrap MCP wrapper for display
+                                _display_name = tc_obj.name
+                                _display_args = tc_obj.arguments
+                                if _display_name == "mcp__pawflow__use_tool" and isinstance(_display_args, dict):
+                                    _display_name = _display_args.get("tool_name", _display_name)
+                                    _display_args = _display_args.get("arguments", _display_args)
+                                elif _display_name == "mcp__pawflow__get_tool_schema":
+                                    _display_name = "get_tool_schema"
+
+                                # Generate unique ID for display_only dedup
+                                import uuid as _uuid_tc
+                                _tc_display_id = _uuid_tc.uuid4().hex[:12]
+
                                 # Tool call (display_only for transcript)
                                 transcript_msgs.append({
                                     "role": "tool_call",
                                     "display_only": True,
                                     "display_type": "tool_call",
-                                    "content": tc_obj.name,
-                                    "tool_name": tc_obj.name,
-                                    "tool_args": tc_obj.arguments,
+                                    "msg_id": f"tc_{_tc_display_id}",
+                                    "content": _display_name,
+                                    "tool_name": _display_name,
+                                    "tool_args": _display_args,
                                     "source": _src,
                                 })
 
@@ -474,8 +490,9 @@ class AgentCoreMixin:
                                     "role": "tool_result",
                                     "display_only": True,
                                     "display_type": "tool_result",
+                                    "msg_id": f"tr_{_tc_display_id}",
                                     "content": tr_preview,
-                                    "tool_name": tc_obj.name,
+                                    "tool_name": _display_name,
                                     "tool_call_id": tc_obj.id,
                                 })
 

@@ -8,6 +8,7 @@ function sourceBadge(source) {
     for (let i = 0; i < name.length; i++) h = ((h << 5) - h + name.charCodeAt(i)) | 0;
     const hue = Math.abs(h) % 360;
     let label = svc ? name + ' via ' + svc : name;
+    if (source.containerized) label += ' \uD83D\uDC33';  // whale emoji = Docker
     if (source.reply_to) label += ' \u2192 ' + displayAgentName(source.reply_to);
     return '<span class="source-badge" style="background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(label) + '</span> ';
   }

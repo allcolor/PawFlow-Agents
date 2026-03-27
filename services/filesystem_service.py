@@ -448,6 +448,11 @@ class RelayService(BaseService):
         logger.info("RelayService '%s' listening on port %d path %s",
                      self._service_id, self._port, self._path)
 
+    def is_connected(self) -> bool:
+        """A relay service is connected when a relay client is in the pool."""
+        with self._relay_pool_lock:
+            return len(self._relay_pool) > 0
+
     def disconnect(self):
         if self._connection:
             self._connection.unregister_route(self._path)

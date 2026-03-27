@@ -227,7 +227,7 @@ async function loadResources() {
     html += _sectionHeader('Services', '_svc');
     if (data.services && data.services.length) {
       data.services.forEach(s => {
-        const statusDot = s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB');
+        const statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}';
         let dockerTag = '';
         if (s.relay_info && s.relay_info.containerized) {
           const img = s.relay_info.docker_image;

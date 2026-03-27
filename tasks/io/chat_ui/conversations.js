@@ -77,6 +77,7 @@ async function resumeConv(cid) {
     _expectingClear = true;
     document.getElementById('messages').innerHTML = '';
     _expectingClear = false;
+    _seenMsgIds.clear();  // reset global dedup set for new conversation
     // Load nicknames BEFORE replay so displayAgentName() works on old messages
     nicknameMap = data.nicknames || {};
     // Replay messages (dedup by msg_id)
@@ -590,6 +591,7 @@ async function refreshCurrentConv() {
     _expectingClear = true;
     document.getElementById('messages').innerHTML = '';
     _expectingClear = false;
+    _seenMsgIds.clear();
     clearAllStreams();
     for (const m of (data.messages || [])) {
       let content = m.content || '';

@@ -132,7 +132,8 @@ class AgentSideChannelsMixin:
             _btw_user_source = {"type": "user", "name": user_id or "anonymous",
                                 "btw": True, "target_agent": agent_name}
             _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
-            store.append_messages(conversation_id, [
+            from core.conversation_writer import ConversationWriter
+            ConversationWriter.for_conversation(conversation_id).enqueue([
                 {"role": "user", "content": f"[btw] {question}",
                  "source": _btw_user_source, "timestamp": _btw_now},
                 {"role": "assistant", "content": response.content,
@@ -249,11 +250,9 @@ class AgentSideChannelsMixin:
                     content=content,
                     source=source,
                 )
-                cstore.append_messages(
-                    conversation_id,
-                    self._serialize_messages([msg]),
-                    user_id=user_id,
-                )
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(conversation_id).enqueue(
+                    self._serialize_messages([msg]), user_id=user_id)
                 # Publish SSE event
                 bus.publish_event(conversation_id, "agent_response", {
                     "agent_name": result.agent_name,

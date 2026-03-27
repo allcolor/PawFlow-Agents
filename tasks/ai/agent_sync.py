@@ -41,12 +41,11 @@ class AgentSyncMixin:
 
         # Persist new messages to ConversationStore (single batch)
         if use_conv_store and conversation_id and result.new_messages:
-            from core.conversation_store import ConversationStore
+            from core.conversation_writer import ConversationWriter
             serialized = self._serialize_messages(
                 result.new_messages, channel=ctx.get("channel", ""))
-            ConversationStore.instance().append_messages(
-                conversation_id, serialized,
-                ttl=conv_ttl, user_id=ctx.get("user_id", ""))
+            ConversationWriter.for_conversation(conversation_id).enqueue(
+                serialized, user_id=ctx.get("user_id", ""), wait=True)
 
         # Serialize full conversation to FlowFile attribute (pipeline mode)
         if conv_attr:

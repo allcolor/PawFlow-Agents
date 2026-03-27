@@ -78,9 +78,9 @@ def _narrate_tool_calls(tool_calls, ctx, bus, conversation_id, agent_name, sourc
         })
         # Persist in transcript (display-only — NOT in agent context)
         try:
-            from core.conversation_store import ConversationStore
+            from core.conversation_writer import ConversationWriter
             import time as _t
-            ConversationStore.instance().append_messages(conversation_id, [{
+            ConversationWriter.for_conversation(conversation_id).enqueue([{
                 "role": "assistant",
                 "content": narration,
                 "source": {**(source or {}), "narrator": True},

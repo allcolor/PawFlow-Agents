@@ -439,25 +439,22 @@ class StreamEmitter(AgentEmitter):
         private = [m for m in all_serialized if m not in public]
 
         _agent_n = self.ctx.get("active_agent_name") or ""
-        store = ConversationStore.instance()
+        from core.conversation_writer import ConversationWriter
+        writer = ConversationWriter.for_conversation(self.conversation_id)
 
-        # ONE atomic operation: transcript + all contexts
-        store.agent_flush(
-            self.conversation_id, _agent_n,
-            public_messages=public,
-            private_messages=private,
-            user_id=self._user_id,
-            ttl=self._conv_ttl,
-        )
+        writer.enqueue_agent_flush(
+            _agent_n, public_messages=public, private_messages=private,
+            user_id=self._user_id, ttl=self._conv_ttl)
         self.ctx["_context_diverged"] = True
 
-        # Sub-conversations: append public to parent
         if "::task::" in self.conversation_id and public:
             _parent = self.conversation_id.split("::task::")[0]
-            store.append_messages(_parent, public,
-                                 ttl=self._conv_ttl, user_id=self._user_id)
+            ConversationWriter.for_conversation(_parent).enqueue(
+                public, user_id=self._user_id)
 
-        self.ctx["_last_known_msg_count"] = store.message_count(self.conversation_id)
+        from core.conversation_store import ConversationStore
+        self.ctx["_last_known_msg_count"] = ConversationStore.instance().message_count(
+            self.conversation_id)
 
     def on_no_pending_work(self, content: str, ctx: dict) -> Optional[str]:
         """Handle [NO_PENDING_WORK] / [RECHECK_IN:N] tags from poller responses."""

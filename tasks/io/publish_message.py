@@ -72,7 +72,8 @@ class PublishMessageTask(BaseTask):
         import uuid as _uuid_pm
         _pm_msg_id = _uuid_pm.uuid4().hex[:12]
         source = {"type": "agent", "name": agent_name}
-        store.append_messages(conv_id, [{
+        from core.conversation_writer import ConversationWriter
+        ConversationWriter.for_conversation(conv_id).enqueue([{
             "role": role,
             "content": text,
             "source": source,

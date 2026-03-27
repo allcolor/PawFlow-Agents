@@ -504,15 +504,25 @@ class AgentActionsMixin:
     def _acquire_context_op(self, conversation_id: str, timeout: float = 30.0) -> bool:
         """Acquire exclusive context-op lock.  Returns True if acquired."""
         evt = self._get_context_op_event(conversation_id)
-        # Wait for any previous op to finish
         if not evt.wait(timeout=timeout):
             return False
-        evt.clear()  # mark as busy
+        evt.clear()
+        # Pause conversation writer during context op
+        try:
+            from core.conversation_writer import ConversationWriter
+            ConversationWriter.for_conversation(conversation_id).pause_for_context_op()
+        except Exception:
+            pass
         return True
-
 
     def _release_context_op(self, conversation_id: str):
         """Release the context-op lock, unblocking waiting FlowFiles."""
+        # Resume conversation writer
+        try:
+            from core.conversation_writer import ConversationWriter
+            ConversationWriter.for_conversation(conversation_id).resume_after_context_op()
+        except Exception:
+            pass
         evt = self._get_context_op_event(conversation_id)
         evt.set()
 

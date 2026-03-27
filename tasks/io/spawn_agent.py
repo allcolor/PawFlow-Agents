@@ -152,7 +152,8 @@ class SpawnAgentTask(BaseTask):
             if result.status == "completed" and result.response:
                 import uuid as _uuid_sa
                 _sa_msg_id = _uuid_sa.uuid4().hex[:12]
-                ConversationStore.instance().append_messages(conv_id, [{
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(conv_id).enqueue([{
                     "role": "assistant",
                     "content": result.response,
                     "source": source,
@@ -203,8 +204,8 @@ class SpawnAgentTask(BaseTask):
         store = ConversationStore.instance()
         bus = ConversationEventBus.instance()
 
-        # Append as a user message with target_agent metadata
-        store.append_messages(conv_id, [{
+        from core.conversation_writer import ConversationWriter
+        ConversationWriter.for_conversation(conv_id).enqueue([{
             "role": "user",
             "content": message,
             "source": {

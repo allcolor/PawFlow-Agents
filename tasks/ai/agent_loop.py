@@ -734,9 +734,9 @@ class AgentLoopTask(
                             "model": resp.model})
                 messages.append(_interrupt_msg)
                 _serialized = self._serialize_messages(messages[-2:])
-                store.append_messages(conversation_id, _serialized)
-                store.append_to_agent_context(
-                    conversation_id, _agent, _serialized)
+                from core.conversation_writer import ConversationWriter
+                ConversationWriter.for_conversation(conversation_id).enqueue(
+                    _serialized, user_id=user_id, context_agent=_agent)
 
                 bus.publish_event(conversation_id, "done", {
                     "response": resp.content,

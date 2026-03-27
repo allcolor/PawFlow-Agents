@@ -125,10 +125,10 @@ class AgentCoreMixin:
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
             messages.append(msg)
             new_messages.append(msg)
-            # Persist immediately — visible = persisted (no exceptions)
+            # Persist via conversation writer (FIFO ordering guaranteed)
             if use_conv_store and conversation_id and msg.role in ("assistant", "tool"):
                 try:
-                    from core.conversation_store import ConversationStore
+                    from core.conversation_writer import ConversationWriter
                     _store_msg = {
                         "role": msg.role, "content": msg.content,
                         "source": msg.source,
@@ -142,8 +142,8 @@ class AgentCoreMixin:
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in msg.tool_calls
                         ]
-                    ConversationStore.instance().append_messages(
-                        conversation_id, [_store_msg], user_id=user_id)
+                    ConversationWriter.for_conversation(conversation_id).enqueue(
+                        [_store_msg], user_id=user_id)
                 except Exception:
                     pass
             # Publish per-message metadata (model, tokens, service) so client

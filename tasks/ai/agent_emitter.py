@@ -203,6 +203,8 @@ class StreamEmitter(AgentEmitter):
     def on_fatal_error(self, error_msg: str) -> None:
         self.bus.publish_event(self.conversation_id, "error_event", {
             "message": error_msg,
+            "agent_name": self._agent_name or "",
+            "conversation_id": self.conversation_id,
         })
 
     def on_overflow_retry(self, iteration: int) -> None:

@@ -759,6 +759,7 @@ class AgentCoreMixin:
                 _flush()
 
                 if _fatal_error:
+                    finish_reason = "error"
                     break
 
                 # Continuation

@@ -99,10 +99,7 @@ async function deleteMsg(btn) {
     });
     const data = await resp.json();
     if (data.deleted) {
-      msg.style.transition = 'opacity 0.3s';
-      msg.style.opacity = '0';
-      setTimeout(() => msg.remove(), 300);
-      if (data.message_count !== undefined) serverMsgCount = data.message_count;
+      resumeConv(conversationId);
     }
   } catch (e) { console.error('Delete message failed:', e); }
 }
@@ -178,11 +175,9 @@ async function deleteSelectedMessages() {
     });
     const data = await resp.json();
     if (data.deleted) {
-      ids.forEach(mid => {
-        const el = document.querySelector('.msg[data-msgid="' + mid + '"]');
-        if (el) { el.style.transition = 'opacity 0.3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }
-      });
-      if (data.message_count !== undefined) serverMsgCount = data.message_count;
+      clearMsgSelection();
+      resumeConv(conversationId);
+      return;
     }
   } catch (e) { console.error('Batch delete failed:', e); }
   clearMsgSelection();

@@ -43,6 +43,10 @@ async function ctxRefresh() {
     showContextOverlay(data);
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
+async function ctxRefreshAndReload() {
+  await ctxRefresh();
+  if (conversationId) resumeConv(conversationId);
+}
 
 async function ctxEditMessage(index) {
   const full = await ctxLoadFull();
@@ -67,36 +71,35 @@ async function ctxEditMessage(index) {
     + '</div></div>';
 }
 
+async function _ctxMutate(body, successMsg) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({conversation_id: conversationId, ...body}),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return false; }
+    if (successMsg) addMsg('system', typeof successMsg === 'function' ? successMsg(data) : successMsg);
+    _ctxFullData = null;
+    ctxRefreshAndReload();
+    return true;
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); return false; }
+}
+
 async function ctxSaveEdit(index) {
   const ta = document.getElementById('ctx-edit-ta-' + index);
   const roleEl = document.getElementById('ctx-edit-role-' + index);
   if (!ta) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'edit_context', conversation_id: conversationId, index: index, content: ta.value, role: roleEl ? roleEl.value : undefined }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
-    _ctxFullData = null;
-    ctxRefresh();
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  _ctxMutate(
+    {action: 'edit_context', index, content: ta.value, role: roleEl ? roleEl.value : undefined},
+    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
 async function ctxDeleteMessage(index) {
   if (!confirm(t('contextDeleteConfirm'))) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_context_message', conversation_id: conversationId, index: index }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
-    _ctxFullData = null;
-    ctxRefresh();
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  _ctxMutate(
+    {action: 'delete_context_message', index},
+    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
 async function ctxAddMessage() {
@@ -122,17 +125,9 @@ async function ctxSaveNewMessage() {
   const role = document.getElementById('ctx-add-role')?.value || 'user';
   const content = document.getElementById('ctx-add-content')?.value || '';
   if (!content.trim()) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'add_context_message', conversation_id: conversationId, role: role, content: content }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
-    _ctxFullData = null;
-    ctxRefresh();
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  _ctxMutate(
+    {action: 'add_context_message', role, content},
+    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
 async function ctxReplaceAll() {
@@ -159,17 +154,9 @@ async function ctxSaveReplaceAll() {
   try { parsed = JSON.parse(ta.value); } catch (e) { addMsg('error', t('contextInvalidJson') + ': ' + e.message); return; }
   if (!Array.isArray(parsed)) { addMsg('error', t('contextInvalidJson') + ': expected array'); return; }
   if (!confirm(t('contextReplaceConfirm'))) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'replace_context', conversation_id: conversationId, context: parsed }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', t('contextSaved', { n: data.message_count, tokens: data.token_estimate }));
-    _ctxFullData = null;
-    ctxRefresh();
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  _ctxMutate(
+    {action: 'replace_context', context: parsed},
+    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
 }
 
 function _buildCtxAgentDropdown(data) {
@@ -203,18 +190,9 @@ async function ctxAgentChanged() {
 async function ctxDeleteContext() {
   if (!_ctxAgentFilter) return;
   if (!confirm('Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.')) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_agent_context', conversation_id: conversationId, agent_name: _ctxAgentFilter }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', 'Context "' + _ctxAgentFilter + '" deleted.');
-    _ctxAgentFilter = '';
-    _ctxFullData = null;
-    await cmdShowContext('');
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  const name = _ctxAgentFilter;
+  _ctxAgentFilter = '';
+  _ctxMutate({action: 'delete_agent_context', agent_name: name}, 'Context "' + name + '" deleted.');
 }
 
 const _ctxSelected = new Set();
@@ -258,22 +236,8 @@ function ctxToggleSelect(row, event) {
 async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
   const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'delete_context_messages',
-        conversation_id: conversationId,
-        agent_name: _ctxAgentFilter,
-        indices: indices,
-      }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    _ctxSelected.clear();
-    _ctxFullData = null;
-    await cmdShowContext(_ctxAgentFilter);
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  _ctxSelected.clear();
+  _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
 }
 
 function showContextOverlay(data) {

@@ -99,32 +99,14 @@ def handle_session_commands(app, cmd, arg, text):
 
 def _connect_relay(app, path: str):
     """Connect filesystem relay to a directory. Default: current workspace."""
-    from pawflow_cli.relay import RelayThread
-
     directory = path or app.directory
-    if not directory:
-        app.renderer.print_error("No path specified and no workspace directory set.")
-        return
-
-    directory = os.path.abspath(os.path.expanduser(directory))
-    if not os.path.isdir(directory):
-        app.renderer.print_error(f"Directory not found: {directory}")
-        return
-
-    # Stop existing relay if running
-    if app.relay and app.relay._registered:
-        app.renderer.print_system(f"Stopping current relay ({app.relay.directory})...")
-        app.relay.stop()
-
-    app.renderer.print_system(f"Connecting relay to {directory}...")
+    if directory:
+        directory = os.path.abspath(os.path.expanduser(directory))
+        if not os.path.isdir(directory):
+            app.renderer.print_error(f"Directory not found: {directory}")
+            return
     try:
-        app.relay = RelayThread(
-            app.server_url, app.session_token, app.username,
-            directory, app.allow_exec,
-            docker_image=getattr(app, 'docker_image', ''),
-        )
-        app.relay.start()
-        app.renderer.print_system(f"Relay '{app.relay.relay_id}' connected on port {app.relay.port}")
+        app.connect_relay(directory)
     except Exception as e:
         app.renderer.print_error(f"Relay failed: {e}")
 

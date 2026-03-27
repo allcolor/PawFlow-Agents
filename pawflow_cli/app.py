@@ -95,16 +95,7 @@ class PawCode:
         # API client
         self.api = AgentAPIClient(self.server_url, self.session_token)
 
-        # Start relay
-        self.renderer.print_system(f"Mounting {self.directory} as filesystem relay...")
-        self.relay = RelayThread(
-            self.server_url, self.session_token, self.username,
-            self.directory, self.allow_exec,
-            docker_image=self.docker_image,
-        )
-        self.relay.start()
-        _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
-        self.renderer.print_system(f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}{_mode}")
+        self.connect_relay(self.directory)
 
         # Cleanup on exit
         atexit.register(self._cleanup)
@@ -793,6 +784,26 @@ class PawCode:
             sys.stdout.flush()
 
         self._cleanup()
+
+    def connect_relay(self, directory: str = ""):
+        """Connect (or reconnect) the filesystem relay."""
+        directory = directory or self.directory
+        if not directory:
+            self.renderer.print_error("No directory specified.")
+            return
+        if self.relay and self.relay._registered:
+            self.renderer.print_system(f"Stopping current relay ({self.relay.directory})...")
+            self.relay.stop()
+        self.renderer.print_system(f"Mounting {directory} as filesystem relay...")
+        self.relay = RelayThread(
+            self.server_url, self.session_token, self.username,
+            directory, self.allow_exec,
+            docker_image=self.docker_image,
+        )
+        self.relay.start()
+        _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
+        self.renderer.print_system(
+            f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}{_mode}")
 
     def _cleanup(self):
         if self.sse:

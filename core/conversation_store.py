@@ -498,6 +498,10 @@ class ConversationStore:
             line = {"t": "msg", **m}
             if "ts" not in line:
                 line["ts"] = now
+            # Every entry MUST have a msg_id for dedup
+            if not line.get("msg_id"):
+                import uuid as _uuid_msg
+                line["msg_id"] = _uuid_msg.uuid4().hex[:12]
             lines.append(line)
         ops = [{"op": "append", "lines": lines}]
         if status:

@@ -167,10 +167,13 @@ class ExecuteScriptHandler(ToolHandler):
         if not svc:
             return f"Error: filesystem service '{svc_name}' not found"
         try:
-            result = svc.execute_command({
-                "action": "exec",
-                "command": f"python -c {repr(code)}",
-            })
+            if hasattr(svc, 'exec'):
+                result = svc.exec(".", f"python3 -c {repr(code)}")
+            else:
+                result = svc.execute_command({
+                    "action": "exec",
+                    "command": f"python -c {repr(code)}",
+                })
             if isinstance(result, dict):
                 stdout = result.get("stdout", "")
                 stderr = result.get("stderr", "")

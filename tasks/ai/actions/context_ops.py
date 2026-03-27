@@ -419,7 +419,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if _ctx_agent == "_transcript":
+        if _ctx_agent == "transcript":
             context_data = store.load(conv_id, user_id=user_id) or []
             diverged = False
         elif _ctx_agent.startswith("task:"):

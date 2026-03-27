@@ -1,9 +1,9 @@
 // ── Context editor ────────────────────────────────────────────────
-let _ctxAgentFilter = '';  // '' = shared/default, 'grok' = per-agent
+let _ctxAgentFilter = 'transcript';
 
 async function cmdShowContext(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
-  if (agentName) _ctxAgentFilter = agentName;
+  if (agentName !== undefined) _ctxAgentFilter = agentName || 'transcript';
   try {
     const body = { action: 'get_context', conversation_id: conversationId };
     if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
@@ -100,7 +100,7 @@ async function ctxSaveEdit(index) {
 
 async function ctxDeleteMessage(index) {
   if (!confirm(t('contextDeleteConfirm'))) return;
-  if (_ctxAgentFilter === '_transcript') {
+  if (_ctxAgentFilter === 'transcript') {
     const row = document.getElementById('ctx-row-' + index);
     const mid = row && row.dataset.msgid;
     if (mid) {
@@ -173,16 +173,14 @@ async function ctxSaveReplaceAll() {
 function _buildCtxAgentDropdown(data) {
   const agents = data.agent_contexts || {};
   const names = Object.keys(agents).filter(n => n !== '*').sort();
-  // Always show dropdown (transcript + shared always present)
-  // Ensure current filter is in the list (may not be diverged yet)
-  if (_ctxAgentFilter && !names.includes(_ctxAgentFilter)) {
+  if (_ctxAgentFilter && _ctxAgentFilter !== 'transcript' && !names.includes(_ctxAgentFilter)) {
     names.push(_ctxAgentFilter);
     names.sort();
   }
   const sharedStatus = agents['*'] || 'messages';
   const sharedLabel = 'Shared' + (sharedStatus === 'diverged' ? ' \u2733' : '');
   let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
-  html += '<option value="_transcript"' + (_ctxAgentFilter === '_transcript' ? ' selected' : '') + '>Transcript</option>';
+  html += '<option value="transcript"' + (_ctxAgentFilter === 'transcript' ? ' selected' : '') + '>Transcript</option>';
   html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
@@ -245,7 +243,7 @@ function ctxToggleSelect(row, event) {
 }
 async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
-  if (_ctxAgentFilter === '_transcript') {
+  if (_ctxAgentFilter === 'transcript') {
     const mids = Array.from(document.querySelectorAll('.ctx-selected[data-msgid]'))
       .map(r => r.dataset.msgid).filter(Boolean);
     _ctxSelected.clear();

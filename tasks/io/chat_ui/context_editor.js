@@ -3,7 +3,7 @@ let _ctxAgentFilter = 'transcript';
 
 async function cmdShowContext(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
-  if (agentName !== undefined) _ctxAgentFilter = agentName || 'transcript';
+  if (agentName !== undefined) _ctxAgentFilter = agentName;
   try {
     const body = { action: 'get_context', conversation_id: conversationId };
     if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
@@ -261,9 +261,11 @@ function showContextOverlay(data) {
   overlay = document.createElement('div');
   overlay.id = 'contextOverlay';
   overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999';
-  const statusBadge = data.diverged
-    ? '<span style="background:#5a3e00;color:#f4a261;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextDiverged') + '</span>'
-    : '<span style="background:#1b4332;color:#52b788;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextSynced') + '</span>';
+  const _isTranscript = _ctxAgentFilter === 'transcript';
+  const statusBadge = _isTranscript ? ''
+    : data.diverged
+      ? '<span style="background:#5a3e00;color:#f4a261;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextDiverged') + '</span>'
+      : '<span style="background:#1b4332;color:#52b788;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600">' + t('contextSynced') + '</span>';
   const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
   let msgsHtml = '';
   if (!data.context || data.context.length === 0) {
@@ -292,7 +294,7 @@ function showContextOverlay(data) {
     + _buildCtxAgentDropdown(data)
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
-    + (_ctxAgentFilter ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
+    + (_ctxAgentFilter && !_isTranscript ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
     + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'

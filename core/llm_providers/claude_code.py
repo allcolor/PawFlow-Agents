@@ -230,15 +230,26 @@ class LLMClaudeCodeMixin:
                           conversation_id: str = "",
                           agent_name: str = "") -> str:
         """Write MCP config to workdir and return the file path."""
-        mcp_bridge = self._get_mcp_bridge_path()
-        if not os.path.exists(mcp_bridge):
-            return ""
-        import sys as _sys
-        python_bin = _sys.executable or "python"
+        _containerize = getattr(self, 'containerize', False)
+
+        if _containerize:
+            mcp_bridge = "/opt/pawflow/mcp_bridge.py"
+            python_bin = "python3"
+        else:
+            mcp_bridge = self._get_mcp_bridge_path()
+            if not os.path.exists(mcp_bridge):
+                return ""
+            import sys as _sys
+            python_bin = _sys.executable or "python"
 
         relay_url, relay_token = self._get_tool_relay_info()
         if not relay_url:
             logger.warning("No toolRelay service — MCP bridge will have no tools")
+
+        # In Docker mode, replace localhost with host.docker.internal
+        if _containerize and relay_url:
+            relay_url = relay_url.replace("localhost", "host.docker.internal")
+            relay_url = relay_url.replace("127.0.0.1", "host.docker.internal")
 
         config = {
             "mcpServers": {
@@ -281,16 +292,19 @@ class LLMClaudeCodeMixin:
 
     def _build_claude_cmd(self, model: str,
                           session_id: str = "",
-                          mcp_config_path: str = "") -> list:
+                          mcp_config_path: str = "",
+                          workdir: str = "") -> list:
         """Build claude CLI command with bidirectional stream-json.
 
         --disallowedTools: blocks ALL built-in tools (filesystem is remote)
         --strict-mcp-config: ignores pre-existing MCP configs
         Only our pawflow MCP tools (get_tool_schema, use_tool) remain.
         If MCP fails, Claude Code has ZERO tools and stops.
+
+        When containerize=True, wraps the command in docker run.
         """
-        cmd = [
-            self.claude_binary, "-p",
+        claude_args = [
+            "-p",
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--model", model or "sonnet",
@@ -301,10 +315,46 @@ class LLMClaudeCodeMixin:
             "--disallowedTools", self._DISALLOWED_BUILTIN_TOOLS,
         ]
         if mcp_config_path:
-            cmd.extend(["--mcp-config", mcp_config_path])
+            claude_args.extend(["--mcp-config", mcp_config_path])
         if session_id:
-            cmd.extend(["--resume", session_id])
-        return cmd
+            claude_args.extend(["--resume", session_id])
+
+        if not getattr(self, 'containerize', False):
+            return [self.claude_binary] + claude_args
+
+        # Docker mode: run Claude Code in a container
+        image = getattr(self, 'docker_image', '') or "pawflow-claude-code:latest"
+        cpu = getattr(self, 'docker_cpu_limit', '') or "2"
+        mem = getattr(self, 'docker_memory_limit', '') or "2g"
+
+        # Resolve host address for MCP bridge to connect back
+        import platform
+        if platform.system() == "Windows" or "microsoft" in platform.release().lower():
+            host_addr = "host.docker.internal"
+        else:
+            host_addr = "host.docker.internal"  # works on Docker Desktop Linux too
+
+        docker_cmd = [
+            "docker", "run", "--rm", "-i",
+            "--cpus", cpu,
+            "--memory", mem,
+            "--name", f"pawflow-claude-{os.getpid()}",
+            # Mount session dir for persistence (memories, CLAUDE.md)
+            "-v", f"{workdir}:/workspace",
+            # Environment
+            "-e", f"CLAUDE_CONFIG_DIR=/workspace",
+            "-e", f"HOME=/workspace",
+            "-e", f"PAWFLOW_HOST={host_addr}",
+            # Network: allow MCP bridge to reach host tool relay
+            "--add-host", f"host.docker.internal:host-gateway",
+            # Security
+            "--read-only",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
+            "--security-opt", "no-new-privileges",
+            image,
+        ] + claude_args
+
+        return docker_cmd
 
     # ── Process management ──────────────────────────────────────────
 
@@ -354,6 +404,11 @@ class LLMClaudeCodeMixin:
             self._claude_proc = None
             try:
                 proc.kill()
+                # Docker mode: also force-remove the container
+                if getattr(self, 'containerize', False):
+                    container_name = f"pawflow-claude-{proc.pid}"
+                    subprocess.run(["docker", "rm", "-f", container_name],
+                                   capture_output=True, timeout=5)
             except OSError:
                 pass
             return
@@ -589,9 +644,19 @@ class LLMClaudeCodeMixin:
         workdir = self._get_session_workdir(conv_id, agent_name)
         self._setup_credentials(workdir)
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
-        cmd = self._build_claude_cmd(model, session_id, mcp_config_path=mcp_path)
+        _containerize = getattr(self, 'containerize', False)
 
-        logger.info("claude-code stream: cwd=%s, cmd=%s", workdir, " ".join(cmd[:8]) + "...")
+        # In Docker mode, MCP config path is relative to /workspace
+        _mcp_arg = mcp_path
+        if _containerize and mcp_path:
+            _mcp_arg = "/workspace/" + os.path.basename(mcp_path)
+
+        cmd = self._build_claude_cmd(model, session_id,
+                                     mcp_config_path=_mcp_arg,
+                                     workdir=workdir)
+
+        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
+                     workdir, _containerize, " ".join(cmd[:8]) + "...")
 
         try:
             proc = subprocess.Popen(
@@ -600,15 +665,17 @@ class LLMClaudeCodeMixin:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                cwd=workdir,
-                env=self._claude_code_env(workdir),
+                cwd=None if _containerize else workdir,
+                env=None if _containerize else self._claude_code_env(workdir),
                 encoding="utf-8",
             )
             self._claude_proc = proc
         except FileNotFoundError:
+            _bin = "docker" if _containerize else self.claude_binary
             raise LLMClientError(
-                f"Claude CLI binary '{self.claude_binary}' not found. "
-                f"Install with: npm install -g @anthropic-ai/claude-code")
+                f"Binary '{_bin}' not found. "
+                + ("Install Docker Desktop." if _containerize
+                   else "Install with: npm install -g @anthropic-ai/claude-code"))
 
         # Send initial message as stream-json (keep stdin open for preempt/interrupt)
         try:

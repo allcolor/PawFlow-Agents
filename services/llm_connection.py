@@ -258,6 +258,22 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 50000,
                 "description": "Max chars for tool results in LLM context (0 = default 50000)",
             },
+            "containerize": {
+                "type": "boolean", "default": False,
+                "description": "Run in Docker container for isolation (requires Docker)",
+            },
+            "docker_image": {
+                "type": "string", "default": "pawflow-claude-code:latest",
+                "description": "Docker image for containerized execution",
+            },
+            "docker_cpu_limit": {
+                "type": "string", "default": "2",
+                "description": "CPU limit for container (e.g. '2' = 2 cores)",
+            },
+            "docker_memory_limit": {
+                "type": "string", "default": "2g",
+                "description": "Memory limit for container (e.g. '2g')",
+            },
         }
 
     def get_parameter_rules(self) -> list:
@@ -285,6 +301,10 @@ class LLMConnectionService(BaseService):
                     "max_concurrent": {"visible": False},
                     "gemini_binary": {"visible": False},
                     "timeout":       {"default": 600},
+                    "containerize":  {"visible": True},
+                    "docker_image":  {"visible": True},
+                    "docker_cpu_limit": {"visible": True},
+                    "docker_memory_limit": {"visible": True},
                 }
             },
             {

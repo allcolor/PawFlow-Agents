@@ -311,7 +311,13 @@ def cmd_gui(args):
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        _shutdown(None, None)
+        logger.info("Ctrl-C received, shutting down...")
+        try:
+            _shutdown(None, None)
+        except (KeyboardInterrupt, SystemExit):
+            pass
+        finally:
+            os._exit(0)
 
 
 def cmd_plugins(args):

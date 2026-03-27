@@ -506,11 +506,10 @@ class LLMClaudeCodeMixin:
 
         try:
             if _containerize:
-                from core.docker_utils import docker_cmd as _dc, to_host_path
+                from core.docker_utils import docker_run, to_host_path, get_host_ip
                 _image = getattr(self, 'docker_image', 'pawflow-claude-code:latest')
                 _cpu = getattr(self, 'docker_cpu_limit', '2')
                 _mem = getattr(self, 'docker_memory_limit', '2g')
-                from core.docker_utils import get_host_ip
                 docker_args = [
                     "--rm", "-i",
                     "--cpus", _cpu, "--memory", _mem,
@@ -523,17 +522,14 @@ class LLMClaudeCodeMixin:
                     "--security-opt", "no-new-privileges",
                     _image,
                 ] + cmd
-                full_cmd = _dc() + ["run"] + docker_args
+                result = docker_run(
+                    docker_args, input=stdin_text, capture_output=True,
+                    text=True, timeout=self.timeout, encoding="utf-8")
             else:
-                full_cmd = cmd
-
-            result = subprocess.run(
-                full_cmd, input=stdin_text, capture_output=True, text=True,
-                timeout=self.timeout,
-                cwd=None if _containerize else workdir,
-                env=self._claude_code_env(workdir) if not _containerize else None,
-                encoding="utf-8",
-            )
+                result = subprocess.run(
+                    cmd, input=stdin_text, capture_output=True, text=True,
+                    timeout=self.timeout, cwd=workdir,
+                    env=self._claude_code_env(workdir), encoding="utf-8")
         except FileNotFoundError:
             raise LLMClientError(
                 f"Claude CLI binary '{self.claude_binary}' not found. "

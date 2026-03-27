@@ -224,8 +224,8 @@ class AgentCompactionMixin:
             )
             logger.info(f"[compact-post] Summary done: {len(summary)} chars")
         except Exception as e:
-            logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)
-            return messages
+            logger.error(f"[compact-post] Summary FAILED: {e}", exc_info=True)
+            raise RuntimeError(f"Compaction failed: {e}") from e
 
         # Guard: empty summary = LLM returned nothing → critical error
         if not summary or len(summary.strip()) < 20:

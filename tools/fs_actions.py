@@ -71,6 +71,17 @@ def detect_available_shells() -> Dict[str, str]:
         _p = _shutil.which(_interp)
         if _p:
             shells[_interp] = _p
+    # Docker-based shells (isolated execution)
+    _docker = _shutil.which("docker")
+    if _docker:
+        try:
+            _dr = subprocess.run([_docker, "info"], capture_output=True, timeout=5)
+            if _dr.returncode == 0:
+                shells["docker-python"] = _docker
+                shells["docker-node"] = _docker
+                shells["docker-bash"] = _docker
+        except Exception:
+            pass
     return shells
 
 
@@ -665,25 +676,87 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
-    # Resolve shell executable
-    executable = None
-    if shell_name:
-        executable = _resolve_shell(shell_name)
-        if not executable:
-            raise ValueError(f"Shell '{shell_name}' not found. "
-                             f"Available: {', '.join(detect_available_shells().keys())}")
-    if not executable and os.name == "nt":
-        # Default: cmd.exe with UTF-8 codepage
-        command = f"chcp 65001 >nul 2>&1 & {command}"
-    result = subprocess.run(
-        command, shell=True,
-        executable=executable,
-        capture_output=True, text=True,
-        encoding="utf-8", errors="replace",
-        timeout=timeout,
-        cwd=root_dir,
-        env=env,
-    )
+    # Relay-level Docker container: exec commands inside the persistent container
+    # Set by relay when --docker-image is used
+    _relay_container = globals().get('_DOCKER_EXEC_CONTAINER')
+    if _relay_container and not (shell_name and shell_name.startswith("docker-")):
+        docker_exec_cmd = [
+            "docker", "exec", "-w", "/workspace",
+            "-e", "PYTHONIOENCODING=utf-8",
+            _relay_container,
+            "bash", "-c", command,
+        ]
+        result = subprocess.run(
+            docker_exec_cmd,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        if len(stdout) > MAX_EXEC_OUTPUT:
+            stdout = stdout[:MAX_EXEC_OUTPUT] + f"\n... (truncated)"
+        if len(stderr) > MAX_EXEC_OUTPUT:
+            stderr = stderr[:MAX_EXEC_OUTPUT] + f"\n... (truncated)"
+        return {"stdout": stdout, "stderr": stderr, "returncode": result.returncode}
+
+    # Docker-based execution: docker-python, docker-node, docker-bash
+    if shell_name and shell_name.startswith("docker-"):
+        _lang = shell_name.split("-", 1)[1]
+        _images = {
+            "python": "python:3.12-slim",
+            "node": "node:22-slim",
+            "bash": "ubuntu:24.04",
+        }
+        _cmds = {
+            "python": ["python3", "-c", command],
+            "node": ["node", "-e", command],
+            "bash": ["bash", "-c", command],
+        }
+        _image = _images.get(_lang)
+        _exec_cmd = _cmds.get(_lang)
+        if not _image or not _exec_cmd:
+            raise ValueError(f"Unknown docker shell '{shell_name}'. "
+                             f"Use docker-python, docker-node, or docker-bash.")
+        docker_cmd = [
+            "docker", "run", "--rm",
+            "-v", f"{root_abs}:/workspace",
+            "-w", "/workspace",
+            "-e", "PYTHONIOENCODING=utf-8",
+            "--cpus", "2",
+            "--memory", "1g",
+            "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp:rw,noexec,nosuid,size=128m",
+            "--security-opt", "no-new-privileges",
+            _image,
+        ] + _exec_cmd
+        result = subprocess.run(
+            docker_cmd,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
+        )
+    else:
+        # Native execution
+        executable = None
+        if shell_name:
+            executable = _resolve_shell(shell_name)
+            if not executable:
+                raise ValueError(f"Shell '{shell_name}' not found. "
+                                 f"Available: {', '.join(detect_available_shells().keys())}")
+        if not executable and os.name == "nt":
+            # Default: cmd.exe with UTF-8 codepage
+            command = f"chcp 65001 >nul 2>&1 & {command}"
+        result = subprocess.run(
+            command, shell=True,
+            executable=executable,
+            capture_output=True, text=True,
+            encoding="utf-8", errors="replace",
+            timeout=timeout,
+            cwd=root_dir,
+            env=env,
+        )
     stdout = result.stdout or ""
     stderr = result.stderr or ""
     if len(stdout) > MAX_EXEC_OUTPUT:

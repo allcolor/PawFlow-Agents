@@ -1140,6 +1140,8 @@ def main():
                         help="WS endpoint path (default: /ws/relay)")
     parser.add_argument("--no-tls", action="store_true",
                         help="Use ws:// instead of wss:// (default is wss with self-signed cert)")
+    parser.add_argument("--docker-image", default="",
+                        help="Run exec/git commands inside this Docker image (mounts --dir as /workspace)")
     args = parser.parse_args()
 
     root_dir = str(Path(args.dir).resolve())
@@ -1202,11 +1204,51 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _signal_handler)
 
+    # Docker container mode: start a persistent container for exec/git
+    _docker_container = None
+    if args.docker_image:
+        import uuid as _uuid_docker
+        _docker_container = f"pawflow-relay-{_uuid_docker.uuid4().hex[:8]}"
+        sys.stderr.write(f"[FSRelay] Starting Docker container: {_docker_container}\n")
+        _dr = subprocess.run([
+            "docker", "run", "-d",
+            "--name", _docker_container,
+            "-v", f"{root_dir}:/workspace",
+            "-w", "/workspace",
+            "--cpus", "2",
+            "--memory", "2g",
+            "--security-opt", "no-new-privileges",
+            args.docker_image,
+            "tail", "-f", "/dev/null",  # keep alive
+        ], capture_output=True, text=True)
+        if _dr.returncode != 0:
+            sys.stderr.write(f"[FSRelay] Docker start failed: {_dr.stderr}\n")
+            sys.exit(1)
+        sys.stderr.write(f"[FSRelay] Container running: {_docker_container}\n")
+        # Inject docker container name into fs_actions module
+        import fs_actions
+        fs_actions._DOCKER_EXEC_CONTAINER = _docker_container
+
+        def _cleanup_docker():
+            try:
+                subprocess.run(["docker", "rm", "-f", _docker_container],
+                               capture_output=True, timeout=10)
+                sys.stderr.write(f"[FSRelay] Container removed: {_docker_container}\n")
+            except Exception:
+                pass
+        atexit.register(_cleanup_docker)
+
     try:
         _ws_connect(ws_url, token, token, args.relay_id,
                      root_dir, args.readonly, allow_exec=args.allow_exec)
     finally:
         _cleanup()
+        if _docker_container:
+            try:
+                subprocess.run(["docker", "rm", "-f", _docker_container],
+                               capture_output=True, timeout=10)
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

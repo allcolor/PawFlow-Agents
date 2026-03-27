@@ -299,20 +299,30 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
              getattr(client, 'provider', "")) == "claude-code"
         )
 
-        # Claude-code compact decision: skip compact if session_id exists
+        # Claude-code compact decision:
+        #   Case 1: first message (key doesn't exist) → compact OK, then create session
+        #   Case 2: session exists (key has value) → skip compact, --resume
+        #   Case 3: session invalidated (key exists but empty) → skip compact,
+        #           context was modified manually — user wants that exact context
         _claude_has_session = False
+        _claude_session_ever_existed = False
         if _is_claude_code and conversation_id:
             try:
                 from core.conversation_store import ConversationStore as _CSSession
                 _session_key = f"claude_session:{_active_agent_name or _context_agent or 'default'}"
-                _claude_has_session = bool(
-                    _CSSession.instance().get_extra(conversation_id, _session_key))
+                _session_val = _CSSession.instance().get_extra(conversation_id, _session_key)
+                _claude_has_session = bool(_session_val)
+                # Key exists (even if empty "") → session was created before
+                _claude_session_ever_existed = _session_val is not None
                 if _claude_has_session:
                     logger.info("[claude-code] session exists (%s) — skipping auto-compact",
                                 _session_key)
+                elif _claude_session_ever_existed:
+                    logger.info("[claude-code] session invalidated (%s) — new session, no compact",
+                                _session_key)
             except Exception:
                 pass
-        _skip_compact = _is_claude_code and _claude_has_session
+        _skip_compact = _is_claude_code and (_claude_has_session or _claude_session_ever_existed)
 
         _context_diverged = False
         if preloaded_messages is not None:

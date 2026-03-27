@@ -834,10 +834,27 @@ class AgentCoreMixin:
                     conversation_id=conversation_id,
                     agent_name=ctx.get("active_agent_name", ""))
             except Exception as _post_err:
-                logger.error("[agent:%s] post-loop error: %s", conversation_id[:8], _post_err)
+                logger.error("[agent:%s] post-loop error: %s", conversation_id[:8],
+                             _post_err, exc_info=True)
             finally:
-                result = _make_result()
-                emitter.on_done(result)
+                try:
+                    result = _make_result()
+                    logger.info("[agent:%s] publishing done (agent=%s)",
+                                conversation_id[:8], ctx.get("active_agent_name", ""))
+                    emitter.on_done(result)
+                except Exception as _done_err:
+                    logger.error("[agent:%s] CRITICAL: on_done failed: %s",
+                                 conversation_id[:8], _done_err, exc_info=True)
+                    # Last resort: publish done directly
+                    try:
+                        from core.conversation_event_bus import ConversationEventBus
+                        ConversationEventBus.instance().publish_event(
+                            conversation_id, "done", {
+                                "response": response_content or "",
+                                "agent_name": ctx.get("active_agent_name", ""),
+                            })
+                    except Exception:
+                        pass
             return result
 
         except _InterruptComplete:

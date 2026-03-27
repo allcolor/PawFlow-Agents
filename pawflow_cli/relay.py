@@ -66,18 +66,21 @@ class RelayThread:
     """Manages a background filesystem relay connection."""
 
     def __init__(self, server_url: str, session_token: str, username: str,
-                 directory: str, allow_exec: bool = True):
+                 directory: str, allow_exec: bool = True,
+                 docker_image: str = ""):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
         self.directory = str(Path(directory).resolve())
         self.allow_exec = allow_exec
+        self.docker_image = docker_image
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
         self._thread = None
         self._stop_event = threading.Event()
         self._registered = False
+        self._docker_container = None
 
     def start(self):
         """Register the service and start the relay thread."""
@@ -113,7 +116,7 @@ class RelayThread:
         self._thread.start()
 
     def stop(self):
-        """Stop the relay and cleanup the service."""
+        """Stop the relay and cleanup the service + Docker container."""
         self._stop_event.set()
         if self._registered:
             try:
@@ -123,6 +126,14 @@ class RelayThread:
             except Exception:
                 pass
             self._registered = False
+        if self._docker_container:
+            import subprocess as _sp
+            try:
+                _sp.run(["docker", "rm", "-f", self._docker_container],
+                        capture_output=True, timeout=10)
+            except Exception:
+                pass
+            self._docker_container = None
 
     def _run_relay(self):
         """Run the WS relay connection loop (stderr suppressed)."""
@@ -133,9 +144,28 @@ class RelayThread:
 
         import pawflow_relay as _relay_mod
 
-        # Filter [FSRelay] lines from stderr by wrapping the write method.
-        # We wrap once and it persists — survives patch_stdout because we
-        # patch the actual write callable, not replace sys.stderr.
+        # Docker mode: start persistent container for exec
+        if self.docker_image:
+            import subprocess as _sp
+            import uuid as _uuid
+            self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
+            _dr = _sp.run([
+                "docker", "run", "-d",
+                "--name", self._docker_container,
+                "-v", f"{self.directory}:/workspace",
+                "-w", "/workspace",
+                "--cpus", "2", "--memory", "2g",
+                "--security-opt", "no-new-privileges",
+                self.docker_image,
+                "tail", "-f", "/dev/null",
+            ], capture_output=True, text=True)
+            if _dr.returncode == 0:
+                import fs_actions
+                fs_actions._DOCKER_EXEC_CONTAINER = self._docker_container
+            else:
+                sys.stderr.write(f"[Relay] Docker start failed: {_dr.stderr}\n")
+
+        # Filter [FSRelay] lines from stderr
         _real_write = sys.stderr.write
         def _filtered_write(s):
             if isinstance(s, str) and "[FSRelay]" in s:

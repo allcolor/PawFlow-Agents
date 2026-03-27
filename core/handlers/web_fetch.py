@@ -11,6 +11,32 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+# ── Anti-injection: sanitize external content ─────────────────────
+
+_INJECTION_PATTERNS = re.compile(
+    r'(?i)'
+    r'(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above|earlier)\s+instructions'
+    r'|you\s+are\s+now\s+(?:a|an|the)\s+'
+    r'|(?:^|\n)\s*system\s*:\s+'
+    r'|new\s+instructions?\s*:'
+    r'|override\s+(?:all\s+)?(?:previous|system)\s+'
+    r'|(?:^|\n)\s*\[system\]\s*'
+    r'|do\s+not\s+follow\s+(?:your|the)\s+(?:original|previous|system)'
+    r'|jailbreak|prompt\s*inject'
+)
+
+
+def _sanitize_external_content(text: str) -> str:
+    """Flag prompt injection attempts in external content.
+
+    Replaces suspicious patterns with a visible marker so the LLM
+    sees them as flagged data, not as instructions to follow.
+    Not foolproof — raises the bar against naive injection.
+    """
+    def _replace(m: re.Match) -> str:
+        return f"[⚠ INJECTION ATTEMPT REDACTED: {m.group()[:60]}]"
+    return _INJECTION_PATTERNS.sub(_replace, text)
+
 
 class ExecuteScriptHandler(ToolHandler):
     """Execute a Python expression or short script and return the result.
@@ -436,11 +462,7 @@ class WebFetchHandler(ToolHandler):
             if is_text or not content_type:
                 try:
                     text = data.decode("utf-8")
-                    # Truncate very large text responses
-                    if len(text) > 50000:
-                        result += text[:50000] + f"\n... (truncated, {len(text)} chars total)"
-                    else:
-                        result += text
+                    result += _sanitize_external_content(text)
                     return result
                 except UnicodeDecodeError:
                     pass
@@ -616,12 +638,14 @@ class ScraplingFetchHandler(ToolHandler):
 
     @staticmethod
     def _finalize(text: str) -> str:
-        """Truncate and return text."""
+        """Sanitize and return scraped text.
+
+        No truncation here — the agent framework handles tool result
+        size limits (4096 chars in context, full content in FileStore).
+        """
         if not text or not text.strip():
             return "(empty page)"
-        if len(text) > 15000:
-            text = text[:15000] + "\n... (truncated)"
-        return text
+        return _sanitize_external_content(text)
 
     def _stealth_subprocess(self, url: str, selector: str) -> Optional[str]:
         """Run stealth fetch in a subprocess to avoid Playwright asyncio issues.
@@ -708,9 +732,7 @@ class ScraplingFetchHandler(ToolHandler):
                                flags=_re.DOTALL)
                 text = _re.sub(r"<[^>]+>", " ", text)
                 text = _re.sub(r"\s+", " ", text).strip()
-                if len(text) > 15000:
-                    text = text[:15000] + "\n... (truncated)"
-                return text if text else "(empty page)"
+                return _sanitize_external_content(text) if text else "(empty page)"
             return (f"Error fetching {url}: scrapling={scrapling_error}, "
                     f"http={resp.status}")
         except Exception as e2:
@@ -769,9 +791,7 @@ class ScraplingFetchHandler(ToolHandler):
             if not pages:
                 return "(PDF has no extractable text — may be scanned/image-based)"
             result = "\n\n".join(pages)
-            if len(result) > 15000:
-                result = result[:15000] + "\n... (truncated)"
-            return result
+            return _sanitize_external_content(result)
         except ImportError:
             pass
         except Exception as e:
@@ -784,9 +804,7 @@ class ScraplingFetchHandler(ToolHandler):
             result = extract_text(io.BytesIO(pdf_bytes))
             if not result.strip():
                 return "(PDF has no extractable text — may be scanned/image-based)"
-            if len(result) > 15000:
-                result = result[:15000] + "\n... (truncated)"
-            return result
+            return _sanitize_external_content(result)
         except ImportError:
             pass
         except Exception as e:

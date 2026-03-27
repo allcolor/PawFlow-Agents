@@ -13,7 +13,7 @@ const MAX_EXEC_OUTPUT = 10 * 1024 * 1024;
 
 const WRITE_ACTIONS = new Set([
   'write_file', 'delete_file', 'mkdir', 'find_replace', 'edit',
-  'git_commit', 'git_push', 'exec', 'batch_edit', 'apply_patch',
+  'git_commit', 'git_push', 'exec', 'exec_stream', 'batch_edit', 'apply_patch',
   'edit_notebook', 'git_add', 'git_reset', 'git_stash', 'git_branch',
   'git_merge', 'git_rebase', 'git_cherry_pick', 'git_tag', 'project_init',
   'screen_click', 'screen_double_click', 'screen_type', 'screen_key', 'screen_move', 'screen_scroll',
@@ -394,6 +394,31 @@ export function executeAction(
             returncode: e.status ?? -1,
           }};
         }
+      }
+
+      case 'exec_stream': {
+        // exec_stream: uses spawnSync in worker thread, posts output chunks via parentPort.
+        // The main thread forwards exec_output frames to the WS socket.
+        if (!allowExec) { return { ok: false, error: 'Shell execution disabled' }; }
+        const sCommand = req.command || '';
+        const sTimeout = Math.min((req.timeout || 30) * 1000, 120000);
+        if (!sCommand) { return { ok: false, error: 'Missing command' }; }
+        const emitOutput = (stream: string, data: string) => {
+          try {
+            const { parentPort: pp } = require('worker_threads');
+            if (pp) { pp.postMessage({ _type: 'exec_output', stream, data }); }
+          } catch {}
+        };
+        const spawnResult = cp.spawnSync(sCommand, {
+          cwd: rootDir, shell: true, timeout: sTimeout,
+          encoding: 'utf-8', maxBuffer: MAX_EXEC_OUTPUT,
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', PAWFLOW_FS_ROOT: rootDir },
+        });
+        const so = (spawnResult.stdout || '').slice(0, MAX_EXEC_OUTPUT);
+        const se = (spawnResult.stderr || '').slice(0, MAX_EXEC_OUTPUT);
+        if (so) { emitOutput('stdout', so); }
+        if (se) { emitOutput('stderr', se); }
+        return { ok: true, data: { stdout: so, stderr: se, returncode: spawnResult.status ?? -1 } };
       }
 
       // Git actions

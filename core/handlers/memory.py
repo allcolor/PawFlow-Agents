@@ -75,10 +75,28 @@ class RememberHandler(ToolHandler):
         """Set embedding function for auto-embedding memories."""
         self._embed_fn = fn
 
+    @staticmethod
+    def _sanitize_memory(text: str) -> str:
+        """Flag injection attempts in memory content.
+
+        Memories are recalled in future conversations and injected into
+        the system prompt. A poisoned memory could hijack future sessions.
+        """
+        _INJ = re.compile(
+            r'(?i)'
+            r'(?:ignore|disregard|forget)\s+(?:all\s+)?(?:previous|prior|above)\s+instructions'
+            r'|you\s+are\s+now\s+(?:a|an|the)\s+'
+            r'|(?:^|\n)\s*system\s*:\s+'
+            r'|new\s+instructions?\s*:'
+            r'|override\s+(?:all\s+)?(?:previous|system)\s+'
+        )
+        return _INJ.sub(lambda m: f"[⚠ FLAGGED: {m.group()[:40]}]", text)
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         text = arguments.get("text", "")
         if not text:
             return "Error: text is required"
+        text = self._sanitize_memory(text)
         tags = arguments.get("tags", [])
         if not isinstance(tags, list):
             tags = [str(tags)]

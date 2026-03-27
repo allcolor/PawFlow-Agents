@@ -116,7 +116,7 @@ def _resolve_shell(name: str) -> str:
 WRITE_ACTIONS = frozenset({
     "write_file", "delete_file", "mkdir", "find_replace", "edit",
     "batch_edit", "apply_patch",
-    "git_commit", "git_push", "exec",
+    "git_commit", "git_push", "exec", "exec_stream",
     "edit_notebook", "git_worktree_add", "git_worktree_remove",
     "git_add", "git_reset", "git_stash", "git_branch",
     "git_merge", "git_rebase", "git_cherry_pick", "git_tag",
@@ -1240,6 +1240,142 @@ def action_write_file_chunked(root_dir: str, path: str, req: Dict[str, Any]) -> 
     return result
 
 
+# ── Streaming exec (Popen, line-by-line output via callback) ─────
+
+def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
+                       allow_exec: bool = False,
+                       on_output=None) -> Any:
+    """Execute a shell command with streaming output.
+
+    on_output(stream: str, data: str) is called for each line of output.
+    stream is "stdout" or "stderr".
+    Returns the same dict as action_exec (stdout, stderr, returncode).
+    If on_output is None, behaves exactly like action_exec.
+    """
+    if not allow_exec:
+        raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
+    command = req.get("command", "")
+    timeout = min(req.get("timeout", 30), 120)
+    shell_name = req.get("shell", "")
+    if not command:
+        raise ValueError("Missing 'command' parameter")
+
+    root_abs = str(Path(root_dir).resolve())
+    _fs_url_pattern = re.compile(r'fs://[^/\s]+/(\S+)')
+    command = _fs_url_pattern.sub(
+        lambda m: str(Path(root_abs) / m.group(1)).replace("\\", "/"), command)
+
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PAWFLOW_FS_ROOT"] = root_abs
+
+    # Build Popen args (same logic as action_exec for shell resolution)
+    popen_kwargs = dict(
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, encoding="utf-8", errors="replace",
+    )
+
+    _relay_container = req.get("_docker_container")
+    if not _relay_container:
+        _containers = globals().get('_DOCKER_CONTAINERS', {})
+        _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
+
+    if _relay_container and not (shell_name and shell_name.startswith("docker-")):
+        if shell_name in ("python", "python3"):
+            _container_shell = ["python3", "-c", command]
+        elif shell_name == "node":
+            _container_shell = ["node", "-e", command]
+        else:
+            _container_shell = ["bash", "-c", command]
+        cmd = _docker_cmd() + [
+            "exec", "-w", "/workspace",
+            "-e", "PYTHONIOENCODING=utf-8",
+            _relay_container,
+        ] + _container_shell
+        popen_kwargs["shell"] = False
+    elif shell_name and shell_name.startswith("docker-"):
+        # Docker-based shells — not streamable (run, not exec), fallback to action_exec
+        return action_exec(root_dir, path, req, allow_exec=allow_exec)
+    else:
+        executable = None
+        if shell_name:
+            executable = _resolve_shell(shell_name)
+            if not executable:
+                raise ValueError(f"Shell '{shell_name}' not found.")
+        if not executable and os.name == "nt":
+            command = f"chcp 65001 >nul 2>&1 & {command}"
+        cmd = command
+        popen_kwargs["shell"] = True
+        popen_kwargs["cwd"] = root_dir
+        popen_kwargs["env"] = env
+        if executable:
+            popen_kwargs["executable"] = executable
+
+    proc = subprocess.Popen(cmd if not popen_kwargs.get("shell") else cmd, **popen_kwargs)
+
+    stdout_lines = []
+    stderr_lines = []
+    total_stdout = 0
+    total_stderr = 0
+    truncated_out = False
+    truncated_err = False
+
+    import selectors
+    sel = selectors.DefaultSelector()
+    sel.register(proc.stdout, selectors.EVENT_READ, "stdout")
+    sel.register(proc.stderr, selectors.EVENT_READ, "stderr")
+
+    import time as _time
+    deadline = _time.monotonic() + timeout
+    open_streams = 2
+
+    while open_streams > 0:
+        remaining = deadline - _time.monotonic()
+        if remaining <= 0:
+            proc.kill()
+            proc.wait()
+            raise TimeoutError(f"Command timed out after {timeout}s")
+        events = sel.select(timeout=min(remaining, 1.0))
+        for key, _ in events:
+            stream_name = key.data
+            line = key.fileobj.readline()
+            if not line:
+                sel.unregister(key.fileobj)
+                open_streams -= 1
+                continue
+            if stream_name == "stdout":
+                total_stdout += len(line)
+                if total_stdout <= MAX_EXEC_OUTPUT:
+                    stdout_lines.append(line)
+                    if on_output:
+                        on_output("stdout", line)
+                elif not truncated_out:
+                    truncated_out = True
+                    if on_output:
+                        on_output("stdout", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
+            else:
+                total_stderr += len(line)
+                if total_stderr <= MAX_EXEC_OUTPUT:
+                    stderr_lines.append(line)
+                    if on_output:
+                        on_output("stderr", line)
+                elif not truncated_err:
+                    truncated_err = True
+                    if on_output:
+                        on_output("stderr", f"\n... (truncating, >{MAX_EXEC_OUTPUT} bytes)\n")
+
+    sel.close()
+    proc.wait()
+
+    stdout = "".join(stdout_lines)
+    stderr = "".join(stderr_lines)
+    if truncated_out:
+        stdout += f"\n... (truncated, {total_stdout} bytes total)"
+    if truncated_err:
+        stderr += f"\n... (truncated, {total_stderr} bytes total)"
+    return {"stdout": stdout, "stderr": stderr, "returncode": proc.returncode}
+
+
 # ── Screen automation (optional: pyautogui + mss) ────────────────
 
 def _get_screen_libs():
@@ -1339,6 +1475,7 @@ ACTIONS = {
     "batch_edit": action_batch_edit,
     "apply_patch": action_apply_patch,
     "exec": action_exec,
+    "exec_stream": action_exec_stream,
     "read_file_chunked": action_read_file_chunked,
     "read_chunk": action_read_chunk,
     "write_file_chunked": action_write_file_chunked,

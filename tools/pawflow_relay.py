@@ -758,7 +758,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             payload = _recv_exact(length)
         return opcode, payload
 
-    def _execute_command(msg):
+    def _execute_command(msg, on_output=None):
         action = msg.get("action", "")
         rel_path = msg.get("path", ".")
 
@@ -777,9 +777,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return {"ok": False, "error": f"Unknown action: {action}"}
 
         try:
-            if action == "exec":
+            if action in ("exec", "exec_stream"):
                 result = handler_func(root_dir, abs_path, msg,
-                                       allow_exec=getattr(mock, 'allow_exec', False))
+                                       allow_exec=getattr(mock, 'allow_exec', False),
+                                       **({"on_output": on_output} if action == "exec_stream" and on_output else {}))
             else:
                 result = handler_func(root_dir, abs_path, msg)
             return {"ok": True, "data": result}
@@ -972,8 +973,20 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
                     # Execute in thread pool for parallel command handling
                     def _run_cmd(_msg, _rid, _sock, _send_fn):
+                        # Streaming callback for exec_stream
+                        _on_output = None
+                        if _msg.get("action") == "exec_stream":
+                            def _on_output(stream, data):
+                                _frame = json.dumps({
+                                    "type": "exec_output",
+                                    "request_id": _rid,
+                                    "stream": stream,
+                                    "data": data,
+                                }).encode("utf-8")
+                                with _send_lock:
+                                    _send_fn(_sock, _frame)
                         try:
-                            _result = _execute_command(_msg)
+                            _result = _execute_command(_msg, on_output=_on_output)
                             _resp = json.dumps({
                                 "type": "result",
                                 "request_id": _rid,

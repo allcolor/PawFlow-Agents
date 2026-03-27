@@ -310,6 +310,8 @@ class WSListener:
                 msg = json.loads(payload.decode("utf-8"))
                 if msg.get("type") == "result" or msg.get("type") == "error":
                     service._resolve_pending(msg)
+                elif msg.get("type") == "exec_output":
+                    service._dispatch_exec_output(msg)
                 elif msg.get("type") == "ping":
                     await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
 
@@ -486,6 +488,20 @@ class RelayService(BaseService):
                 holder["data"] = msg.get("data", {})
             evt.set()
 
+    def _dispatch_exec_output(self, msg: dict):
+        """Forward streaming exec_output to the registered callback (if any)."""
+        request_id = msg.get("request_id", "")
+        with self._pending_lock:
+            entry = self._pending.get(request_id)
+        if entry:
+            _, holder = entry
+            cb = holder.get("_on_output")
+            if cb:
+                try:
+                    cb(msg.get("stream", "stdout"), msg.get("data", ""))
+                except Exception:
+                    pass
+
     def _request(self, action: str, path: str = ".", **kwargs) -> Any:
         """Send a command to the relay and wait for the result (sync).
 
@@ -552,6 +568,75 @@ class RelayService(BaseService):
 
         data = holder.get("data")
         # Check for relay-level errors
+        if isinstance(data, dict) and data.get("ok") is False:
+            raise Exception(data.get("error", "Relay error"))
+        return data
+
+    def _request_stream(self, action: str, path: str = ".",
+                        on_output=None, **kwargs) -> Any:
+        """Like _request but registers an on_output callback for streaming.
+
+        exec_output messages arriving before the final result are dispatched
+        to on_output(stream, data) via _dispatch_exec_output.
+        """
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        if not pool:
+            raise Exception(f"Relay not connected to '{self._service_id}'.")
+
+        request_id = uuid.uuid4().hex[:12]
+        evt = threading.Event()
+        holder: Dict[str, Any] = {}
+        if on_output:
+            holder["_on_output"] = on_output
+
+        with self._pending_lock:
+            self._pending[request_id] = (evt, holder)
+
+        payload = json.dumps({
+            "type": "command",
+            "request_id": request_id,
+            "action": action,
+            "path": path,
+            **kwargs,
+        }).encode("utf-8")
+
+        last_err = None
+        for attempt in range(len(pool)):
+            idx = (self._relay_idx + attempt) % len(pool)
+            conn = pool[idx]
+            writer, loop = conn["writer"], conn["loop"]
+
+            async def _send(w=writer):
+                listener = self._connection
+                if listener:
+                    await listener._ws_send(w, payload)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+                self._relay_idx = idx + 1
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                continue
+
+        if last_err:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise Exception(f"Failed to send to relay: {last_err}")
+
+        # Streaming exec can take longer — use the command timeout + buffer
+        stream_timeout = kwargs.get("timeout", 30) + 30
+        if not evt.wait(timeout=stream_timeout):
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise Exception(f"Relay timeout for {action} on {self._service_id}")
+
+        if "error" in holder:
+            raise Exception(holder["error"])
+
+        data = holder.get("data")
         if isinstance(data, dict) and data.get("ok") is False:
             raise Exception(data.get("error", "Relay error"))
         return data
@@ -657,6 +742,18 @@ class RelayService(BaseService):
         if shell:
             kwargs["shell"] = shell
         return self._request("exec", path, **kwargs)
+
+    def exec_stream(self, path: str, command: str, timeout: int = 30,
+                    shell: str = "", on_output=None):
+        """Execute a command with streaming output via on_output(stream, data).
+
+        Returns the final result dict (stdout, stderr, returncode).
+        on_output is called for each line as it arrives from the relay.
+        """
+        kwargs = {"command": command, "timeout": timeout}
+        if shell:
+            kwargs["shell"] = shell
+        return self._request_stream("exec_stream", path, on_output=on_output, **kwargs)
 
     # ── Git ──
 

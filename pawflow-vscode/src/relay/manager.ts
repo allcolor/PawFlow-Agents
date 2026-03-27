@@ -3,6 +3,7 @@ import * as crypto from 'crypto';
 import * as net from 'net';
 import * as path from 'path';
 import * as tls from 'tls';
+import * as cp from 'child_process';
 import { AgentAPIClient } from '../api/client';
 import { executeAction } from './actions';
 
@@ -324,6 +325,17 @@ export class RelayManager implements vscode.Disposable {
         workerData: { ...workerData, actionsPath },
       });
       worker.on('message', (result: any) => {
+        // Intermediate streaming messages from exec_stream
+        if (result._type === 'exec_output') {
+          const frame = JSON.stringify({
+            type: 'exec_output',
+            request_id: requestId,
+            stream: result.stream,
+            data: result.data,
+          });
+          this._wsSend(socket, frame);
+          return;
+        }
         const response = JSON.stringify({
           type: 'result',
           request_id: requestId,

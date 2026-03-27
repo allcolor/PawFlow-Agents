@@ -279,21 +279,7 @@ function _feIcon(n){const e=n.split('.').pop().toLowerCase();const m={js:'&#1282
 
 addMsg('system', t('welcome'));
 
-// DEBUG: track unexpected message DOM removals
-let _expectingClear = false;  // set true before intentional innerHTML='' / clearAllStreams
-const _msgObserver = new MutationObserver((mutations) => {
-  if (_expectingClear) return;
-  for (const m of mutations) {
-    for (const node of m.removedNodes) {
-      if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {
-        const role = node.className.replace('msg ', '');
-        const text = (node.dataset.rawText || node.textContent || '').substring(0, 80);
-        console.warn('[MSG REMOVED]', role, text);
-        console.trace('[MSG REMOVED STACK]');
-      }
-    }
-  }
-});
+// ── App initialization (runs last, after all modules loaded) ──
 _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();

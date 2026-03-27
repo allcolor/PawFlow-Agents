@@ -1,3 +1,14 @@
+// ── Global app state ──
+// These are shared across all JS modules via the global scope.
+let conversationId = null;
+let sending = false;
+let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
+let eventSource = null;
+let pendingAgent = null;  // agent to select when first message creates a conversation
+let selectedAgent = '';   // currently active agent ('' = default)
+let sseRetryCount = 0;    // for exponential backoff on reconnect
+let sseReconnectTimer = null;
+
 // ── Permission helpers ──
 // window._userRole is set by loadResources() from the server response
 function _isAdmin() { return (window._userRole || '') === 'admin'; }
@@ -196,3 +207,19 @@ function scrollToMessage(rawIndex) {
     }
   }
 }
+
+// ── Debug: detect unexpected message removal ──
+let _expectingClear = false;
+const _msgObserver = new MutationObserver((mutations) => {
+  if (_expectingClear) return;
+  for (const m of mutations) {
+    for (const node of m.removedNodes) {
+      if (node.nodeType === 1 && node.classList && node.classList.contains('msg')) {
+        const role = node.className.replace('msg ', '');
+        const text = (node.dataset.rawText || node.textContent || '').substring(0, 80);
+        console.warn('[MSG REMOVED]', role, text);
+        console.trace('[MSG REMOVED STACK]');
+      }
+    }
+  }
+});

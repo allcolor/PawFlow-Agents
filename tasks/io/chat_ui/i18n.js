@@ -212,12 +212,4 @@ ttlOpts[2].textContent = t('ttl6h');
 ttlOpts[3].textContent = t('ttl24h');
 ttlOpts[4].textContent = t('ttl7d');
 
-// API, SSE_URL, LOGIN_URL are set by the template <script> block
-let conversationId = null;
-let sending = false;
-let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
-let eventSource = null;
-let pendingAgent = null;  // agent to select when first message creates a conversation
-let selectedAgent = '';   // currently active agent ('' = default)
-let sseRetryCount = 0;     // for exponential backoff on reconnect
-let sseReconnectTimer = null;
+// App state variables are in state.js

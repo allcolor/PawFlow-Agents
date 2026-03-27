@@ -1,4 +1,21 @@
-// ── Memory overlay ────────────────────────────────────────────────
+// ── Agent Memories ──────────────────────────────────────────────
+let _memoryCache = [];
+let _memoryAgentFilter = null;  // null = all
+
+async function cmdShowMemories() {
+  try {
+    const body = { action: 'list_memories' };
+    if (_memoryAgentFilter !== null) body.agent_name = _memoryAgentFilter;
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    _memoryCache = data.memories || [];
+    showMemoryOverlay(_memoryCache);
+  } catch (e) { addMsg('error', 'Failed to load memories: ' + e.message); }
+}
+
 function showMemoryOverlay(memories) {
   let overlay = document.getElementById('memoryOverlay');
   if (overlay) overlay.remove();

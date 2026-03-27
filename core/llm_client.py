@@ -313,7 +313,7 @@ class LLMClient(
                 if self.provider == "openai":
                     result = self._complete_openai(messages, model, temperature, max_tokens, response_format, tools)
                 elif self.provider == "claude-code":
-                    result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback=None)
+                    result = self._complete_claude_code(messages, model, temperature, max_tokens, tools)
                 elif self.provider == "gemini-cli":
                     result = self._complete_gemini_cli(messages, model, temperature, max_tokens, tools)
                 else:

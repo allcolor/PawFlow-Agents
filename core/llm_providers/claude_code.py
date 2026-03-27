@@ -475,39 +475,64 @@ class LLMClaudeCodeMixin:
     def _complete_claude_code(
         self, messages, model, temperature, max_tokens, tools=None,
     ):
-        """Run claude CLI and parse the response (non-streaming)."""
+        """Run claude CLI in simple prompt mode (no MCP, no tools).
+
+        Used for summarization, narration, and other non-interactive calls.
+        Supports containerization (same Docker path as streaming).
+        """
         from core.llm_client import LLMClientError, LLMResponse
 
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
-        session_id = getattr(self, '_claude_session_id', "")
-        user_id = getattr(self, '_user_id', "")
-        conv_id = getattr(self, '_conversation_id', "")
-        agent_name = getattr(self, '_agent_name', "")
+        conv_id = getattr(self, '_conversation_id', "") or "default"
+        agent_name = getattr(self, '_agent_name', "") or "default"
 
         workdir = self._get_session_workdir(conv_id, agent_name)
-        mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
+        self._setup_credentials(workdir)
 
-        # For complete mode, use text input / json output (simpler)
+        # Simple prompt mode: no MCP, no tools, max 1 turn
         cmd = [
             self.claude_binary, "-p",
             "--output-format", "json",
             "--model", model or "sonnet",
             "--dangerously-skip-permissions",
-            "--max-turns", "1000",
-            "--verbose",
+            "--max-turns", "1",
         ]
-        if mcp_path:
-            cmd.extend(["--mcp-config", mcp_path])
 
-        logger.debug("claude-code complete: cwd=%s, input=%d chars", workdir, len(stdin_text))
+        _containerize = getattr(self, 'containerize', False)
+        logger.info("claude-code complete: cwd=%s, containerize=%s, input=%d chars",
+                     workdir, _containerize, len(stdin_text))
 
         try:
+            if _containerize:
+                from core.docker_utils import docker_cmd as _dc, to_host_path
+                _image = getattr(self, 'docker_image', 'pawflow-claude-code:latest')
+                _cpu = getattr(self, 'docker_cpu_limit', '2')
+                _mem = getattr(self, 'docker_memory_limit', '2g')
+                from core.docker_utils import get_host_ip
+                docker_args = [
+                    "--rm", "-i",
+                    "--cpus", _cpu, "--memory", _mem,
+                    "-v", f"{to_host_path(workdir)}:/workspace",
+                    "-e", "CLAUDE_CONFIG_DIR=/workspace",
+                    "-e", "HOME=/workspace",
+                    "-e", f"PAWFLOW_HOST={get_host_ip()}",
+                    "--add-host", "host.docker.internal:host-gateway",
+                    "--user", "1000:1000",
+                    "--security-opt", "no-new-privileges",
+                    _image,
+                ] + cmd
+                full_cmd = _dc() + ["run"] + docker_args
+            else:
+                full_cmd = cmd
+
             result = subprocess.run(
-                cmd, input=stdin_text, capture_output=True, text=True,
-                timeout=self.timeout, cwd=workdir,
-                env=self._claude_code_env(workdir), encoding="utf-8",
+                full_cmd, input=stdin_text, capture_output=True, text=True,
+                timeout=self.timeout,
+                cwd=None if _containerize else workdir,
+                env=self._claude_code_env(workdir) if not _containerize else None,
+                encoding="utf-8",
             )
         except FileNotFoundError:
             raise LLMClientError(

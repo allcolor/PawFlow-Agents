@@ -393,8 +393,9 @@ class BaseTask(VariableResolverMixin, Task, ABC):
             candidates.append(flow_dir / relative_path)
         # Fallback: relative to the task's own Python file
         try:
-            task_mod = __import__(self.__class__.__module__)
-            if hasattr(task_mod, '__file__') and task_mod.__file__:
+            import sys as _sys
+            task_mod = _sys.modules.get(self.__class__.__module__)
+            if task_mod and hasattr(task_mod, '__file__') and task_mod.__file__:
                 task_dir = Path(task_mod.__file__).parent
                 candidates.append(task_dir / relative_path)
         except Exception:

@@ -438,6 +438,14 @@ class LLMClaudeCodeMixin:
     def _cleanup_proc(self, proc):
         """Clean up a Claude Code subprocess (and Docker container if applicable)."""
         self._claude_proc = None
+        # Docker mode: kill container FIRST (proc.kill only kills wsl, not the container)
+        if getattr(self, 'containerize', False):
+            container_name = f"pawflow-claude-{proc.pid}"
+            try:
+                from core.docker_utils import docker_rm
+                docker_rm(container_name)
+            except Exception:
+                pass
         for stream in (proc.stdout, proc.stdin, proc.stderr):
             try:
                 if stream and not stream.closed:
@@ -449,16 +457,9 @@ class LLMClaudeCodeMixin:
         except OSError:
             pass
         try:
-            proc.wait(timeout=5)
+            proc.wait(timeout=3)
         except Exception:
             pass
-        # Docker mode: ensure container is removed
-        if getattr(self, 'containerize', False):
-            container_name = f"pawflow-claude-{proc.pid}"
-            try:
-                docker_rm(container_name)
-            except Exception:
-                pass
 
     # ── Non-streaming (complete) ────────────────────────────────────
 

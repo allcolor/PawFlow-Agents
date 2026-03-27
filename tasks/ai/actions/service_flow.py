@@ -23,9 +23,25 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "service_list":
         try:
             from gui.services.user_service_registry import UserServiceRegistry
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
             registry = UserServiceRegistry.get_instance()
-            defs = registry.get_all_for_user(user_id)
             services = []
+            for sid, sdef in sorted(greg.get_all_definitions().items()):
+                _enabled = getattr(sdef, "enabled", True)
+                try:
+                    _started = greg.is_connected(sid) if _enabled else False
+                except Exception:
+                    _started = False
+                services.append({
+                    "id": sid,
+                    "type": sdef.service_type,
+                    "enabled": _enabled,
+                    "started": _started,
+                    "description": sdef.description,
+                    "scope": "global",
+                })
+            defs = registry.get_all_for_user(user_id)
             for sid, sdef in sorted(defs.items()):
                 try:
                     _started = registry.is_connected(user_id, sid) if sdef.enabled else False

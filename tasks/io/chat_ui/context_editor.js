@@ -308,6 +308,8 @@ function showContextOverlay(data) {
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
+  const _sel = document.getElementById('ctxAgentFilter');
+  if (_sel) _sel.value = _ctxAgentFilter;
 }
 
 // ── Tool Call Parser ────────────────────────────────────────────

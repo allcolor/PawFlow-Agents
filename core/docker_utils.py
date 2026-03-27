@@ -139,6 +139,10 @@ def docker_popen(args: list, **kwargs) -> subprocess.Popen:
     """Popen 'docker run' with correct prefix. Translates -v paths on Windows."""
     cmd = docker_cmd() + ["run"]
 
+    # On Windows: create new process group so Ctrl-C goes to Python, not wsl
+    if is_windows() and "creationflags" not in kwargs:
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
     if is_windows():
         translated = []
         i = 0

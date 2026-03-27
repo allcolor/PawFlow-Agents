@@ -320,6 +320,13 @@ def cmd_gui(args):
     _guardian.start()
 
     try:
+        if os.name == "nt":
+            # Windows: Ctrl-C may not generate SIGINT when wsl subprocess runs.
+            # Poll with short sleep + catch GenerateConsoleCtrlEvent.
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            # SetConsoleCtrlHandler(None, False) ensures Python handles Ctrl-C
+            kernel32.SetConsoleCtrlHandler(None, False)
         while not _shutting_down:
             time.sleep(0.5)
     except KeyboardInterrupt:

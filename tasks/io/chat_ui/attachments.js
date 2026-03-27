@@ -81,9 +81,8 @@ function copyMsg(btn) {
 async function deleteMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg || !conversationId) return;
-  const rawIdx = msg.dataset.rawIndex;
-  if (rawIdx === undefined) {
-    // No raw_index — message was added live (not from history), just remove from DOM
+  const mid = msg.dataset.msgid;
+  if (!mid) {
     msg.remove();
     return;
   }
@@ -92,7 +91,7 @@ async function deleteMsg(btn) {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
         action: 'delete_message', conversation_id: conversationId,
-        index: parseInt(rawIdx),
+        msg_id: mid,
       }),
       credentials: 'same-origin',
     });

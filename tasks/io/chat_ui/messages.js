@@ -80,6 +80,7 @@ function addMsg(role, text, extra) {
     if (srcName) cssClass = 'subagent';
   }
   el.className = 'msg ' + cssClass;
+  if (msgId) el.dataset.msgid = msgId;
   el.dataset.rawText = (text || '').substring(0, 500);  // for dedup comparison
   if (extra && extra.raw_index !== undefined) el.dataset.rawIndex = extra.raw_index;
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';

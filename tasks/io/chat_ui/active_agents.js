@@ -77,6 +77,10 @@ function trackAgentDone(agentName) {
 function updateActivePanel() {
   const panel = document.getElementById('activePanel');
   const rows = document.getElementById('activeRows');
+  const now0 = Date.now();
+  for (const k of Object.keys(activeInteractions)) {
+    if (now0 - (activeInteractions[k].updatedAt || activeInteractions[k].startedAt) > 120000) delete activeInteractions[k];
+  }
   const names = Object.keys(activeInteractions);
   const wasVisible = panel.classList.contains('visible');
   const wasAtBottom = isNearBottom();

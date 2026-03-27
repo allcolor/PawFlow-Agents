@@ -203,6 +203,7 @@ function connectSSE(cid) {
       activeInteractions[aKey].round = data.round;
       activeInteractions[aKey].maxRounds = data.max_rounds;
       activeInteractions[aKey].totalTools = data.total_tools;
+      activeInteractions[aKey].updatedAt = Date.now();
       if (data.tools_called && data.tools_called.length > 0) {
         activeInteractions[aKey].lastTool = data.tools_called[data.tools_called.length - 1];
       }

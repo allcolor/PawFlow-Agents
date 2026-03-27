@@ -48,6 +48,8 @@ export class RelayManager implements vscode.Disposable {
   private reconnectAttempts = 0;
   private static readonly MAX_RECONNECT_ATTEMPTS = 30;
   private outputChannel: vscode.OutputChannel;
+  private dockerContainer: string = '';
+  private dockerImage: string = '';
   private _onStatusChange = new vscode.EventEmitter<string>();
   readonly onDidChangeStatus = this._onStatusChange.event;
 
@@ -58,11 +60,12 @@ export class RelayManager implements vscode.Disposable {
   get isRunning(): boolean { return this.running; }
   getRelayId(): string { return this.relayId; }
 
-  async start(api: AgentAPIClient, username: string, workspaceDir: string, allowExec: boolean): Promise<void> {
+  async start(api: AgentAPIClient, username: string, workspaceDir: string, allowExec: boolean, dockerImage: string = ''): Promise<void> {
     if (this.running) { await this.stop(api); }
 
     this.rootDir = workspaceDir;
     this.allowExec = allowExec;
+    this.dockerImage = dockerImage;
     this.allowAutomation = vscode.workspace.getConfiguration('pawflow').get('allowAutomation', false);
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
@@ -95,8 +98,49 @@ export class RelayManager implements vscode.Disposable {
     await new Promise(r => setTimeout(r, 3000));
 
     this.running = true;
-    this._connect();
+
+    if (this.dockerImage) {
+      // Docker mode: start container with Python relay inside
+      // The container relay connects to our WS listener directly
+      await this._startDockerRelay();
+    } else {
+      // Direct mode: TypeScript native actions
+      this._connect();
+    }
     this._onStatusChange.fire('running');
+  }
+
+  private async _startDockerRelay(): Promise<void> {
+    const containerName = `pawflow-vscode-relay-${crypto.randomBytes(4).toString('hex')}`;
+    this.dockerContainer = containerName;
+
+    // The container runs the Python relay which connects back to our WS listener
+    // on the host. The relay needs: --server, --token, --dir, --relay-id, --allow-exec
+    const wsUrl = `wss://host.docker.internal:${this.port}/ws/relay`;
+    const dockerArgs = [
+      'docker', 'run', '-d',
+      '--name', containerName,
+      '-v', `${this.rootDir}:/workspace`,
+      '--add-host', 'host.docker.internal:host-gateway',
+      '--cpus', '2', '--memory', '2g',
+      '--security-opt', 'no-new-privileges',
+      this.dockerImage,
+      'python3', '/opt/pawflow/pawflow_relay.py',
+      '--server', wsUrl,
+      '--token', this.wsToken,
+      '--relay-id', this.relayId,
+      '--dir', '/workspace',
+      '--allow-exec',
+    ];
+
+    this.outputChannel.appendLine(`[Relay] Starting Docker container: ${containerName}`);
+    try {
+      const result = cp.execSync(dockerArgs.join(' '), { encoding: 'utf-8', timeout: 30000 });
+      this.outputChannel.appendLine(`[Relay] Container started: ${containerName}`);
+    } catch (e: any) {
+      this.outputChannel.appendLine(`[Relay] Docker start failed: ${e.stderr || e.message}`);
+      this.dockerContainer = '';
+    }
   }
 
   async stop(api: AgentAPIClient): Promise<void> {
@@ -108,6 +152,14 @@ export class RelayManager implements vscode.Disposable {
     if (this.socket) {
       this.socket.destroy();
       this.socket = null;
+    }
+    // Stop Docker container
+    if (this.dockerContainer) {
+      try {
+        cp.execSync(`docker rm -f ${this.dockerContainer}`, { timeout: 10000 });
+        this.outputChannel.appendLine(`[Relay] Container removed: ${this.dockerContainer}`);
+      } catch {}
+      this.dockerContainer = '';
     }
     if (this.relayId) {
       try { await api.sendAction('service_uninstall', { service_id: this.relayId }); } catch {}

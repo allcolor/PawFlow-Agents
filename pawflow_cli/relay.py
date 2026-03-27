@@ -144,27 +144,35 @@ class RelayThread:
 
         import pawflow_relay as _relay_mod
 
-        # Docker mode: start persistent container for exec
         if self.docker_image:
+            # Docker mode: launch relay INSIDE container
+            # The container relay connects to the WS listener directly
             import subprocess as _sp
             import uuid as _uuid
             self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
-            _dr = _sp.run([
-                "docker", "run", "-d",
+            ws_url = f"wss://host.docker.internal:{self.port}/ws/relay"
+            docker_cmd = [
+                "docker", "run", "--rm",
                 "--name", self._docker_container,
                 "-v", f"{self.directory}:/workspace",
-                "-w", "/workspace",
+                "--add-host", "host.docker.internal:host-gateway",
                 "--cpus", "2", "--memory", "2g",
                 "--security-opt", "no-new-privileges",
                 self.docker_image,
-                "tail", "-f", "/dev/null",
-            ], capture_output=True, text=True)
-            if _dr.returncode == 0:
-                import fs_actions
-                fs_actions._DOCKER_EXEC_CONTAINER = self._docker_container
-            else:
-                sys.stderr.write(f"[Relay] Docker start failed: {_dr.stderr}\n")
+                "python3", "/opt/pawflow/pawflow_relay.py",
+                "--server", ws_url,
+                "--token", self.ws_token,
+                "--relay-id", self.relay_id,
+                "--dir", "/workspace",
+                "--allow-exec",
+            ]
+            try:
+                _sp.run(docker_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            except Exception:
+                pass
+            return
 
+        # Direct mode: connect from this process
         # Filter [FSRelay] lines from stderr
         _real_write = sys.stderr.write
         def _filtered_write(s):

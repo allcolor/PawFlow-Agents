@@ -13,8 +13,16 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Copy relay files to build context
+cp "$ROOT_DIR/tools/pawflow_relay.py" "$SCRIPT_DIR/pawflow_relay.py"
+cp "$ROOT_DIR/tools/fs_actions.py" "$SCRIPT_DIR/fs_actions.py"
 
 docker build -t pawflow-relay-dev:latest "$SCRIPT_DIR"
+
+# Cleanup
+rm -f "$SCRIPT_DIR/pawflow_relay.py" "$SCRIPT_DIR/fs_actions.py"
 
 echo ""
 echo "Built pawflow-relay-dev:latest"

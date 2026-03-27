@@ -1249,51 +1249,63 @@ def main():
     if hasattr(signal, "SIGTERM"):
         signal.signal(signal.SIGTERM, _signal_handler)
 
-    # Docker container mode: start a persistent container for exec/git
-    _docker_container = None
     if args.docker_image:
+        # Docker mode: launch the relay INSIDE the container.
+        # The container relay connects directly to the PawFlow server.
+        # The host process just manages the container lifecycle.
         import uuid as _uuid_docker
         _docker_container = f"pawflow-relay-{_uuid_docker.uuid4().hex[:8]}"
-        sys.stderr.write(f"[FSRelay] Starting Docker container: {_docker_container}\n")
-        _dr = subprocess.run([
-            "docker", "run", "-d",
+        sys.stderr.write(f"[FSRelay] Starting Docker relay: {_docker_container}\n")
+
+        # The container runs the relay Python script connecting to the server
+        docker_cmd = [
+            "docker", "run", "--rm",
             "--name", _docker_container,
             "-v", f"{root_dir}:/workspace",
-            "-w", "/workspace",
+            "--add-host", "host.docker.internal:host-gateway",
             "--cpus", "2",
             "--memory", "2g",
             "--security-opt", "no-new-privileges",
             args.docker_image,
-            "tail", "-f", "/dev/null",  # keep alive
-        ], capture_output=True, text=True)
-        if _dr.returncode != 0:
-            sys.stderr.write(f"[FSRelay] Docker start failed: {_dr.stderr}\n")
-            sys.exit(1)
-        sys.stderr.write(f"[FSRelay] Container running: {_docker_container}\n")
-        # Inject docker container name into fs_actions module
-        import fs_actions
-        fs_actions._DOCKER_EXEC_CONTAINER = _docker_container
+            "python3", "/opt/pawflow/pawflow_relay.py",
+            "--server", ws_url.replace("localhost", "host.docker.internal")
+                               .replace("127.0.0.1", "host.docker.internal"),
+            "--token", token,
+            "--relay-id", args.relay_id,
+            "--dir", "/workspace",
+        ]
+        if args.allow_exec:
+            docker_cmd.append("--allow-exec")
+        if args.readonly:
+            docker_cmd.append("--readonly")
 
-        def _cleanup_docker():
-            try:
-                subprocess.run(["docker", "rm", "-f", _docker_container],
-                               capture_output=True, timeout=10)
-                sys.stderr.write(f"[FSRelay] Container removed: {_docker_container}\n")
-            except Exception:
-                pass
-        atexit.register(_cleanup_docker)
+        sys.stderr.write(f"[FSRelay] Container relay connecting to server...\n")
+        try:
+            # Run in foreground — blocks until container exits
+            proc = subprocess.Popen(docker_cmd, stdout=sys.stdout, stderr=sys.stderr)
 
-    try:
-        _ws_connect(ws_url, token, token, args.relay_id,
-                     root_dir, args.readonly, allow_exec=args.allow_exec)
-    finally:
-        _cleanup()
-        if _docker_container:
-            try:
-                subprocess.run(["docker", "rm", "-f", _docker_container],
-                               capture_output=True, timeout=10)
-            except Exception:
-                pass
+            def _cleanup_docker():
+                try:
+                    subprocess.run(["docker", "rm", "-f", _docker_container],
+                                   capture_output=True, timeout=10)
+                except Exception:
+                    pass
+            atexit.register(_cleanup_docker)
+
+            proc.wait()
+        except KeyboardInterrupt:
+            sys.stderr.write(f"\n[FSRelay] Stopping container: {_docker_container}\n")
+            subprocess.run(["docker", "rm", "-f", _docker_container],
+                           capture_output=True, timeout=10)
+        finally:
+            _cleanup()
+    else:
+        # Direct mode: connect to server from this process
+        try:
+            _ws_connect(ws_url, token, token, args.relay_id,
+                         root_dir, args.readonly, allow_exec=args.allow_exec)
+        finally:
+            _cleanup()
 
 
 if __name__ == "__main__":

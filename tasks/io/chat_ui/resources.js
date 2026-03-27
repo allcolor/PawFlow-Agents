@@ -227,10 +227,15 @@ async function loadResources() {
     html += _sectionHeader('Services', '_svc');
     if (data.services && data.services.length) {
       data.services.forEach(s => {
-        const statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}';
+        const statusDot = s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB');
+        let dockerTag = '';
+        if (s.relay_info && s.relay_info.containerized) {
+          const img = s.relay_info.docker_image;
+          dockerTag = ' \u{1F433}' + (img ? ` [${img}]` : '');
+        }
         const svcCtx = ` oncontextmenu="showServiceMenu(event,'${s.service_id}','${s.scope}',${s.enabled});return false;"`;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;"${svcCtx}>
-          ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span></span>
+          ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;">${statusDot} <b>${s.service_id}</b> <span style="color:#555">(${s.service_type})</span>${dockerTag}</span>
         </div>`;
       });
     } else {

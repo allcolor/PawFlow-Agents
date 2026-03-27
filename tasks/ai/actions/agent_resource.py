@@ -369,19 +369,31 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     "service_id": sid,
                     "service_type": getattr(sdef, "service_type", ""),
                     "enabled": getattr(sdef, "enabled", True),
+                    "connected": greg.is_connected(sid),
                     "description": getattr(sdef, "description", ""),
                     "scope": "global",
                 })
             if uid and uid != "anonymous":
                 ureg = UserServiceRegistry.get_instance()
                 for sid, sdef in ureg.get_all_for_user(uid).items():
-                    svcs.append({
+                    _entry = {
                         "service_id": sid,
                         "service_type": getattr(sdef, "service_type", ""),
                         "enabled": getattr(sdef, "enabled", True),
+                        "connected": ureg.is_connected(uid, sid),
                         "description": getattr(sdef, "description", ""),
                         "scope": "user",
-                    })
+                    }
+                    # Relay metadata (containerized, docker_image)
+                    _svc = ureg.get_live_instance(uid, sid) if sdef.enabled else None
+                    if _svc and hasattr(_svc, '_relay_info') and _svc._relay_info:
+                        _entry["relay_info"] = _svc._relay_info
+                    elif sdef.config and sdef.config.get("docker_image"):
+                        _entry["relay_info"] = {
+                            "containerized": True,
+                            "docker_image": sdef.config["docker_image"],
+                        }
+                    svcs.append(_entry)
             result["services"] = svcs
         except Exception:
             result["services"] = []

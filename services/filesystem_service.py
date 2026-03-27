@@ -444,6 +444,7 @@ class RelayService(BaseService):
         listener = WSListener.get_or_create(self._port)
         listener.register_route(self._path, self)
         self._connection = listener
+        self._initialized = True
         logger.info("RelayService '%s' listening on port %d path %s",
                      self._service_id, self._port, self._path)
 

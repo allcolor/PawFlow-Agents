@@ -164,6 +164,17 @@ class RelayThread:
             except Exception:
                 pass
             self._docker_container = None
+        # Kill Docker Popen to prevent WinError 6 on GC
+        if hasattr(self, '_docker_proc') and self._docker_proc:
+            try:
+                self._docker_proc.kill()
+            except (OSError, Exception):
+                pass
+            try:
+                self._docker_proc.wait(timeout=2)
+            except Exception:
+                pass
+            self._docker_proc = None
 
     def _run_relay(self):
         """Run the WS relay connection loop (stderr suppressed)."""
@@ -222,8 +233,9 @@ class RelayThread:
                 if hasattr(self, '_docker_proc') and self._docker_proc:
                     try:
                         self._docker_proc.kill()
-                    except Exception:
+                    except (OSError, Exception):
                         pass
+                    self._docker_proc = None
             return
 
         # Direct mode: connect from this process

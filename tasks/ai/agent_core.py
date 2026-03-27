@@ -813,29 +813,31 @@ class AgentCoreMixin:
                     messages=messages, new_messages=new_messages,
                     all_msg_ids=all_assistant_msg_ids)
 
-            # NO_PENDING_WORK handling (streaming/poller only via emitter)
-            _processed = emitter.on_no_pending_work(response_content or "", ctx)
-            if _processed is None:
-                new_messages.clear()
-                return _make_result("discarded")
-            response_content = _processed
+            # Post-loop: ALWAYS publish done, even if cleanup fails
+            try:
+                # NO_PENDING_WORK handling (streaming/poller only via emitter)
+                _processed = emitter.on_no_pending_work(response_content or "", ctx)
+                if _processed is None:
+                    new_messages.clear()
+                    result = _make_result("discarded")
+                    emitter.on_done(result)
+                    return result
+                response_content = _processed
 
-            self._track_tokens(
-                user_id or "anonymous", total_tokens_in, total_tokens_out,
-                model=final_model or _client_model,
-                agent_name=ctx.get("active_agent_name", "") or "",
-                llm_service=ctx.get("active_llm_service", ""))
+                self._track_tokens(
+                    user_id or "anonymous", total_tokens_in, total_tokens_out,
+                    model=final_model or _client_model,
+                    agent_name=ctx.get("active_agent_name", "") or "",
+                    llm_service=ctx.get("active_llm_service", ""))
 
-            # Mark for lazy compaction on next turn (avoid blocking done event
-            # and prevent poll ghosts from the summarize LLM call)
-            # Post-response compact is handled by auto-compact on next load
-
-            self._cleanup_tool_result_files(
-                conversation_id=conversation_id,
-                agent_name=ctx.get("active_agent_name", ""))
-
-            result = _make_result()
-            emitter.on_done(result)
+                self._cleanup_tool_result_files(
+                    conversation_id=conversation_id,
+                    agent_name=ctx.get("active_agent_name", ""))
+            except Exception as _post_err:
+                logger.error("[agent:%s] post-loop error: %s", conversation_id[:8], _post_err)
+            finally:
+                result = _make_result()
+                emitter.on_done(result)
             return result
 
         except _InterruptComplete:

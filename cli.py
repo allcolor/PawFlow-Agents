@@ -307,6 +307,17 @@ def cmd_gui(args):
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)
 
+    # Guardian thread: force-exit after 5s of shutdown
+    def _force_exit_guardian():
+        import time as _t
+        while not _shutting_down:
+            _t.sleep(0.5)
+        _t.sleep(5)
+        logger.warning("Shutdown timeout — force exit")
+        os._exit(1)
+    _guardian = threading.Thread(target=_force_exit_guardian, daemon=True)
+    _guardian.start()
+
     try:
         while not _shutting_down:
             time.sleep(0.5)

@@ -200,7 +200,7 @@ document.getElementById('logoutBtn').textContent = t('logout');
 document.getElementById('deleteConvBtn').title = t('deleteConv');
 document.getElementById('input').placeholder = t('placeholder');
 document.querySelector('.btn-attach').title = t('attachTitle');
-document.getElementById('folderBtn').title = t('folderOpen');
+// folderBtn removed (browser filesystem feature deleted)
 document.querySelector('.sidebar-header h2').textContent = t('conversations');
 document.querySelector('.btn-new').textContent = t('newChat');
 // TTL selector i18n

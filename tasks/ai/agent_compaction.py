@@ -167,10 +167,13 @@ class AgentCompactionMixin:
         try:
             _text_to_summarize = self._messages_to_text(old_conv)
             logger.info(f"[compact-post] Summarizing {len(_text_to_summarize)} chars from {len(old_conv)} msgs...")
-            summary = self._call_summarize(client, _text_to_summarize,
-                                            target_tokens=1000,
-                                            agent_name=agent_name,
-                                            llm_service=llm_service)
+            _summary_target = max(1000, int(max_context * 0.05))
+            summary = self._summarize_messages(
+                old_conv, client, max_context,
+                target_tokens=_summary_target,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+            )
             logger.info(f"[compact-post] Summary done: {len(summary)} chars")
         except Exception as e:
             logger.warning(f"[compact-post] Summary FAILED: {e}", exc_info=True)

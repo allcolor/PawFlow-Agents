@@ -111,23 +111,6 @@ class ServeChatUITask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        # Serve JS files if routed here (fallback when serveAssets not deployed)
-        req_path = flowfile.get_attribute("http.request.path") or ""
-        if req_path.startswith("/chat/js/"):
-            filename = req_path.split("/chat/js/", 1)[1].split("?")[0]
-            js_path = _CHAT_UI_DIR / filename
-            if js_path.exists() and filename.endswith(".js"):
-                flowfile.set_content(js_path.read_bytes())
-                flowfile.set_attribute("http.response.status", "200")
-                flowfile.set_attribute("http.response.header.Content-Type",
-                                       "application/javascript; charset=utf-8")
-                flowfile.set_attribute("http.response.header.Cache-Control",
-                                       "public, max-age=31536000, immutable")
-                return [flowfile]
-            flowfile.set_content(b"Not found")
-            flowfile.set_attribute("http.response.status", "404")
-            return [flowfile]
-
         agent_path = self.config.get("agent_path", "/api/agent")
         login_url = self.config.get("login_url", "")
         sse_path = self.config.get("sse_path", "/api/agent/events")

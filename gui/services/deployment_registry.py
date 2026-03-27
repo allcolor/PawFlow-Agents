@@ -30,6 +30,7 @@ class DeployedInstance:
     flow_id: str                          # template ID
     flow_name: str
     flow_path: str                        # path to template JSON
+    flow_version: int = 0                 # version in FlowVersionStore (0 = legacy/unversioned)
     owner: Optional[str] = None           # None = global
     status: str = "stopped"               # running | stopped | error
     source: str = "gui"                   # gui | agent
@@ -130,6 +131,11 @@ class DeploymentRegistry:
             short = uuid.uuid4().hex[:6]
             instance_id = f"{flow_id}__{short}"
 
+        # Snapshot flow config into version store
+        from engine.flow_state import FlowVersionStore
+        vs = FlowVersionStore()
+        version = vs.save_version(flow_id, raw, label=f"deploy {instance_id}")
+
         # Copy layout from flow template if available
         flow_layout = raw.get("layout", {})
 
@@ -138,6 +144,7 @@ class DeploymentRegistry:
             flow_id=flow_id,
             flow_name=flow_name,
             flow_path=str(tpath),
+            flow_version=version,
             owner=owner,
             status="stopped",
             source=source,
@@ -156,6 +163,27 @@ class DeploymentRegistry:
         self._save_instance(inst)
         logger.info("Deployed instance '%s' from template '%s'", instance_id, flow_id)
         return instance_id
+
+    def update_version(self, instance_id: str, version: int) -> bool:
+        """Update a deployment to use a specific flow version.
+
+        The version must exist in FlowVersionStore. Use this to upgrade
+        or rollback a deployment to a different flow version.
+        """
+        self._ensure_loaded()
+        with self._data_lock:
+            inst = self._instances.get(instance_id)
+            if inst is None:
+                return False
+            from engine.flow_state import FlowVersionStore
+            vs = FlowVersionStore()
+            config = vs.get_version(inst.flow_id, version)
+            if config is None:
+                raise ValueError(f"Version {version} not found for flow '{inst.flow_id}'")
+            inst.flow_version = version
+        self._save_instance(inst)
+        logger.info("Deployment '%s' updated to version %d", instance_id, version)
+        return True
 
     def save_layout(self, instance_id: str, layout: Dict[str, Any]) -> None:
         """Save layout positions for a deployed instance."""

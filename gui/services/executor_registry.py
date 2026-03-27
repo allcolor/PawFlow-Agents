@@ -168,6 +168,7 @@ class ExecutorRegistry:
                     continue
                 self._restore_instance(iid, inst.flow_path,
                                        inst.max_workers, inst.max_retries,
+                                       flow_version=getattr(inst, 'flow_version', 0),
                                        parameters=inst.parameters)
 
         # Clean up legacy state file if present
@@ -184,18 +185,29 @@ class ExecutorRegistry:
                           max_workers: int = 4, max_retries: int = 3,
                           flow_version: Optional[int] = None,
                           parameters: Optional[Dict[str, Any]] = None) -> bool:
-        """Restore a single executor from a flow file. Returns True on success."""
-        if not flow_path or not Path(flow_path).exists():
-            logger.warning("Cannot restore '%s': file not found (%s)", instance_id, flow_path)
-            return False
-
+        """Restore a single executor from a flow file or version store."""
         try:
             # Ensure tasks & services are registered before parsing
             from tasks import register_all_tasks
             register_all_tasks()
 
-            with open(flow_path, "r", encoding="utf-8") as ff:
-                raw = json.load(ff)
+            raw = None
+            # Try version store first (versioned deployment)
+            if flow_version and flow_version > 0:
+                from engine.flow_state import FlowVersionStore
+                vs = FlowVersionStore()
+                # Need flow_id — extract from instance_id or flow_path
+                _flow_id = Path(flow_path).stem if flow_path else instance_id.split("__")[0]
+                raw = vs.get_version(_flow_id, flow_version)
+                if raw:
+                    logger.info("Restored '%s' from version store (v%d)", instance_id, flow_version)
+            # Fallback to flow_path (legacy unversioned deployments)
+            if raw is None:
+                if not flow_path or not Path(flow_path).exists():
+                    logger.warning("Cannot restore '%s': file not found (%s)", instance_id, flow_path)
+                    return False
+                with open(flow_path, "r", encoding="utf-8") as ff:
+                    raw = json.load(ff)
             clean = {k: v for k, v in raw.items() if not k.startswith("_")}
             from engine.parser import FlowParser
             flow = FlowParser.parse(clean)

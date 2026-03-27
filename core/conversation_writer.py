@@ -56,7 +56,14 @@ class ConversationWriter:
     def enqueue(self, messages: List[Dict], user_id: str = "",
                 context_agent: str = "", status: str = "",
                 wait: bool = False) -> Optional[threading.Event]:
-        """Add messages to the write queue. Non-blocking unless wait=True."""
+        """Add messages to the write queue. Non-blocking unless wait=True.
+
+        Stamps each message with ts=now if not already present.
+        """
+        _now = time.time()
+        for m in messages:
+            if "ts" not in m and "timestamp" not in m:
+                m["ts"] = _now
         evt = threading.Event() if wait else None
         self._queue.put({
             "op": "append",
@@ -76,6 +83,10 @@ class ConversationWriter:
                             user_id: str = "", ttl: int = 0,
                             wait: bool = False) -> Optional[threading.Event]:
         """Enqueue an agent_flush operation (transcript + all contexts atomically)."""
+        _now = time.time()
+        for m in public_messages + private_messages:
+            if "ts" not in m and "timestamp" not in m:
+                m["ts"] = _now
         evt = threading.Event() if wait else None
         self._queue.put({
             "op": "agent_flush",

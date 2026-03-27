@@ -988,8 +988,12 @@ class LLMClaudeCodeMixin:
                 _flush_turn()
             except Exception:
                 pass
+            # Capture stderr BEFORE cleanup closes the pipes
+            try:
+                _stderr = proc.stderr.read() if proc.stderr and not proc.stderr.closed else ""
+            except Exception:
+                _stderr = ""
             self._cleanup_proc(proc)
-            _stderr = ""
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
             self._recover_tokens(workdir)
 

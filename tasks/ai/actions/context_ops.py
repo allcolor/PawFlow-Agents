@@ -419,8 +419,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        # Sub-conversation context: load from sub-conv directly
-        if _ctx_agent.startswith("task:"):
+        if _ctx_agent == "_transcript":
+            context_data = store.load(conv_id, user_id=user_id) or []
+            diverged = False
+        elif _ctx_agent.startswith("task:"):
             _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
             _sub_cid = f"{conv_id}::task::{_sub_tid}"
             context_data = store.load(_sub_cid) or []
@@ -446,6 +448,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "content": content[:300] if isinstance(content, str) else str(content)[:300],
                 "has_tool_calls": has_tool_calls,
                 "source": m.get("source"),
+                "msg_id": m.get("msg_id", ""),
             })
         # Include agent context status map
         _agent_ctx_map = store.list_agent_contexts(conv_id)

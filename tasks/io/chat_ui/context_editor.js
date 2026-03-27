@@ -43,10 +43,6 @@ async function ctxRefresh() {
     showContextOverlay(data);
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
-async function ctxRefreshAndReload() {
-  await ctxRefresh();
-  reloadConv();
-}
 
 async function ctxEditMessage(index) {
   const full = await ctxLoadFull();
@@ -71,6 +67,7 @@ async function ctxEditMessage(index) {
     + '</div></div>';
 }
 
+let _ctxDirty = false;
 async function _ctxMutate(body, successMsg) {
   try {
     const resp = await fetch(API, {
@@ -81,9 +78,15 @@ async function _ctxMutate(body, successMsg) {
     if (data.error) { addMsg('error', data.error); return false; }
     if (successMsg) addMsg('system', typeof successMsg === 'function' ? successMsg(data) : successMsg);
     _ctxFullData = null;
-    ctxRefreshAndReload();
+    _ctxDirty = true;
+    await ctxRefresh();
     return true;
   } catch (e) { addMsg('error', 'Failed: ' + e.message); return false; }
+}
+function ctxClose() {
+  const overlay = document.getElementById('contextOverlay');
+  if (overlay) overlay.remove();
+  if (_ctxDirty) { _ctxDirty = false; reloadConv(); }
 }
 
 async function ctxSaveEdit(index) {
@@ -97,9 +100,17 @@ async function ctxSaveEdit(index) {
 
 async function ctxDeleteMessage(index) {
   if (!confirm(t('contextDeleteConfirm'))) return;
-  _ctxMutate(
-    {action: 'delete_context_message', index},
-    (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
+  if (_ctxAgentFilter === '_transcript') {
+    const row = document.getElementById('ctx-row-' + index);
+    const mid = row && row.dataset.msgid;
+    if (mid) {
+      await _ctxMutate({action: 'delete_message', msg_id: mid});
+    }
+  } else {
+    await _ctxMutate(
+      {action: 'delete_context_message', index, agent_name: _ctxAgentFilter},
+      (d) => t('contextSaved', {n: d.message_count, tokens: d.token_estimate}));
+  }
 }
 
 async function ctxAddMessage() {
@@ -162,9 +173,7 @@ async function ctxSaveReplaceAll() {
 function _buildCtxAgentDropdown(data) {
   const agents = data.agent_contexts || {};
   const names = Object.keys(agents).filter(n => n !== '*').sort();
-  console.log('[ctx-dropdown] agents:', JSON.stringify(agents), 'names:', names, 'filter:', _ctxAgentFilter);
-  // Always show dropdown if there are per-agent contexts or if a filter is active
-  if (names.length === 0 && !_ctxAgentFilter) return '';
+  // Always show dropdown (transcript + shared always present)
   // Ensure current filter is in the list (may not be diverged yet)
   if (_ctxAgentFilter && !names.includes(_ctxAgentFilter)) {
     names.push(_ctxAgentFilter);
@@ -173,6 +182,7 @@ function _buildCtxAgentDropdown(data) {
   const sharedStatus = agents['*'] || 'messages';
   const sharedLabel = 'Shared' + (sharedStatus === 'diverged' ? ' \u2733' : '');
   let html = '<select id="ctxAgentFilter" onchange="ctxAgentChanged()" style="background:#1e1e3a;color:#c0c0d0;border:1px solid #444;border-radius:6px;padding:3px 8px;font-size:12px">';
+  html += '<option value="_transcript"' + (_ctxAgentFilter === '_transcript' ? ' selected' : '') + '>Transcript</option>';
   html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
@@ -235,9 +245,16 @@ function ctxToggleSelect(row, event) {
 }
 async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
-  const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
-  _ctxSelected.clear();
-  await _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
+  if (_ctxAgentFilter === '_transcript') {
+    const mids = Array.from(document.querySelectorAll('.ctx-selected[data-msgid]'))
+      .map(r => r.dataset.msgid).filter(Boolean);
+    _ctxSelected.clear();
+    if (mids.length) await _ctxMutate({action: 'delete_message', msg_ids: mids});
+  } else {
+    const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
+    _ctxSelected.clear();
+    await _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
+  }
 }
 
 function showContextOverlay(data) {
@@ -262,7 +279,8 @@ function showContextOverlay(data) {
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
       const editBtn = '<button onclick="event.stopPropagation();ctxEditMessage(' + i + ')" style="background:none;border:none;color:#4fc3f7;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextEdit') + '">&#9998;</button>';
       const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + i + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="' + t('contextDelete') + '">&#128465;</button>';
-      msgsHtml += '<div id="ctx-row-' + i + '" data-ctx-idx="' + i + '" style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
+      const _mid = m.msg_id || '';
+      msgsHtml += '<div id="ctx-row-' + i + '" data-ctx-idx="' + i + '"' + (_mid ? ' data-msgid="' + _mid + '"' : '') + ' style="padding:6px 8px;border-bottom:1px solid #222;cursor:pointer" onclick="if(event.ctrlKey||event.shiftKey){event.preventDefault();ctxToggleSelect(this,event)}else{this.querySelector(\'.ctx-full\')&&(this.querySelector(\'.ctx-full\').style.display=this.querySelector(\'.ctx-full\').style.display===\'block\'?\'none\':\'block\')}">'
         + '<div style="display:flex;align-items:center">' + badge + tcTag + src + '<span style="margin-left:auto">' + editBtn + delBtn + '</span></div>'
         + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>'
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'
@@ -277,7 +295,7 @@ function showContextOverlay(data) {
     + '<span style="color:#6c6c8a;font-size:12px;margin-left:auto">' + t('contextMessages', {n:data.message_count}) + ' &middot; ' + t('contextTokens', {n:data.token_estimate}) + '</span>'
     + '<button onclick="ctxReplaceAll()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="' + t('contextReplaceAll') + '">JSON</button>'
     + (_ctxAgentFilter ? '<button onclick="ctxDeleteContext()" style="background:#5a1a1a;color:#e74c3c;border:none;border-radius:6px;padding:3px 10px;cursor:pointer;font-size:11px;font-weight:600" title="Delete this context entirely">\u{1F5D1} Delete</button>' : '')
-    + '<button onclick="document.getElementById(\'contextOverlay\').remove()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
+    + '<button onclick="ctxClose()" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:18px;margin-left:4px">&times;</button>'
     + '</div>'
     + '<div id="ctx-msg-list" style="flex:1;overflow-y:auto;border:1px solid #222;border-radius:8px;background:#0d1117">' + msgsHtml + '</div>'
     + '<div id="ctxSelectBar" style="display:none;padding:6px 0;align-items:center;gap:8px;justify-content:center">'

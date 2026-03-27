@@ -44,6 +44,15 @@ class FilesystemToolHandler(ToolHandler):
     # Service types that provide filesystem operations (relay = full agent, others = storage only)
     _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 
+    # Actions that require a relay service (exec, git, shell)
+    _RELAY_ONLY_ACTIONS = frozenset({
+        "exec",
+        "git_status", "git_log", "git_diff", "git_commit", "git_pull", "git_push",
+        "git_checkout", "git_add", "git_reset", "git_stash", "git_branch",
+        "git_merge", "git_rebase", "git_cherry_pick", "git_tag", "git_blame",
+        "git_worktree_list", "git_worktree_add", "git_worktree_remove",
+    })
+
     @property
     def name(self) -> str:
         return "filesystem"
@@ -52,13 +61,14 @@ class FilesystemToolHandler(ToolHandler):
     def description(self) -> str:
         desc = (
             "Access files and run commands on the user's filesystem through a configured service. "
-            "Actions: list_dir, read_file (supports offset/limit for pagination), read_pdf, read_notebook (.ipynb), edit_notebook (edit/insert/delete cells), "
+            "File actions (all services): list_dir, read_file (supports offset/limit for pagination), read_pdf, read_notebook (.ipynb), edit_notebook, "
             "write_file (use content for text OR file_id to copy a server file like generated images), "
             "edit (exact string replace OR line-based: use start_line/end_line/new_string to replace a range of lines), "
             "batch_edit (atomic multi-file edit), apply_patch (unified diff), "
             "delete_file, mkdir, stat, exists, search (glob), grep (regex), find_replace. "
-            "Shell: exec — run any shell command (e.g. exec with command='cat file.txt' or command='ls -la'). "
-            "Git: git_status, git_log, git_diff, git_commit (files, amend), git_pull, git_push, git_checkout, "
+            "Relay-only actions (require a 'relay' service, NOT available on pure filesystem/cloud): "
+            "exec — run shell commands (with optional 'shell' param: bash, powershell, cmd, python, node); "
+            "git_status, git_log, git_diff, git_commit, git_pull, git_push, git_checkout, "
             "git_add, git_reset, git_stash, git_branch, git_merge, git_rebase, git_cherry_pick, git_tag, git_blame, "
             "git_worktree_list, git_worktree_add, git_worktree_remove. "
             "Transfer: copy_to_store (filesystem→FileStore), "
@@ -520,6 +530,14 @@ class FilesystemToolHandler(ToolHandler):
             "ls": "list_dir", "cat": "read_file", "rm": "delete_file",
         }
         action = _action_aliases.get(action, action)
+
+        # Block relay-only actions on pure filesystem services
+        if action in self._RELAY_ONLY_ACTIONS:
+            _svc_type = getattr(svc, 'TYPE', '') or getattr(svc, 'service_type', '')
+            if _svc_type and _svc_type != "relay":
+                return (f"Error: '{action}' requires a relay service (exec, git, shell). "
+                        f"Service '{service_name}' is type '{_svc_type}' (storage only). "
+                        f"Connect a relay (pawcode, vscode plugin, or pawflow_relay.py) for this action.")
 
         try:
             if action == "list_dir":

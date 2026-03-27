@@ -50,12 +50,25 @@ class ExecuteScriptTask(BaseTask):
                 'flow_file': flowfile,  # alias for compat
             }
 
-            # Inject filesystem service if configured
+            # Inject filesystem service — explicit config or auto-detect first relay
             fs_service_id = self.config.get('filesystem_service_id')
+            fs_svc = None
             if fs_service_id:
                 fs_svc = self.get_service(fs_service_id)
-                if fs_svc:
-                    local_ns['fs'] = fs_svc
+            if not fs_svc:
+                # Auto-detect: prefer connected relay, then any filesystem
+                try:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    for _sid, _sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
+                        if getattr(_sdef, "service_type", "") in ("relay", "filesystem"):
+                            _s = GlobalServiceRegistry.get_instance().get_live_instance(_sid)
+                            if _s:
+                                fs_svc = _s
+                                break
+                except Exception:
+                    pass
+            if fs_svc:
+                local_ns['fs'] = fs_svc
 
             exec(self.script, globals_dict, local_ns)
 

@@ -263,8 +263,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             "conversation_id": conversation_id, "agent_name": _target or "",
         })
 
+        # Save original content before overwriting with ack
+        _original_content = flowfile.get_content()
+
         # Background thread: prepare context (may compact), then run agent loop
         def _bg_streaming():
+            # Restore original content (overwritten by ack below)
+            flowfile.set_content(_original_content)
             try:
                 ctx = self._prepare_agent_context(flowfile)
             except Exception as e:

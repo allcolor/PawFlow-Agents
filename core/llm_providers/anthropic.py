@@ -278,7 +278,7 @@ class LLMAnthropicMixin:
                         })
                 api_messages.append({"role": m.role, "content": content_blocks})
             else:
-                api_messages.append({"role": m.role, "content": m.content})
+                api_messages.append({"role": m.role, "content": m.content or ""})
         return system_text, api_messages
 
     @staticmethod

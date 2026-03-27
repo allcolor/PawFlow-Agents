@@ -100,6 +100,7 @@ class AgentSerializationMixin:
         System messages are excluded (internal to LLM context).
         """
         result = []
+        _tc_id_to_name = {}  # tool_call_id → display name (for tool_result matching)
         for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
             if role == "system":
@@ -128,6 +129,24 @@ class AgentSerializationMixin:
             tool_call_id = m.get("tool_call_id")
 
             if role == "assistant" and tool_calls:
+                # Build tc_id → display name map for tool_result matching
+                for tc in tool_calls:
+                    _raw_name = tc.get("name", "?")
+                    _raw_args = tc.get("arguments", {})
+                    if _raw_name == "mcp__pawflow__use_tool" and isinstance(_raw_args, dict):
+                        _tc_id_to_name[tc.get("id", "")] = _raw_args.get("tool_name", _raw_name)
+                    elif _raw_name == "mcp__pawflow__get_tool_schema":
+                        _tc_id_to_name[tc.get("id", "")] = "get_tool_schema"
+                    else:
+                        _tc_id_to_name[tc.get("id", "")] = _raw_name
+                # Thinking block (before tool calls, same as SSE live order)
+                _thinking = m.get("thinking", "")
+                if _thinking:
+                    result.append({
+                        "type": "thinking", "role": "assistant",
+                        "content": _thinking,
+                        "source": m.get("source"),
+                    })
                 # Assistant message that contains tool calls
                 if content:
                     _tc_entry = {
@@ -144,6 +163,12 @@ class AgentSerializationMixin:
                     # Build rich display matching SSE tool_call format
                     _tc_name = tc.get("name", "?")
                     _tc_args = tc.get("arguments", {})
+                    # Unwrap MCP wrappers for display (same as SSE live)
+                    if _tc_name == "mcp__pawflow__use_tool" and isinstance(_tc_args, dict):
+                        _tc_name = _tc_args.get("tool_name", _tc_name)
+                        _tc_args = _tc_args.get("arguments", _tc_args)
+                    elif _tc_name == "mcp__pawflow__get_tool_schema":
+                        _tc_name = "get_tool_schema"
                     _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
                     # Format source label
                     _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
@@ -198,11 +223,14 @@ class AgentSerializationMixin:
                 _is_diff = any(p in display_content for p in ("replacement(s):", "Edited ", "hunks"))
                 _limit = 2000 if _is_diff else 300
                 preview = display_content[:_limit]
-                result.append({
+                _tr_entry = {
                     "type": "tool_result", "role": "tool",
                     "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
-                })
+                }
+                if tool_call_id in _tc_id_to_name:
+                    _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]
+                result.append(_tr_entry)
             elif role in ("tool_call", "tool_result", "narration", "thinking"):
                 # display_only messages from claude-code turns — pass through as-is
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
@@ -222,6 +250,13 @@ class AgentSerializationMixin:
                 # Skip internal system instructions injected as user messages
                 if role == "user" and content.startswith("[System:"):
                     continue
+                # Thinking block on assistant text messages (no tool_calls)
+                if role == "assistant" and m.get("thinking"):
+                    result.append({
+                        "type": "thinking", "role": "assistant",
+                        "content": m["thinking"],
+                        "source": m.get("source"),
+                    })
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
                 if m.get("msg_id"):
                     entry["msg_id"] = m["msg_id"]

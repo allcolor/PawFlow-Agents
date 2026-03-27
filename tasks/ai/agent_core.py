@@ -135,6 +135,8 @@ class AgentCoreMixin:
                         "msg_id": getattr(msg, "msg_id", None),
                         "tool_call_id": getattr(msg, "tool_call_id", None),
                     }
+                    if msg.thinking:
+                        _store_msg["thinking"] = msg.thinking
                     if msg.tool_calls:
                         _store_msg["tool_calls"] = [
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
@@ -389,15 +391,11 @@ class AgentCoreMixin:
                         _src = _agent_source()
                         _agent = _src.get("name", "")
 
-                        def _persist_display(msg_dict):
-                            """Persist a display_only message immediately (in order)."""
-                            if use_conv_store and conversation_id:
-                                try:
-                                    from core.conversation_store import ConversationStore
-                                    ConversationStore.instance().append_messages(
-                                        conversation_id, [msg_dict], user_id=user_id)
-                                except Exception:
-                                    pass
+                        # display_only messages are NOT persisted in the transcript.
+                        # The transcript contains LLM context messages (assistant, tool)
+                        # and _classify_messages_for_display reconstructs the visual
+                        # representation (tool_call, tool_result, thinking) from them.
+                        # Persisting display_only would create duplicates at reload.
 
                         if text:
                             msg = LLMMessage(
@@ -420,21 +418,10 @@ class AgentCoreMixin:
                                 "tokens_out": _est_out,
                             })
 
-                        # Thinking (display_only — persisted for transcript)
                         if tool_calls:
-                            _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
-                            if _thinking:
-                                import uuid as _uuid_th
-                                _persist_display({
-                                    "role": "thinking",
-                                    "content": _thinking[:500],
-                                    "msg_id": f"th_{_uuid_th.uuid4().hex[:12]}",
-                                    "display_only": True,
-                                    "display_type": "thinking",
-                                    "source": _src,
-                                })
+                            # Extract thinking from first tool_call (claude-code bundles it there)
+                            _thinking_text = tool_calls[0].get("thinking", "") if tool_calls else ""
 
-                        if tool_calls:
                             tc_objects = [
                                 LLMToolCall(
                                     id=tc.get("id", ""),
@@ -445,10 +432,11 @@ class AgentCoreMixin:
                             for tc_obj in tc_objects:
                                 tools_called.append(tc_obj.name)
 
-                            # Tool call message (in LLM context)
+                            # Tool call message (in LLM context, includes thinking)
                             tc_msg = LLMMessage(
                                 role="assistant", content="",
-                                tool_calls=tc_objects, source=_src)
+                                tool_calls=tc_objects, thinking=_thinking_text,
+                                source=_src)
                             _append(tc_msg)
                             turn_msgs.append(tc_msg)
 
@@ -465,22 +453,6 @@ class AgentCoreMixin:
                                 elif _display_name == "mcp__pawflow__get_tool_schema":
                                     _display_name = "get_tool_schema"
 
-                                # Generate unique ID for display_only dedup
-                                import uuid as _uuid_tc
-                                _tc_display_id = _uuid_tc.uuid4().hex[:12]
-
-                                # Tool call (display_only — persist immediately in order)
-                                _persist_display({
-                                    "role": "tool_call",
-                                    "display_only": True,
-                                    "display_type": "tool_call",
-                                    "msg_id": f"tc_{_tc_display_id}",
-                                    "content": _display_name,
-                                    "tool_name": _display_name,
-                                    "tool_args": _display_args,
-                                    "source": _src,
-                                })
-
                                 # Tool result (in LLM context)
                                 tr_content = _result or "(no output)"
                                 tr_msg = LLMMessage(
@@ -489,19 +461,8 @@ class AgentCoreMixin:
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
 
-                                # Tool result (display_only — persist immediately in order)
-                                tr_preview = (tr_content[:300] + "..."
-                                              if len(tr_content) > 300
-                                              else tr_content)
-                                _persist_display({
-                                    "role": "tool_result",
-                                    "display_only": True,
-                                    "display_type": "tool_result",
-                                    "msg_id": f"tr_{_tc_display_id}",
-                                    "content": tr_preview,
-                                    "tool_name": _display_name,
-                                    "tool_call_id": tc_obj.id,
-                                })
+                                # display_only NOT persisted — _classify_messages_for_display
+                                # reconstructs tool_call/tool_result from LLM context messages
 
                     def _llm_call(msgs, ps=poll_silent):
                         if emitter.is_streaming:
@@ -649,11 +610,16 @@ class AgentCoreMixin:
                                 "Do not just think — act or respond.]")))
                             _need_more_retried = True
                             continue
+                        _src_no_tools = _agent_source(response.tokens_in, response.tokens_out, response.model)
                         action, msgs, final, _need_more_retried = self._handle_response_no_tools(
                             _resp_text, _client_provider, tool_defs,
-                            _need_more_retried,
-                            source=_agent_source(response.tokens_in, response.tokens_out, response.model))
+                            _need_more_retried, source=_src_no_tools)
+                        # Attach thinking to the first assistant message
+                        _thinking_txt = response.thinking or ""
                         for _m in msgs:
+                            if _m.role == "assistant" and _thinking_txt:
+                                _m.thinking = _thinking_txt
+                                _thinking_txt = ""  # only on the first one
                             _append(_m)
                         if action == "break":
                             response_content = final
@@ -667,6 +633,7 @@ class AgentCoreMixin:
                     _append(LLMMessage(
                         role="assistant", content=response.content,
                         tool_calls=response.tool_calls,
+                        thinking=response.thinking or "",
                         source=_agent_source(response.tokens_in, response.tokens_out, response.model)))
 
                     if poll_silent and response.tool_calls:

@@ -232,6 +232,8 @@ class LLMAnthropicMixin:
             elif m.role == "assistant" and m.tool_calls:
                 # Assistant message with tool_use content blocks
                 content_blocks: List[Dict[str, Any]] = []
+                if getattr(m, "thinking", ""):
+                    content_blocks.append({"type": "thinking", "thinking": m.thinking})
                 text = m.text_content if isinstance(m.content, list) else m.content
                 if text:
                     content_blocks.append({"type": "text", "text": text})
@@ -278,7 +280,14 @@ class LLMAnthropicMixin:
                         })
                 api_messages.append({"role": m.role, "content": content_blocks})
             else:
-                api_messages.append({"role": m.role, "content": m.content or ""})
+                # Assistant message with thinking but no tool_calls
+                if m.role == "assistant" and getattr(m, "thinking", ""):
+                    _blocks = [{"type": "thinking", "thinking": m.thinking}]
+                    if m.content:
+                        _blocks.append({"type": "text", "text": m.content if isinstance(m.content, str) else m.text_content})
+                    api_messages.append({"role": "assistant", "content": _blocks})
+                else:
+                    api_messages.append({"role": m.role, "content": m.content or ""})
         return system_text, api_messages
 
     @staticmethod

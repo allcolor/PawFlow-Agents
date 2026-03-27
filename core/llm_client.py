@@ -71,6 +71,7 @@ class LLMMessage:
     source: Optional[Dict[str, str]] = None  # {"type": "user"|"agent", "name": "...", "llm_service": "..."}
     msg_id: str = ""  # unique ID — auto-generated if empty
     display_only: bool = False  # True = visible in transcript, excluded from LLM context
+    thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
 
     def __post_init__(self):
         if not self.msg_id:

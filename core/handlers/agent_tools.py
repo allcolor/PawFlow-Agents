@@ -429,7 +429,7 @@ class MCPToolHandler(ConfigurableToolHandler):
             "transport": "stdio",
             "server_id": "my-mcp-server",
             "tool_name": "web_search",
-            "relay_service": <FilesystemService instance>,
+            "relay_service": <RelayService instance>,
         }
 
     Uses JSON-RPC 2.0. HTTP transport uses direct HTTP POST.
@@ -451,7 +451,7 @@ class MCPToolHandler(ConfigurableToolHandler):
         self._timeout = timeout
         self._transport = transport  # "http" or "stdio"
         self._server_id = server_id
-        self._relay_service = relay_service  # FilesystemService for relay calls
+        self._relay_service = relay_service  # RelayService for relay calls
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         if self._transport == "stdio":

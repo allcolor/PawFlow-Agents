@@ -425,7 +425,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         else:
             # Find user's first connected filesystem service
             for sid, sdef in ureg.get_all_for_user(user_id).items():
-                if getattr(sdef, "service_type", "") in ("filesystem", "browserFilesystem", "serverFilesystem"):
+                if getattr(sdef, "service_type", "") in ("relay", "filesystem"):
                     svc = ureg.get_live_instance(user_id, sid)
                     if svc and hasattr(svc, '_relay_pool') and svc._relay_pool:
                         source_svc = svc
@@ -468,8 +468,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             }).encode("utf-8")
 
             async def _send_spawn():
-                from services.filesystem_service import FilesystemWSListener
-                await FilesystemWSListener._ws_send_raw(_writer, _spawn_msg)
+                from services.filesystem_service import WSListener
+                await WSListener._ws_send_raw(_writer, _spawn_msg)
 
             asyncio.run_coroutine_threadsafe(_send_spawn(), _loop).result(timeout=5)
 
@@ -525,8 +525,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         }).encode("utf-8")
 
                         async def _send_stop():
-                            from services.filesystem_service import FilesystemWSListener
-                            await FilesystemWSListener._ws_send_raw(_writer, _stop_msg)
+                            from services.filesystem_service import WSListener
+                            await WSListener._ws_send_raw(_writer, _stop_msg)
 
                         asyncio.run_coroutine_threadsafe(_send_stop(), _loop).result(timeout=5)
                     except Exception:

@@ -368,7 +368,6 @@ if (typeof hljs !== 'undefined') {
   <div class="attachments-preview" id="attachPreview"></div>
   <div class="input-row">
     <button class="btn-attach" id="promptsBtn" onclick="showPrompts()" title="Prompt library" style="font-size:16px !important">&#x1F4DD;</button>
-    <button class="btn-attach btn-folder" id="folderBtn" onclick="openLocalFolder()" title="Open local folder">&#x1F4C1;</button>
     <button class="btn-attach" onclick="document.getElementById('fileInput').click()" title="Attach files">&#x1F4CE;</button>
     <input type="file" id="fileInput" multiple accept=".pdf,.txt,.html,.md,.csv,.json,.png,.jpg,.jpeg,.gif,.webp,.py" style="display:none" onchange="handleFiles(this.files)">
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"

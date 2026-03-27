@@ -55,7 +55,7 @@ class UserServiceRegistry:
 
     # Plan C: service types that support heartbeat (have a ping() method)
     _HEARTBEAT_TYPES = frozenset({
-        "localFilesystem", "wsFilesystem", "serverFilesystem",
+        "relay",
         "remoteExecutor",
     })
 

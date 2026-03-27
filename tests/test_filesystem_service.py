@@ -12,7 +12,7 @@ Tests cover:
 - Relay script (unit: traversal, secret, readonly)
 - GetFile/PutFile sandboxed (FileStore fallback)
 - ExecuteScript + fs injection
-- Admin restriction (serverFilesystem)
+- Admin restriction (server filesystem)
 - OAuthTokenStore (save, get, refresh, revoke)
 - i18n keys
 """
@@ -466,7 +466,7 @@ class TestAdminRestriction(unittest.TestCase):
 
     def test_server_filesystem_type(self):
         from services.server_filesystem_service import ServerFilesystemService
-        self.assertEqual(ServerFilesystemService.TYPE, "serverFilesystem")
+        self.assertEqual(ServerFilesystemService.TYPE, "filesystem")
 
 
 # ── OAuthTokenStore ────────────────────────────────────────────────

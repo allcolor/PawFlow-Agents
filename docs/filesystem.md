@@ -34,10 +34,8 @@ All backends are wrapped in `PermissionEnforcedFilesystem` which enforces:
 
 | Type | Description | Git Support | Requires |
 |------|-------------|-------------|----------|
-| `localFilesystem` | HTTP relay to user's machine | Yes | `pawflow_relay.py` script |
-| `wsFilesystem` | WebSocket relay (persistent connection) | Yes | `pawflow_relay.py` script |
-| `browserFilesystem` | Browser File System Access API | No | Chrome/Edge, folder opened |
-| `serverFilesystem` | Server disk (admin only) | Yes | Admin role |
+| `relay` | WebSocket relay to user's machine (exec, git, shell) | Yes | pawcode, vscode plugin, or `pawflow_relay.py` |
+| `filesystem` | Server disk (admin only) | Yes | Admin role |
 | `googleDrive` | Google Drive via REST API | No | OAuth2 authorization |
 | `oneDrive` | OneDrive via Graph API | No | OAuth2 authorization |
 
@@ -123,7 +121,7 @@ The `user_id` is automatically injected from the authenticated session. Tokens a
 For rare cases where flows need server disk access (exports, logs, staging):
 
 ```
-/service install serverFilesystem staging root=/var/pawflow/staging,mode=readwrite
+/service install filesystem staging root=/var/pawflow/staging,mode=readwrite
 ```
 
 Only admin users can install this service type.
@@ -210,5 +208,5 @@ matches = fs.grep("src", r"TODO|FIXME")
 - **Secret validation**: Relay scripts use HMAC constant-time comparison
 - **Encryption at rest**: OAuth tokens stored encrypted via SecretsManager
 - **Defense in depth**: Relay `--readonly` flag blocks writes server-side even if service is configured as readwrite
-- **Admin restriction**: `serverFilesystem` type requires admin role to install
+- **Admin restriction**: Server `filesystem` type requires admin role to install
 - **Sandbox default**: GetFile/PutFile without a service use FileStore (no disk access)

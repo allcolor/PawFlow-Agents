@@ -775,7 +775,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _uid:
                     for _sid, _sdef in _ureg.get_all_for_user(_uid).items():
                         if getattr(_sdef, "service_type", "") in (
-                            "filesystem", "browserFilesystem", "serverFilesystem"):
+                            "relay", "filesystem"):
                             _fs_svcs.append(_sid)
                 if _fs_svcs:
                     _fs_services_info = (

@@ -53,7 +53,6 @@ from core.handlers import (  # noqa: F401
     ImageModelInfoHandler,
     LinkIdentityHandler,
     ListSecretsHandler,
-    LocalFilesHandler,
     MCPToolHandler,
     ManageResourceHandler,
     NotifyUserHandler,
@@ -282,7 +281,6 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CreateFileHandler())
     registry.register(ScheduleContinuationHandler())
     registry.register(ScheduleRecheckHandler())
-    registry.register(LocalFilesHandler())
     registry.register(RemoteExecutorHandler())
     registry.register(ImageGenerationHandler())
     registry.register(ImageModelInfoHandler())

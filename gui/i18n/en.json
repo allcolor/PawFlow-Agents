@@ -1072,7 +1072,7 @@
     "filesystem.error_not_found": "Not found: {path}",
     "filesystem.error_traversal": "Path traversal blocked: {path}",
     "filesystem.error_no_service": "No filesystem service configured",
-    "filesystem.error_admin_only": "serverFilesystem requires admin role",
+    "filesystem.error_admin_only": "Server filesystem requires admin role",
     "filesystem.mode_read": "Read only",
     "filesystem.mode_readwrite": "Read/Write",
     "filesystem.mode_full": "Full access",

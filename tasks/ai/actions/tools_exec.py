@@ -17,19 +17,6 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
     """Handle tools exec actions. Returns [flowfile] or None."""
 
 
-    if action == "file_result":
-        # Browser responding to a local_files tool request
-        request_id = body.get("request_id", "")
-        result = body.get("result", {})
-        if not request_id:
-            flowfile.set_content(json.dumps({"error": "Missing request_id"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        from core.tool_registry import LocalFilesHandler
-        LocalFilesHandler.resolve_request(request_id, result)
-        flowfile.set_content(json.dumps({"status": "ok"}).encode())
-        return [flowfile]
-
     if action == "exec_result":
         # User responding to a remote_exec approval request
         request_id = body.get("request_id", "")

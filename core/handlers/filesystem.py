@@ -41,9 +41,8 @@ class FilesystemToolHandler(ToolHandler):
     _available_services: List[Dict[str, Any]] = []  # Plan D: list of compatible services
     _tool_result_max_chars: int = 50000  # configurable via LLM service
 
-    # Filesystem service types (checked in order for auto-detection)
-    _FS_TYPES = ("filesystem", "browserFilesystem", "serverFilesystem",
-                 "googleDrive", "oneDrive")
+    # Service types that provide filesystem operations (relay = full agent, others = storage only)
+    _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 
     @property
     def name(self) -> str:

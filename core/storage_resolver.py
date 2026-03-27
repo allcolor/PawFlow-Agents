@@ -136,7 +136,7 @@ class StorageResolver:
         if not svc:
             raise ValueError(f"Filesystem service '{service_name}' not found")
 
-        # Prefer direct write_file (FilesystemService unified relay)
+        # Prefer direct write_file (RelayService unified relay)
         if hasattr(svc, 'write_file'):
             svc.write_file(path, data)
         elif hasattr(svc, 'execute_command'):
@@ -161,7 +161,7 @@ class StorageResolver:
         if not svc:
             raise ValueError(f"Filesystem service '{service_name}' not found")
 
-        # Prefer direct read_file (FilesystemService unified relay)
+        # Prefer direct read_file (RelayService unified relay)
         if hasattr(svc, 'read_file'):
             data = svc.read_file(path)
             return data, ""
@@ -182,9 +182,7 @@ class StorageResolver:
     # Aliases that auto-resolve to the first available filesystem service
     _FS_AUTO_ALIASES = {"workspace", "ws", "local"}
 
-    # Filesystem service types (checked in order for auto-detection)
-    _FS_TYPES = ("filesystem", "browserFilesystem", "serverFilesystem",
-                 "googleDrive", "oneDrive")
+    _FS_TYPES = ("relay", "filesystem", "googleDrive", "oneDrive")
 
     def _resolve_fs(self, service_name: str):
         """Resolve a filesystem service by name.

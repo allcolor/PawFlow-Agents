@@ -766,8 +766,7 @@ class AgentUtilsMixin:
                 info = svc.get_relay_info() if hasattr(svc, 'get_relay_info') else {}
                 result.append({"id": sid, "type": svc_type, "root": info.get("root", "?")})
             elif service_type == "filesystem" and svc_type in (
-                "localFilesystem", "wsFilesystem", "browserFilesystem",
-                "serverFilesystem", "googleDrive", "oneDrive",
+                "relay", "googleDrive", "oneDrive",
             ):
                 result.append({"id": sid, "type": svc_type, "root": "?"})
         # User services
@@ -786,8 +785,7 @@ class AgentUtilsMixin:
                                 "root": sdef.description or "?",
                             })
                     elif service_type == "filesystem" and sdef.service_type in (
-                        "localFilesystem", "wsFilesystem", "browserFilesystem",
-                        "serverFilesystem", "googleDrive", "oneDrive",
+                        "relay", "googleDrive", "oneDrive",
                     ):
                         if not any(s["id"] == sid for s in result):
                             result.append({
@@ -805,8 +803,7 @@ class AgentUtilsMixin:
         Search order: flow services → UserServiceRegistry (Plan B cross-channel).
         """
         services = getattr(self, '_services', {})
-        fs_types = ("filesystem", "browserFilesystem",
-                     "serverFilesystem", "googleDrive", "oneDrive")
+        fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
         for svc in services.values():
             svc_type = getattr(svc, 'TYPE', '')
             if svc_type in fs_types:

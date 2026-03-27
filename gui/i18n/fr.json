@@ -1072,7 +1072,7 @@
     "filesystem.error_not_found": "Introuvable : {path}",
     "filesystem.error_traversal": "Traversée de chemin bloquée : {path}",
     "filesystem.error_no_service": "Aucun service de fichiers configuré",
-    "filesystem.error_admin_only": "serverFilesystem nécessite le rôle admin",
+    "filesystem.error_admin_only": "Le filesystem serveur nécessite le rôle admin",
     "filesystem.mode_read": "Lecture seule",
     "filesystem.mode_readwrite": "Lecture/Écriture",
     "filesystem.mode_full": "Accès complet",

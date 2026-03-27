@@ -1,6 +1,6 @@
 """Tool Relay Service — WebSocket listener for MCP bridge connections.
 
-Same pattern as FilesystemService: binds a port, accepts relay connections.
+Same pattern as RelayService: binds a port, accepts relay connections.
 The MCP bridge (running as Claude Code subprocess) connects here to
 execute PawFlow tools.
 
@@ -66,8 +66,8 @@ class ToolRelayService(BaseService):
 
     def connect(self):
         """Register route on the shared WS listener (same port as filesystem)."""
-        from services.filesystem_service import FilesystemWSListener
-        listener = FilesystemWSListener.get_or_create(self._port)
+        from services.filesystem_service import WSListener
+        listener = WSListener.get_or_create(self._port)
         listener.register_route(self._path, self)
         self._connection = listener
         logger.info("ToolRelayService '%s' listening on port %d path %s",
@@ -79,7 +79,7 @@ class ToolRelayService(BaseService):
             self._connection = None
 
     # ── WebSocket message handling ──
-    # Called by FilesystemWSListener when a connection comes in on our path.
+    # Called by WSListener when a connection comes in on our path.
     # We override the relay pattern: instead of storing the connection for
     # later _request() calls, we handle requests inline in the WS loop.
     #
@@ -221,8 +221,7 @@ class ToolRelayService(BaseService):
 
         Same logic as agent_utils._find_filesystem_service but standalone.
         """
-        fs_types = ("filesystem", "browserFilesystem",
-                    "serverFilesystem", "googleDrive", "oneDrive")
+        fs_types = ("relay", "filesystem", "googleDrive", "oneDrive")
         # Global services
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry

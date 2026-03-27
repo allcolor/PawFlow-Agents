@@ -813,7 +813,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "type": "register",
                 "token": token,
                 "secret": secret,
-                "relay_type": "filesystem",
+                "relay_type": "relay",
                 "relay_id": relay_id,
                 "info": info,
             }).encode("utf-8")
@@ -990,7 +990,7 @@ def _create_service(login_url, session_id, service_id, port, relay_path, token):
     config_str = f"port={port},path={relay_path},token={token},mode=readwrite"
     return _agent_api_call(login_url, session_id, {
         "action": "service_install",
-        "service_type": "filesystem",
+        "service_type": "relay",
         "service_name": service_id,
         "config_str": config_str,
     })

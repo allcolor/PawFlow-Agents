@@ -97,7 +97,7 @@ class RelayThread:
         _api_call(self.server_url, "POST", "/api/agent",
                   body={
                       "action": "service_install",
-                      "service_type": "filesystem",
+                      "service_type": "relay",
                       "service_name": self.relay_id,
                       "config_str": config_str,
                   },

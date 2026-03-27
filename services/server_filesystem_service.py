@@ -221,7 +221,7 @@ class ServerFilesystemBackend(FilesystemBackend):
 class ServerFilesystemService(BaseService):
     """Server filesystem service. ADMIN ONLY."""
 
-    TYPE = "serverFilesystem"
+    TYPE = "filesystem"
     VERSION = "1.0.0"
     NAME = "Server Filesystem (Admin Only)"
     ADMIN_ONLY = True  # Flag for service installation checks
@@ -235,7 +235,7 @@ class ServerFilesystemService(BaseService):
 
     def _create_connection(self) -> PermissionEnforcedFilesystem:
         if not self._root:
-            raise ServiceError("'root' config is required for serverFilesystem")
+            raise ServiceError("'root' config is required for server filesystem")
         backend = ServerFilesystemBackend(self._root)
         perms = FilesystemPermissions(self._mode, self._allowed, self._denied)
         return PermissionEnforcedFilesystem(backend, perms)

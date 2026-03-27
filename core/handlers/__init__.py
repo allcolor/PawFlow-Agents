@@ -20,7 +20,6 @@ from core.handlers.file_ops import (  # noqa: F401
     CreateFileHandler,
     ScheduleContinuationHandler,
     ScheduleRecheckHandler,
-    LocalFilesHandler,
 )
 from core.handlers.filesystem import (  # noqa: F401
     FilesystemToolHandler,

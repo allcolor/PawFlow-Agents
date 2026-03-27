@@ -79,7 +79,7 @@ export class RelayManager implements vscode.Disposable {
     // Create service
     const configStr = `port=${this.port},path=/ws/relay,token=${this.wsToken},mode=readwrite`;
     const installResult = await api.sendAction('service_install', {
-      service_type: 'filesystem',
+      service_type: 'relay',
       service_name: this.relayId,
       config_str: configStr,
     });
@@ -139,7 +139,7 @@ export class RelayManager implements vscode.Disposable {
 
     this.outputChannel.appendLine(`[Relay] Connecting to wss://${host}:${this.port}${wsPath}`);
 
-    // Connect with TLS (self-signed cert from FilesystemWSListener)
+    // Connect with TLS (self-signed cert from WSListener)
     const socket = tls.connect({
       host, port: this.port,
       rejectUnauthorized: false, // accept self-signed
@@ -176,7 +176,7 @@ export class RelayManager implements vscode.Disposable {
           type: 'register',
           token: this.wsToken,
           secret: this.wsToken,
-          relay_type: 'filesystem',
+          relay_type: 'relay',
           relay_id: this.relayId,
           info: { platform: process.platform, root: this.rootDir, mode: 'readwrite' },
         });

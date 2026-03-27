@@ -822,10 +822,6 @@ function stopPollTimer() {
   if (resourcesTimer) { clearInterval(resourcesTimer); resourcesTimer = null; }
 }
 
-// ── Local Files (File System Access API) ─────────────────────────
-let localDirHandle = null;
-let localDirName = '';
-
 async function showPrompts() {
   try {
     const r = await fetch(AGENT_PATH, {

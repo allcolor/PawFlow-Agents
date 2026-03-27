@@ -64,10 +64,9 @@ def _register_all_services():
     # Executor service
     import services.remote_executor_service   # noqa: F401
 
-    # Filesystem services
-    import services.filesystem_service         # noqa: F401  — unified reverse relay
+    # Relay & filesystem services
+    import services.filesystem_service         # noqa: F401  — relay service (WS)
     import services.tool_relay_service         # noqa: F401  — MCP bridge tool relay
-    import services.browser_filesystem_service # noqa: F401
     import services.server_filesystem_service  # noqa: F401
     import services.gdrive_filesystem_service  # noqa: F401
     import services.onedrive_filesystem_service  # noqa: F401

@@ -271,8 +271,8 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                     "message": f"Service '{name}' already exists for that path.",
                 }).encode())
                 return [flowfile]
-            from services.filesystem_service import FilesystemService
-            greg.register_definition(name, FilesystemService, {
+            from services.filesystem_service import RelayService
+            greg.register_definition(name, RelayService, {
                 "root_path": path,
                 "read_only": False,
             })

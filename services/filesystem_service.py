@@ -34,14 +34,14 @@ logger = logging.getLogger(__name__)
 
 # ── Shared WS Listener (singleton per port) ──────────────────────
 
-class FilesystemWSListener:
-    """Shared WebSocket listener — one per port, multiple filesystem services."""
+class WSListener:
+    """Shared WebSocket listener — one per port, multiple relay/tool services."""
 
-    _instances: Dict[int, "FilesystemWSListener"] = {}
+    _instances: Dict[int, "WSListener"] = {}
     _lock = threading.Lock()
 
     @classmethod
-    def get_or_create(cls, port: int) -> "FilesystemWSListener":
+    def get_or_create(cls, port: int) -> "WSListener":
         with cls._lock:
             if port not in cls._instances:
                 inst = cls(port)
@@ -50,14 +50,14 @@ class FilesystemWSListener:
 
     def __init__(self, port: int):
         self._port = port
-        self._routes: Dict[str, "FilesystemService"] = {}  # path → service
+        self._routes: Dict[str, "RelayService"] = {}  # path → service
         self._routes_lock = threading.Lock()
         self._loop: Optional[asyncio.AbstractEventLoop] = None
         self._thread: Optional[threading.Thread] = None
         self._server = None
         self._ref_count = 0
 
-    def register_route(self, path: str, service: "FilesystemService"):
+    def register_route(self, path: str, service: "RelayService"):
         with self._routes_lock:
             self._routes[path] = service
             self._ref_count += 1
@@ -363,10 +363,10 @@ class FilesystemWSListener:
 
 # ── Filesystem Service ────────────────────────────────────────────
 
-class FilesystemService(BaseService):
+class RelayService(BaseService):
     """Filesystem service backed by a reverse WebSocket relay."""
 
-    TYPE = "filesystem"
+    TYPE = "relay"
     VERSION = "2.0.0"
     NAME = "Filesystem (Relay)"
     DESCRIPTION = "Remote filesystem access via WebSocket relay"
@@ -436,10 +436,10 @@ class FilesystemService(BaseService):
 
     def connect(self):
         """Register route on the shared listener."""
-        listener = FilesystemWSListener.get_or_create(self._port)
+        listener = WSListener.get_or_create(self._port)
         listener.register_route(self._path, self)
         self._connection = listener
-        logger.info("FilesystemService '%s' listening on port %d path %s",
+        logger.info("RelayService '%s' listening on port %d path %s",
                      self._service_id, self._port, self._path)
 
     def disconnect(self):
@@ -698,4 +698,4 @@ class FilesystemService(BaseService):
 
 
 # Register with ServiceFactory
-ServiceFactory.register(FilesystemService)
+ServiceFactory.register(RelayService)

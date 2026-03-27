@@ -48,7 +48,7 @@ class AgentToolConfigMixin:
             FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler,
             ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler, AudioGenerationHandler,
-            LinkIdentityHandler, LocalFilesHandler, ManageResourceHandler,
+            LinkIdentityHandler, ManageResourceHandler,
             NotifyUserHandler,
             RecallHandler, RememberHandler, RemoteExecutorHandler,
             SemanticRecallHandler,
@@ -119,9 +119,6 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if user_id:
                     h.set_user_id(user_id)
-            elif isinstance(h, LocalFilesHandler):
-                if conversation_id:
-                    h.set_conversation_id(conversation_id)
             elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
                 h.set_user_id(user_id)
                 if hasattr(h, 'set_agent_name'):

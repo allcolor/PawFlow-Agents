@@ -182,12 +182,33 @@ class RelayThread:
                 "--allow-exec",
             ]
             try:
-                result = _sp.run(docker_cmd, capture_output=True, text=True)
-                if result.returncode != 0:
-                    sys.stderr.write(f"[Relay] Docker relay failed (exit {result.returncode}):\n")
-                    sys.stderr.write(f"[Relay] {result.stderr[:500]}\n")
+                self._docker_proc = _sp.Popen(
+                    docker_cmd, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                # Wait for container to exit or stop event
+                while not self._stop_event.is_set():
+                    try:
+                        self._docker_proc.wait(timeout=1)
+                        break  # container exited
+                    except _sp.TimeoutExpired:
+                        continue
+                # Check exit code
+                rc = self._docker_proc.poll()
+                if rc and rc != 0:
+                    stderr = ""
+                    try:
+                        stderr = self._docker_proc.stderr.read().decode("utf-8", errors="replace")
+                    except Exception:
+                        pass
+                    sys.stderr.write(f"[Relay] Docker relay failed (exit {rc}):\n")
+                    sys.stderr.write(f"[Relay] {stderr[:500]}\n")
             except Exception as e:
                 sys.stderr.write(f"[Relay] Docker error: {e}\n")
+            finally:
+                if hasattr(self, '_docker_proc') and self._docker_proc:
+                    try:
+                        self._docker_proc.kill()
+                    except Exception:
+                        pass
             return
 
         # Direct mode: connect from this process

@@ -14,7 +14,9 @@ COPY pawflow.py /opt/pawflow/pawflow.py
 ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
-RUN groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -m -s /bin/bash pawflow
+# GID/UID 1000 may already exist (node image) — use existing or create
+RUN (getent group 1000 || groupadd -g 1000 pawflow) && \
+    (id -u 1000 2>/dev/null || useradd -u 1000 -g 1000 -m -s /bin/bash pawflow)
 
 # Working directory for agent sessions
 RUN mkdir -p /workspace && chown 1000:1000 /workspace

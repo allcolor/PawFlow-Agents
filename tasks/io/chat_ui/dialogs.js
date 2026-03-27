@@ -1,3 +1,10 @@
+// ── Exec approval dialog ─────────────────────────────────────────
+function showExecApprovalDialog(data) {
+  const { request_id, action, command, risk_level, cwd, editable } = data;
+  const overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  const riskLabel = risk_level.charAt(0).toUpperCase() + risk_level.slice(1);
+  const cmdHtml = editable
     ? '<textarea id="execCmdEdit">' + escapeHtml(command) + '</textarea>'
     : '<code>' + escapeHtml(command) + '</code>';
   overlay.innerHTML = `

@@ -5,6 +5,11 @@ On Linux: Docker runs natively, invoke via 'docker ...'
 
 All code that runs Docker should use docker_cmd() to get the correct
 command prefix, and translate_path() for volume mounts.
+
+Execution modes:
+  local   — no Docker, subprocess only
+  docker  — spawn containers via docker.sock (host or DinD)
+  sidecar — pre-deployed containers, communicate via network
 """
 
 import os
@@ -14,6 +19,75 @@ import subprocess
 
 def is_windows() -> bool:
     return os.name == "nt"
+
+
+# ── Execution mode detection ─────────────────────────────────────
+
+_exec_mode_cache = None
+
+
+def detect_exec_mode() -> str:
+    """Auto-detect execution mode: local, docker, or sidecar.
+
+    Override with PAWFLOW_EXEC_MODE env var.
+    """
+    global _exec_mode_cache
+    if _exec_mode_cache is not None:
+        return _exec_mode_cache
+
+    explicit = os.environ.get("PAWFLOW_EXEC_MODE", "").strip().lower()
+    if explicit in ("local", "docker", "sidecar"):
+        _exec_mode_cache = explicit
+        return explicit
+
+    # K8s pod
+    if os.environ.get("KUBERNETES_SERVICE_HOST"):
+        _exec_mode_cache = "sidecar"
+        return "sidecar"
+    # AWS ECS
+    if os.environ.get("ECS_CONTAINER_METADATA_URI") or os.environ.get("ECS_CONTAINER_METADATA_URI_V4"):
+        _exec_mode_cache = "sidecar"
+        return "sidecar"
+    # In a container
+    in_container = os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
+    if in_container:
+        if os.path.exists("/var/run/docker.sock"):
+            _exec_mode_cache = "docker"  # DinD with socket
+            return "docker"
+        _exec_mode_cache = "sidecar"  # container without docker.sock
+        return "sidecar"
+    # Host with Docker
+    if docker_available():
+        _exec_mode_cache = "docker"
+        return "docker"
+    _exec_mode_cache = "local"
+    return "local"
+
+
+def to_host_path(container_path: str) -> str:
+    """Convert a container path to the equivalent host path for volume mounts.
+
+    In Docker-in-Docker, PawFlow sees /workspace but the Docker daemon
+    needs the original host path. Set PAWFLOW_HOST_WORKDIR to enable.
+
+    Example:
+      PAWFLOW_HOST_WORKDIR=/home/user/project
+      PAWFLOW_WORKDIR=/workspace  (default)
+      to_host_path("/workspace/sub") → "/home/user/project/sub"
+    """
+    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
+    if not host_workdir:
+        return container_path  # not in DinD, path is already host
+    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
+    try:
+        rel = os.path.relpath(container_path, container_workdir)
+        if rel.startswith(".."):
+            return container_path  # outside workspace, can't translate
+        if rel == ".":
+            return host_workdir
+        return os.path.join(host_workdir, rel).replace("\\", "/")
+    except ValueError:
+        return container_path
 
 
 def docker_cmd() -> list:

@@ -38,6 +38,23 @@ def _translate_path(p):
     return p
 
 
+def _to_host_path(container_path):
+    """Translate container path to host path for DinD volume mounts."""
+    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
+    if not host_workdir:
+        return container_path
+    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
+    try:
+        rel = os.path.relpath(container_path, container_workdir)
+        if rel.startswith(".."):
+            return container_path
+        if rel == ".":
+            return host_workdir
+        return os.path.join(host_workdir, rel).replace("\\", "/")
+    except ValueError:
+        return container_path
+
+
 def detect_available_shells() -> Dict[str, str]:
     """Detect available shells on this system. Returns {name: path}."""
     shells: Dict[str, str] = {}
@@ -744,7 +761,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
                              f"Use docker-python, docker-node, or docker-bash.")
         docker_run_args = [
             "--rm",
-            "-v", f"{_translate_path(root_abs)}:/workspace",
+            "-v", f"{_translate_path(_to_host_path(root_abs))}:/workspace",
             "-w", "/workspace",
             "-e", "PYTHONIOENCODING=utf-8",
             "--cpus", "2",

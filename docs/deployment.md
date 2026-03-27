@@ -1,158 +1,362 @@
 # PawFlow Deployment Guide
 
-Ce guide couvre les options de deploiement de PawFlow : local, Docker, et production.
+PawFlow supports three execution modes, auto-detected at startup:
 
----
+| Mode | Detection | Container spawning | Communication |
+|------|-----------|-------------------|---------------|
+| `local` | No Docker available | None | Subprocess |
+| `docker` | Docker socket available | `docker run` / `docker exec` | Subprocess + pipes |
+| `sidecar` | K8s / ECS / container without docker.sock | None (pre-deployed) | WebSocket / network |
 
-## Quick Start
+Override with `PAWFLOW_EXEC_MODE=local|docker|sidecar`.
 
-### Local Development
+## Auto-detection logic
 
-```bash
-# API REST
-python -m uvicorn api.app:app --reload --port 8000
-
-# GUI Streamlit (dans un autre terminal)
-python -m streamlit run gui/main.py
-
-# CLI
-python cli.py run flows/demo_pipeline.json -v
 ```
-
-- API : http://localhost:8000/docs
-- GUI : http://localhost:8501
-
-### Docker
-
-```bash
-# Demarrer API + GUI
-docker compose up -d
-
-# API : http://localhost:8000
-# GUI : http://localhost:8501
-
-# Arreter
-docker compose down
-```
-
-### Docker avec PostgreSQL
-
-```bash
-docker compose --profile postgres up -d
-# PostgreSQL accessible sur localhost:5432
-```
-
-### Build uniquement
-
-```bash
-docker compose build
+PAWFLOW_EXEC_MODE set?              -> use that value
+KUBERNETES_SERVICE_HOST set?        -> sidecar (K8s pod)
+ECS_CONTAINER_METADATA_URI set?     -> sidecar (AWS ECS task)
+/.dockerenv exists?
+  + /var/run/docker.sock exists?    -> docker (DinD)
+  + no docker.sock                  -> sidecar (container, no daemon)
+Docker available on host?           -> docker
+Otherwise                           -> local
 ```
 
 ---
 
-## Configuration
+## 1. Local (bare metal / VM)
 
-### Variables d'environnement
+PawFlow runs directly on the host. No containers.
 
-Copier `.env.example` vers `.env` et personnaliser :
+### Requirements
+- Python 3.11+
+- Claude CLI (`npm install -g @anthropic-ai/claude-code`) -- optional, for Claude Code provider
+- Docker -- optional, for containerized exec
 
-```bash
-cp .env.example .env
-```
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PAWFLOW_SECRET_KEY` | Cle secrete pour les sessions et tokens | `changeme` |
-| `PAWFLOW_CORS_ORIGINS` | Origines CORS autorisees (separees par virgule) | `http://localhost:8501,http://localhost:8000` |
-| `PAWFLOW_RATE_LIMIT` | Activer le rate limiting | `false` |
-| `PAWFLOW_RATE_LIMIT_MAX` | Nombre max de requetes par fenetre | `100` |
-| `PAWFLOW_RATE_LIMIT_WINDOW` | Fenetre de rate limiting en secondes | `60` |
-| `PAWFLOW_MAX_BODY_SIZE` | Taille max du body HTTP en bytes | `10485760` (10 MB) |
-| `POSTGRES_PASSWORD` | Mot de passe PostgreSQL (profil postgres) | `pawflowsecret` |
-| `PAWFLOW_API_URL` | URL de l'API pour la GUI | `http://localhost:8000` |
-
----
-
-## Architecture Docker
-
-```
-docker compose up -d
-```
-
-Lance deux services :
-
-1. **api** : Serveur FastAPI (uvicorn) sur le port 8000
-   - Health check automatique sur `/api/v1/system/health`
-   - Volumes montes : `flows/`, `config/`, `plugins/`
-   - Redemarrage automatique (`unless-stopped`)
-
-2. **gui** : Interface Streamlit sur le port 8501
-   - Demarre apres le health check de l'API
-   - Communique avec l'API via le reseau Docker interne (`http://api:8000`)
-
-3. **postgres** (optionnel, profil `postgres`) : PostgreSQL 16 sur le port 5432
-   - Donnees persistees dans un volume Docker (`pgdata`)
-
----
-
-## Production Checklist
-
-### Securite
-
-- [ ] Changer `PAWFLOW_SECRET_KEY` avec une valeur aleatoire forte
-- [ ] Activer le rate limiting (`PAWFLOW_RATE_LIMIT=true`)
-- [ ] Configurer les origines CORS strictement
-- [ ] Activer l'authentification dans l'API (RBAC)
-- [ ] Generer des API keys pour les integrations
-- [ ] Restreindre `PAWFLOW_MAX_BODY_SIZE` selon les besoins
-
-### Reseau
-
-- [ ] Placer un reverse proxy (nginx, Traefik) devant l'API
-- [ ] Configurer HTTPS/TLS
-- [ ] Ne pas exposer PostgreSQL sur le reseau public
-
-### Monitoring
-
-- [ ] Verifier le health check : `GET /api/v1/system/health`
-- [ ] Surveiller les bulletins via `GET /api/v1/monitoring/bulletins`
-- [ ] Configurer les alertes sur les logs Docker
-
-### Sauvegarde
-
-- [ ] Sauvegarder le volume `pgdata` si PostgreSQL est utilise
-- [ ] Sauvegarder les repertoires `flows/`, `config/`, `plugins/`
-- [ ] Exporter les flows via l'API (`GET /api/v1/flows/{id}/export`)
-
-### Performance
-
-- [ ] Ajuster `max_workers` dans les executors selon les ressources CPU
-- [ ] Configurer le backpressure des connections selon la memoire disponible
-- [ ] Surveiller le SpillTracker pour les fichiers volumineux
-
----
-
-## Commandes utiles
+### Start
 
 ```bash
-# Logs en temps reel
-docker compose logs -f
-
-# Logs d'un service specifique
-docker compose logs -f api
-
-# Redemarrer un service
-docker compose restart api
-
-# Reconstruire apres modification du code
-docker compose up -d --build
-
-# Verifier l'etat des services
-docker compose ps
-
-# Acceder au shell d'un conteneur
-docker compose exec api bash
-
-# Lancer les tests dans le conteneur
-docker compose exec api pytest tests/ -v
+python cli.py --port 9090
 ```
+
+### Claude Code
+Runs as a subprocess: `claude -p --input-format stream-json ...`
+
+### Filesystem relay
+Runs natively -- no container. The relay process runs Python `fs_actions.py` directly.
+
+---
+
+## 2. Docker (host or Docker-in-Docker)
+
+PawFlow runs on the host (or in a container with docker.sock mounted) and spawns child containers.
+
+### Requirements
+- Docker installed and running
+- User in `docker` group (Linux): `sudo usermod -aG docker $USER`
+
+### 2a. PawFlow on host, containers for isolation
+
+```bash
+# Build images
+bash docker/claude-code/build.sh   # pawflow-claude-code:latest
+bash docker/relay-dev/build.sh     # pawflow-relay-dev:latest
+
+# Start PawFlow
+python cli.py --port 9090
+```
+
+Enable containerization per service in the admin panel:
+- `containerize: true`
+- `docker_image: pawflow-claude-code:latest`
+
+### 2b. PawFlow in Docker (DinD)
+
+PawFlow itself runs in a container, with docker.sock mounted to spawn children.
+
+```bash
+docker run -d \
+  --name pawflow \
+  -p 9090:9090 \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v /path/to/data:/workspace/data \
+  -e PAWFLOW_HOST_WORKDIR=/path/to/data \
+  -e PAWFLOW_WORKDIR=/workspace/data \
+  pawflow:latest
+```
+
+**Critical environment variables for DinD:**
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `PAWFLOW_HOST_WORKDIR` | Yes (DinD) | The **host** path that maps to the PawFlow container's workdir. Used for child container volume mounts. |
+| `PAWFLOW_WORKDIR` | No (default: `/workspace`) | The path inside the PawFlow container where the workdir is mounted. |
+
+**Why:** When PawFlow spawns a child container (Claude Code, relay), it passes `-v {path}:/workspace` to Docker. In DinD, PawFlow sees `/workspace/data` but the Docker daemon (running on the host) needs the actual host path `/path/to/data`. `PAWFLOW_HOST_WORKDIR` enables this translation.
+
+### Volume mount translation example
+
+```
+PawFlow container sees: /workspace/data/claude_sessions/abc/
+Host path needed:       /path/to/data/claude_sessions/abc/
+
+PAWFLOW_HOST_WORKDIR=/path/to/data
+PAWFLOW_WORKDIR=/workspace/data
+
+Translation: /workspace/data/claude_sessions/abc/
+           -> relpath from /workspace/data = claude_sessions/abc/
+           -> join with /path/to/data = /path/to/data/claude_sessions/abc/
+```
+
+### Docker images
+
+| Image | Size | Contents |
+|-------|------|----------|
+| `pawflow-claude-code:latest` | ~500MB | Node.js 22, Claude CLI, Python 3, MCP bridge, Git |
+| `pawflow-relay-dev:latest` | ~3-4GB | Python, Node, Rust, Go, C/C++, Java, C#, Ruby, PHP, Perl, Lua, Zig |
+| `python:3.12-slim` | ~150MB | Python only |
+| `node:22-slim` | ~200MB | Node.js + npm |
+
+Build:
+```bash
+bash docker/claude-code/build.sh
+bash docker/relay-dev/build.sh
+```
+
+---
+
+## 3. Sidecar (Kubernetes / AWS ECS / Azure ACI)
+
+PawFlow runs as one container in a pod/task. Claude Code and relays run as **sidecar containers** in the same pod/task. Communication is via network (WebSocket), not Docker spawning.
+
+### Requirements
+- Shared volume between containers (PVC in K8s, EFS/bind in ECS)
+- Network connectivity between containers (localhost in same pod, or service DNS)
+
+### Environment variables
+
+| Variable | Set on | Description |
+|----------|--------|-------------|
+| `PAWFLOW_EXEC_MODE` | PawFlow | Set to `sidecar` (auto-detected in K8s/ECS) |
+| `PAWFLOW_CLAUDE_SIDECAR_URL` | PawFlow | WebSocket URL of Claude Code sidecar (e.g., `ws://localhost:9092`) |
+| `PAWFLOW_TOOL_RELAY_URL` | Claude Code sidecar | Tool relay WebSocket URL (e.g., `ws://pawflow:9091/ws/tools`) |
+| `PAWFLOW_TOOL_RELAY_TOKEN` | Claude Code sidecar | Auth token for tool relay |
+
+### 3a. Kubernetes (EKS / GKE / AKS)
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pawflow
+spec:
+  template:
+    spec:
+      containers:
+        - name: pawflow
+          image: pawflow:latest
+          ports:
+            - containerPort: 9090
+          env:
+            - name: PAWFLOW_EXEC_MODE
+              value: sidecar
+            - name: PAWFLOW_CLAUDE_SIDECAR_URL
+              value: ws://localhost:9092
+          volumeMounts:
+            - name: shared-data
+              mountPath: /workspace/data
+
+        - name: claude-code
+          image: pawflow-claude-code:latest
+          command: ["python3", "/opt/pawflow/claude_sidecar.py"]
+          ports:
+            - containerPort: 9092
+          env:
+            - name: PAWFLOW_TOOL_RELAY_URL
+              value: ws://localhost:9091/ws/tools
+            - name: PAWFLOW_TOOL_RELAY_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pawflow-secrets
+                  key: tool-relay-token
+          volumeMounts:
+            - name: shared-data
+              mountPath: /workspace/data
+
+        - name: relay
+          image: pawflow-relay-dev:latest
+          command:
+            - python3
+            - /opt/pawflow/pawflow_relay.py
+            - --server
+            - ws://localhost:9091/ws/relay
+            - --token
+            - $(RELAY_TOKEN)
+            - --relay-id
+            - relay-sidecar
+            - --dir
+            - /workspace
+            - --allow-exec
+          volumeMounts:
+            - name: shared-data
+              mountPath: /workspace
+
+      volumes:
+        - name: shared-data
+          persistentVolumeClaim:
+            claimName: pawflow-data
+```
+
+### 3b. AWS ECS
+
+```json
+{
+  "family": "pawflow",
+  "containerDefinitions": [
+    {
+      "name": "pawflow",
+      "image": "pawflow:latest",
+      "portMappings": [{"containerPort": 9090}],
+      "environment": [
+        {"name": "PAWFLOW_EXEC_MODE", "value": "sidecar"},
+        {"name": "PAWFLOW_CLAUDE_SIDECAR_URL", "value": "ws://localhost:9092"}
+      ],
+      "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace/data"}]
+    },
+    {
+      "name": "claude-code",
+      "image": "pawflow-claude-code:latest",
+      "command": ["python3", "/opt/pawflow/claude_sidecar.py"],
+      "environment": [
+        {"name": "PAWFLOW_TOOL_RELAY_URL", "value": "ws://localhost:9091/ws/tools"}
+      ],
+      "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace/data"}]
+    },
+    {
+      "name": "relay",
+      "image": "pawflow-relay-dev:latest",
+      "command": ["python3", "/opt/pawflow/pawflow_relay.py",
+                   "--server", "ws://localhost:9091/ws/relay",
+                   "--dir", "/workspace", "--allow-exec"],
+      "mountPoints": [{"sourceVolume": "shared-data", "containerPath": "/workspace"}]
+    }
+  ],
+  "volumes": [{"name": "shared-data", "host": {}}]
+}
+```
+
+### 3c. Docker Compose
+
+```yaml
+services:
+  pawflow:
+    image: pawflow:latest
+    ports:
+      - "9090:9090"
+    environment:
+      PAWFLOW_EXEC_MODE: sidecar
+      PAWFLOW_CLAUDE_SIDECAR_URL: ws://claude-code:9092
+    volumes:
+      - pawflow-data:/workspace/data
+
+  claude-code:
+    image: pawflow-claude-code:latest
+    entrypoint: ["python3", "/opt/pawflow/claude_sidecar.py"]
+    environment:
+      PAWFLOW_TOOL_RELAY_URL: ws://pawflow:9091/ws/tools
+      PAWFLOW_TOOL_RELAY_TOKEN: ${TOOL_RELAY_TOKEN}
+    volumes:
+      - pawflow-data:/workspace/data
+
+  relay:
+    image: pawflow-relay-dev:latest
+    entrypoint:
+      - python3
+      - /opt/pawflow/pawflow_relay.py
+      - --server
+      - ws://pawflow:9091/ws/relay
+      - --token
+      - ${RELAY_TOKEN}
+      - --relay-id
+      - relay-sidecar
+      - --dir
+      - /workspace
+      - --allow-exec
+    volumes:
+      - workspace:/workspace
+
+volumes:
+  pawflow-data:
+  workspace:
+```
+
+---
+
+## 4. Security model
+
+| Mode | Host access | Network | CPU/Memory | Isolation |
+|------|------------|---------|------------|-----------|
+| Local (native) | Full | Full | Unlimited | None |
+| Docker (Claude Code) | MCP tools only | MCP + API | Configurable | Container |
+| Docker (relay) | Mounted dir | Full | 2 CPU / 2GB | Container |
+| Docker (ephemeral shells) | Mounted dir | None | 2 CPU / 1GB | Container + read-only |
+| Sidecar (Claude Code) | Shared volume | Internal | Pod limits | Container |
+| Sidecar (relay) | Shared volume | Internal | Pod limits | Container |
+
+---
+
+## 5. Exec shell selection
+
+The `exec` tool supports a `shell` parameter:
+
+| Shell | Description |
+|-------|-------------|
+| `bash` | System bash (Git Bash on Windows) |
+| `powershell` | PowerShell |
+| `cmd` | Windows CMD |
+| `python` | Python interpreter |
+| `node` | Node.js |
+| `docker-python` | Python in ephemeral Docker container |
+| `docker-node` | Node.js in ephemeral Docker container |
+| `docker-bash` | Bash in ephemeral Docker container |
+
+`docker-*` shells are only available in `docker` mode. In `sidecar` mode, exec commands run inside the relay sidecar.
+
+---
+
+## 6. PawFlow SDK
+
+The `pawflow` Python module is pre-installed in all PawFlow containers. It provides synchronous access to PawFlow tools via the tool relay WebSocket.
+
+```python
+from pawflow import fs, tools
+
+# Filesystem operations
+data = fs.read_file("config.json")
+fs.write_file("output.txt", "processed")
+files = fs.list_dir("src/")
+
+# Any PawFlow tool
+result = tools.call("generate_image", prompt="a logo", width=256)
+```
+
+Works in: ExecuteScript (containerized), custom Docker scripts, any container with `PAWFLOW_TOOL_RELAY_URL` set.
+
+---
+
+## 7. Environment variable reference
+
+| Variable | Used by | Description |
+|----------|---------|-------------|
+| `PAWFLOW_EXEC_MODE` | PawFlow | Override execution mode: `local`, `docker`, `sidecar` |
+| `PAWFLOW_HOST_WORKDIR` | PawFlow (DinD) | Host path mapped to container workdir (for child volume mounts) |
+| `PAWFLOW_WORKDIR` | PawFlow (DinD) | Container workdir path (default: `/workspace`) |
+| `PAWFLOW_CLAUDE_SIDECAR_URL` | PawFlow (sidecar) | WebSocket URL of Claude Code sidecar |
+| `PAWFLOW_DOCKER_IMAGE` | Containers | Image name (set in Dockerfile, used for detection) |
+| `PAWFLOW_TOOL_RELAY_URL` | MCP bridge / sidecars | Tool relay WebSocket URL |
+| `PAWFLOW_TOOL_RELAY_TOKEN` | MCP bridge / sidecars | Auth token for tool relay |
+| `PAWFLOW_USER_ID` | MCP bridge | User context for tool execution |
+| `PAWFLOW_CONVERSATION_ID` | MCP bridge | Conversation context |
+| `PAWFLOW_AGENT_NAME` | MCP bridge | Agent identity |
+| `PAWFLOW_FS_ROOT` | Relay containers | Mounted workspace root path |

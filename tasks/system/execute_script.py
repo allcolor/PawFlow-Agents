@@ -13,7 +13,7 @@ Uses the unified sandbox from core.sandbox:
 from typing import Dict, Any, List
 from core import FlowFile, TaskFactory, TaskError
 from core.base_task import BaseTask
-from core.docker_utils import docker_run
+from core.docker_utils import docker_run, to_host_path as _to_host_path
 
 
 class ExecuteScriptTask(BaseTask):
@@ -111,7 +111,7 @@ with open("/data/output.json", "w") as f:
             # Run in Docker
             docker_run_args = [
                 "--rm",
-                "-v", f"{tmpdir}:/data",
+                "-v", f"{_to_host_path(tmpdir)}:/data",
                 "--add-host", "host.docker.internal:host-gateway",
                 "-e", f"PAWFLOW_TOOL_RELAY_URL={relay_url}",
                 "-e", f"PAWFLOW_TOOL_RELAY_TOKEN={relay_token}",

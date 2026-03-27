@@ -14,7 +14,7 @@ import subprocess
 import threading
 from typing import List, Optional
 
-from core.docker_utils import docker_cmd as _docker_cmd, docker_popen, docker_rm
+from core.docker_utils import docker_cmd as _docker_cmd, docker_popen, docker_rm, to_host_path
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +341,7 @@ class LLMClaudeCodeMixin:
             "--memory", mem,
             "--name", f"pawflow-claude-{os.getpid()}",
             # Mount session dir for persistence (memories, CLAUDE.md)
-            "-v", f"{workdir}:/workspace",
+            "-v", f"{to_host_path(workdir)}:/workspace",
             # Environment — HOME must be /workspace so Claude Code
             # finds .credentials.json at $CLAUDE_CONFIG_DIR/
             "-e", "CLAUDE_CONFIG_DIR=/workspace",

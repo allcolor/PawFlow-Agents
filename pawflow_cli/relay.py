@@ -26,6 +26,23 @@ def _translate_path(p):
     return p
 
 
+def _to_host_path(container_path):
+    """Translate container path to host path for DinD volume mounts."""
+    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
+    if not host_workdir:
+        return container_path
+    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
+    try:
+        rel = os.path.relpath(container_path, container_workdir)
+        if rel.startswith(".."):
+            return container_path
+        if rel == ".":
+            return host_workdir
+        return os.path.join(host_workdir, rel).replace("\\", "/")
+    except ValueError:
+        return container_path
+
+
 def _get_host_ip():
     """Get IP reachable from Docker containers."""
     if os.name == "nt":
@@ -195,7 +212,7 @@ class RelayThread:
             docker_cmd = _docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
-                "-v", f"{_translate_path(self.directory)}:/workspace",
+                "-v", f"{_translate_path(_to_host_path(self.directory))}:/workspace",
                 "--add-host", "host.docker.internal:host-gateway",
                 "--cpus", "2", "--memory", "2g",
                 "--security-opt", "no-new-privileges",

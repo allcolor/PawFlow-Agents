@@ -71,6 +71,23 @@ def _translate_path(p):
     return p
 
 
+def _to_host_path(container_path):
+    """Translate container path to host path for DinD volume mounts."""
+    host_workdir = os.environ.get("PAWFLOW_HOST_WORKDIR")
+    if not host_workdir:
+        return container_path
+    container_workdir = os.environ.get("PAWFLOW_WORKDIR", "/workspace")
+    try:
+        rel = os.path.relpath(container_path, container_workdir)
+        if rel.startswith(".."):
+            return container_path
+        if rel == ".":
+            return host_workdir
+        return os.path.join(host_workdir, rel).replace("\\", "/")
+    except ValueError:
+        return container_path
+
+
 def generate_relay_id(username: str, directory: str) -> str:
     """Generate a stable relay ID from username + directory.
 
@@ -915,7 +932,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     _dr = subprocess.run(_docker_cmd() + [
                                         "run", "-d",
                                         "--name", _child_container,
-                                        "-v", f"{_translate_path(_root)}:/workspace",
+                                        "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
                                         "-w", "/workspace",
                                         "--cpus", "2", "--memory", "2g",
                                         "--security-opt", "no-new-privileges",
@@ -1307,7 +1324,7 @@ def main():
         docker_run_args = [
             "--rm",
             "--name", _docker_container,
-            "-v", f"{_translate_path(root_dir)}:/workspace",
+            "-v", f"{_translate_path(_to_host_path(root_dir))}:/workspace",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", "2",
             "--memory", "2g",

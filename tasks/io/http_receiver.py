@@ -126,6 +126,15 @@ class HTTPReceiverTask(BaseTask):
         # Relationship routing
         ff.set_attribute("route.relationship", relationship)
 
+        # Priority: commands and technical actions get high priority
+        if pending_req.body:
+            try:
+                _body = json.loads(pending_req.body)
+                if isinstance(_body, dict) and _body.get("action"):
+                    ff.set_attribute("priority", "10")
+            except (json.JSONDecodeError, TypeError):
+                pass
+
         # Enqueue for pickup by execute()
         try:
             self._queue.put_nowait(ff)

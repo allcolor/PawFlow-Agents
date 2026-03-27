@@ -649,6 +649,14 @@ function handleSSE(event) {
       addMsg('system', data.message || '');
       break;
 
+    case 'command_result':
+      if (data.error) { addMsg('error', data.error); }
+      else {
+        try { var cr = JSON.parse(data.result); addMsg('system', cr.error || cr.message || data.result); }
+        catch(e) { addMsg('system', data.result); }
+      }
+      break;
+
     case 'btw_token':
       streaming['btw:' + agent] = (streaming['btw:' + agent] || '') + (data.text || '');
       break;

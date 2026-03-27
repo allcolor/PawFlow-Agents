@@ -29,6 +29,17 @@ from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
 
+# Actions that run in background (can be slow)
+_BG_ACTIONS = frozenset({
+    "service_install", "service_uninstall", "update_service",
+    "toggle_service", "delete_service",
+    "deploy_flow", "undeploy_flow", "start_flow", "stop_flow",
+    "update_flow_params", "promote_flow",
+    "delete_message",
+    "relay_connect", "relay_disconnect",
+    "claude_code_login_url", "claude_code_login_code", "claude_code_auth",
+})
+
 _ACTION_HANDLERS = [
     _handle_conversation,
     _handle_cancel_interrupt,
@@ -91,13 +102,56 @@ class AgentActionsMixin:
                 else:
                     return result
 
-        # Dispatch to action handlers
+        # Actions that may be slow → run in background, ack immediately
+        conversation_id = body.get("conversation_id", "")
+        if action in _BG_ACTIONS and conversation_id:
+            return self._run_action_bg(
+                action, body, store, user_id, flowfile, conversation_id)
+
+        # Dispatch to action handlers (sync — fast commands)
         for handler in _ACTION_HANDLERS:
             result = handler(self, action, body, store, user_id, flowfile)
             if result is not None:
                 return result
 
         return None
+
+    def _run_action_bg(self, action, body, store, user_id, flowfile, conversation_id):
+        """Run an action in background. Return ack immediately, result via SSE."""
+        import copy
+        _body = copy.deepcopy(body)
+
+        def _bg():
+            try:
+                for handler in _ACTION_HANDLERS:
+                    result = handler(self, action, _body, store, user_id, flowfile)
+                    if result is not None:
+                        _content = ""
+                        if isinstance(result, list) and result:
+                            _content = result[0].get_content().decode("utf-8", errors="replace")
+                        from core.conversation_event_bus import ConversationEventBus
+                        ConversationEventBus.instance().publish_event(
+                            conversation_id, "command_result", {
+                                "action": action, "result": _content,
+                            })
+                        return
+            except Exception as e:
+                logger.error("[bg-cmd] %s failed: %s", action, e, exc_info=True)
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "command_result", {
+                            "action": action, "error": str(e),
+                        })
+                except Exception:
+                    pass
+
+        threading.Thread(target=_bg, daemon=True,
+                         name=f"cmd-{action}-{conversation_id[:8]}").start()
+        flowfile.set_content(json.dumps({
+            "status": "accepted", "action": action,
+        }).encode())
+        return [flowfile]
 
 
     def _handle_telegram_conv_command(

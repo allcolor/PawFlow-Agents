@@ -235,4 +235,18 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         plan_id = data.get("plan_id", "")
         app.renderer.print_system(f"\U0001f4cb Plan deleted: {plan_id}")
 
+    elif ev_type == "command_result":
+        _action = data.get("action", "")
+        if data.get("error"):
+            app.renderer.print_system(f"[{_action}] Error: {data['error']}")
+        else:
+            _result = data.get("result", "")
+            try:
+                import json as _json_ev
+                _parsed = _json_ev.loads(_result)
+                _msg = _parsed.get("error") or _parsed.get("message") or _result
+            except Exception:
+                _msg = _result
+            app.renderer.print_system(f"[{_action}] {_msg}")
+
     return True, streaming_agent, thinking_agent

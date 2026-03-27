@@ -375,7 +375,7 @@ class HTTPListenerService(BaseService):
         super().__init__(config)
         self._host = self.config.get("host", "0.0.0.0")
         self._port = int(self.config.get("port", 9090))
-        self._request_timeout = float(self.config.get("request_timeout", 30.0))
+        self._request_timeout = float(self.config.get("request_timeout", 120.0))
 
         self._ssl_certfile = self.config.get("ssl_certfile", "")
         self._ssl_keyfile = self.config.get("ssl_keyfile", "")

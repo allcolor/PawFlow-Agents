@@ -689,6 +689,18 @@ function connectSSE(cid) {
     showToolApprovalDialog(data);
   });
 
+  eventSource.addEventListener('command_result', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.error) { addMsg('error', data.error); }
+    else {
+      try {
+        const parsed = JSON.parse(data.result);
+        addMsg('system', parsed.error ? parsed.error : (parsed.message || data.result));
+      } catch { addMsg('system', data.result); }
+    }
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

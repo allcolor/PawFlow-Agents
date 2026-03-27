@@ -385,12 +385,19 @@ class AgentCoreMixin:
 
                         _bus = emitter.bus
                         _cid = conversation_id
-                        # Messages for the agent loop (in-memory context)
                         turn_msgs = []
-                        # All messages for transcript (includes display_only)
-                        transcript_msgs = []
                         _src = _agent_source()
                         _agent = _src.get("name", "")
+
+                        def _persist_display(msg_dict):
+                            """Persist a display_only message immediately (in order)."""
+                            if use_conv_store and conversation_id:
+                                try:
+                                    from core.conversation_store import ConversationStore
+                                    ConversationStore.instance().append_messages(
+                                        conversation_id, [msg_dict], user_id=user_id)
+                                except Exception:
+                                    pass
 
                         if text:
                             msg = LLMMessage(
@@ -418,7 +425,7 @@ class AgentCoreMixin:
                             _thinking = tool_calls[0].get("thinking", "") if tool_calls else ""
                             if _thinking:
                                 import uuid as _uuid_th
-                                transcript_msgs.append({
+                                _persist_display({
                                     "role": "thinking",
                                     "content": _thinking[:500],
                                     "msg_id": f"th_{_uuid_th.uuid4().hex[:12]}",
@@ -462,8 +469,8 @@ class AgentCoreMixin:
                                 import uuid as _uuid_tc
                                 _tc_display_id = _uuid_tc.uuid4().hex[:12]
 
-                                # Tool call (display_only for transcript)
-                                transcript_msgs.append({
+                                # Tool call (display_only — persist immediately in order)
+                                _persist_display({
                                     "role": "tool_call",
                                     "display_only": True,
                                     "display_type": "tool_call",
@@ -482,11 +489,11 @@ class AgentCoreMixin:
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
 
-                                # Tool result (display_only for transcript)
+                                # Tool result (display_only — persist immediately in order)
                                 tr_preview = (tr_content[:300] + "..."
                                               if len(tr_content) > 300
                                               else tr_content)
-                                transcript_msgs.append({
+                                _persist_display({
                                     "role": "tool_result",
                                     "display_only": True,
                                     "display_type": "tool_result",
@@ -495,17 +502,6 @@ class AgentCoreMixin:
                                     "tool_name": _display_name,
                                     "tool_call_id": tc_obj.id,
                                 })
-
-                        # Persist to transcript immediately
-                        if transcript_msgs and use_conv_store and conversation_id:
-                            try:
-                                from core.conversation_store import ConversationStore
-                                cstore = ConversationStore.instance()
-                                cstore.append_messages(
-                                    conversation_id, transcript_msgs,
-                                    user_id=user_id)
-                            except Exception as e:
-                                logger.warning("Failed to persist claude-code turn: %s", e)
 
                     def _llm_call(msgs, ps=poll_silent):
                         if emitter.is_streaming:

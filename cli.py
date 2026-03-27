@@ -315,7 +315,8 @@ def cmd_gui(args):
         _t.sleep(5)
         logger.warning("Shutdown timeout — force exit")
         os._exit(1)
-    _guardian = threading.Thread(target=_force_exit_guardian, daemon=True)
+    import threading as _th_guard
+    _guardian = _th_guard.Thread(target=_force_exit_guardian, daemon=True)
     _guardian.start()
 
     try:

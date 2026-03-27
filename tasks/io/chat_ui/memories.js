@@ -1,7 +1,4 @@
-    showMemoryOverlay(_memoryCache);
-  } catch (e) { addMsg('error', 'Failed to load memories: ' + e.message); }
-}
-
+// ── Memory overlay ────────────────────────────────────────────────
 function showMemoryOverlay(memories) {
   let overlay = document.getElementById('memoryOverlay');
   if (overlay) overlay.remove();
@@ -168,3 +165,5 @@ async function cmdAddSecret(name, value) {
     const data = await resp.json();
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', t('secretAdded', { name, ref: data.key || name, short: name }));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}

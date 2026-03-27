@@ -1,10 +1,3 @@
-    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Save'; return; }
-    addMsg('system', 'Service \'' + serviceId + '\' updated.');
-    document.getElementById('resourceEditorOverlay').remove();
-    loadResources();
-  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = 'Save'; }
-}
-
 // ── Flow instance context menu ───────────────────────────────────
 function showFlowInstanceMenu(e, instanceId, status, scope) {
   e.preventDefault();

@@ -191,14 +191,3 @@ function showToolCallDialog(toolName) {
     sendMessage('/call ' + toolName + '(' + argStr + ')');
   };
 }
-
-// ── Slash commands ───────────────────────────────────────────────
-const HELP_DATA = {
-  '/help': {
-    usage: '/help [command]',
-    short: 'Show available commands or detailed help for a command',
-    detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
-  },
-  '/msg': {
-    usage: '/msg <name|ALL> <message>',
-    short: 'Send a message to a specific agent (shortcut for /agent msg)',

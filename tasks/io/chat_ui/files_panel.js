@@ -1,35 +1,3 @@
-  const list = document.getElementById('filesList');
-  list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_conv_files', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
-    const files = data.files || [];
-    if (files.length === 0) {
-      list.innerHTML = '<span style="color:#808090;font-size:12px">No files in this conversation.</span>';
-      return;
-    }
-    const available = files.filter(f => f.available);
-    if (!available.length) {
-      list.innerHTML = '<span style="color:#555;font-size:12px">No files</span>';
-      return;
-    }
-    list.innerHTML = '';
-    for (const f of available) {
-      const href = window.location.origin + '/files/' + f.file_id + '/' + f.filename;
-      const chip = document.createElement('span');
-      chip.className = 'file-chip';
-      chip.innerHTML = `<span class="file-status available" title="Available"></span><a href="${href}" target="_blank" title="Download">${escapeHtml(f.filename)}</a>`;
-      chip.addEventListener('contextmenu', (e) => showFileMenu(e, f.file_id, f.filename));
-      list.appendChild(chip);
-    }
-  } catch (e) {
-    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load files</span>';
-  }
-}
-
 // ── File context menu ──────────────────────────────────────────
 function showFileMenu(e, fileId, filename) {
   e.preventDefault();
@@ -188,3 +156,34 @@ function handleFiles(fileList) {
         const source = e.target.result;
         addMsg('system', `Installing tool from ${file.name}...`);
         try {
+          const resp = await fetch(API, {
+            method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({ action: 'install_tool', filename: file.name, source }),
+          });
+          const data = await resp.json();
+          if (data.error) { addMsg('error', 'Install failed: ' + data.error); }
+          else { addMsg('system', `Tool **${data.tool_name}** installed: ${data.description}`); }
+        } catch (err) { addMsg('error', 'Install failed: ' + err.message); }
+      };
+      textReader.readAsText(file);
+      continue;
+    }
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const dataUrl = e.target.result;
+      const base64 = dataUrl.split(',')[1];
+      const entry = {
+        file: file,
+        filename: file.name,
+        mime_type: file.type || 'application/octet-stream',
+        data: base64,
+        dataUrl: dataUrl,
+      };
+      pendingFiles.push(entry);
+      renderAttachments();
+    };
+    reader.readAsDataURL(file);
+  }
+  // Reset file input so same file can be re-selected
+  document.getElementById('fileInput').value = '';
+}

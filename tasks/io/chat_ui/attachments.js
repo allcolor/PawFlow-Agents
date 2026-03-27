@@ -1,35 +1,4 @@
-          const resp = await fetch(API, {
-            method: 'POST', headers: getAuthHeaders(),
-            body: JSON.stringify({ action: 'install_tool', filename: file.name, source }),
-          });
-          const data = await resp.json();
-          if (data.error) { addMsg('error', 'Install failed: ' + data.error); }
-          else { addMsg('system', `Tool **${data.tool_name}** installed: ${data.description}`); }
-        } catch (err) { addMsg('error', 'Install failed: ' + err.message); }
-      };
-      textReader.readAsText(file);
-      continue;
-    }
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const dataUrl = e.target.result;
-      const base64 = dataUrl.split(',')[1];
-      const entry = {
-        file: file,
-        filename: file.name,
-        mime_type: file.type || 'application/octet-stream',
-        data: base64,
-        dataUrl: dataUrl,
-      };
-      pendingFiles.push(entry);
-      renderAttachments();
-    };
-    reader.readAsDataURL(file);
-  }
-  // Reset file input so same file can be re-selected
-  document.getElementById('fileInput').value = '';
-}
-
+// ── Attachments ──────────────────────────────────────────────────
 function removeFile(idx) {
   pendingFiles.splice(idx, 1);
   renderAttachments();
@@ -367,3 +336,16 @@ async function cmdResourceAction(action, extra) {
   try {
     const payload = { action, conversation_id: conversationId, ...extra };
     const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
+    else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
+    else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
+    else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
+    else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
+    else addMsg('system', JSON.stringify(data, null, 2));
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}

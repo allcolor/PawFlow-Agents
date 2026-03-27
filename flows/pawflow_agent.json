@@ -75,8 +75,8 @@
           },
           {
             "method": "GET",
-            "pattern": "/chat/js/{filename}",
-            "relationship": "GET:/chat"
+            "pattern": "/chat/js/{path}",
+            "relationship": "GET:/chat/js"
           },
           {
             "method": "GET",
@@ -183,6 +183,11 @@
             "attribute": "http.path",
             "operator": "matches_regex",
             "value": "^/files/"
+          },
+          "chat_js": {
+            "attribute": "http.path",
+            "operator": "matches_regex",
+            "value": "^/chat/js/"
           }
         },
         "default_relationship": "api"
@@ -202,6 +207,13 @@
       "parameters": {
         "service_id": "http_listener",
         "content_type": "application/json"
+      }
+    },
+    "chat_assets": {
+      "type": "serveAssets",
+      "parameters": {
+        "assets_prefix": "chat_ui",
+        "cache_control": "public, max-age=31536000, immutable"
       }
     }
   },
@@ -310,6 +322,21 @@
       "from": "oauth_logout",
       "to": "send_response",
       "type": "success"
+    },
+    {
+      "from": "route_after_auth",
+      "to": "chat_assets",
+      "type": "chat_js"
+    },
+    {
+      "from": "chat_assets",
+      "to": "send_response",
+      "type": "success"
+    },
+    {
+      "from": "http_in",
+      "to": "validate_auth",
+      "type": "GET:/chat/js"
     }
   ],
   "entries": [

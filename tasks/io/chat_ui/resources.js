@@ -1,17 +1,4 @@
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
-    else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
-    else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
-    else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
-    else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
-    else addMsg('system', JSON.stringify(data, null, 2));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
-}
-
+// ── Resources (services, flows) ──────────────────────────────────
 async function cmdServiceList() {
   try {
     const resp = await fetch(API, {
@@ -1203,3 +1190,9 @@ async function _submitServiceEdit(serviceId, scope) {
       body: JSON.stringify({ action: 'update_service', service_id: serviceId, scope, config, conversation_id: conversationId }),
     });
     const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Save'; return; }
+    addMsg('system', 'Service \'' + serviceId + '\' updated.');
+    document.getElementById('resourceEditorOverlay').remove();
+    loadResources();
+  } catch (e) { addMsg('error', e.message); btn.disabled = false; btn.textContent = 'Save'; }
+}

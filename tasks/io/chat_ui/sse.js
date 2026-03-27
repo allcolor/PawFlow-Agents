@@ -1,3 +1,8 @@
+// Connect SSE for a conversation
+function connectSSE(cid) {
+  if (eventSource) eventSource.close();
+  if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  startActiveSync();
   sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
   const token = getToken();
   const url = SSE_URL + '?conversation_id=' + encodeURIComponent(cid)

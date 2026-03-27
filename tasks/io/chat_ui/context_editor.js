@@ -1,6 +1,4 @@
-    .finally(() => { hideContextOp(); contextOpInProgress = false; });
-}
-
+// ── Context editor ────────────────────────────────────────────────
 let _ctxAgentFilter = '';  // '' = shared/default, 'grok' = per-agent
 
 async function cmdShowContext(agentName) {
@@ -378,3 +376,6 @@ async function cmdShowMemories() {
     });
     const data = await resp.json();
     _memoryCache = data.memories || [];
+    showMemoryOverlay(_memoryCache);
+  } catch (e) { addMsg('error', 'Failed to load memories: ' + e.message); }
+}

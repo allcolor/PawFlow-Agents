@@ -1,3 +1,13 @@
+// ── Slash commands ───────────────────────────────────────────────
+const HELP_DATA = {
+  '/help': {
+    usage: '/help [command]',
+    short: 'Show available commands or detailed help for a command',
+    detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
+  },
+  '/msg': {
+    usage: '/msg <name|ALL> <message>',
+    short: 'Send a message to a specific agent (shortcut for /agent msg)',
     detail: 'Send a message to a specific agent without changing the active agent.\n\nExamples:\n  /msg grok Explain this code\n  /msg ALL What do you think?',
   },
   '/btw': {
@@ -2742,3 +2752,5 @@ function cmdRebuildClean() {
     if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
     addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
   }).catch(e => addMsg('error', 'Rebuild clean failed: ' + e.message))
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+}

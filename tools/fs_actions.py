@@ -677,8 +677,11 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
     # Relay-level Docker container: exec commands inside the persistent container
-    # Set by relay when --docker-image is used
-    _relay_container = globals().get('_DOCKER_EXEC_CONTAINER')
+    # _DOCKER_CONTAINERS: {root_dir: container_name} — supports multiple relays
+    _relay_container = req.get("_docker_container")
+    if not _relay_container:
+        _containers = globals().get('_DOCKER_CONTAINERS', {})
+        _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
     if _relay_container and not (shell_name and shell_name.startswith("docker-")):
         docker_exec_cmd = [
             "docker", "exec", "-w", "/workspace",

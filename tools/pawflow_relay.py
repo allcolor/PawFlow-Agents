@@ -863,15 +863,60 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             _ws_frame_send(sock, _resp)
                     else:
                         sys.stderr.write(f"[FSRelay] Spawning child relay: {_sr_id} -> {_sr_root}\n")
-                        def _child_relay(_url, _tok, _sec, _rid, _root):
+                        # If parent uses Docker, child starts its own container
+                        _parent_docker = globals().get('_DOCKER_EXEC_CONTAINER') or \
+                                         getattr(__import__('fs_actions'), '_DOCKER_EXEC_CONTAINER', None) \
+                                         if 'fs_actions' in sys.modules else None
+                        _child_docker_image = msg.get("docker_image", "")
+
+                        def _child_relay(_url, _tok, _sec, _rid, _root,
+                                         _docker_img="", _parent_has_docker=False):
+                            _child_container = None
                             try:
+                                # Start child Docker container if parent uses Docker
+                                if _docker_img or _parent_has_docker:
+                                    import uuid as _uuid_child
+                                    _img = _docker_img or "pawflow-relay-dev:latest"
+                                    _child_container = f"pawflow-relay-child-{_uuid_child.uuid4().hex[:8]}"
+                                    _dr = subprocess.run([
+                                        "docker", "run", "-d",
+                                        "--name", _child_container,
+                                        "-v", f"{_root}:/workspace",
+                                        "-w", "/workspace",
+                                        "--cpus", "2", "--memory", "2g",
+                                        "--security-opt", "no-new-privileges",
+                                        _img, "tail", "-f", "/dev/null",
+                                    ], capture_output=True, text=True)
+                                    if _dr.returncode == 0:
+                                        # Register container for this root dir
+                                        import fs_actions as _fsa
+                                        if not hasattr(_fsa, '_DOCKER_CONTAINERS'):
+                                            _fsa._DOCKER_CONTAINERS = {}
+                                        _fsa._DOCKER_CONTAINERS[str(Path(_root).resolve())] = _child_container
+                                        sys.stderr.write(f"[FSRelay] Child container: {_child_container}\n")
+                                    else:
+                                        _child_container = None
                                 _ws_connect(_url, _tok, _sec, _rid, _root,
                                             readonly=readonly, allow_exec=allow_exec)
                             except Exception as _ce:
                                 sys.stderr.write(f"[FSRelay] Child {_rid} died: {_ce}\n")
+                            finally:
+                                if _child_container:
+                                    # Unregister from dict
+                                    try:
+                                        import fs_actions as _fsa2
+                                        _fsa2._DOCKER_CONTAINERS.pop(str(Path(_root).resolve()), None)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        subprocess.run(["docker", "rm", "-f", _child_container],
+                                                       capture_output=True, timeout=10)
+                                    except Exception:
+                                        pass
                         _child_thread = _threading.Thread(
                             target=_child_relay,
-                            args=(url, _sr_token, _sr_secret, _sr_id, _sr_root),
+                            args=(url, _sr_token, _sr_secret, _sr_id, _sr_root,
+                                  _child_docker_image, bool(_parent_docker)),
                             daemon=True, name=f"relay-child-{_sr_id}")
                         _child_thread.start()
                         _child_relays[_sr_id] = _child_thread

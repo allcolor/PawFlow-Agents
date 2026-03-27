@@ -168,7 +168,11 @@ class ExecuteScriptHandler(ToolHandler):
             return f"Error: filesystem service '{svc_name}' not found"
         try:
             if hasattr(svc, 'exec'):
-                result = svc.exec(".", f"python3 -c {repr(code)}")
+                # Write to temp file then execute (avoids shell escaping issues)
+                import tempfile, uuid as _uuid_exec
+                _fname = f"/tmp/_pawflow_exec_{_uuid_exec.uuid4().hex[:8]}.py"
+                svc.write_file(_fname, code.encode("utf-8"))
+                result = svc.exec(".", f"python3 {_fname} && rm -f {_fname}")
             else:
                 result = svc.execute_command({
                     "action": "exec",

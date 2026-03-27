@@ -27,17 +27,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             defs = registry.get_all_for_user(user_id)
             services = []
             for sid, sdef in sorted(defs.items()):
+                try:
+                    _started = registry.is_connected(user_id, sid) if sdef.enabled else False
+                except Exception:
+                    _started = False
                 entry = {
                     "id": sid,
                     "type": sdef.service_type,
                     "enabled": sdef.enabled,
-                    "connected": registry.is_connected(user_id, sid),
+                    "started": _started,
                     "description": sdef.description,
                 }
-                _is_relay = sdef.service_type in ("relay", "localFilesystem")
                 svc = registry.get_live_instance(user_id, sid) if sdef.enabled else None
-                if _is_relay:
-                    entry["listening"] = bool(svc and getattr(svc, '_connection', None))
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
                     entry["relay_info"] = svc._relay_info
                 elif sdef.config and sdef.config.get("docker_image"):

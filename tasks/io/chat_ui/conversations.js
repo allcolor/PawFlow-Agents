@@ -77,20 +77,12 @@ async function resumeConv(cid) {
     _expectingClear = true;
     document.getElementById('messages').innerHTML = '';
     _expectingClear = false;
-    _seenMsgIds.clear();  // reset global dedup set for new conversation
-    // Load nicknames BEFORE replay so displayAgentName() works on old messages
+    _seenMsgIds.clear();
     nicknameMap = data.nicknames || {};
-    // Replay messages (dedup by msg_id)
-    const _seenMsgIds = new Set();
     for (const m of (data.messages || [])) {
       let content = m.content || '';
       if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
         content = content.replace(/^\[[^\]]+\]:\s*/, '');
-      }
-      // Skip duplicates by msg_id
-      if (m.msg_id) {
-        if (_seenMsgIds.has(m.msg_id)) continue;
-        _seenMsgIds.add(m.msg_id);
       }
       addMsg(m.type || m.role, content, m);
     }
@@ -284,11 +276,6 @@ async function _recoverConversation(cid) {
             continue;
           }
         }
-      }
-      // Skip if msg_id already seen (SSE already displayed this message)
-      if (m.msg_id && typeof _seenMsgIds !== 'undefined' && _seenMsgIds.has(m.msg_id)) {
-        console.log('[poll] skipping msg_id already seen:', m.msg_id);
-        continue;
       }
       let pollContent = m.content || '';
       // Strip identity prefixes (same as history replay)

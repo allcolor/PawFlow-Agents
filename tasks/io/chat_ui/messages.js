@@ -59,8 +59,6 @@ function buildMetaLine(extra) {
   return '<div class="msg-meta" onclick="this.classList.toggle(\'expanded\')">' + line + '</div>';
 }
 
-// Global set of seen msg_ids for dedup (SSE + poll + replay)
-const _seenMsgIds = new Set();
 
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip

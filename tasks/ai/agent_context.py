@@ -993,7 +993,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _before = len(messages)
                 messages = self._compact_post_response(
                     messages, _sc, 200000,
-                    keep_recent=6, conversation_id=conversation_id,
+                    conversation_id=conversation_id,
                     agent_name=agent_name, llm_service=_sc_svc)
                 logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
                             f"{_before} → {len(messages)} messages (via {_sc_svc or 'default'})")

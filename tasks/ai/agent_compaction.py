@@ -21,6 +21,64 @@ logger = logging.getLogger(__name__)
 
 
 
+def _select_recent_messages(
+    messages: List[LLMMessage],
+    start_idx: int = 1,
+    min_conversation: int = 20,
+    min_total: int = 30,
+    max_total: int = 100,
+) -> int:
+    """Find split point: keep recent messages with guaranteed conversation ratio.
+
+    Algorithm:
+    1. Walk backwards to find the last `min_conversation` user/assistant messages
+    2. Include all tool messages between them
+    3. If total < min_total, extend further back (any role)
+    4. If total > max_total, drop oldest tool messages to fit
+
+    Returns the split index (messages[split:] = recent to keep).
+    """
+    n = len(messages)
+    if n <= start_idx + min_total:
+        return start_idx  # not enough messages to compact
+
+    # Step 1: find the 20 most recent user/assistant messages
+    conv_count = 0
+    scan = n
+    while scan > start_idx and conv_count < min_conversation:
+        scan -= 1
+        if messages[scan].role in ("user", "assistant"):
+            conv_count += 1
+
+    split = scan
+    total = n - split
+
+    # Step 2: if total < min_total, extend back further
+    while total < min_total and split > start_idx:
+        split -= 1
+        total = n - split
+
+    # Step 3: if total > max_total, trim oldest tool messages
+    if total > max_total:
+        recent = list(messages[split:])
+        # Drop tool messages from the front (oldest) until at max_total
+        while len(recent) > max_total:
+            # Find first tool message to drop
+            dropped = False
+            for i, m in enumerate(recent):
+                if m.role == "tool":
+                    recent.pop(i)
+                    dropped = True
+                    break
+            if not dropped:
+                break  # only user/assistant left, can't trim more
+        # Replace messages in-place and return new split
+        messages[split:] = recent
+        return len(messages) - len(recent)
+
+    return split
+
+
 class AgentCompactionMixin:
     """Methods extracted from AgentLoopTask."""
 
@@ -122,20 +180,10 @@ class AgentCompactionMixin:
 
         The full history is always available via read_history tool.
         """
-        if len(messages) <= keep_recent + 3:
-            return messages  # not enough to compact
-
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        # Split: keep last keep_recent*3 messages (includes tool plumbing).
-        # The multiplier accounts for tool_call chains (assistant + N tool results).
-        _keep_total = min(keep_recent * 3, len(messages) - start_idx - 1)
-        _split = max(start_idx + 1, len(messages) - _keep_total)
-        # Don't split inside a tool chain
-        while _split > start_idx and messages[_split].role == "tool":
-            _split -= 1
-
+        _split = _select_recent_messages(messages, start_idx)
         if _split <= start_idx:
             return messages
 
@@ -211,6 +259,24 @@ class AgentCompactionMixin:
         logger.info(
             f"[compact-post] {len(messages)} messages → {len(compacted)} "
             f"(~{new_est} tokens)")
+
+        # Fallback: if still over max_context, retry with aggressive params
+        if new_est > max_context and len(recent_messages) > 10:
+            logger.info("[compact-post] still over max_context, retrying aggressive (6 conv, max 20)")
+            _split2 = _select_recent_messages(messages, start_idx,
+                                               min_conversation=6, min_total=10, max_total=20)
+            if _split2 > start_idx:
+                recent_messages = messages[_split2:]
+                compacted = []
+                if system_msg:
+                    compacted.append(system_msg)
+                compacted.append(LLMMessage(role="user", content=(
+                    f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
+                    f"Use read_history tool to access older messages if needed.")))
+                compacted.append(LLMMessage(role="assistant", content="Understood."))
+                compacted.extend(recent_messages)
+                new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
+                logger.info(f"[compact-post] aggressive: {len(compacted)} msgs (~{new_est} tokens)")
 
         # Persist compacted context
         if conversation_id:
@@ -489,35 +555,10 @@ class AgentCompactionMixin:
 
         # Walk backwards to find the split point:
         # 1. Count "conversation messages" = user messages + assistant TEXT responses
-        #    (assistant with tool_calls and tool results are plumbing, don't count)
-        # 2. Keep at least `keep_recent` conversation messages (default 6)
-        # 3. All tool-call plumbing between kept messages is kept too
-        _msg_count = 0
-        _split = len(messages)
-
-        while _split > start_idx and _msg_count < keep_recent:
-            _split -= 1
-            m = messages[_split]
-            # Count user messages and assistant text responses (not tool_calls)
-            if m.role == "user" and not (
-                    isinstance(m.content, str) and m.content.startswith("[System:")):
-                _msg_count += 1
-            elif m.role == "assistant" and not getattr(m, "tool_calls", None):
-                _msg_count += 1
-
-        # Never split inside a tool-call chain: if messages[_split] is a tool
-        # result, walk back to include the preceding assistant + all its tool results
-        while _split > start_idx and messages[_split].role == "tool":
-            _split -= 1
-        # If we landed on an assistant with tool_calls, include it
-        if (_split > start_idx and messages[_split].role == "assistant"
-                and getattr(messages[_split], "tool_calls", None)):
-            pass  # include this assistant message in recent
-        # Ensure we don't include the system prompt in old_messages
-        if _split <= start_idx:
+        split_point = _select_recent_messages(messages, start_idx)
+        if split_point <= start_idx:
             return messages
 
-        split_point = _split
         old_messages = messages[start_idx:split_point]
         recent_messages = messages[split_point:]
 

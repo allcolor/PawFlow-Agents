@@ -376,6 +376,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             if uid and uid != "anonymous":
                 ureg = UserServiceRegistry.get_instance()
                 for sid, sdef in ureg.get_all_for_user(uid).items():
+                    _svc_live = ureg.get_live_instance(uid, sid) if sdef.enabled else None
+                    _is_relay = getattr(sdef, "service_type", "") in ("relay", "localFilesystem")
                     _entry = {
                         "service_id": sid,
                         "service_type": getattr(sdef, "service_type", ""),
@@ -384,9 +386,9 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                         "description": getattr(sdef, "description", ""),
                         "scope": "user",
                     }
-                    # Relay metadata (containerized, docker_image)
-                    _svc = ureg.get_live_instance(uid, sid) if sdef.enabled else None
-                    if _svc and hasattr(_svc, '_relay_info') and _svc._relay_info:
+                    if _is_relay:
+                        _entry["listening"] = bool(_svc_live and getattr(_svc_live, '_connection', None))
+                    if _svc_live and hasattr(_svc_live, '_relay_info') and _svc_live._relay_info:
                         _entry["relay_info"] = _svc._relay_info
                     elif sdef.config and sdef.config.get("docker_image"):
                         _entry["relay_info"] = {

@@ -34,8 +34,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "connected": registry.is_connected(user_id, sid),
                     "description": sdef.description,
                 }
-                # Include relay metadata if available
+                _is_relay = sdef.service_type in ("relay", "localFilesystem")
                 svc = registry.get_live_instance(user_id, sid) if sdef.enabled else None
+                if _is_relay:
+                    entry["listening"] = bool(svc and getattr(svc, '_connection', None))
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
                     entry["relay_info"] = svc._relay_info
                 elif sdef.config and sdef.config.get("docker_image"):

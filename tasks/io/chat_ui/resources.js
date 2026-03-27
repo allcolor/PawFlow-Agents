@@ -11,7 +11,7 @@ async function cmdServiceList() {
     if (!svcs.length) { addMsg('system', 'No services installed. Use /service install <type> <name> [key=val,...] to add one.'); return; }
     let lines = ['**Your services:**'];
     svcs.forEach(s => {
-      const icon = s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB');
+      const icon = s.connected ? '\u{1F7E2}' : (s.listening ? '\u{1F7E1}' : (s.enabled ? '\u{1F534}' : '\u26AB'));
       let tag = '';
       if (s.relay_info && s.relay_info.containerized) {
         const img = s.relay_info.docker_image;
@@ -227,10 +227,15 @@ async function loadResources() {
     html += _sectionHeader('Services', '_svc');
     if (data.services && data.services.length) {
       data.services.forEach(s => {
-        const hasConnected = s.connected !== undefined;
-        const statusDot = hasConnected
-          ? (s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB'))
-          : (s.enabled ? '\u{1F7E2}' : '\u{1F534}');
+        let statusDot;
+        if (s.connected !== undefined) {
+          if (s.connected) statusDot = '\u{1F7E2}';          // green: relay connected
+          else if (s.listening) statusDot = '\u{1F7E1}';     // yellow: listening, no relay
+          else if (s.enabled) statusDot = '\u{1F534}';       // red: enabled but down
+          else statusDot = '\u26AB';                          // black: disabled
+        } else {
+          statusDot = s.enabled ? '\u{1F7E2}' : '\u{1F534}'; // non-relay: enabled = green
+        }
         let dockerTag = '';
         if (s.relay_info && s.relay_info.containerized) {
           const img = s.relay_info.docker_image;

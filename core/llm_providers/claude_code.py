@@ -434,8 +434,8 @@ class LLMClaudeCodeMixin:
         except (OSError, BrokenPipeError):
             pass
 
-    def _cleanup_proc(self, proc):
-        """Clean up a Claude Code subprocess (and Docker container if applicable)."""
+    def _cleanup_proc(self, proc) -> str:
+        """Clean up a Claude Code subprocess. Returns captured stderr."""
         self._claude_proc = None
         # Docker mode: kill container FIRST (proc.kill only kills wsl, not the container)
         if getattr(self, 'containerize', False):
@@ -445,12 +445,7 @@ class LLMClaudeCodeMixin:
                 docker_rm(container_name)
             except Exception:
                 pass
-        for stream in (proc.stdout, proc.stdin, proc.stderr):
-            try:
-                if stream and not stream.closed:
-                    stream.close()
-            except Exception:
-                pass
+        # Kill process FIRST so pipes become readable (no more blocking)
         try:
             proc.kill()
         except OSError:
@@ -459,6 +454,21 @@ class LLMClaudeCodeMixin:
             proc.wait(timeout=3)
         except Exception:
             pass
+        # NOW read stderr (process is dead, read won't block)
+        stderr = ""
+        try:
+            if proc.stderr and not proc.stderr.closed:
+                stderr = proc.stderr.read() or ""
+        except Exception:
+            pass
+        # Close all streams
+        for stream in (proc.stdout, proc.stdin, proc.stderr):
+            try:
+                if stream and not stream.closed:
+                    stream.close()
+            except Exception:
+                pass
+        return stderr
 
     # ── Non-streaming (complete) ────────────────────────────────────
 
@@ -995,12 +1005,8 @@ class LLMClaudeCodeMixin:
                 _flush_turn()
             except Exception:
                 pass
-            # Capture stderr BEFORE cleanup closes the pipes
-            try:
-                _stderr = proc.stderr.read() if proc.stderr and not proc.stderr.closed else ""
-            except Exception:
-                _stderr = ""
-            self._cleanup_proc(proc)
+            # Cleanup process — _cleanup_proc captures stderr internally
+            _stderr = self._cleanup_proc(proc)
             # Recover refreshed tokens from workdir (Claude Code may have refreshed them)
             self._recover_tokens(workdir)
 

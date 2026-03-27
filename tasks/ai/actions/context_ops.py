@@ -29,6 +29,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             store.save_agent_context(conv_id, agent_name, data)
         else:
             store.save_context(conv_id, data)
+        store.invalidate_claude_sessions(conv_id)
 
     def _resolve_agent_max_tokens(agent_name):
         """Get max_tokens from an agent's LLM service config."""

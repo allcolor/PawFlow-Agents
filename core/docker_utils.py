@@ -45,6 +45,44 @@ def translate_path(host_path: str) -> str:
     return path
 
 
+def _translate_volume_mount(mount: str) -> str:
+    """Translate a -v mount argument from Windows to WSL Docker format.
+
+    Input:  C:\\Projets\\foo:/workspace
+    Output: /mnt/c/Projets/foo:/workspace
+
+    Handles Windows drive letters (C:) which conflict with the
+    host:container separator (:).
+    """
+    if not is_windows():
+        return mount
+
+    # Detect Windows absolute path (C:\... or C:/...)
+    # The mount format is host_path:container_path[:options]
+    # Windows path has a drive letter like C:\ which contains ':'
+    host_path = mount
+    container_path = ""
+
+    # Check for drive letter pattern: X:\... or X:/...
+    if len(mount) >= 3 and mount[1] == ":" and mount[2] in ("\\/"):
+        # Windows absolute path — find the NEXT ':' after the drive
+        next_colon = mount.find(":", 2)
+        if next_colon > 0:
+            host_path = mount[:next_colon]
+            container_path = mount[next_colon + 1:]
+        # else: no container path, just a host path
+    elif ":" in mount:
+        # Unix-style or relative path — split on first ':'
+        idx = mount.index(":")
+        host_path = mount[:idx]
+        container_path = mount[idx + 1:]
+
+    host_path = translate_path(host_path)
+    if container_path:
+        return f"{host_path}:{container_path}"
+    return host_path
+
+
 def docker_available() -> bool:
     """Check if Docker is available and running."""
     try:
@@ -66,15 +104,7 @@ def docker_run(args: list, **kwargs) -> subprocess.CompletedProcess:
         while i < len(args):
             if args[i] == "-v" and i + 1 < len(args):
                 translated.append("-v")
-                mount = args[i + 1]
-                # host:container format
-                parts = mount.split(":")
-                if len(parts) >= 2:
-                    host_part = parts[0]
-                    container_part = ":".join(parts[1:])
-                    host_part = translate_path(host_part)
-                    mount = f"{host_part}:{container_part}"
-                translated.append(mount)
+                translated.append(_translate_volume_mount(args[i + 1]))
                 i += 2
             else:
                 translated.append(args[i])
@@ -96,12 +126,7 @@ def docker_popen(args: list, **kwargs) -> subprocess.Popen:
             if args[i] == "-v" and i + 1 < len(args):
                 translated.append("-v")
                 mount = args[i + 1]
-                parts = mount.split(":")
-                if len(parts) >= 2:
-                    host_part = translate_path(parts[0])
-                    container_part = ":".join(parts[1:])
-                    mount = f"{host_part}:{container_part}"
-                translated.append(mount)
+                translated.append(_translate_volume_mount(mount))
                 i += 2
             else:
                 translated.append(args[i])

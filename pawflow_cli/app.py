@@ -52,10 +52,12 @@ _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else 
 class PawCode:
     """Main CLI application."""
 
-    def __init__(self, server_url: str, directory: str, allow_exec: bool = True):
+    def __init__(self, server_url: str, directory: str, allow_exec: bool = True,
+                 docker_image: str = ""):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
         self.allow_exec = allow_exec
+        self.docker_image = docker_image
 
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
@@ -98,9 +100,11 @@ class PawCode:
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
             self.directory, self.allow_exec,
+            docker_image=self.docker_image,
         )
         self.relay.start()
-        self.renderer.print_system(f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}")
+        _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
+        self.renderer.print_system(f"Relay '{self.relay.relay_id}' connected on port {self.relay.port}{_mode}")
 
         # Cleanup on exit
         atexit.register(self._cleanup)
@@ -685,6 +689,7 @@ class PawCode:
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
             self.directory, self.allow_exec,
+            docker_image=self.docker_image,
         )
         self.relay.start()
 
@@ -809,6 +814,8 @@ def main():
                         help="Disable shell execution on the mounted directory")
     parser.add_argument("--no-relay", action="store_true",
                         help="Don't mount filesystem relay (chat only)")
+    parser.add_argument("--docker-image", default="",
+                        help="Run relay inside this Docker image (e.g. pawflow-relay-dev:latest)")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
@@ -825,6 +832,7 @@ def main():
         server_url=args.server,
         directory=args.dir,
         allow_exec=not args.no_exec,
+        docker_image=args.docker_image,
     )
 
     if args.login:

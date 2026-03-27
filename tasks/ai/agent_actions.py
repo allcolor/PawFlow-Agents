@@ -35,7 +35,6 @@ _BG_ACTIONS = frozenset({
     "toggle_service", "delete_service",
     "deploy_flow", "undeploy_flow", "start_flow", "stop_flow",
     "update_flow_params", "promote_flow",
-    "delete_message",
     "relay_connect", "relay_disconnect",
     "claude_code_login_url", "claude_code_login_code", "claude_code_auth",
 })

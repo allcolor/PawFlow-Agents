@@ -49,8 +49,11 @@ function highlightConv(cid) {
   });
 }
 
-async function resumeConv(cid) {
-  if (cid === conversationId) return;  // already viewing this one
+async function reloadConv() {
+  if (conversationId) resumeConv(conversationId, true);
+}
+async function resumeConv(cid, force) {
+  if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
   try {
     const resp = await fetch(API, {

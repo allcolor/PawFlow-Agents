@@ -45,7 +45,7 @@ async function ctxRefresh() {
 }
 async function ctxRefreshAndReload() {
   await ctxRefresh();
-  if (conversationId) resumeConv(conversationId);
+  reloadConv();
 }
 
 async function ctxEditMessage(index) {
@@ -237,7 +237,7 @@ async function ctxDeleteSelected() {
   if (!_ctxSelected.size) return;
   const indices = Array.from(_ctxSelected).map(Number).sort((a, b) => b - a);
   _ctxSelected.clear();
-  _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
+  await _ctxMutate({action: 'delete_context_messages', agent_name: _ctxAgentFilter, indices});
 }
 
 function showContextOverlay(data) {
@@ -290,7 +290,6 @@ function showContextOverlay(data) {
     + '</div>'
     + '</div>';
   document.body.appendChild(overlay);
-  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
 }
 
 // ── Tool Call Parser ────────────────────────────────────────────

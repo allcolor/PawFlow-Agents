@@ -99,7 +99,7 @@ async function deleteMsg(btn) {
     });
     const data = await resp.json();
     if (data.deleted) {
-      resumeConv(conversationId);
+      reloadConv();
     }
   } catch (e) { console.error('Delete message failed:', e); }
 }
@@ -176,7 +176,7 @@ async function deleteSelectedMessages() {
     const data = await resp.json();
     if (data.deleted) {
       clearMsgSelection();
-      resumeConv(conversationId);
+      reloadConv();
       return;
     }
   } catch (e) { console.error('Batch delete failed:', e); }

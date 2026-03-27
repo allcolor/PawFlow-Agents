@@ -793,6 +793,10 @@ class AgentCoreMixin:
                     messages=messages, new_messages=new_messages,
                     all_msg_ids=all_assistant_msg_ids)
 
+            # Unregister claude-code client BEFORE done (prevents stale preempt)
+            if hasattr(self, '_active_claude_client') and conversation_id in getattr(self, '_active_claude_client', {}):
+                del self._active_claude_client[conversation_id]
+
             # Post-loop: ALWAYS publish done, even if cleanup fails
             try:
                 # NO_PENDING_WORK handling (streaming/poller only via emitter)

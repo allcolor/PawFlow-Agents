@@ -55,10 +55,12 @@ class ConversationWriter:
 
     def enqueue(self, messages: List[Dict], user_id: str = "",
                 context_agent: str = "", status: str = "",
+                sse_events: List[Dict] = None,
                 wait: bool = False) -> Optional[threading.Event]:
         """Add messages to the write queue. Non-blocking unless wait=True.
 
         Stamps each message with ts=now if not already present.
+        sse_events: list of {"type": str, "data": dict} to publish AFTER write.
         """
         _now = time.time()
         for m in messages:
@@ -71,6 +73,7 @@ class ConversationWriter:
             "user_id": user_id,
             "context_agent": context_agent,
             "status": status,
+            "sse_events": sse_events,
             "_done_event": evt,
         })
         if wait and evt:
@@ -81,6 +84,7 @@ class ConversationWriter:
                             public_messages: List[Dict],
                             private_messages: List[Dict],
                             user_id: str = "", ttl: int = 0,
+                            sse_events: List[Dict] = None,
                             wait: bool = False) -> Optional[threading.Event]:
         """Enqueue an agent_flush operation (transcript + all contexts atomically)."""
         _now = time.time()
@@ -95,6 +99,7 @@ class ConversationWriter:
             "private": private_messages,
             "user_id": user_id,
             "ttl": ttl,
+            "sse_events": sse_events,
             "_done_event": evt,
         })
         if wait and evt:
@@ -163,6 +168,18 @@ class ConversationWriter:
                         if ctx_agent:
                             store.append_to_agent_context(
                                 self._cid, ctx_agent, msgs)
+                # Publish SSE events AFTER successful write
+                sse_events = item.get("sse_events")
+                if sse_events:
+                    try:
+                        from core.conversation_event_bus import ConversationEventBus
+                        bus = ConversationEventBus.instance()
+                        for sse_evt in sse_events:
+                            bus.publish_event(
+                                self._cid, sse_evt["type"], sse_evt.get("data"))
+                    except Exception as sse_err:
+                        logger.warning("[conv-writer:%s] SSE publish failed: %s",
+                                       self._cid[:8], sse_err)
             except Exception as e:
                 logger.error("[conv-writer:%s] write failed: %s",
                              self._cid[:8], e, exc_info=True)

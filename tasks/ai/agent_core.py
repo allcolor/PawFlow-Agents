@@ -125,7 +125,7 @@ class AgentCoreMixin:
                 emitter._current_msg_id = _uuid_append.uuid4().hex[:12]
             messages.append(msg)
             new_messages.append(msg)
-            # Persist via conversation writer (FIFO ordering guaranteed)
+            # Persist via conversation writer + publish SSE (single source of truth)
             if use_conv_store and conversation_id and msg.role in ("assistant", "tool"):
                 try:
                     from core.conversation_writer import ConversationWriter
@@ -142,8 +142,32 @@ class AgentCoreMixin:
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in msg.tool_calls
                         ]
+                    # Build SSE events to publish AFTER write
+                    _sse = []
+                    _agent = (msg.source or {}).get("name", "") if msg.source else ""
+                    _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
+                    if msg.role == "assistant" and msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            _sse.append({"type": "tool_call", "data": {
+                                "tool": tc.name, "arguments": tc.arguments,
+                                "agent_name": _agent, "llm_service": _svc,
+                            }})
+                    if msg.role == "tool":
+                        _preview = (msg.content[:2000] if isinstance(msg.content, str)
+                                    else str(msg.content)[:2000])
+                        if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
+                            _nl = _preview.find("\n")
+                            if _nl >= 0:
+                                _preview = _preview[_nl + 1:]
+                            if _preview.endswith("[/TOOL OUTPUT]"):
+                                _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                        _sse.append({"type": "tool_result", "data": {
+                            "tool": getattr(msg, '_tool_name', ''),
+                            "result": _preview,
+                            "agent_name": _agent, "llm_service": _svc,
+                        }})
                     ConversationWriter.for_conversation(conversation_id).enqueue(
-                        [_store_msg], user_id=user_id)
+                        [_store_msg], user_id=user_id, sse_events=_sse if _sse else None)
                 except Exception:
                     pass
             # Publish per-message metadata (model, tokens, service) so client
@@ -458,6 +482,7 @@ class AgentCoreMixin:
                                 tr_msg = LLMMessage(
                                     role="tool", content=tr_content,
                                     tool_call_id=tc_obj.id)
+                                tr_msg._tool_name = _display_name
                                 _append(tr_msg)
                                 turn_msgs.append(tr_msg)
 
@@ -679,7 +704,9 @@ class AgentCoreMixin:
                                 )
                             except Exception:
                                 _ctx_result = result_text[:_TOOL_RESULT_MAX] + "\n\n[... truncated]"
-                        _append(LLMMessage(role="tool", content=_ctx_result, tool_call_id=tc.id))
+                        _tr_msg = LLMMessage(role="tool", content=_ctx_result, tool_call_id=tc.id)
+                        _tr_msg._tool_name = tc.name
+                        _append(_tr_msg)
                         # Preview for SSE
                         _prev = result_text[:2000] if isinstance(result_text, str) else str(result_text)[:2000]
                         if isinstance(_prev, str) and _prev.startswith("[TOOL OUTPUT"):

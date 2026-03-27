@@ -300,15 +300,8 @@ class StreamEmitter(AgentEmitter):
 
     def on_tool_calls(self, tool_calls, response_content, thinking,
                       poll_silent):
-        # Publish tool_call events FIRST — this finalizes the streaming element
-        # on the client, so narration tokens create a NEW element (not appended)
-        for tc in tool_calls:
-            self.bus.publish_event(self.conversation_id, "tool_call", {
-                "tool": tc.name,
-                "arguments": tc.arguments,
-                "agent_name": self._agent_name or "",
-                "llm_service": self._agent_svc or "",
-            })
+        # tool_call SSE events are now published by ConversationWriter
+        # after the message is written to the store (single source of truth).
         # Narration: ONLY if LLM said absolutely nothing
         if not response_content and not thinking and tool_calls:
             _nsvc = self.ctx.get("narrator_service", "")
@@ -321,17 +314,9 @@ class StreamEmitter(AgentEmitter):
             )
 
     def on_tool_result(self, tc, result_text, preview):
-        evt = {
-            "tool": tc.name,
-            "result": preview,
-            "agent_name": self._agent_name or "",
-            "llm_service": self._agent_svc or "",
-        }
-        # Include file path for syntax-aware rendering
-        if tc.name == "filesystem" and tc.arguments.get("path"):
-            evt["path"] = tc.arguments["path"]
-            evt["fs_action"] = tc.arguments.get("action", "")
-        self.bus.publish_event(self.conversation_id, "tool_result", evt)
+        # tool_result SSE events are now published by ConversationWriter
+        # after the message is written to the store (single source of truth).
+        pass
 
     # ── Control flow ──────────────────────────────────────────────────
 

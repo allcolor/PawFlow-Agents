@@ -698,12 +698,18 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         _containers = globals().get('_DOCKER_CONTAINERS', {})
         _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
     if _relay_container and not (shell_name and shell_name.startswith("docker-")):
+        # Determine shell/interpreter for the container
+        if shell_name in ("python", "python3"):
+            _container_shell = ["python3", "-c", command]
+        elif shell_name == "node":
+            _container_shell = ["node", "-e", command]
+        else:
+            _container_shell = ["bash", "-c", command]
         docker_exec_cmd = _docker_cmd() + [
             "exec", "-w", "/workspace",
             "-e", "PYTHONIOENCODING=utf-8",
             _relay_container,
-            "bash", "-c", command,
-        ]
+        ] + _container_shell
         result = subprocess.run(
             docker_exec_cmd,
             capture_output=True, text=True,

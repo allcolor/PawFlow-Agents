@@ -371,18 +371,29 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
             if use_conv_store and conversation_id and not ctx.get("is_poll") and not _was_interrupted and not _had_error:
                 try:
+                    # Flush writer — ensure all messages from this turn are on disk
+                    from core.conversation_writer import ConversationWriter
+                    try:
+                        ConversationWriter.for_conversation(conversation_id).flush(timeout=5)
+                    except Exception:
+                        pass
                     _cs = ConversationStore.instance()
                     _final_count = _cs.message_count(conversation_id)
-                    _known = ctx.get("_last_known_msg_count", 0)
-                    if _final_count > _known:
-                        _page = _cs.load_page(conversation_id,
-                                              limit=_final_count - _known, offset=_known)
-                        _pending = [
-                            m for m in (_page["messages"] if _page else [])
-                            if isinstance(m, dict) and m.get("role") == "user"
-                            and not (isinstance(m.get("content"), str)
-                                     and m["content"].startswith("[System:"))]
-                        if _pending:
+                    # Check: are there user messages AFTER the last assistant/tool message?
+                    # Load the tail and check if the very last message(s) are from the user
+                    # (meaning the agent didn't respond to them)
+                    _tail = _cs.load_page(conversation_id, limit=5, offset=max(0, _final_count - 5))
+                    _tail_msgs = (_tail["messages"] if _tail else []) if _tail else []
+                    _pending = []
+                    for m in reversed(_tail_msgs):
+                        if not isinstance(m, dict):
+                            continue
+                        if m.get("role") == "user" and not (
+                                isinstance(m.get("content"), str) and m["content"].startswith("[System:")):
+                            _pending.append(m)
+                        else:
+                            break  # hit a non-user message → no more pending
+                    if _pending:
                             from core.poll_scheduler import PollScheduler
                             PollScheduler.instance().schedule_delay(
                                 conversation_id, 3,

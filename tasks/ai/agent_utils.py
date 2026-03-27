@@ -149,9 +149,6 @@ class AgentUtilsMixin:
         if not svc_id:
             svc_id = self._resolve_service_param("llm_service", user_id) or "default"
         client, svc = self._resolve_llm_service(svc_id, user_id)
-        if not client:
-            client = self._get_default_client(user_id)
-            svc = None
         return client, svc_id, svc
 
     def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:

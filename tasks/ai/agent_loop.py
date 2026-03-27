@@ -604,18 +604,18 @@ class AgentLoopTask(
         # For claude-code: graceful interrupt only (stdin message).
         # Claude Code will acknowledge, summarize, and exit normally.
         # No cancel_agent (which kills the process), no parallel synthesis.
-        _is_cc = False
+        # Claude-code: graceful interrupt via stdin (only if process is alive)
         if hasattr(self, '_active_claude_client'):
             _cc_client = self._active_claude_client.get(conversation_id)
-            logger.info(f"[agent:{conversation_id[:8]}] interrupt: _active_claude_client={bool(_cc_client)}, "
-                        f"keys={list(self._active_claude_client.keys())[:3]}")
             if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
-                _is_cc = True
-                _cc_client.cancel_claude_code(force=False)
-                logger.info(f"[agent:{conversation_id[:8]}] claude-code graceful interrupt sent")
-                return  # Claude Code handles its own response
-        else:
-            logger.info(f"[agent:{conversation_id[:8]}] interrupt: no _active_claude_client attr")
+                _proc = getattr(_cc_client, '_claude_proc', None)
+                if _proc and _proc.poll() is None:
+                    _cc_client.cancel_claude_code(force=False)
+                    logger.info(f"[agent:{conversation_id[:8]}] claude-code graceful interrupt sent")
+                    return  # Claude Code handles its own response
+                else:
+                    # Stale client — process dead, clean up
+                    self._active_claude_client.pop(conversation_id, None)
 
         # Cancel the current run — publish cancelled event so UI stops
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)

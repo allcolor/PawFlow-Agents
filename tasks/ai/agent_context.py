@@ -262,7 +262,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if _active_agent_name:
                     _rc, _rsvc_id, _rsvc = self._resolve_agent_client(
                         _active_agent_name, _user_id_for_svc, conversation_id)
-                    if _rc and _rsvc_id != task_llm_service:
+                    if _rc:
                         client = _rc
                         resolved_svc = _rsvc
                         _active_llm_service = _rsvc_id
@@ -270,9 +270,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         logger.info("Agent '%s' using LLM service '%s' (provider: %s)",
                                     _active_agent_name, _rsvc_id,
                                     getattr(_rsvc, 'provider', '?') if _rsvc else '?')
+                    elif _rsvc_id and _rsvc_id != task_llm_service:
+                        # Agent has a specific service configured but it can't be resolved
+                        raise ValueError(
+                            f"Agent '{_active_agent_name}' LLM service '{_rsvc_id}' "
+                            f"not found. Check service configuration.")
                     else:
                         logger.info("Agent '%s' using task default LLM '%s'",
                                     _active_agent_name, task_llm_service)
+            except ValueError:
+                raise  # Don't catch our own service-not-found error
             except Exception as e:
                 logger.error("Error resolving agent LLM service: %s", e, exc_info=True)
         if not _active_agent_name and use_conv_store and conversation_id:

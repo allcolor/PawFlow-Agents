@@ -203,68 +203,52 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
     """Streaming agent execution + sync + side channels."""
 
     def _execute_streaming(self, flowfile: FlowFile) -> List[FlowFile]:
-        """Streaming mode: returns ACK immediately, runs loop in background thread."""
+        """Streaming mode: returns ACK immediately, runs loop in background thread.
+
+        _prepare_agent_context (which may compact) runs in the background
+        thread, NOT here. This method returns in < 1s.
+        """
         from core.conversation_event_bus import ConversationEventBus
+        from core.conversation_store import ConversationStore
+
+        # Parse body for conversation_id and user text (lightweight, no LLM)
+        raw = flowfile.get_content().decode("utf-8", errors="replace")
         try:
-            ctx = self._prepare_agent_context(flowfile)
-        except ValueError as e:
-            flowfile.set_content(json.dumps({"error": str(e)}).encode())
-            flowfile.set_attribute("http.status.code", "400")
-            return [flowfile]
-        conversation_id = ctx["conversation_id"]
+            _body = json.loads(raw) if raw.strip().startswith("{") else {}
+        except (json.JSONDecodeError, TypeError):
+            _body = {}
+        conversation_id = (
+            _body.get("conversation_id")
+            or flowfile.get_attribute("agent.conversation_id")
+            or ""
+        )
+        _user_text = _body.get("message", "")
+        _target = _body.get("target_agent", "")
         bus = ConversationEventBus.instance()
 
-        if not self._is_context_op_free(conversation_id):
-            evt = self._get_context_op_event(conversation_id)
-            if not evt.wait(timeout=60.0):
-                flowfile.set_content(json.dumps({"error": "Context operation in progress"}).encode())
-                flowfile.set_attribute("http.response.status", "409")
-                return [flowfile]
-
-        _target = ctx.get("_target_agent", "")
-        bus.publish_event(conversation_id, "thinking", {
-            "conversation_id": conversation_id, "agent_name": _target or "",
-        })
-        _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
-        with self._conv_gen_lock:
-            gen = self._conv_generation.get(_gen_key, 0)
-        ctx["_generation"] = gen
-        ctx["_gen_key"] = _gen_key
-
-        # If agent thread already running, queue the message
+        # If agent thread already running, preempt or queue
         _already_active = any(
             t.is_alive() and t.name == f"agent-stream-{conversation_id}"
             for t in threading.enumerate())
         if _already_active:
-            # Extract user text from the new message
-            _user_text = ""
-            _user_msgs = [m for m in ctx.get("messages", []) if m.role == "user"]
-            if _user_msgs:
-                _last = _user_msgs[-1]
-                _user_text = _last.content if isinstance(_last.content, str) else str(_last.content)
-
-            # Claude-code preempt: inject directly into running subprocess
             _active_client = getattr(self, '_active_claude_client', {}).get(conversation_id)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
                 if _active_client.send_user_message(_user_text):
                     logger.info(f"[agent:{conversation_id[:8]}] preempt via claude-code stdin")
-                    from core.conversation_store import ConversationStore as _CSq
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                                      "message_count": _CSq.instance().message_count(conversation_id)})
+                                      "message_count": ConversationStore.instance().message_count(conversation_id)})
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
 
-            # Other providers: queue for drain_pending between iterations
             logger.info(f"[agent:{conversation_id[:8]}] already active — queueing")
             _queued_key = f"_queued_msgs:{conversation_id}"
             if not hasattr(self, '_pending_user_msgs'):
                 self._pending_user_msgs = {}
-            self._pending_user_msgs.setdefault(_queued_key, []).append(ctx)
+            self._pending_user_msgs.setdefault(_queued_key, []).append(flowfile)
             bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
-            from core.conversation_store import ConversationStore as _CSq
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
-                              "message_count": _CSq.instance().message_count(conversation_id)})
+                              "message_count": ConversationStore.instance().message_count(conversation_id)})
             flowfile.set_content(ack.encode("utf-8"))
             flowfile.set_attribute("agent.conversation_id", conversation_id)
             return [flowfile]
@@ -273,27 +257,55 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
-        from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "active")
 
-        # Register interaction
-        _user_msgs = [m for m in ctx["messages"] if m.role == "user"]
-        _msg_preview = ""
-        if _user_msgs:
-            _last = _user_msgs[-1].content if isinstance(_user_msgs[-1].content, str) else ""
-            _msg_preview = _last[:80]
-        with self._interactions_lock:
-            self._active_interactions[_gen_key] = {
-                "agent_name": _target or ctx.get("active_agent_name", ""),
-                "message_preview": _msg_preview, "started_at": time.time(),
-                "iteration": 0, "last_tool": "", "status": "thinking",
-                "conversation_id": conversation_id,
-            }
+        bus.publish_event(conversation_id, "thinking", {
+            "conversation_id": conversation_id, "agent_name": _target or "",
+        })
+
+        # Background thread: prepare context (may compact), then run agent loop
+        def _bg_streaming():
+            try:
+                ctx = self._prepare_agent_context(flowfile)
+            except Exception as e:
+                logger.error("[agent:%s] prepare_context failed: %s",
+                             conversation_id[:8], e, exc_info=True)
+                bus.publish_event(conversation_id, "error_event", {
+                    "message": f"Context preparation failed: {e}",
+                    "agent_name": _target,
+                })
+                bus.publish_event(conversation_id, "done", {
+                    "agent_name": _target, "response": "",
+                    "finish_reason": "error",
+                })
+                with self._active_lock:
+                    self._active_conversations[conversation_id] = max(0,
+                        self._active_conversations.get(conversation_id, 1) - 1)
+                ConversationStore.instance().set_status(conversation_id, "idle")
+                return
+
+            _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
+            with self._conv_gen_lock:
+                gen = self._conv_generation.get(_gen_key, 0)
+            ctx["_generation"] = gen
+            ctx["_gen_key"] = _gen_key
+
+            with self._interactions_lock:
+                _msg_preview = (_user_text or "")[:80]
+                self._active_interactions[_gen_key] = {
+                    "name": _target or ctx.get("active_agent_name", ""),
+                    "startedAt": time.time(),
+                    "lastTool": "", "activeTools": [], "status": "thinking",
+                    "msgPreview": _msg_preview,
+                    "conversation_id": conversation_id,
+                    "updatedAt": time.time(),
+                }
+
+            self._streaming_agent_loop(ctx, conversation_id, bus)
 
         thread = threading.Thread(
-            target=self._streaming_agent_loop,
-            args=(ctx, conversation_id, bus),
-            daemon=True, name=f"agent-stream-{conversation_id}")
+            target=_bg_streaming, daemon=True,
+            name=f"agent-stream-{conversation_id}")
         thread.start()
 
         # Start poller if configured
@@ -305,9 +317,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 daemon=True, name="agent-poller").start()
             logger.info(f"Agent poller started (interval={poll_interval}s)")
 
-        from core.conversation_store import ConversationStore as _CS
         ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
-                          "message_count": _CS.instance().message_count(conversation_id)})
+                          "message_count": ConversationStore.instance().message_count(conversation_id)})
         flowfile.set_content(ack.encode("utf-8"))
         flowfile.set_attribute("agent.conversation_id", conversation_id)
         flowfile.set_attribute("agent.streaming", "true")

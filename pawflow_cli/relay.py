@@ -182,9 +182,12 @@ class RelayThread:
                 "--allow-exec",
             ]
             try:
-                _sp.run(docker_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-            except Exception:
-                pass
+                result = _sp.run(docker_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    sys.stderr.write(f"[Relay] Docker relay failed (exit {result.returncode}):\n")
+                    sys.stderr.write(f"[Relay] {result.stderr[:500]}\n")
+            except Exception as e:
+                sys.stderr.write(f"[Relay] Docker error: {e}\n")
             return
 
         # Direct mode: connect from this process

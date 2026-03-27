@@ -265,6 +265,12 @@ class LLMClient(
         _re = config.get("reasoning_effort", "")
         if _re:
             client._reasoning_effort = _re
+        # Docker containerization (claude-code provider)
+        if config.get("containerize"):
+            client.containerize = True
+            client.docker_image = config.get("docker_image", "pawflow-claude-code:latest")
+            client.docker_cpu_limit = config.get("docker_cpu_limit", "2")
+            client.docker_memory_limit = config.get("docker_memory_limit", "2g")
         return client
 
     def complete(

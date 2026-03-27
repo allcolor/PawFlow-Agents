@@ -986,17 +986,13 @@ class LLMClaudeCodeMixin:
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
-                    # If preempt messages were injected via stdin, don't break —
-                    # Claude Code will process them and send another result.
+                    # result event is always the final signal — Claude Code
+                    # absorbs all pending preempts inline before emitting result.
                     _pending = getattr(self, '_preempt_pending', 0)
                     if _pending > 0:
-                        self._preempt_pending = _pending - 1
-                        logger.info("[claude-code] result event but preempt pending (%d) "
-                                    "— continuing stream", _pending - 1)
-                        # Reset turn state for the next message
-                        _turn_count = 0
-                        _current_msg_id = ""
-                        continue
+                        logger.info("[claude-code] result event with %d preempt(s) pending "
+                                    "— resetting to 0 and breaking", _pending)
+                        self._preempt_pending = 0
                     break
 
         finally:

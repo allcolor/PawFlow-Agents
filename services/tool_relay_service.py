@@ -278,6 +278,25 @@ class ToolRelayService(BaseService):
                         conversation_id: str, agent_name: str) -> dict:
         registry = self._get_registry(user_id, conversation_id)
 
+        # ── Tool Approval Gate ───────────────────────────────────
+        # Check approval before executing — same gate used by API providers.
+        try:
+            from core.tool_approval import ToolApprovalGate
+            if ToolApprovalGate.is_enabled(conversation_id):
+                action_summary = tool_name
+                if tool_name == "filesystem" and isinstance(arguments, dict):
+                    action = arguments.get("action", "")
+                    path = arguments.get("path", "")
+                    action_summary = f"filesystem.{action}({path})" if path else f"filesystem.{action}"
+                approval = ToolApprovalGate.check(
+                    tool_name, action_summary, conversation_id, user_id, arguments
+                )
+                if approval != "approved":
+                    return {"type": "result", "request_id": request_id,
+                            "data": f"Error: Tool execution denied ({approval}): {action_summary}"}
+        except Exception as e:
+            logger.warning("Tool approval check failed: %s", e)
+
         # NO SSE events here — the stream handler (claude_code.py) publishes
         # tool_call/tool_result events from the Claude Code output stream.
         # Publishing here would create duplicates.

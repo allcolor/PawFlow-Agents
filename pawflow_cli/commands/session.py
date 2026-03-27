@@ -121,6 +121,7 @@ def _connect_relay(app, path: str):
         app.relay = RelayThread(
             app.server_url, app.session_token, app.username,
             directory, app.allow_exec,
+            docker_image=getattr(app, 'docker_image', ''),
         )
         app.relay.start()
         app.renderer.print_system(f"Relay '{app.relay.relay_id}' connected on port {app.relay.port}")

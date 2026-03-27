@@ -305,10 +305,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if conv_id:
             active = store.get_extra(conv_id, "active_resources") or {}
             active = self._ensure_active_agent(conv_id, active, uid)
-        # Build agents list with autoconv status
+        # Build agents list: only agents that are members of this conversation
+        # (active_resources.agents), not all repo agents.
+        conv_agent_names = active.get("agents", [])
+        # Backward compat: old format had only active.agent (single agent)
+        if not conv_agent_names and active.get("agent"):
+            conv_agent_names = [active["agent"]]
+
         agents_out = []
-        for a in rs.list_all("agent", uid, conversation_id=conv_id):
-            aname = a["name"]
+        for aname in conv_agent_names:
+            a = rs.get_any("agent", aname, uid)
+            if not a:
+                # Agent deleted from repo but still referenced in conv
+                a = {"name": aname, "description": "", "_scope": ""}
             entry = {
                 "name": aname,
                 "description": a.get("description", ""),
@@ -320,8 +329,20 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 if ac_cfg.get("enabled"):
                     entry["autoconv"] = ac_cfg.get("frequency", "on")
             agents_out.append(entry)
+
+        # Repo agents list (all global+user agents, with in_conversation flag)
+        all_repo_agents = rs.list_all("agent", uid)
+        repo_agent_count = len(all_repo_agents)
+        repo_agents_out = [{
+            "name": a["name"],
+            "description": a.get("description", ""),
+            "scope": a.get("_scope", ""),
+            "in_conversation": a["name"] in set(conv_agent_names),
+        } for a in all_repo_agents]
         result = {
             "agents": agents_out,
+            "repo_agent_count": repo_agent_count,
+            "repo_agents": repo_agents_out,
             "skills": [{
                 "name": s["name"],
                 "description": s.get("description", ""),
@@ -494,6 +515,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
             return [flowfile]
+        if rtype == "agent" and scope == "conversation":
+            flowfile.set_content(json.dumps({"error": "Agents cannot use conversation scope. Create with user or global scope, then add to conversation via add_agent_to_conv."}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         if not rtype or not rname:
             flowfile.set_content(json.dumps({"error": "Missing resource_type or name"}).encode())
             return [flowfile]
@@ -653,6 +678,100 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({
             "shared": True, "type": rtype, "name": rname,
             "target": target_conv,
+        }).encode())
+        return [flowfile]
+
+    if action == "add_agent_to_conv":
+        conv_id = body.get("conversation_id", "")
+        aname = body.get("name", "").strip()
+        if not conv_id or not aname:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.resource_store import ResourceStore
+        uid = user_id or "anonymous"
+        agent = ResourceStore.instance().get_any("agent", aname, uid)
+        if not agent:
+            flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not found in repository"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        active = store.get_extra(conv_id, "active_resources") or {}
+        agents = active.setdefault("agents", [])
+        if aname not in agents:
+            agents.append(aname)
+        if not active.get("agent"):
+            active["agent"] = aname
+        store.set_extra(conv_id, "active_resources", active)
+        flowfile.set_content(json.dumps({"ok": True, "agent": aname}).encode())
+        return [flowfile]
+
+    if action == "remove_agent_from_conv":
+        conv_id = body.get("conversation_id", "")
+        aname = body.get("name", "").strip()
+        if not conv_id or not aname:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        active = store.get_extra(conv_id, "active_resources") or {}
+        agents = active.get("agents", [])
+        if aname in agents:
+            agents.remove(aname)
+        active["agents"] = agents
+        # If removed agent was the selected primary, pick next or clear
+        if active.get("agent") == aname:
+            active["agent"] = agents[0] if agents else ""
+        store.set_extra(conv_id, "active_resources", active)
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
+    if action == "list_repo_agents":
+        conv_id = body.get("conversation_id", "")
+        from core.resource_store import ResourceStore
+        uid = user_id or "anonymous"
+        rs = ResourceStore.instance()
+        all_agents = rs.list_all("agent", uid)
+        conv_agents = set()
+        if conv_id:
+            active = store.get_extra(conv_id, "active_resources") or {}
+            conv_agents = set(active.get("agents", []))
+            if not conv_agents and active.get("agent"):
+                conv_agents = {active["agent"]}
+        out = []
+        for a in all_agents:
+            out.append({
+                "name": a["name"],
+                "description": a.get("description", ""),
+                "scope": a.get("_scope", ""),
+                "in_conversation": a["name"] in conv_agents,
+            })
+        flowfile.set_content(json.dumps({"agents": out}, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "create_conversation":
+        agents = body.get("agents", [])
+        if not agents or not isinstance(agents, list):
+            flowfile.set_content(json.dumps({"error": "'agents' list is required"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        # Validate agents exist in repo
+        from core.resource_store import ResourceStore
+        uid = user_id or "anonymous"
+        rs = ResourceStore.instance()
+        valid_agents = []
+        for aname in agents:
+            if rs.get_any("agent", aname, uid):
+                valid_agents.append(aname)
+        if not valid_agents:
+            flowfile.set_content(json.dumps({"error": "None of the specified agents exist in the repository"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        new_id = store.generate_id()
+        store.save(new_id, [], user_id=uid)
+        active_res = {"agents": valid_agents, "agent": valid_agents[0]}
+        store.set_extra(new_id, "active_resources", active_res)
+        flowfile.set_content(json.dumps({
+            "conversation_id": new_id,
+            "agents": valid_agents,
         }).encode())
         return [flowfile]
 

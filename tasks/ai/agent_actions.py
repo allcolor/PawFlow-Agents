@@ -412,10 +412,10 @@ class AgentActionsMixin:
                 # with the new context (rebuilt/compacted/summarized)
                 _agent = result.get("agent", "")
                 if _agent:
-                    _clear_claude_session(conv_id, _agent)
+                    self._clear_claude_session(conv_id, _agent)
                 else:
                     # Shared context changed — clear all agent sessions
-                    _clear_claude_session(conv_id, "")
+                    self._clear_claude_session(conv_id, "")
                 bus.publish_event(conv_id, "compact_progress", {
                     "stage": "done", **result,
                 })

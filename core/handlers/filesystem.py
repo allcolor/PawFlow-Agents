@@ -486,8 +486,10 @@ class FilesystemToolHandler(ToolHandler):
         return result
 
     def _execute_inner(self, arguments: Dict[str, Any]) -> str:
-        # Arguments may arrive as JSON string from MCP bridge
-        if isinstance(arguments, str):
+        # Arguments may arrive as JSON string from MCP bridge (possibly double-encoded)
+        for _ in range(3):
+            if not isinstance(arguments, str):
+                break
             try:
                 arguments = json.loads(arguments)
             except (json.JSONDecodeError, TypeError):

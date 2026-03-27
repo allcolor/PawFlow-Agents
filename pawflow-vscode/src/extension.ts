@@ -53,7 +53,8 @@ export async function activate(context: vscode.ExtensionContext) {
         if (workspaceDir) {
           try {
             await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<boolean>('allowExec', true));
+                              config.get<boolean>('allowExec', true),
+                              config.get<string>('dockerImage', ''));
           } catch (e: any) {
             vscode.window.showWarningMessage(`PawFlow relay failed: ${e.message}`);
           }
@@ -95,7 +96,8 @@ export async function activate(context: vscode.ExtensionContext) {
           const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
           if (workspaceDir && apiClient) {
             await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<boolean>('allowExec', true));
+                              config.get<boolean>('allowExec', true),
+                              config.get<string>('dockerImage', ''));
           }
         }
       } catch (e: any) {
@@ -119,7 +121,8 @@ export async function activate(context: vscode.ExtensionContext) {
         const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
         if (workspaceDir) {
           await relay.start(apiClient, auth.getUsername(), workspaceDir,
-                            config.get<boolean>('allowExec', true));
+                            config.get<boolean>('allowExec', true),
+                            config.get<string>('dockerImage', ''));
           vscode.window.showInformationMessage('PawFlow: Relay started');
         }
       }
@@ -137,7 +140,8 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       try {
         await relay.start(apiClient, auth.getUsername(), dir,
-                          config.get<boolean>('allowExec', true));
+                          config.get<boolean>('allowExec', true),
+                          config.get<string>('dockerImage', ''));
         vscode.window.showInformationMessage(`PawFlow: Relay connected to ${dir}`);
       } catch (e: any) {
         vscode.window.showErrorMessage(`PawFlow relay failed: ${e.message}`);

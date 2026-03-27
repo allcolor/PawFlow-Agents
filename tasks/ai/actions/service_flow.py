@@ -53,6 +53,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "enabled": sdef.enabled,
                     "started": _started,
                     "description": sdef.description,
+                    "scope": "user",
                 }
                 svc = registry.get_live_instance(user_id, sid) if sdef.enabled else None
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:

@@ -396,7 +396,13 @@ function connectSSE(cid) {
     const plan = data.plan || data;
     const title = plan.title || data.title || '';
     const stepCount = (plan.steps && plan.steps.length) || data.steps || 0;
-    addMsg('system', '\u{1F4CB} Plan created: ' + title + ' (' + stepCount + ' steps)');
+    const planId = plan.id || plan.plan_id || '';
+    const isPendingApproval = (plan.status || '') === 'pending_approval';
+    let msgHtml = '\u{1F4CB} Plan created: <strong>' + title + '</strong> (' + stepCount + ' steps)';
+    if (isPendingApproval && planId) {
+      msgHtml += ' &mdash; <button onclick="planAction(\'approve_plan\',\'' + planId + '\')" style="margin-left:6px;padding:2px 10px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9em">\u2705 Approve</button>';
+    }
+    addMsg('system', msgHtml, {html: true});
     // Show plans button and refresh panel if open
     const plansBtn = document.getElementById('plansBtn');
     if (plansBtn) plansBtn.style.display = '';

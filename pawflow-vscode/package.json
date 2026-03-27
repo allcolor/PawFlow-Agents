@@ -157,6 +157,11 @@
           "default": true,
           "description": "Allow shell execution via relay"
         },
+        "pawflow.dockerImage": {
+          "type": "string",
+          "default": "",
+          "description": "Docker image to use for the filesystem relay (e.g. pawflow-relay-dev:latest). Leave empty for direct (native) mode."
+        },
         "pawflow.allowAutomation": {
           "type": "boolean",
           "default": false,

@@ -118,7 +118,7 @@ function _sectionHeader(title, rtype) {
   const isParamSecret = rtype === '_param' || rtype === '_secret';
   const onclick = isParamSecret
     ? `_showParamEditor('','',${rtype === '_secret'},true)`
-    : `showResourceCreator('${rtype}')`;
+    : rtype === 'agent' ? 'showAddAgentToConvDialog()' : `showResourceCreator('${rtype}')`;
   const collapsed = _collapsedSections[rtype] || false;
   const arrow = collapsed ? '\u25B6' : '\u25BC';
   return `<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
@@ -154,18 +154,54 @@ async function loadResources() {
     }
     const el = document.getElementById('resourcesContent');
     let html = '';
-    // Agents
+    // Agents (conversation members)
+    html += _sectionHeader('Agents', 'agent');
     if (data.agents && data.agents.length) {
-      html += _sectionHeader('Agents', 'agent');
-      data.agents.forEach(a => {
-        const active = a.active;
-        html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'agent','${a.name}','${a.scope||''}','${a.autoconv||''}');return false;">
-          <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'agent',name:'${a.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-          ${_scopeBadge(a.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;cursor:pointer;" onclick="cmdAgentSelect('${a.name}')">${a.name}</span>${a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:4px;" title="Autoconv: ' + a.autoconv + '">\u{1F504} ' + a.autoconv + '</span>' : ''}
-        </div>`;
+      data.agents.forEach(function(a) {
+        var isPrimary = a.active;
+        var aName = escapeHtml(a.name);
+        var primaryColor = isPrimary ? '#4ecdc4' : '#555';
+        var textColor = isPrimary ? '#e0e0e0' : '#aaa';
+        var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
+        var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
+        var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
+        html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'
+          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
+          + _scopeBadge(a.scope)
+          + '<span style="color:' + textColor + ';font-size:12px;cursor:pointer;flex:1;"'
+          + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + aName + '</span>'
+          + autoconvTag
+          + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Remove from conversation"'
+          + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
+          + '</div>';
       });
-      html += _sectionFooter();
+    } else {
+      html += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
     }
+    html += _sectionFooter();
+
+    // Agent Repository (repo agents not yet in conv, collapsed by default)
+    if (!("_agent_repo" in _collapsedSections)) _collapsedSections["_agent_repo"] = true;
+    html += _sectionHeader("Agent Repository", "_agent_repo");
+    if (!_collapsedSections["_agent_repo"]) {
+      var repoAgents = (data.repo_agents || []).filter(function(a) { return !a.in_conversation; });
+      if (repoAgents.length) {
+        repoAgents.forEach(function(a) {
+          var aName = escapeHtml(a.name);
+          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+            + _scopeBadge(a.scope)
+            + '<span style="color:#888;font-size:12px;flex:1;">' + aName + '</span>'
+            + '<span style="color:#6c5ce7;font-size:10px;cursor:pointer;padding:0 4px;" title="Add to conversation"'
+            + ' onclick="_addAgentToConv(this.dataset.n)" data-n="' + aName + '">+</span>'
+            + '</div>';
+        });
+      } else {
+        html += '<div style="margin-left:8px;font-size:11px;color:#555;">All agents are in this conversation</div>';
+      }
+    }
+    html += _sectionFooter();
+    // Skills
     // Skills (always show header + [+] even when empty)
     html += _sectionHeader('Skills', 'skill');
     (data.skills || []).forEach(s => {
@@ -643,6 +679,138 @@ function _saveResourceCreate(rtype) {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
   }).catch(e => addMsg('error', e.message));
+}
+
+function _removeAgentFromConv(name) {
+  var convAgents = document.querySelectorAll('#res-section-agent > div');
+  if (convAgents.length <= 1) {
+    if (!confirm('Remove the last agent from this conversation?')) return;
+  }
+  cmdResourceAction('remove_agent_from_conv', {name: name, conversation_id: conversationId})
+    .then(loadResources);
+}
+
+function _addAgentToConv(name) {
+  cmdResourceAction('add_agent_to_conv', {name: name, conversation_id: conversationId})
+    .then(loadResources);
+}
+
+async function showAddAgentToConvDialog() {
+  var existing = document.getElementById('resourceEditorOverlay');
+  if (existing) existing.remove();
+  var overlay = document.createElement('div');
+  overlay.id = 'resourceEditorOverlay';
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  var panel = document.createElement('div');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:460px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = '<p style="color:#e0e0e0;font-weight:600;">Add Agent to Conversation</p><p style="color:#888;">Loading...</p>';
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+  try {
+    var resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_repo_agents', conversation_id: conversationId }),
+    });
+    var data = await resp.json();
+    var agents = data.agents || [];
+    var available = agents.filter(function(a) { return !a.in_conversation; });
+    var inConv = agents.filter(function(a) { return a.in_conversation; });
+    panel.innerHTML = '';
+
+    var header = document.createElement('div');
+    header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+    header.innerHTML = '<strong style="color:#e0e0e0;">Add Agent to Conversation</strong>';
+    var closeBtn = document.createElement('button');
+    closeBtn.textContent = '×';
+    closeBtn.style.cssText = 'background:none;border:none;color:#888;cursor:pointer;font-size:18px;';
+    closeBtn.onclick = function() { overlay.remove(); };
+    header.appendChild(closeBtn);
+    panel.appendChild(header);
+
+    if (available.length) {
+      var searchInput = document.createElement('input');
+      searchInput.placeholder = 'Search agents...';
+      searchInput.style.cssText = 'width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;font-size:12px;margin-bottom:8px;box-sizing:border-box;';
+      panel.appendChild(searchInput);
+
+      var list = document.createElement('div');
+      list.id = 'agent-pick-list';
+      available.forEach(function(a) {
+        var lbl = document.createElement('label');
+        lbl.style.cssText = 'display:flex;align-items:center;gap:8px;padding:5px 4px;cursor:pointer;border-radius:4px;';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.value = a.name; cb.style.accentColor = '#6c5ce7';
+        var nameSpan = document.createElement('span');
+        nameSpan.style.cssText = 'color:#e0e0e0;font-size:12px;';
+        nameSpan.textContent = a.name;
+        lbl.appendChild(cb); lbl.appendChild(nameSpan);
+        if (a.description) {
+          var desc = document.createElement('span');
+          desc.style.cssText = 'color:#888;font-size:11px;';
+          desc.textContent = a.description;
+          lbl.appendChild(desc);
+        }
+        list.appendChild(lbl);
+      });
+      panel.appendChild(list);
+
+      searchInput.addEventListener('input', function() {
+        var q = this.value.toLowerCase();
+        list.querySelectorAll('label').forEach(function(lbl) {
+          var n = lbl.querySelector('span') ? lbl.querySelector('span').textContent.toLowerCase() : '';
+          lbl.style.display = n.includes(q) ? '' : 'none';
+        });
+      });
+    } else {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'color:#666;font-size:12px;margin-bottom:8px;';
+      empty.textContent = 'All agents are already in this conversation.';
+      panel.appendChild(empty);
+    }
+
+    if (inConv.length) {
+      var already = document.createElement('div');
+      already.style.cssText = 'margin-top:8px;font-size:11px;color:#555;';
+      already.textContent = 'Already in conversation: ' + inConv.map(function(a) { return a.name; }).join(', ');
+      panel.appendChild(already);
+    }
+
+    var createLink = document.createElement('div');
+    createLink.style.cssText = 'margin-top:12px;border-top:1px solid #333;padding-top:10px;font-size:11px;';
+    var cl = document.createElement('span');
+    cl.style.cssText = 'color:#6c5ce7;cursor:pointer;';
+    cl.textContent = '+ Create new agent in repository';
+    cl.onclick = function() { overlay.remove(); showResourceCreator('agent'); };
+    createLink.appendChild(cl);
+    panel.appendChild(createLink);
+
+    var btns = document.createElement('div');
+    btns.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;margin-top:12px;';
+    var cancelBtn = document.createElement('button');
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.style.cssText = 'background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
+    cancelBtn.onclick = function() { overlay.remove(); };
+    var addBtn = document.createElement('button');
+    addBtn.textContent = 'Add Selected';
+    addBtn.style.cssText = 'background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;';
+    addBtn.onclick = async function() {
+      var checks = list ? list.querySelectorAll('input[type=checkbox]:checked') : [];
+      if (!checks.length) { alert('Select at least one agent.'); return; }
+      overlay.remove();
+      for (var i = 0; i < checks.length; i++) {
+        await cmdResourceAction('add_agent_to_conv', {name: checks[i].value, conversation_id: conversationId});
+      }
+      loadResources();
+    };
+    btns.appendChild(cancelBtn); btns.appendChild(addBtn);
+    panel.appendChild(btns);
+  } catch(e) {
+    var err = document.createElement('div');
+    err.style.cssText = 'color:#e94560;font-size:12px;';
+    err.textContent = 'Error: ' + e.message;
+    panel.appendChild(err);
+  }
 }
 
 // ── Param/Secret context menu + create ────────────────────────────

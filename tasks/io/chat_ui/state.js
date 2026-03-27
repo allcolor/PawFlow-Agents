@@ -121,7 +121,7 @@ function toggleSidebar() {
   document.getElementById('sidebar').classList.toggle('open');
 }
 
-function newChat() {
+function _doNewChat() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   stopPollTimer();
   conversationId = null;
@@ -151,6 +151,85 @@ function newChat() {
   // Close sidebar on mobile
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('input').focus();
+}
+
+async function newChat() {
+  // Show agent picker to pre-assign agents to the new conversation
+  const agents = await _pickAgentsForNewConv();
+  _doNewChat();
+  if (agents && agents.length > 0) {
+    try {
+      const resp = await fetch(API, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({action: 'create_conversation', agents})
+      });
+      const data = await resp.json();
+      if (data.conversation_id) {
+        conversationId = data.conversation_id;
+        connectSSE(conversationId);
+        loadResources();
+      }
+    } catch(e) { console.error('create_conversation failed', e); }
+  }
+}
+
+// Show a dialog to pick 1+ agents from repo for a new conversation.
+// Returns array of agent names, or null if skipped/cancelled.
+async function _pickAgentsForNewConv() {
+  return new Promise(async (resolve) => {
+    let repoAgents = [];
+    try {
+      const r = await fetch(API, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({action: 'list_repo_agents', conversation_id: ''})
+      });
+      const d = await r.json();
+      repoAgents = d.agents || [];
+    } catch(e) { console.error(e); }
+
+    if (repoAgents.length === 0) { resolve(null); return; }
+
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+
+    const box = document.createElement('div');
+    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:320px;max-width:480px;max-height:70vh;display:flex;flex-direction:column;gap:12px';
+
+    const listHtml = repoAgents.map(a => {
+      const desc = a.description ? ` — ${a.description}` : '';
+      const scope = a.scope ? `<span style="font-size:0.8em;opacity:0.5;margin-left:4px">${a.scope}</span>` : '';
+      return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:4px" data-name="${a.name.toLowerCase()}"><input type="checkbox" value="${a.name}" style="accent-color:var(--accent,#7c6af7)"><span><strong>${a.name}</strong>${desc}${scope}</span></label>`;
+    }).join('');
+
+    box.innerHTML = `
+      <div style="font-weight:600;font-size:1.05em">Choose agents for this conversation</div>
+      <input id="_ncAgentSearch" type="text" placeholder="Search agents..." style="padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em">
+      <div id="_ncAgentList" style="overflow-y:auto;max-height:300px;display:flex;flex-direction:column;gap:6px">${listHtml}</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
+        <button id="_ncSkipBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer">Skip</button>
+        <button id="_ncOkBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600">Start conversation</button>
+      </div>`;
+
+    overlay.appendChild(box);
+    document.body.appendChild(overlay);
+
+    document.getElementById('_ncAgentSearch').addEventListener('input', function() {
+      const q = this.value.toLowerCase();
+      document.querySelectorAll('#_ncAgentList label').forEach(lbl => {
+        lbl.style.display = !q || lbl.dataset.name.includes(q) ? '' : 'none';
+      });
+    });
+
+    const cleanup = (val) => { overlay.remove(); resolve(val); };
+    document.getElementById('_ncSkipBtn').onclick = () => cleanup(null);
+    document.getElementById('_ncOkBtn').onclick = () => {
+      const checked = [...document.querySelectorAll('#_ncAgentList input[type=checkbox]:checked')].map(c => c.value);
+      cleanup(checked.length > 0 ? checked : null);
+    };
+    overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null); });
+  });
 }
 
 function updateDeleteBtn() {

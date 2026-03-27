@@ -577,7 +577,8 @@ class PawCode:
         # File/relay/session commands — need local state
         from pawflow_cli.commands.files import handle_files_commands
         from pawflow_cli.commands.session import handle_session_commands
-        for handler in (handle_files_commands, handle_session_commands):
+        from pawflow_cli.commands.conversation import handle_conversation_commands
+        for handler in (handle_files_commands, handle_session_commands, handle_conversation_commands):
             if handler(self, cmd, arg, text):
                 return
 

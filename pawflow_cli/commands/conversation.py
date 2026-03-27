@@ -8,17 +8,25 @@ def handle_conversation_commands(app, cmd, arg, text):
     """Handle conversation commands. Returns True if handled, False otherwise."""
 
     if cmd in ("/conv", "/conversations"):
-        try:
-            data = app.api.send_action("list_conversations")
-            app.renderer.print_conversation_list(data.get("conversations", []))
-        except Exception as e:
-            app.renderer.print_error(str(e))
+        if arg:
+            # /conv <id> — switch to conversation
+            _switch_conversation(app, arg.strip())
+        else:
+            # /conv — list conversations
+            try:
+                data = app.api.send_action("list_conversations")
+                convs = data.get("conversations", [])
+                app.renderer.print_conversation_list(convs)
+                if convs:
+                    app.renderer.print_system("Use /conv <id> or /resume <id> to switch.")
+            except Exception as e:
+                app.renderer.print_error(str(e))
         return True
 
     if cmd == "/resume":
         if not arg:
-            app.renderer.print_error("Usage: /resume <id> [num_messages]")
-            return True
+            # No arg — let server handle (tell agent to continue)
+            return False
         parts = arg.split()
         cid_partial = parts[0]
         show_n = int(parts[1]) if len(parts) > 1 else 50
@@ -162,3 +170,30 @@ def handle_conversation_commands(app, cmd, arg, text):
         return True
 
     return False
+
+
+def _switch_conversation(app, cid_partial: str):
+    """Switch to a conversation by partial ID."""
+    full_cid = app._resolve_conversation_id(cid_partial)
+    if not full_cid:
+        app.renderer.print_error(f"No conversation matching '{cid_partial}'")
+        return
+    try:
+        data = app.api.send_action("load_history",
+                                     conversation_id=full_cid,
+                                     limit=20, offset=0)
+        if data.get("error"):
+            app.renderer.print_error(data["error"])
+            return
+        app.conversation_id = full_cid
+        app._last_history = data.get("messages", [])
+        save_config({"last_conversation_id": full_cid})
+        if app.sse:
+            app.sse.disconnect()
+        app.sse = SSEClient(app.server_url, app.session_token)
+        app.sse.connect(full_cid)
+        total = data.get("message_count", 0)
+        app.renderer.print_system(f"Switched to {full_cid[:8]} ({total} messages)")
+        app._display_history(app._last_history, len(app._last_history))
+    except Exception as e:
+        app.renderer.print_error(str(e))

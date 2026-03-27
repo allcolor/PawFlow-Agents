@@ -297,7 +297,7 @@ function handleKey(e) {
     cmdAgentInterrupt(target);
     return;
   }
-  if (e.key === 'Enter' && !e.shiftKey) {
+  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
     e.preventDefault();
     send();
     return;

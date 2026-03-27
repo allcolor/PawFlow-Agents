@@ -59,9 +59,17 @@ class AgentIdentityMixin:
     def _ensure_active_agent(conv_id: str, active_res: dict, uid: str) -> dict:
         """Ensure an agent is selected in active_resources.
 
+        Handles migration from old format (agent: str only) to new format
+        (agents: list of conv members, agent: str for selected primary).
         If no agent is selected, auto-selects 'assistant' (or first available).
         Persists the change and returns the (possibly updated) active_res dict.
         """
+        # Migrate old format: agent (str) present but agents (list) absent
+        if active_res.get("agent") and "agents" not in active_res:
+            active_res["agents"] = [active_res["agent"]]
+        # If agents list has entries but no primary selected, pick first
+        if active_res.get("agents") and not active_res.get("agent"):
+            active_res["agent"] = active_res["agents"][0]
         if active_res.get("agent"):
             return active_res
         from core.resource_store import ResourceStore
@@ -72,7 +80,11 @@ class AgentIdentityMixin:
             all_agents = rs.list_all("agent", uid)
             default = all_agents[0] if all_agents else None
         if default:
-            active_res["agent"] = default["name"]
+            dname = default["name"]
+            active_res["agent"] = dname
+            agents = active_res.setdefault("agents", [])
+            if dname not in agents:
+                agents.insert(0, dname)
             ConversationStore.instance().set_extra(
                 conv_id, "active_resources", active_res)
         return active_res

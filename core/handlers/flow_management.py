@@ -873,7 +873,10 @@ class UpdatePlanHandler(ToolHandler):
             return f"Error: plan '{plan_id}' not found."
 
         for u in updates:
-            step_num = int(u.get("step", 0))
+            step_num = int(u.get("step") or u.get("index") or 0)
+            # LLMs sometimes send 0-based index; steps are 1-based
+            if step_num == 0:
+                step_num = 1
             status = u.get("status", "")
             note = u.get("note", "")
             for s in plan["steps"]:

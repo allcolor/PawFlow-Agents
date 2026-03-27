@@ -195,6 +195,8 @@ function addMsg(role, text, extra) {
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
     el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
+  } else if (extra && extra.html) {
+    el.innerHTML = text;
   } else {
     el.textContent = text;
   }

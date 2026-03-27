@@ -344,6 +344,15 @@ def main():
         elif method == "tools/call":
             name = params.get("name", "")
             args = params.get("arguments", {})
+            # Robust: LLM sometimes double-encodes arguments as a JSON string
+            for _ in range(3):
+                if isinstance(args, str):
+                    try:
+                        args = json.loads(args)
+                    except (json.JSONDecodeError, TypeError):
+                        break
+                else:
+                    break
             _log(f"CALL {name}({json.dumps(args)[:200]})")
 
             if not client:
@@ -362,11 +371,13 @@ def main():
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
                 tool_args = args.get("arguments", {})
-                if isinstance(tool_args, str):
+                for _ in range(3):
+                    if not isinstance(tool_args, str):
+                        break
                     try:
                         tool_args = json.loads(tool_args)
                     except (json.JSONDecodeError, TypeError):
-                        pass
+                        break
                 result = client.request("execute_tool",
                                         tool_name=tool_name,
                                         arguments=tool_args)

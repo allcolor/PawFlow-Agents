@@ -126,6 +126,16 @@ class HTTPReceiverTask(BaseTask):
         # Relationship routing
         ff.set_attribute("route.relationship", relationship)
 
+        # POST agent: respond immediately with ack (async processing)
+        if pending_req.method == "POST" and "/api/agent" in pending_req.path:
+            service_id = self.config.get("service_id", "")
+            svc = self.get_service(service_id)
+            if svc:
+                svc.submit_response(
+                    pending_req.request_id, 200,
+                    {"Content-Type": "application/json"},
+                    json.dumps({"status": "accepted"}).encode())
+
         # Priority: commands and technical actions get high priority
         if pending_req.body:
             try:

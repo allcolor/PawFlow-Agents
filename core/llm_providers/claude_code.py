@@ -248,10 +248,12 @@ class LLMClaudeCodeMixin:
         if not relay_url:
             logger.warning("No toolRelay service — MCP bridge will have no tools")
 
-        # In Docker mode, replace localhost with host.docker.internal
+        # In Docker mode, replace localhost with the host IP reachable from container
         if _containerize and relay_url:
-            relay_url = relay_url.replace("localhost", "host.docker.internal")
-            relay_url = relay_url.replace("127.0.0.1", "host.docker.internal")
+            from core.docker_utils import get_host_ip
+            _host_ip = get_host_ip()
+            relay_url = relay_url.replace("localhost", _host_ip)
+            relay_url = relay_url.replace("127.0.0.1", _host_ip)
 
         config = {
             "mcpServers": {
@@ -330,11 +332,8 @@ class LLMClaudeCodeMixin:
         mem = getattr(self, 'docker_memory_limit', '') or "2g"
 
         # Resolve host address for MCP bridge to connect back
-        import platform
-        if platform.system() == "Windows" or "microsoft" in platform.release().lower():
-            host_addr = "host.docker.internal"
-        else:
-            host_addr = "host.docker.internal"  # works on Docker Desktop Linux too
+        from core.docker_utils import get_host_ip
+        host_addr = get_host_ip()
 
         docker_run_args = [
             "--rm", "-i",

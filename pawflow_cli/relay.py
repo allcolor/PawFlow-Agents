@@ -26,6 +26,21 @@ def _translate_path(p):
     return p
 
 
+def _get_host_ip():
+    """Get IP reachable from Docker containers."""
+    if os.name == "nt":
+        import socket as _s
+        try:
+            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            pass
+    return "host.docker.internal"
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
@@ -165,7 +180,7 @@ class RelayThread:
             import subprocess as _sp
             import uuid as _uuid
             self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
-            ws_url = f"wss://host.docker.internal:{self.port}/ws/relay"
+            ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
             docker_cmd = _docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,

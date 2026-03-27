@@ -49,6 +49,19 @@ def _docker_cmd():
     return ["docker"]
 
 
+def _get_host_ip():
+    if os.name == "nt":
+        import socket as _s
+        try:
+            s = _s.socket(_s.AF_INET, _s.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            pass
+    return "host.docker.internal"
+
 def _translate_path(p):
     if os.name != "nt":
         return p
@@ -1283,8 +1296,8 @@ def main():
             "--security-opt", "no-new-privileges",
             args.docker_image,
             "python3", "/opt/pawflow/pawflow_relay.py",
-            "--server", ws_url.replace("localhost", "host.docker.internal")
-                               .replace("127.0.0.1", "host.docker.internal"),
+            "--server", ws_url.replace("localhost", _get_host_ip())
+                               .replace("127.0.0.1", _get_host_ip()),
             "--token", token,
             "--relay-id", args.relay_id,
             "--dir", "/workspace",

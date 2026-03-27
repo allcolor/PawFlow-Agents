@@ -308,16 +308,11 @@ def cmd_gui(args):
     signal.signal(signal.SIGTERM, _shutdown)
 
     try:
-        while True:
-            time.sleep(1)
+        while not _shutting_down:
+            time.sleep(0.5)
     except KeyboardInterrupt:
-        logger.info("Ctrl-C received, shutting down...")
-        try:
-            _shutdown(None, None)
-        except (KeyboardInterrupt, SystemExit):
-            pass
-        finally:
-            os._exit(0)
+        pass
+    _shutdown(None, None)
 
 
 def cmd_plugins(args):

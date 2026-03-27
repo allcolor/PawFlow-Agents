@@ -83,6 +83,26 @@ def _translate_volume_mount(mount: str) -> str:
     return host_path
 
 
+def get_host_ip() -> str:
+    """Get the host IP address that Docker containers can reach.
+
+    On Windows (Docker WSL): returns the LAN IP (host.docker.internal doesn't work)
+    On Linux: returns 'host.docker.internal' (Docker Desktop) or gateway IP
+    """
+    if is_windows():
+        # Docker WSL can't reach host.docker.internal — use LAN IP
+        import socket as _sock
+        try:
+            s = _sock.socket(_sock.AF_INET, _sock.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "host.docker.internal"
+    return "host.docker.internal"
+
+
 def docker_available() -> bool:
     """Check if Docker is available and running."""
     try:

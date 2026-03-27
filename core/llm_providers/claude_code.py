@@ -343,9 +343,11 @@ class LLMClaudeCodeMixin:
             "--name", f"pawflow-claude-{os.getpid()}",
             # Mount session dir for persistence (memories, CLAUDE.md)
             "-v", f"{workdir}:/workspace",
-            # Environment
-            "-e", f"CLAUDE_CONFIG_DIR=/workspace",
-            "-e", f"HOME=/workspace",
+            # Environment — HOME must be /workspace so Claude Code
+            # finds .credentials.json at $CLAUDE_CONFIG_DIR/
+            "-e", "CLAUDE_CONFIG_DIR=/workspace",
+            "-e", "HOME=/workspace",
+            "-e", "NODE_OPTIONS=--max-old-space-size=1536",
             "-e", f"PAWFLOW_HOST={host_addr}",
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", f"host.docker.internal:host-gateway",
@@ -921,9 +923,14 @@ class LLMClaudeCodeMixin:
 
                 elif etype == "result":
                     # Final result — flush last turn and exit the loop
-                    # (with stream-json input, Claude Code stays alive
-                    #  waiting for more messages — we must break here)
                     _flush_turn()
+                    # Check for API errors (auth failure, rate limit, etc.)
+                    if event.get("is_error") or event.get("subtype") == "error_during_execution":
+                        _err_text = event.get("result", "")
+                        if "authentication" in _err_text.lower() or "401" in _err_text:
+                            raise LLMClientError(f"Claude Code auth failed: {_err_text[:300]}")
+                        # Other errors: log but continue (may have partial results)
+                        logger.warning("[claude-code] result has is_error=True: %s", _err_text[:200])
                     result_text = event.get("result", "")
                     if not turn_callback and result_text and not content_parts:
                         content_parts.append(result_text)

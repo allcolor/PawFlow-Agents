@@ -172,7 +172,13 @@ class ExecuteScriptHandler(ToolHandler):
                 import tempfile, uuid as _uuid_exec
                 _fname = f".pawflow_exec_{_uuid_exec.uuid4().hex[:8]}.py"
                 svc.write_file(_fname, code.encode("utf-8"))
-                result = svc.exec(".", f"python3 {_fname}; rm -f {_fname}")
+                try:
+                    result = svc.exec(".", f"python3 {_fname}")
+                finally:
+                    try:
+                        svc.delete_file(_fname)
+                    except Exception:
+                        pass
             else:
                 result = svc.execute_command({
                     "action": "exec",

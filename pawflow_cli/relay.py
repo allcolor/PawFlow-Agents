@@ -11,6 +11,21 @@ import time
 from pathlib import Path
 
 
+def _docker_cmd():
+    if os.name == "nt":
+        return ["wsl", "docker"]
+    return ["docker"]
+
+
+def _translate_path(p):
+    if os.name != "nt":
+        return p
+    p = p.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        return f"/mnt/{p[0].lower()}{p[2:]}"
+    return p
+
+
 def find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("", 0))
@@ -129,7 +144,7 @@ class RelayThread:
         if self._docker_container:
             import subprocess as _sp
             try:
-                _sp.run(["docker", "rm", "-f", self._docker_container],
+                _sp.run(_docker_cmd() + ["rm", "-f", self._docker_container],
                         capture_output=True, timeout=10)
             except Exception:
                 pass
@@ -151,10 +166,10 @@ class RelayThread:
             import uuid as _uuid
             self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
             ws_url = f"wss://host.docker.internal:{self.port}/ws/relay"
-            docker_cmd = [
-                "docker", "run", "--rm",
+            docker_cmd = _docker_cmd() + [
+                "run", "--rm",
                 "--name", self._docker_container,
-                "-v", f"{self.directory}:/workspace",
+                "-v", f"{_translate_path(self.directory)}:/workspace",
                 "--add-host", "host.docker.internal:host-gateway",
                 "--cpus", "2", "--memory", "2g",
                 "--security-opt", "no-new-privileges",

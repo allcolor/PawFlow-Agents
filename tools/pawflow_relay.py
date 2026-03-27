@@ -43,6 +43,21 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 
+def _docker_cmd():
+    if os.name == "nt":
+        return ["wsl", "docker"]
+    return ["docker"]
+
+
+def _translate_path(p):
+    if os.name != "nt":
+        return p
+    p = p.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        return f"/mnt/{p[0].lower()}{p[2:]}"
+    return p
+
+
 def generate_relay_id(username: str, directory: str) -> str:
     """Generate a stable relay ID from username + directory.
 
@@ -878,10 +893,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     import uuid as _uuid_child
                                     _img = _docker_img or "pawflow-relay-dev:latest"
                                     _child_container = f"pawflow-relay-child-{_uuid_child.uuid4().hex[:8]}"
-                                    _dr = subprocess.run([
-                                        "docker", "run", "-d",
+                                    _dr = subprocess.run(_docker_cmd() + [
+                                        "run", "-d",
                                         "--name", _child_container,
-                                        "-v", f"{_root}:/workspace",
+                                        "-v", f"{_translate_path(_root)}:/workspace",
                                         "-w", "/workspace",
                                         "--cpus", "2", "--memory", "2g",
                                         "--security-opt", "no-new-privileges",
@@ -909,7 +924,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     except Exception:
                                         pass
                                     try:
-                                        subprocess.run(["docker", "rm", "-f", _child_container],
+                                        subprocess.run(_docker_cmd() + ["rm", "-f", _child_container],
                                                        capture_output=True, timeout=10)
                                     except Exception:
                                         pass
@@ -1258,10 +1273,10 @@ def main():
         sys.stderr.write(f"[FSRelay] Starting Docker relay: {_docker_container}\n")
 
         # The container runs the relay Python script connecting to the server
-        docker_cmd = [
-            "docker", "run", "--rm",
+        docker_run_args = [
+            "--rm",
             "--name", _docker_container,
-            "-v", f"{root_dir}:/workspace",
+            "-v", f"{_translate_path(root_dir)}:/workspace",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", "2",
             "--memory", "2g",
@@ -1274,6 +1289,7 @@ def main():
             "--relay-id", args.relay_id,
             "--dir", "/workspace",
         ]
+        docker_cmd = _docker_cmd() + ["run"] + docker_run_args
         if args.allow_exec:
             docker_cmd.append("--allow-exec")
         if args.readonly:
@@ -1286,7 +1302,7 @@ def main():
 
             def _cleanup_docker():
                 try:
-                    subprocess.run(["docker", "rm", "-f", _docker_container],
+                    subprocess.run(_docker_cmd() + ["rm", "-f", _docker_container],
                                    capture_output=True, timeout=10)
                 except Exception:
                     pass
@@ -1295,7 +1311,7 @@ def main():
             proc.wait()
         except KeyboardInterrupt:
             sys.stderr.write(f"\n[FSRelay] Stopping container: {_docker_container}\n")
-            subprocess.run(["docker", "rm", "-f", _docker_container],
+            subprocess.run(_docker_cmd() + ["rm", "-f", _docker_container],
                            capture_output=True, timeout=10)
         finally:
             _cleanup()

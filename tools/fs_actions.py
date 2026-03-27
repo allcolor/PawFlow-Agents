@@ -22,6 +22,22 @@ MAX_EXEC_OUTPUT = 10 * 1024 * 1024  # 10 MB for stdout/stderr
 
 import shutil as _shutil
 
+
+def _docker_cmd():
+    if os.name == "nt":
+        return ["wsl", "docker"]
+    return ["docker"]
+
+
+def _translate_path(p):
+    if os.name != "nt":
+        return p
+    p = p.replace("\\", "/")
+    if len(p) >= 2 and p[1] == ":":
+        return f"/mnt/{p[0].lower()}{p[2:]}"
+    return p
+
+
 def detect_available_shells() -> Dict[str, str]:
     """Detect available shells on this system. Returns {name: path}."""
     shells: Dict[str, str] = {}
@@ -72,16 +88,15 @@ def detect_available_shells() -> Dict[str, str]:
         if _p:
             shells[_interp] = _p
     # Docker-based shells (isolated execution)
-    _docker = _shutil.which("docker")
-    if _docker:
-        try:
-            _dr = subprocess.run([_docker, "info"], capture_output=True, timeout=5)
-            if _dr.returncode == 0:
-                shells["docker-python"] = _docker
-                shells["docker-node"] = _docker
-                shells["docker-bash"] = _docker
-        except Exception:
-            pass
+    try:
+        _dr = subprocess.run(_docker_cmd() + ["info"], capture_output=True, timeout=5)
+        if _dr.returncode == 0:
+            _docker_bin = _docker_cmd()[0]
+            shells["docker-python"] = _docker_bin
+            shells["docker-node"] = _docker_bin
+            shells["docker-bash"] = _docker_bin
+    except Exception:
+        pass
     return shells
 
 
@@ -683,8 +698,8 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         _containers = globals().get('_DOCKER_CONTAINERS', {})
         _relay_container = _containers.get(root_abs) or globals().get('_DOCKER_EXEC_CONTAINER')
     if _relay_container and not (shell_name and shell_name.startswith("docker-")):
-        docker_exec_cmd = [
-            "docker", "exec", "-w", "/workspace",
+        docker_exec_cmd = _docker_cmd() + [
+            "exec", "-w", "/workspace",
             "-e", "PYTHONIOENCODING=utf-8",
             _relay_container,
             "bash", "-c", command,
@@ -721,9 +736,9 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
         if not _image or not _exec_cmd:
             raise ValueError(f"Unknown docker shell '{shell_name}'. "
                              f"Use docker-python, docker-node, or docker-bash.")
-        docker_cmd = [
-            "docker", "run", "--rm",
-            "-v", f"{root_abs}:/workspace",
+        docker_run_args = [
+            "--rm",
+            "-v", f"{_translate_path(root_abs)}:/workspace",
             "-w", "/workspace",
             "-e", "PYTHONIOENCODING=utf-8",
             "--cpus", "2",
@@ -735,7 +750,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             _image,
         ] + _exec_cmd
         result = subprocess.run(
-            docker_cmd,
+            _docker_cmd() + ["run"] + docker_run_args,
             capture_output=True, text=True,
             encoding="utf-8", errors="replace",
             timeout=timeout,

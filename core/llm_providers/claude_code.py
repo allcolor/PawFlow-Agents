@@ -14,6 +14,8 @@ import subprocess
 import threading
 from typing import List, Optional
 
+from core.docker_utils import docker_cmd as _docker_cmd, docker_popen, docker_rm
+
 logger = logging.getLogger(__name__)
 
 # Base directory for per-session Claude Code workdirs
@@ -334,8 +336,8 @@ class LLMClaudeCodeMixin:
         else:
             host_addr = "host.docker.internal"  # works on Docker Desktop Linux too
 
-        docker_cmd = [
-            "docker", "run", "--rm", "-i",
+        docker_run_args = [
+            "--rm", "-i",
             "--cpus", cpu,
             "--memory", mem,
             "--name", f"pawflow-claude-{os.getpid()}",
@@ -354,7 +356,9 @@ class LLMClaudeCodeMixin:
             image,
         ] + claude_args
 
-        return docker_cmd
+        # Store args for docker_popen (used in _stream_claude_code)
+        self._docker_run_args = docker_run_args
+        return _docker_cmd() + ["run"] + docker_run_args
 
     # ── Process management ──────────────────────────────────────────
 
@@ -407,8 +411,7 @@ class LLMClaudeCodeMixin:
                 # Docker mode: also force-remove the container
                 if getattr(self, 'containerize', False):
                     container_name = f"pawflow-claude-{proc.pid}"
-                    subprocess.run(["docker", "rm", "-f", container_name],
-                                   capture_output=True, timeout=5)
+                    docker_rm(container_name)
             except OSError:
                 pass
             return
@@ -450,8 +453,7 @@ class LLMClaudeCodeMixin:
         if getattr(self, 'containerize', False):
             container_name = f"pawflow-claude-{proc.pid}"
             try:
-                subprocess.run(["docker", "rm", "-f", container_name],
-                               capture_output=True, timeout=5)
+                docker_rm(container_name)
             except Exception:
                 pass
 
@@ -667,16 +669,26 @@ class LLMClaudeCodeMixin:
                      workdir, _containerize, " ".join(cmd[:8]) + "...")
 
         try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                cwd=None if _containerize else workdir,
-                env=None if _containerize else self._claude_code_env(workdir),
-                encoding="utf-8",
-            )
+            if _containerize:
+                proc = docker_popen(
+                    self._docker_run_args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                )
+            else:
+                proc = subprocess.Popen(
+                    cmd,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    cwd=workdir,
+                    env=self._claude_code_env(workdir),
+                    encoding="utf-8",
+                )
             self._claude_proc = proc
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary

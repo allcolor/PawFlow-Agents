@@ -183,7 +183,7 @@ class RelayThread:
             ]
             try:
                 self._docker_proc = _sp.Popen(
-                    docker_cmd, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                    docker_cmd, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
                 # Wait for container to exit or stop event
                 while not self._stop_event.is_set():
                     try:

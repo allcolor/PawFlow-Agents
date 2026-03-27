@@ -378,7 +378,13 @@ if (typeof hljs !== 'undefined') {
 </div>
 </div>
 <script>
-/* JS_PLACEHOLDER */
+// Config injected by server
+const AGENT_PATH = '{{AGENT_PATH}}';
+const API = window.location.origin + '{{AGENT_PATH}}';
+const SSE_URL = window.location.origin + '{{SSE_PATH}}';
+const LOGIN_URL = '{{LOGIN_URL}}';
 </script>
+<!-- JS modules loaded individually for caching -->
+/* JS_PLACEHOLDER */
 </body>
 </html>

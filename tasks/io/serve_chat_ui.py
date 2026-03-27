@@ -1,16 +1,15 @@
-"""ServeChatUI Task — Serve a self-contained chat HTML interface.
+"""ServeChatUI Task — Serve chat HTML + individual JS modules.
 
-Returns a complete HTML page with embedded CSS and JavaScript that provides
-a chat interface for the agentLoop. The UI handles conversation_id tracking,
-message history, file download links, and markdown rendering.
+Routes:
+    GET /chat        → HTML page with <script src> tags
+    GET /chat/js/*   → individual JS files (cached)
 
-The HTML template and JS are loaded from tasks/io/chat_ui/ at runtime
-and assembled into a single page.
-
-Flow pattern:
-    httpReceiver (GET /chat) → serveChatUI → handleHTTPResponse
+The HTML template is in tasks/io/chat_ui/template.html.
+JS modules are individual files in tasks/io/chat_ui/*.js,
+served separately for proper caching and debugging.
 """
 
+import hashlib
 import logging
 from pathlib import Path
 from typing import Dict, Any, List
@@ -20,47 +19,77 @@ from core.base_task import BaseTask
 
 logger = logging.getLogger(__name__)
 
-# Cache the assembled HTML in-process (loaded once per worker)
-_cached_html: str = ""
+_CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
+
+# JS modules in load order (each file must be standalone)
+_JS_MODULES = [
+    "i18n.js", "state.js", "conversations.js", "messages.js",
+    "active_agents.js", "typing.js", "sse.js",
+    "dialogs.js", "commands.js", "context_editor.js", "memories.js",
+    "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
+    "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
+]
+
+# Cache: filename → (content_bytes, etag, content_hash)
+_js_cache: Dict[str, tuple] = {}
+_html_cache: str = ""
+_js_version: str = ""  # hash of all JS combined — used as cache buster
 
 
-def _load_chat_html() -> str:
-    """Load and assemble the chat UI HTML from template + JS assets."""
-    global _cached_html
-    if _cached_html:
-        return _cached_html
-
-    chat_ui_dir = Path(__file__).parent / "chat_ui"
-    template = (chat_ui_dir / "template.html").read_text(encoding="utf-8")
-
-    # Load JS modules in order (they share a single global scope)
-    _JS_MODULES = [
-        "i18n.js", "state.js", "conversations.js", "messages.js",
-        "active_agents.js", "typing.js", "sse.js",
-        "dialogs.js", "commands.js", "context_editor.js", "memories.js",
-        "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
-        "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
-    ]
-    js_parts = []
+def _compute_js_version() -> str:
+    """Compute a short hash of all JS files for cache busting."""
+    h = hashlib.md5()
     for mod in _JS_MODULES:
-        mod_path = chat_ui_dir / mod
-        if mod_path.exists():
-            js_parts.append(f"// ── {mod} ──\n" + mod_path.read_text(encoding="utf-8"))
-    js = "\n".join(js_parts)
+        p = _CHAT_UI_DIR / mod
+        if p.exists():
+            h.update(p.read_bytes())
+    return h.hexdigest()[:8]
 
-    # Inject JS into the template placeholder
-    html = template.replace("/* JS_PLACEHOLDER */", js)
-    _cached_html = html
-    logger.info("Chat UI loaded: %d chars (%d template + %d JS from %d modules)",
-                len(html), len(template), len(js), len(js_parts))
+
+def _load_html() -> str:
+    global _html_cache, _js_version
+    if _html_cache:
+        return _html_cache
+
+    _js_version = _compute_js_version()
+    template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
+
+    # Build <script src> tags instead of inline JS
+    script_tags = []
+    for mod in _JS_MODULES:
+        if (_CHAT_UI_DIR / mod).exists():
+            script_tags.append(f'<script src="/chat/js/{mod}?v={_js_version}"></script>')
+    scripts_html = "\n".join(script_tags)
+
+    # Replace the JS placeholder with script tags
+    html = template.replace("/* JS_PLACEHOLDER */", "")
+    # Insert script tags before </body>
+    html = html.replace("</body>", f"{scripts_html}\n</body>")
+
+    _html_cache = html
+    logger.info("Chat UI loaded: %d chars template, %d JS modules, version=%s",
+                len(template), len(_JS_MODULES), _js_version)
     return html
 
 
+def _load_js(filename: str) -> tuple:
+    """Load a JS file. Returns (content_bytes, etag) or (None, None)."""
+    if filename in _js_cache:
+        return _js_cache[filename]
+    p = _CHAT_UI_DIR / filename
+    if not p.exists() or not filename.endswith(".js"):
+        return None, None
+    content = p.read_bytes()
+    etag = hashlib.md5(content).hexdigest()[:12]
+    _js_cache[filename] = (content, etag)
+    return content, etag
+
+
 class ServeChatUITask(BaseTask):
-    """Serve a self-contained chat HTML interface."""
+    """Serve the chat HTML interface and its JS assets."""
 
     TYPE = "serveChatUI"
-    VERSION = "1.0.0"
+    VERSION = "2.0.0"
     NAME = "Serve Chat UI"
     DESCRIPTION = "Serve an HTML chat interface for the agent"
     ICON = "chat"
@@ -89,7 +118,7 @@ class ServeChatUITask(BaseTask):
                 "type": "string",
                 "required": False,
                 "default": "",
-                "description": "Custom CSS to append to the chat UI for theming",
+                "description": "Custom CSS to inject into the chat UI",
             },
             "custom_css_file": {
                 "type": "string",
@@ -100,10 +129,30 @@ class ServeChatUITask(BaseTask):
         }
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
+        req_path = flowfile.get_attribute("http.request.path") or "/chat"
+
+        # Serve individual JS files
+        if req_path.startswith("/chat/js/"):
+            filename = req_path.split("/chat/js/", 1)[1].split("?")[0]
+            content, etag = _load_js(filename)
+            if content is None:
+                flowfile.set_content(b"Not found")
+                flowfile.set_attribute("http.response.status", "404")
+                return [flowfile]
+            flowfile.set_content(content)
+            flowfile.set_attribute("http.response.status", "200")
+            flowfile.set_attribute("http.response.header.Content-Type",
+                                   "application/javascript; charset=utf-8")
+            flowfile.set_attribute("http.response.header.Cache-Control",
+                                   "public, max-age=31536000, immutable")
+            flowfile.set_attribute("http.response.header.ETag", f'"{etag}"')
+            return [flowfile]
+
+        # Serve HTML page
         agent_path = self.config.get("agent_path", "/api/agent")
         login_url = self.config.get("login_url", "")
         sse_path = self.config.get("sse_path", "/api/agent/events")
-        html = _load_chat_html()
+        html = _load_html()
         html = html.replace("{{AGENT_PATH}}", agent_path)
         html = html.replace("{{LOGIN_URL}}", login_url)
         html = html.replace("{{SSE_PATH}}", sse_path)

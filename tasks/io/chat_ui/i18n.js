@@ -212,9 +212,7 @@ ttlOpts[2].textContent = t('ttl6h');
 ttlOpts[3].textContent = t('ttl24h');
 ttlOpts[4].textContent = t('ttl7d');
 
-const API = window.location.origin + '{{AGENT_PATH}}';
-const SSE_URL = window.location.origin + '{{SSE_PATH}}';
-const LOGIN_URL = '{{LOGIN_URL}}';
+// API, SSE_URL, LOGIN_URL are set by the template <script> block
 let conversationId = null;
 let sending = false;
 let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running

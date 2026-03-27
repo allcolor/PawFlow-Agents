@@ -75,6 +75,11 @@
           },
           {
             "method": "GET",
+            "pattern": "/chat/js/{filename}",
+            "relationship": "GET:/chat"
+          },
+          {
+            "method": "GET",
             "pattern": "/files/{file_id}/{filename}",
             "relationship": "GET:/files"
           },

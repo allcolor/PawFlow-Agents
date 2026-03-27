@@ -206,8 +206,11 @@ export async function activate(context: vscode.ExtensionContext) {
   // Forward relay status to chat panel
   relay.onDidChangeStatus((status) => {
     chatProvider.postRelayStatus(status);
-    if (status === 'running') {
-      statusBar.setConnected(auth.getUsername() + ' [relay ✓]');
+    if (status === 'running' || status === 'running-docker') {
+      const label = status === 'running-docker'
+        ? auth.getUsername() + ' [relay 🐳 ✓]'
+        : auth.getUsername() + ' [relay ✓]';
+      statusBar.setConnected(label);
     } else {
       statusBar.setError(auth.getUsername() + ' [relay ✗]');
     }

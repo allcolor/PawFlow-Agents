@@ -27,13 +27,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             defs = registry.get_all_for_user(user_id)
             services = []
             for sid, sdef in sorted(defs.items()):
-                services.append({
+                entry = {
                     "id": sid,
                     "type": sdef.service_type,
                     "enabled": sdef.enabled,
                     "connected": registry.is_connected(user_id, sid),
                     "description": sdef.description,
-                })
+                }
+                # Include relay metadata if available
+                svc = registry.get_live_instance(user_id, sid) if sdef.enabled else None
+                if svc and hasattr(svc, '_relay_info') and svc._relay_info:
+                    entry["relay_info"] = svc._relay_info
+                services.append(entry)
             flowfile.set_content(json.dumps({
                 "services": services,
             }, ensure_ascii=False).encode())

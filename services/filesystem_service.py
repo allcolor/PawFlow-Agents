@@ -219,9 +219,11 @@ class WSListener:
             _reg_info = reg.get("info", {})
             logger.info("Relay connected: %s (path=%s, addr=%s)", relay_id, req_path, tag)
 
-            # Store relay metadata (shells, platform, etc.)
+            # Store relay metadata (shells, platform, containerized, etc.)
             if _reg_info.get("shells") and hasattr(service, '_relay_shells'):
                 service._relay_shells = _reg_info["shells"]
+            if service and _reg_info:
+                service._relay_info = _reg_info
 
             # Confirm registration
             await self._ws_send(writer, json.dumps({
@@ -383,6 +385,7 @@ class RelayService(BaseService):
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
         self._relay_shells: List[str] = []  # available shells on the relay system
+        self._relay_info: Dict[str, Any] = {}  # full registration info (platform, containerized, etc.)
 
         # Relay connection pool — supports multiple connections for resilience
         self._relay_pool: List[Dict] = []  # [{"reader", "writer", "loop"}]

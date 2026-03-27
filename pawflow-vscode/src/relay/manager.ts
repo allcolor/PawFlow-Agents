@@ -108,7 +108,7 @@ export class RelayManager implements vscode.Disposable {
       // Direct mode: TypeScript native actions
       this._connect();
     }
-    this._onStatusChange.fire('running');
+    this._onStatusChange.fire(this.dockerImage ? 'running-docker' : 'running');
   }
 
   private async _startDockerRelay(): Promise<void> {
@@ -231,7 +231,7 @@ export class RelayManager implements vscode.Disposable {
           secret: this.wsToken,
           relay_type: 'relay',
           relay_id: this.relayId,
-          info: { platform: process.platform, root: this.rootDir, mode: 'readwrite' },
+          info: { platform: process.platform, root: this.rootDir, mode: 'readwrite', containerized: !!this.dockerImage, docker_image: this.dockerImage || '' },
         });
         this._wsSend(socket, regMsg);
         this.reconnectDelay = 1000;
@@ -260,7 +260,7 @@ export class RelayManager implements vscode.Disposable {
           const msg = JSON.parse(frame.payload.toString('utf-8'));
           if (msg.type === 'registered') {
             this.outputChannel.appendLine(`[Relay] ✓ Server confirmed registration: ${msg.relay_id || this.relayId}`);
-            this._onStatusChange.fire('running');
+            this._onStatusChange.fire(this.dockerImage ? 'running-docker' : 'running');
           } else if (msg.type === 'error') {
             this.outputChannel.appendLine(`[Relay] ✗ Server error: ${msg.message || JSON.stringify(msg)}`);
           } else if (msg.type === 'command') {

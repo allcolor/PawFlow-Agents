@@ -81,6 +81,7 @@ COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
 COPY fs_actions.py /opt/pawflow/fs_actions.py
 COPY pawflow.py /opt/pawflow/pawflow.py
 ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
+ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
 
 # ── Cleanup ─────────────────────────────────────────────────────────
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*

@@ -694,11 +694,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _shells = detect_available_shells()
     except Exception:
         _shells = {}
+    def _is_containerized():
+        return os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
+
     info = {
         "platform": sys.platform,
         "root": root_dir,
         "mode": mode,
         "shells": list(_shells.keys()),
+        "containerized": _is_containerized(),
+        "docker_image": os.environ.get("PAWFLOW_DOCKER_IMAGE", ""),
     }
 
     def _resolve(rel_path):

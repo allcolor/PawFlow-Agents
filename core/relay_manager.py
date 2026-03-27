@@ -285,6 +285,14 @@ class RelayConnectionManager:
         else:
             logger.warning("resolve_pending: no pending request %s", request_id)
 
+    @staticmethod
+    def _relay_description(info: Dict[str, Any]) -> str:
+        tag = ""
+        if info.get("containerized"):
+            img = info.get("docker_image", "")
+            tag = f" \U0001f433 [{img}]" if img else " \U0001f433 [container]"
+        return f"WS relay: {info.get('platform', 'unknown')} @ {info.get('root', '?')}{tag}"
+
     def _auto_install_service(self, user_id: str, relay_id: str,
                                relay_type: str, info: Dict[str, Any]):
         """Auto-install/enable the relay as a user service."""
@@ -312,7 +320,7 @@ class RelayConnectionManager:
                     service_id=relay_id,
                     service_type=svc_type,
                     config=config,
-                    description=f"WS relay: {info.get('platform', 'unknown')} @ {info.get('root', '?')}",
+                    description=self._relay_description(info),
                     enabled=True,
                 )
             logger.info("Auto-installed service '%s' for user '%s'", relay_id, user_id)

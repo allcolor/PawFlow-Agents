@@ -12,7 +12,12 @@ async function cmdServiceList() {
     let lines = ['**Your services:**'];
     svcs.forEach(s => {
       const icon = s.connected ? '\u{1F7E2}' : (s.enabled ? '\u{1F534}' : '\u26AB');
-      lines.push(`  ${icon} **${s.id}** (\`${s.type}\`) ${s.description || ''}`);
+      let tag = '';
+      if (s.relay_info && s.relay_info.containerized) {
+        const img = s.relay_info.docker_image;
+        tag = ' \u{1F433}' + (img ? ` [${img}]` : ' [container]');
+      }
+      lines.push(`  ${icon} **${s.id}** (\`${s.type}\`)${tag} ${s.description || ''}`);
     });
     addMsg('system', lines.join('\n'));
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }

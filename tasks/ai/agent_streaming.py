@@ -350,27 +350,26 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         emitter = StreamEmitter(conversation_id, bus, ctx, self, gen_key, my_generation)
 
-        result = None
+        _had_error = False
         try:
             result = self._run_agent_loop(ctx, emitter)
+            _had_error = getattr(result, "finish_reason", "") == "error"
 
             # Set idle status
             ConversationStore.instance().set_status(conversation_id, "idle")
 
         except Exception:
-            # Errors already handled by _run_agent_loop + emitter
+            _had_error = True
             try:
                 ConversationStore.instance().set_status(conversation_id, "idle")
             except Exception:
                 pass
-            raise
         finally:
             use_conv_store = ctx.get("use_conv_store", False)
 
             # Check for pending user messages — but NOT if interrupted or fatal error
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
-            _was_error = isinstance(result, dict) and result.get("finish_reason") == "error"
-            if use_conv_store and conversation_id and not ctx.get("is_poll") and not _was_interrupted and not _was_error:
+            if use_conv_store and conversation_id and not ctx.get("is_poll") and not _was_interrupted and not _had_error:
                 try:
                     _cs = ConversationStore.instance()
                     _final_count = _cs.message_count(conversation_id)

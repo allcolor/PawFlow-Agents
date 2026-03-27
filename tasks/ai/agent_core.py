@@ -543,7 +543,8 @@ class AgentCoreMixin:
                             _was_cancelled = True
                         if _was_cancelled:
                             raise AgentCancelled()
-                        if _is_claude_code and ctx.get("_claude_has_session"):
+                        _is_auth_error = "auth" in err_str.lower() or "401" in err_str
+                        if _is_claude_code and ctx.get("_claude_has_session") and not _is_auth_error:
                             logger.warning("[claude-code] resume failed (%s), "
                                            "retrying with full context", err_str[:100])
                             try:

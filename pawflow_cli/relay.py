@@ -144,6 +144,8 @@ class RelayThread:
 
         # Create new service
         config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
+        if self.docker_image:
+            config_str += f",docker_image={self.docker_image}"
         _api_call(self.server_url, "POST", "/api/agent",
                   body={
                       "action": "service_install",

@@ -303,8 +303,18 @@ class RelayConnectionManager:
 
             existing = registry.get_definition(user_id, relay_id)
             if existing:
-                # Re-enable existing service
+                # Re-enable and update description (may have new info)
                 registry.enable(user_id, relay_id)
+                # Merge docker_image from existing config into info for description
+                _cfg = getattr(existing, "config", {}) or {}
+                if _cfg.get("docker_image") and not info.get("containerized"):
+                    info["containerized"] = True
+                    info["docker_image"] = _cfg["docker_image"]
+                try:
+                    existing.description = self._relay_description(info)
+                    registry._save_to_disk(user_id)
+                except Exception:
+                    pass
             else:
                 config = {
                     "relay_id": relay_id,

@@ -38,6 +38,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 svc = registry.get_live_instance(user_id, sid) if sdef.enabled else None
                 if svc and hasattr(svc, '_relay_info') and svc._relay_info:
                     entry["relay_info"] = svc._relay_info
+                elif sdef.config and sdef.config.get("docker_image"):
+                    # Fallback: CLI passed docker_image in service config
+                    entry["relay_info"] = {
+                        "containerized": True,
+                        "docker_image": sdef.config["docker_image"],
+                    }
                 services.append(entry)
             flowfile.set_content(json.dumps({
                 "services": services,

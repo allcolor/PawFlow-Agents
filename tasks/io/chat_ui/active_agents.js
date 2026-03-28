@@ -45,6 +45,7 @@ function _ensureInteraction(agentName) {
 }
 function trackAgentTool(agentName, toolName) {
   const key = _ensureInteraction(agentName);
+  if (!key) return;
   activeInteractions[key].lastTool = toolName;
   activeInteractions[key].status = toolName;
   const at = activeInteractions[key].activeTools;
@@ -53,6 +54,7 @@ function trackAgentTool(agentName, toolName) {
 }
 function trackAgentToolDone(agentName, toolName) {
   const key = _ensureInteraction(agentName);
+  if (!key) return;
   if (activeInteractions[key]) {
     const at = activeInteractions[key].activeTools;
     const idx = at.indexOf(toolName);

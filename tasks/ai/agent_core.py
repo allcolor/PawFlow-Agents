@@ -142,9 +142,11 @@ class AgentCoreMixin:
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in msg.tool_calls
                         ]
-                    # Build SSE events to publish AFTER write
+                    # Build SSE events to publish AFTER write (only if agent known)
                     _sse = []
                     _agent = (msg.source or {}).get("name", "") if msg.source else ""
+                    if not _agent:
+                        _agent = ctx.get("active_agent_name", "")
                     _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
                     if msg.role == "assistant" and msg.tool_calls:
                         from core.llm_client import unwrap_mcp_tool

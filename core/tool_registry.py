@@ -158,6 +158,25 @@ class ToolRegistry:
             # Run post-hooks (specific then wildcard)
             for hook in self._hooks.get(f"post:{name}", []) + self._hooks.get("post:*", []):
                 result = hook(name, args, result)
+            # Safety cap: prevent oversized results from crashing any caller
+            _max = getattr(handler, '_tool_result_max_chars', 50000)
+            if isinstance(result, str) and len(result) > _max:
+                try:
+                    from core.file_store import FileStore
+                    _fid = FileStore.instance().store(
+                        f"tool_result_{name}.txt",
+                        result.encode("utf-8"), "text/plain",
+                        category="tool_result",
+                    )
+                    _first = result.split("\n", 1)[0][:200]
+                    result = (
+                        result[:_max]
+                        + f"\n\n{_first}\n"
+                        f"[Result cleared — {len(result):,} chars. "
+                        f"Full output: read(path=\"{_fid}\", source=\"filestore\")]"
+                    )
+                except Exception:
+                    result = result[:_max] + f"\n\n[... truncated — {len(result):,} chars total]"
             return result
         except Exception as e:
             logger.error(f"Tool '{name}' execution failed: {e}")

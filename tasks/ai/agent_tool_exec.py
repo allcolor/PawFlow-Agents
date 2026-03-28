@@ -99,28 +99,8 @@ class AgentToolExecMixin:
                         if candidates:
                             hint = ", ".join(candidates[:3])
                             result += f"\n[Related tests may exist: {hint} — use run_tests to verify]"
-                # Safety cap: prevent 1GB results from crashing the server.
-                # Save full to FileStore, keep 50K in context for the LLM.
-                # _clear_seen_tool_results will later shrink to ref-only.
-                if isinstance(result, str) and len(result) > 50000:
-                    try:
-                        from core.file_store import FileStore
-                        _fid = FileStore.instance().store(
-                            f"tool_result_{tc.name}.txt",
-                            result.encode("utf-8"), "text/plain",
-                            category="tool_result",
-                            conversation_id=conversation_id,
-                            agent_name=agent_name,
-                        )
-                        _first = result.split("\n", 1)[0][:200]
-                        result = (
-                            result[:50000]
-                            + f"\n\n{_first}\n"
-                            f"[Result cleared — {len(result):,} chars. "
-                            f"Full output: read(path=\"{_fid}\", source=\"filestore\")]"
-                        )
-                    except Exception:
-                        result = result[:50000] + "\n\n[... truncated]"
+                # No truncation here — registry.execute() handles the 50K cap
+                # for ALL callers (agent loop, MCP bridge, /call command).
                 # Wrap tool output so the LLM treats it as data, not instructions
                 if result and tc.name not in ("complete_task", "assign_task"):
                     result = (

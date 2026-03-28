@@ -38,7 +38,9 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
-        history = self._classify_messages_for_display(page["messages"])
+        raw_messages = page["messages"]
+        raw_count = len(raw_messages)
+        history = self._classify_messages_for_display(raw_messages)
         nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
         active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
         active_res = self._ensure_active_agent(conv_id, active_res, user_id or "anonymous")
@@ -50,6 +52,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
             "message_count": page["total_count"],
             "has_more": page["has_more"],
             "offset": page["offset"],
+            "raw_count": raw_count,
             "nicknames": nicknames,
             "active_agent": active_res.get("agent", ""),
             "custom_css": custom_css,

@@ -439,13 +439,22 @@ class ConversationStore:
                           "status": "idle", "created_at": now,
                           "expires_at": now + ttl if ttl > 0 else 0})
 
+        # Dedup: skip messages already in transcript
+        existing_ids = self._get_transcript_msg_ids(cid) if self.exists(cid) else set()
+
         for m in public_messages:
+            mid = m.get("msg_id")
+            if mid and mid in existing_ids:
+                continue
             line = {"t": "msg", **m}
             if "ts" not in line:
                 line["ts"] = now
             lines.append(line)
 
         for m in private_messages:
+            mid = m.get("msg_id")
+            if mid and mid in existing_ids:
+                continue
             line = {"t": "msg", "private": True, **m}
             if "ts" not in line:
                 line["ts"] = now

@@ -90,7 +90,7 @@ async function resumeConv(cid, force) {
       addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
-    currentOffset = (data.messages || []).length;
+    currentOffset = data.raw_count || (data.messages || []).length;
     hasMoreMessages = data.has_more || false;
     _updateLoadMoreBanner();
     selectedAgent = data.active_agent || '';
@@ -170,7 +170,7 @@ async function loadMoreMessages() {
     if (data.error) { loadingMore = false; return; }
 
     hasMoreMessages = data.has_more || false;
-    currentOffset += (data.messages || []).length;
+    currentOffset += data.raw_count || (data.messages || []).length;
 
     // Prepend older messages before existing ones (after banner)
     const insertPoint = banner ? banner.nextSibling : container.firstChild;

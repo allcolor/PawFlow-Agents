@@ -808,7 +808,7 @@ function replayHistory(data) {
   messagesEl.innerHTML = '';
   _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
-  currentHistoryOffset = (data.messages || []).length;
+  currentHistoryOffset = data.raw_count || (data.messages || []).length;
 
   _addLoadMoreBanner(data);
   var msgs = data.messages || [];
@@ -819,7 +819,7 @@ function replayHistory(data) {
 }
 
 function prependHistory(data) {
-  currentHistoryOffset += (data.messages || []).length;
+  currentHistoryOffset += data.raw_count || (data.messages || []).length;
   var prevHeight = messagesEl.scrollHeight;
 
   // Remove old load-more banner

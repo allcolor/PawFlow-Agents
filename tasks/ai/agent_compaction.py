@@ -157,14 +157,18 @@ class AgentCompactionMixin:
             jsonl_lines.append(json.dumps(entry, ensure_ascii=False))
         jsonl_content = "\n".join(jsonl_lines)
 
-        # Write to FileStore
+        # Write to FileStore — fallback to direct messages if store fails
         from core.file_store import FileStore
-        file_id = FileStore.instance().store(
-            "conversation_history.jsonl",
-            jsonl_content.encode("utf-8"),
-            "application/jsonl",
-            category="context",
-        )
+        try:
+            file_id = FileStore.instance().store(
+                "conversation_history.jsonl",
+                jsonl_content.encode("utf-8"),
+                "application/jsonl",
+                category="context",
+            )
+        except Exception as e:
+            logger.error("[cc-context] FileStore write failed: %s — sending messages directly", e)
+            return messages
 
         logger.info("[cc-context] offloaded %d old messages (%d chars) to FileStore %s, "
                     "keeping %d recent messages in prompt",

@@ -556,6 +556,7 @@ class AgentCoreMixin:
                             client._claude_session_id = ""
                             ctx["_claude_has_session"] = False
                             try:
+                                llm_context = self._prepare_cc_file_context(list(messages))
                                 response = _llm_call(llm_context)
                                 _resume_retried = True
                             except Exception as retry_err:
@@ -568,12 +569,15 @@ class AgentCoreMixin:
                         elif "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)
-                            llm_context = self._compact(
-                                llm_context, compact_client,
-                                ctx.get("max_context_size", 64000), threshold=0.5,
-                                conversation_id=conversation_id,
-                                tool_defs=ctx.get("tool_defs"),
-                                chars_per_token=ctx.get("chars_per_token", 0))
+                            if _is_claude_code:
+                                llm_context = self._prepare_cc_file_context(list(messages))
+                            else:
+                                llm_context = self._compact(
+                                    llm_context, compact_client,
+                                    ctx.get("max_context_size", 64000), threshold=0.5,
+                                    conversation_id=conversation_id,
+                                    tool_defs=ctx.get("tool_defs"),
+                                    chars_per_token=ctx.get("chars_per_token", 0))
                             try:
                                 response = _llm_call(llm_context)
                             except Exception as retry_err:
@@ -591,7 +595,10 @@ class AgentCoreMixin:
 
                     emitter.check_cancelled()
 
-                    # Post-response
+                    # Post-response — mark session as active for next iteration
+                    if _is_claude_code and not ctx.get("_claude_has_session"):
+                        if getattr(client, '_claude_session_id', ''):
+                            ctx["_claude_has_session"] = True
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out
                     final_model = response.model

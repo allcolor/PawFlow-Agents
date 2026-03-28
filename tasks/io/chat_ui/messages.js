@@ -168,6 +168,9 @@ function addMsg(role, text, extra) {
     if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
     const tcId = (extra && extra.tc_id) || '';
     if (tcId) el.dataset.tcId = tcId;
+    el.dataset.tool = toolName;
+    if (args && args.path) el.dataset.path = args.path;
+    if (args && args.command) el.dataset.command = args.command.substring(0, 200);
 
     if (toolName === 'edit' && args && args.path) {
       el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + _renderToolCallEdit('', args);
@@ -193,10 +196,10 @@ function addMsg(role, text, extra) {
       const firstLine = resultText.split('\n')[0].substring(0, 100);
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
         + '<div class="tc-result"><details open><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-        + '<div class="tc-result-body">' + renderMarkdown(resultText) + '</div></details></div>';
+        + _renderToolOutput(resultText) + '</details></div>';
     } else {
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result">\u23bf ' + renderMarkdown(resultText) + '</div>';
+        + '<div class="tc-result">\u23bf ' + _renderToolOutput(resultText) + '</div>';
     }
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -268,20 +271,78 @@ function _synLine(code, lang) {
   catch(e) { return escapeHtml(code); }
 }
 
+function _renderToolOutput(text, toolHint, pathHint) {
+  // Smart rendering: detect content type from hints + content analysis
+  const lines = text.split('\n');
+  const _ext = pathHint ? (pathHint.split('.').pop() || '').toLowerCase() : '';
+
+  // Detect diff (has +/- lines with context)
+  const diffLines = lines.filter(l => /^\s*\d*\s*[+-] /.test(l) || l.startsWith('+ ') || l.startsWith('- '));
+  const isDiff = diffLines.length >= 2 && (
+    text.includes('replacement') || text.includes('Edited ') || text.includes('Written ')
+    || text.includes('@@') || text.includes('diff ') || lines.some(l => l.startsWith('---') || l.startsWith('+++')));
+  if (isDiff) {
+    return '<pre class="tc-output tc-diff">' + lines.map(l => {
+      const s = l.trimStart();
+      if (s.startsWith('+ ') || /^\s*\d+\s+\+ /.test(l)) return '<span class="diff-add">' + escapeHtml(l) + '</span>';
+      if (s.startsWith('- ') || /^\s*\d+\s+- /.test(l)) return '<span class="diff-del">' + escapeHtml(l) + '</span>';
+      if (s.startsWith('@@')) return '<span class="diff-hunk">' + escapeHtml(l) + '</span>';
+      return '<span class="diff-ctx">' + escapeHtml(l) + '</span>';
+    }).join('\n') + '</pre>';
+  }
+
+  // Detect markdown (has code fences, headers, bold, lists)
+  if (/^```|^\#{1,3} |^\*\*|^\- \[/.test(text) || text.includes('\n```')) {
+    return '<div class="tc-md">' + renderMarkdown(text) + '</div>';
+  }
+
+  // Detect file read (line numbers: "  42\tcontent")
+  const hasLineNumbers = lines.length > 3 && lines.filter(l => /^\s*\d+\t/.test(l)).length > lines.length * 0.5;
+  if (hasLineNumbers) {
+    return '<pre class="tc-output tc-code">' + lines.map(l => {
+      const m = l.match(/^(\s*\d+)\t(.*)$/);
+      if (m) return '<span class="ln">' + m[1] + '</span>\t' + escapeHtml(m[2]);
+      return escapeHtml(l);
+    }).join('\n') + '</pre>';
+  }
+
+  // Detect JSON
+  const trimmed = text.trim();
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    return '<pre class="tc-output tc-json">' + escapeHtml(text) + '</pre>';
+  }
+
+  // Hint: tool-based styling
+  const _codeExts = ['py','js','ts','jsx','tsx','java','go','rs','rb','c','cpp','cs','php','sh','bash','yaml','yml','toml','sql','html','css','xml'];
+  if (_ext && _codeExts.includes(_ext)) {
+    return '<pre class="tc-output tc-code" data-lang="' + _ext + '">' + escapeHtml(text) + '</pre>';
+  }
+  // grep/glob results: path:line format
+  if (toolHint === 'grep' || toolHint === 'glob') {
+    return '<pre class="tc-output tc-grep">' + lines.map(l => {
+      const m = l.match(/^([^:]+:\d+:)\s*(.*)$/);
+      if (m) return '<span class="grep-loc">' + escapeHtml(m[1]) + '</span> ' + escapeHtml(m[2]);
+      return escapeHtml(l);
+    }).join('\n') + '</pre>';
+  }
+
+  // Default: monospace terminal output
+  return '<pre class="tc-output">' + escapeHtml(text) + '</pre>';
+}
+
 function _attachToolResult(tcEl, resultText) {
-  // Change bullet from pending (green) to done (grey)
   const bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
-  // Append result inside the tool_call element
+  const toolHint = tcEl.dataset.tool || '';
+  const pathHint = tcEl.dataset.path || '';
   const resultDiv = document.createElement('div');
   resultDiv.className = 'tc-result';
   if (resultText.length > 500) {
     const firstLine = resultText.split('\n')[0].substring(0, 120);
     resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
-      + '</summary><div class="tc-result-body">' + renderMarkdown(resultText)
-      + '</div></details>';
+      + '</summary>' + _renderToolOutput(resultText, toolHint, pathHint) + '</details>';
   } else {
-    resultDiv.innerHTML = '\u23bf ' + renderMarkdown(resultText);
+    resultDiv.innerHTML = '\u23bf ' + _renderToolOutput(resultText, toolHint, pathHint);
   }
   tcEl.appendChild(resultDiv);
 }

@@ -197,6 +197,8 @@ class AgentSerializationMixin:
                         "content": _display,
                         "tool_name": _tc_name,
                         "tool_args": _tc_args_str,
+                        "tc_id": tc.get("id", ""),
+                        "arguments": _tc_args,
                         "source": _tc_source,
                     })
             elif role == "tool" and tool_call_id:
@@ -217,6 +219,7 @@ class AgentSerializationMixin:
                     "type": "tool_result", "role": "tool",
                     "content": preview + ("..." if len(display_content) > _limit else ""),
                     "tool_call_id": tool_call_id,
+                    "tc_id": tool_call_id,
                 }
                 if tool_call_id in _tc_id_to_name:
                     _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]

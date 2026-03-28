@@ -318,7 +318,11 @@ class WSListener:
                     await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
 
         except Exception as e:
-            logger.error("Relay connection error (%s): %s", tag, e)
+            _err_str = str(e)
+            if "0 bytes read" in _err_str:
+                logger.debug("Relay disconnected normally (%s)", tag)
+            else:
+                logger.error("Relay connection error (%s): %s", tag, e)
         finally:
             if service:
                 service._clear_relay(reader=reader)

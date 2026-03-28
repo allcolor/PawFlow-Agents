@@ -1,5 +1,6 @@
 """compact_result tool — receives summary from Claude Code during compaction."""
 
+import json
 import logging
 import threading
 from typing import Any, Dict
@@ -15,10 +16,16 @@ _pending: Dict[str, dict] = {}  # key → {"event": Event, "summary": str}
 
 def wait_for_compact_result(key: str, timeout: float = 300) -> str:
     """Block until compact_result is called for this key. Returns summary or raises."""
-    event = threading.Event()
     with _pending_lock:
-        _pending[key] = {"event": event, "summary": ""}
-    if not event.wait(timeout=timeout):
+        entry = _pending.get(key)
+    if not entry:
+        raise RuntimeError(f"No compact pending for key '{key}'. Call set_compact_key first.")
+    # Already delivered?
+    if entry["summary"]:
+        with _pending_lock:
+            _pending.pop(key, None)
+        return entry["summary"]
+    if not entry["event"].wait(timeout=timeout):
         with _pending_lock:
             _pending.pop(key, None)
         raise TimeoutError(f"compact_result not called within {timeout}s")
@@ -62,6 +69,13 @@ class CompactResultHandler(ToolHandler):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if isinstance(arguments, str):
+            arguments = {"summary": arguments}
         summary = arguments.get("summary", "")
         if not summary:
             return "Error: summary is required"

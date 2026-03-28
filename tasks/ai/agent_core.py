@@ -698,7 +698,8 @@ class AgentCoreMixin:
                         _max_consec, parallel=emitter.is_streaming,
                         agent_name=ctx.get("active_agent_name") or "",
                         agent_svc=ctx.get("active_llm_service", ""),
-                        conversation_id=conversation_id, user_id=user_id)
+                        conversation_id=conversation_id, user_id=user_id,
+                        is_claude_code=_is_claude_code)
 
                     for tc, result_text in results:
                         tools_called.append(tc.name)

@@ -13,6 +13,21 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 logger = logging.getLogger(__name__)
 
+
+def _apply_bg_results(messages, conversation_id):
+    """Apply completed background tool results to in-memory messages."""
+    import core.background_tool as _bg
+    for m in messages:
+        if (m.role == "tool" and isinstance(m.content, str)
+                and "Running in background" in m.content
+                and getattr(m, 'tool_call_id', None)):
+            result = _bg.pop_completed(conversation_id, m.tool_call_id)
+            if result is not None:
+                m.content = result
+                logger.info("[bg-tool] applied result for %s in-memory",
+                            m.tool_call_id)
+
+
 class AgentCoreMixin:
     def _run_agent_loop(self, ctx: Dict, emitter: AgentEmitter) -> AgentResult:
         """The ONE agent execution loop — used by both sync and streaming."""
@@ -632,16 +647,7 @@ class AgentCoreMixin:
 
                     # Apply pending background tool results to in-memory messages
                     import core.background_tool as _bg_mod
-                    for m in messages:
-                        if (m.role == "tool" and isinstance(m.content, str)
-                                and "Running in background" in m.content
-                                and getattr(m, 'tool_call_id', None)):
-                            _bg_result = _bg_mod.pop_completed(
-                                conversation_id, m.tool_call_id)
-                            if _bg_result is not None:
-                                m.content = _bg_result
-                                logger.info("[bg-tool] applied result for %s in-memory",
-                                            m.tool_call_id)
+                    _apply_bg_results(messages, conversation_id)
 
                     if response.tokens_in > 0:
                         _svc_id = ctx.get("active_llm_service") or ""
@@ -651,24 +657,13 @@ class AgentCoreMixin:
 
                     # No tools → final response (but wait for bg tasks first)
                     if not response.tool_calls:
-                        # If bg tasks are pending, wait and apply results before exiting
-                        import core.background_tool as _bg_wait
-                        if _bg_wait.has_pending(conversation_id):
+                        if _bg_mod.has_pending(conversation_id):
                             logger.info("[agent:%s] waiting for background tasks before exit",
                                         conversation_id[:8])
                             emitter.on_status("Waiting for background tasks...")
-                            _bg_wait.wait_pending(conversation_id, timeout=120,
-                                                  cancel_check=emitter.check_cancelled)
-                            # Apply completed results
-                            for m in messages:
-                                if (m.role == "tool" and isinstance(m.content, str)
-                                        and "Running in background" in m.content
-                                        and getattr(m, 'tool_call_id', None)):
-                                    _bg_r = _bg_wait.pop_completed(
-                                        conversation_id, m.tool_call_id)
-                                    if _bg_r is not None:
-                                        m.content = _bg_r
-                            # Continue loop so LLM sees the results
+                            _bg_mod.wait_pending(conversation_id, timeout=120,
+                                                 cancel_check=emitter.check_cancelled)
+                            _apply_bg_results(messages, conversation_id)
                             continue
 
                         _resp_text = response.content or ""

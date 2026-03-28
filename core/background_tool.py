@@ -163,12 +163,6 @@ def cleanup_done(max_age: float = 300):
         ]
         for tc_id in to_remove:
             _backgrounded.pop(tc_id, None)
-        # Also purge stale _completed entries (agent crashed before pickup)
-        stale_keys = [k for k in _completed
-                      if k.split(":", 1)[-1] not in _backgrounded
-                      or _backgrounded.get(k.split(":", 1)[-1], {}).get("status") in ("done", "cancelled")]
-        for k in stale_keys:
-            _completed.pop(k, None)
 
 
 def _periodic_cleanup():

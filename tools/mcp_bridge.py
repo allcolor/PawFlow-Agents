@@ -155,6 +155,10 @@ class ToolRelayClient:
     def _do_request(self, method: str, request_id: str, **kwargs) -> any:
         payload = {"type": "request", "request_id": request_id,
                    "method": method, **kwargs}
+        if method == "execute_tool":
+            _log(f"→ RELAY {method} {kwargs.get('tool_name','?')} "
+                 f"args={json.dumps(kwargs.get('arguments',''))[:300]} "
+                 f"[req={request_id}]")
         with self._lock:
             self._ws_send(json.dumps(payload))
             while True:
@@ -387,10 +391,6 @@ def main():
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
                 tool_args = args.get("arguments", {})
-                if not tool_args or tool_args == {} or tool_args == "{}":
-                    _log(f"EMPTY ARGS for {tool_name}! "
-                         f"raw args type={type(args).__name__}, "
-                         f"raw params={json.dumps(params)[:500]}")
                 for _ in range(3):
                     if not isinstance(tool_args, str):
                         break
@@ -402,6 +402,12 @@ def main():
                                         tool_name=tool_name,
                                         arguments=tool_args)
                 result = str(result) if result else "(no output)"
+                # Phantom call detection: empty args + "required" error
+                # → silently swallow (Claude Code sends these spuriously)
+                if (not tool_args or tool_args == {}) and isinstance(result, str) \
+                        and "required" in result.lower() and result.startswith("Error:"):
+                    _log(f"PHANTOM SKIP {tool_name}() → {result[:200]}")
+                    result = ""
             else:
                 result = f"Error: unknown tool '{name}'"
 

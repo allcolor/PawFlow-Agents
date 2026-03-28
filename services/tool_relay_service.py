@@ -133,9 +133,13 @@ class ToolRelayService(BaseService):
             return self._handle_get_schema(request_id, msg.get("tool_name", ""),
                                            user_id=user_id)
         elif method == "execute_tool":
+            _raw_args = msg.get("arguments", {})
+            _tool = msg.get("tool_name", "")
+            if not _raw_args or _raw_args == {}:
+                logger.warning("[tool-relay] EMPTY ARGS received for %s (request=%s) raw msg keys: %s",
+                               _tool, request_id, list(msg.keys()))
             return self._handle_execute(
-                request_id, msg.get("tool_name", ""),
-                msg.get("arguments", {}),
+                request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,
             )
         else:
@@ -342,6 +346,9 @@ class ToolRelayService(BaseService):
             logger.warning("Tool approval check failed: %s", e)
 
         try:
+            logger.info("[tool-relay] execute %s(%s) [req=%s]",
+                        tool_name, json.dumps(arguments)[:300] if isinstance(arguments, dict) else str(arguments)[:300],
+                        request_id)
             result = registry.execute(tool_name, arguments)
             result_str = str(result) if result is not None else "(no output)"
         except Exception as e:

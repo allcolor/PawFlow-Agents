@@ -760,7 +760,7 @@ function replayHistory(data) {
   messagesEl.innerHTML = '';
   _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
-  currentHistoryOffset = (data.messages || []).length;
+  currentHistoryOffset += (data.messages || []).length;
 
   if (data.has_more) {
     var more = document.createElement('div');

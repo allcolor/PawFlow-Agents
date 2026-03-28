@@ -112,6 +112,7 @@ async function resumeConv(cid, force) {
     startPollTimer();
     updateDeleteBtn();
     loadResources();
+    loadPermissionMode();
     document.getElementById('status').textContent = t('ready');
     document.getElementById('sidebar').classList.remove('open');
     scrollBottom(true);

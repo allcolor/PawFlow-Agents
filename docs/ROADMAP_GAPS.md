@@ -7,7 +7,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ## A. Critical Gaps (functional blockers)
 
-### A1. Hard cost cap per conversation
+### A1. Hard cost cap per conversation ✅ DONE
 **Priority:** P0 — prevents bill shock
 **Effort:** Small (1-2h)
 **Dependencies:** None
@@ -159,7 +159,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ---
 
-### B5. CLAUDE.md-equivalent auto-reinject post-compact
+### B5. {agent_name}.md auto-reinject post-compact ✅ DONE
 **Priority:** P1 — context persistence
 **Effort:** Small (2-4h)
 **Dependencies:** Compaction system (already exists)
@@ -304,7 +304,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ---
 
-### C7. Permission modes with quick toggle
+### C7. Permission modes with quick toggle ✅ DONE
 **Priority:** P3
 **Effort:** Small (2h)
 **Dependencies:** Tool approval gate

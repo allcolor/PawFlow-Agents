@@ -59,6 +59,44 @@ function clearAllStreams() {
   streams = {};
   streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
 }
+let permissionMode = 'default';  // current tool permission mode
+
+function setPermissionMode(mode) {
+  permissionMode = mode;
+  fetch(API, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'set_permission_mode', conversation_id: conversationId, mode}),
+    credentials: 'same-origin'
+  }).catch(e => console.error('setPermissionMode failed', e));
+  updatePermissionBadge();
+}
+
+function loadPermissionMode() {
+  if (!conversationId) { updatePermissionBadge(); return; }
+  fetch(API, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'get_permission_mode', conversation_id: conversationId}),
+    credentials: 'same-origin'
+  }).then(r => r.json()).then(d => {
+    permissionMode = d.permission_mode || 'default';
+    const sel = document.getElementById('permissionMode');
+    if (sel) sel.value = permissionMode;
+    updatePermissionBadge();
+  }).catch(() => {});
+}
+
+function updatePermissionBadge() {
+  const sel = document.getElementById('permissionMode');
+  if (!sel) return;
+  sel.style.display = conversationId ? '' : 'none';
+  sel.value = permissionMode;
+  // Visual hint: color the border based on mode
+  const colors = {default: '#e94560', approve_edits: '#e94560', read_only: '#f0a500', auto: '#4ecdc4'};
+  sel.style.borderColor = colors[permissionMode] || '#e94560';
+}
+
 let nicknameMap = {};      // { realName: displayName } — agent display names
 let pendingFiles = [];  // [{file, dataUrl, base64, mime_type, filename}]
 let lastSSEActivity = 0;  // timestamp of last SSE event received
@@ -138,6 +176,8 @@ function _doNewChat() {
   document.getElementById('schedsPanel').style.display = 'none';
   document.getElementById('plansBtn').style.display = 'none';
   document.getElementById('plansPanel').style.display = 'none';
+  permissionMode = 'default';
+  updatePermissionBadge();
   highlightConv(null);
   // Close sidebar on mobile
   document.getElementById('sidebar').classList.remove('open');
@@ -160,6 +200,7 @@ async function newChat() {
         conversationId = data.conversation_id;
         connectSSE(conversationId);
         loadResources();
+        loadPermissionMode();
       }
     } catch(e) { console.error('create_conversation failed', e); }
   }
@@ -233,6 +274,7 @@ function updateDeleteBtn() {
   document.getElementById('filesBtn').style.display = show;
   document.getElementById('schedsBtn').style.display = show;
   document.getElementById('plansBtn').style.display = show;
+  document.getElementById('permissionMode').style.display = show;
 }
 // ── Reply-to state ──
 let _replyTo = null;  // {raw_index, role, agent, text_preview}

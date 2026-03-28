@@ -28,6 +28,19 @@ def _apply_bg_results(messages, conversation_id):
                             m.tool_call_id)
 
 
+def _check_budget(ctx, total_in, total_out):
+    """Raise RuntimeError if conversation cost exceeds max_budget_usd."""
+    budget = ctx.get("max_budget_usd", 0)
+    if not budget:
+        return  # no cap
+    svc_cfg = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
+    cost_in = float(svc_cfg.get("cost_per_1m_input", 3.0))
+    cost_out = float(svc_cfg.get("cost_per_1m_output", 15.0))
+    spent = (total_in / 1_000_000 * cost_in) + (total_out / 1_000_000 * cost_out)
+    if spent >= budget:
+        raise RuntimeError(f"Budget exceeded: ${spent:.4f} >= ${budget:.2f} limit")
+
+
 class AgentCoreMixin:
     def _run_agent_loop(self, ctx: Dict, emitter: AgentEmitter) -> AgentResult:
         """The ONE agent execution loop — used by both sync and streaming."""
@@ -543,6 +556,7 @@ class AgentCoreMixin:
 
                     _resume_retried = False
                     try:
+                        _check_budget(ctx, total_tokens_in, total_tokens_out)
                         response = _llm_call(_call_context)
                     except AgentCancelled:
                         raise
@@ -551,6 +565,12 @@ class AgentCoreMixin:
                         # AgentCancelled may be wrapped in LLMClientError
                         if "AgentCancelled" in err_str:
                             raise AgentCancelled()
+                        # Budget exceeded — fatal, no retry
+                        if "Budget exceeded" in err_str:
+                            logger.warning("[agent:%s] %s", conversation_id[:8], err_str)
+                            emitter.on_fatal_error(err_str)
+                            _fatal_error = True
+                            break
                         # Claude-code resume failed → invalidate session, retry
                         # with full context (first-message flow).
                         # But NOT if the agent was cancelled (interrupt) — that's
@@ -575,6 +595,7 @@ class AgentCoreMixin:
                             client._claude_session_id = ""
                             ctx["_claude_has_session"] = False
                             try:
+                                _check_budget(ctx, total_tokens_in, total_tokens_out)
                                 llm_context = self._prepare_cc_file_context(list(messages))
                                 response = _llm_call(llm_context)
                                 _resume_retried = True
@@ -602,6 +623,7 @@ class AgentCoreMixin:
                                     tool_defs=ctx.get("tool_defs"),
                                     chars_per_token=ctx.get("chars_per_token", 0))
                             try:
+                                _check_budget(ctx, total_tokens_in, total_tokens_out)
                                 response = _llm_call(llm_context)
                             except Exception as retry_err:
                                 logger.error(f"LLM retry failed: {retry_err}")
@@ -636,6 +658,22 @@ class AgentCoreMixin:
                     total_tokens_out += response.tokens_out
                     final_model = response.model
                     finish_reason = response.finish_reason
+
+                    # Budget warning at 80%
+                    _bud = ctx.get("max_budget_usd", 0)
+                    if _bud and not ctx.get("_budget_warning_sent"):
+                        _svc_c = getattr(ctx.get("resolved_svc"), 'config', {}) or {}
+                        _ci = float(_svc_c.get("cost_per_1m_input", 3.0))
+                        _co = float(_svc_c.get("cost_per_1m_output", 15.0))
+                        _spent = (total_tokens_in / 1_000_000 * _ci) + (total_tokens_out / 1_000_000 * _co)
+                        if _spent >= _bud * 0.8:
+                            ctx["_budget_warning_sent"] = True
+                            emitter.bus.publish_event(conversation_id, "budget_warning", {
+                                "spent_usd": round(_spent, 4),
+                                "budget_usd": _bud,
+                                "percent": round(_spent / _bud * 100, 1),
+                                "agent_name": ctx.get("active_agent_name", ""),
+                            })
 
                     self._deflate_image_messages(messages)
                     # Clear old tool results — keep last 3 (2 was too aggressive, caused repeats)

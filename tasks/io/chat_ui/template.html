@@ -371,6 +371,13 @@ if (typeof hljs !== 'undefined') {
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="explorerBtn" onclick="openExplorer()" title="File Explorer">&#128193;</button>
+    <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
+            style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
+      <option value="default">&#x1F512; Default</option>
+      <option value="approve_edits">&#x270F; Approve edits</option>
+      <option value="read_only">&#x1F4D6; Read-only</option>
+      <option value="auto">&#x26A1; Auto</option>
+    </select>
     <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
     <button class="btn" id="memoryBtn" onclick="cmdShowMemories()" style="display:none" title="View agent memories">&#x1F9E0;</button>
     <button class="btn" id="exportConvBtn" onclick="exportConversation()" style="display:none" title="Export conversation">&#x1F4E5;</button>

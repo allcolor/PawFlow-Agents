@@ -57,15 +57,37 @@ class AgentToolExecMixin:
                     f"Stop and explain to the user what you've tried so far, "
                     f"and ask if they want you to continue."
                 )
-            # Approval gate: check if user has pre-approved this tool/action
-            from core.tool_approval import ToolApprovalGate
-            approval = ToolApprovalGate.check(
-                tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
-                conversation_id, user_id,
-                arguments=tc.arguments,
-            )
-            if approval != "approved":
-                return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
+            # Permission mode check
+            _perm_mode = ""
+            try:
+                from core.conversation_store import ConversationStore
+                _perm_mode = ConversationStore.instance().get_extra(
+                    conversation_id, "permission_mode") or "default"
+            except Exception:
+                pass
+            if _perm_mode == "read_only":
+                _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
+                                "delete", "mkdir", "bash", "notebook_edit"}
+                if tc.name in _write_tools:
+                    return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
+                # Also block filesystem write actions
+                if tc.name == "filesystem" and tc.arguments.get("action", "") not in (
+                        "list_dir", "read_file", "stat", "exists", "search", "grep",
+                        "git_status", "git_log", "git_diff", ""):
+                    return tc, "Error: write operations blocked (read-only mode). Change permission mode to allow writes."
+            elif _perm_mode == "auto":
+                pass  # skip approval gate entirely — auto-approve all tools
+            else:
+                # default / approve_edits — use normal approval gate
+                # Approval gate: check if user has pre-approved this tool/action
+                from core.tool_approval import ToolApprovalGate
+                approval = ToolApprovalGate.check(
+                    tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                    conversation_id, user_id,
+                    arguments=tc.arguments,
+                )
+                if approval != "approved":
+                    return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
             # Re-inject thread-local source agent (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():

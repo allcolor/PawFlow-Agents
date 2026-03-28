@@ -945,4 +945,25 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "set_permission_mode":
+        conv_id = body.get("conversation_id", "")
+        mode = body.get("mode", "default")
+        if mode not in ("default", "approve_edits", "read_only", "auto"):
+            flowfile.set_content(json.dumps({"error": f"Invalid permission mode: {mode}"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        store.set_extra(conv_id, "permission_mode", mode)
+        flowfile.set_content(json.dumps({"status": "ok", "permission_mode": mode}).encode())
+        return [flowfile]
+
+    if action == "get_permission_mode":
+        conv_id = body.get("conversation_id", "")
+        mode = store.get_extra(conv_id, "permission_mode") or "default" if conv_id else "default"
+        flowfile.set_content(json.dumps({"permission_mode": mode}).encode())
+        return [flowfile]
+
     return None

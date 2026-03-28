@@ -263,6 +263,18 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /task cancel <id>     — Cancel a task"
         ),
     },
+    "/permission": {
+        "usage": "/permission [default | approve_edits | read_only | auto]",
+        "short": "Set tool permission mode",
+        "detail": (
+            "Set how tool calls are authorized for this conversation:\n\n"
+            "  /permission              — Show current mode\n"
+            "  /permission default      — Normal approval gate\n"
+            "  /permission approve_edits — Same as default (explicit approval)\n"
+            "  /permission read_only    — Block all write operations\n"
+            "  /permission auto         — Auto-approve everything (no prompts)"
+        ),
+    },
     "/service": {
         "usage": "/service list | add | delete | test",
         "short": "Manage LLM and external services",
@@ -291,7 +303,11 @@ HELP: Dict[str, Dict[str, str]] = {
     "/cost": {
         "usage": "/cost [agent]",
         "short": "Show token usage and estimated cost",
-        "detail": "Show token usage per agent and estimated cost for the session.",
+        "detail": (
+            "Show token usage per agent and estimated cost for the session.\n"
+            "If max_budget_usd is configured on the LLM service, also shows remaining budget.\n"
+            "A budget_warning SSE event fires at 80% usage. Agent stops at 100%."
+        ),
         "aliases": "/usage",
     },
 
@@ -772,6 +788,14 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
     if cmd == "/task":
         return _parse_task_command(arg, base)
 
+    if cmd == "/permission":
+        mode = arg.strip().lower() if arg.strip() else ""
+        if not mode:
+            return {"action": "get_permission_mode", **base}
+        if mode not in ("default", "approve_edits", "read_only", "auto"):
+            return {"display": f"Invalid mode: {mode}. Valid: default, approve_edits, read_only, auto"}
+        return {"action": "set_permission_mode", "mode": mode, **base}
+
     if cmd == "/service":
         return _parse_service_command(arg, base, user_id)
 
@@ -1214,7 +1238,7 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
             "Scheduling": ["/schedules", "/autoconv", "/loop"],
             "Files": ["/files", "/upload", "/paste", "/copy", "/view",
                       "/run", "/diff"],
-            "Mode": ["/plan", "/hooks"],
+            "Mode": ["/plan", "/hooks", "/permission"],
             "Activation": ["/activate", "/deactivate", "/share", "/link"],
             "Session": ["/login", "/help", "/doctor", "/add-dir"],
             "Analysis": ["/stats", "/insights", "/pr-comments",

@@ -20,6 +20,23 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 logger = logging.getLogger(__name__)
 
 
+def _find_agent_md(agent_name, user_id):
+    """Find {agent_name}.md (case-insensitive) in the relay filesystem root."""
+    try:
+        from core.handlers._fs_base import find_fs_service
+        svc = find_fs_service(user_id)
+        if not svc:
+            return None
+        entries = svc.list_dir(".")
+        target = f"{agent_name}.md".lower()
+        for e in entries:
+            if e.name.lower() == target:
+                data = svc.read_file(e.name)
+                return (e.name, data.decode("utf-8"))
+    except Exception:
+        pass
+    return None
+
 
 from tasks.ai.agent_tool_config import AgentToolConfigMixin
 from tasks.ai.agent_tool_exec import AgentToolExecMixin
@@ -314,6 +331,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Resolve max_context early (needed for compact-if-not-fit decision)
         _svc_cfg_early = (getattr(resolved_svc, 'config', {}) or {})
         _max_ctx = int(_svc_cfg_early.get("max_context_size", 0) or 0) or 200000
+        _max_budget = float(_svc_cfg_early.get("max_budget_usd", 0) or 0)
 
         _context_diverged = False
         if preloaded_messages is not None:
@@ -392,6 +410,25 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             # Loaded from store — these messages are already persisted
             base_message_count = len(messages)
 
+        # Inject {agent_name}.md project instructions if available
+        _agent_md_content = ""
+        if _active_agent_name and conversation_id:
+            _agent_md = _find_agent_md(_active_agent_name, user_id)
+            if _agent_md:
+                _agent_md_content = _agent_md[1]
+                # Insert after system prompt (index 1 or after summary)
+                _inject_idx = 1  # after system prompt
+                for i, m in enumerate(messages):
+                    if isinstance(m.content, str) and "[Conversation summary" in m.content:
+                        _inject_idx = i + 2  # after summary + "understood"
+                        break
+                messages.insert(_inject_idx, LLMMessage(
+                    role="user",
+                    content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}"
+                ))
+                messages.insert(_inject_idx + 1, LLMMessage(
+                    role="assistant", content="Understood."
+                ))
 
         if use_conv_store and not conversation_id:
             from core.conversation_store import ConversationStore
@@ -956,6 +993,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "active_llm_service": _active_llm_service,
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
             "resolved_svc": resolved_svc,
+            "max_budget_usd": _max_budget,
             "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)
             "sub_executor": sub_executor,
             "_target_agent": _target_agent,
@@ -963,6 +1001,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "_nicknames": _nicknames if conversation_id else {},
             "_is_claude_code": _is_claude_code,
             "_claude_has_session": _claude_has_session,
+            "_agent_md_content": _agent_md_content,
         }
 
 

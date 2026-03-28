@@ -177,30 +177,54 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     except Exception:
         pass
 
-    # Inject result as a system message the agent will see on next turn.
-    # The tool_call already has a placeholder tool_result "[Running in background]".
-    # This message provides the REAL result so the agent can act on it.
+    # Inject result into the conversation.
+    # Strategy depends on provider:
+    # - LLM API: replace the placeholder tool_result in the messages array (direct access)
+    # - Claude Code: inject as system message (no direct context access)
+    _result_content = "[Cancelled by user]" if is_cancel else result_text
+    _injected = False
+
+    # Try direct replacement in agent context (works for LLM API)
     try:
-        from core.conversation_writer import ConversationWriter
-        if is_cancel:
-            content = (
-                f"[System: Background task {tool_name} (tool_call_id={tc_id}) was cancelled by user. "
-                f"The tool_call returned a placeholder — ignore its result.]"
-            )
-        else:
-            content = (
-                f"[System: Background task {tool_name} (tool_call_id={tc_id}) has completed. "
-                f"The earlier tool_call returned '[Running in background]' as placeholder. "
-                f"Here is the actual result:\n\n{result_text}]"
-            )
-        msg = {
-            "role": "user",
-            "content": content,
-            "source": {"type": "system", "name": "background"},
-        }
-        ConversationWriter.for_conversation(conv_id).enqueue([msg])
-    except Exception as e:
-        logger.error("[bg-tool] failed to inject result for %s: %s", tc_id, e)
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        ctx_data = store.load_agent_context(conv_id, agent_name)
+        if ctx_data:
+            for msg in ctx_data:
+                if (msg.get("tool_call_id") == tc_id
+                        and isinstance(msg.get("content"), str)
+                        and "Running in background" in msg["content"]):
+                    msg["content"] = _result_content
+                    store.save_agent_context(conv_id, agent_name, ctx_data)
+                    _injected = True
+                    logger.info("[bg-tool] replaced placeholder in agent context for %s", tc_id)
+                    break
+    except Exception:
+        pass
+
+    # Fallback: inject as system message (for Claude Code or if context not found)
+    if not _injected:
+        try:
+            from core.conversation_writer import ConversationWriter
+            if is_cancel:
+                content = (
+                    f"[System: Background task {tool_name} (tool_call_id={tc_id}) was cancelled by user. "
+                    f"The tool_call returned a placeholder — ignore its result.]"
+                )
+            else:
+                content = (
+                    f"[System: Background task {tool_name} (tool_call_id={tc_id}) has completed. "
+                    f"The earlier tool_call returned '[Running in background]' as placeholder. "
+                    f"Here is the actual result:\n\n{result_text}]"
+                )
+            msg = {
+                "role": "user",
+                "content": content,
+                "source": {"type": "system", "name": "background"},
+            }
+            ConversationWriter.for_conversation(conv_id).enqueue([msg])
+        except Exception as e:
+            logger.error("[bg-tool] failed to inject result for %s: %s", tc_id, e)
 
     # Cleanup old tasks periodically
     cleanup_done(max_age=300)

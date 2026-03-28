@@ -93,7 +93,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ## B. High Priority Gaps
 
-### B1. @file mention with autocomplete
+### B1. @file mention with autocomplete ✅ DONE
 **Priority:** P1 — CC killer-feature UX
 **Effort:** Medium (1-2 days)
 **Dependencies:** Relay filesystem (already works)
@@ -253,7 +253,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ---
 
-### C4. Ctrl+R history search in PawCode
+### C4. Ctrl+R history search in PawCode ✅ DONE (already built-in)
 **Priority:** P3
 **Effort:** Small (2h)
 **Dependencies:** PawCode CLI readline
@@ -370,7 +370,7 @@ Ordered by priority within each category. Dependencies noted.
 
 ---
 
-### D4. !cmd inline bash in prompt
+### D4. !cmd inline bash in prompt ✅ DONE
 **Priority:** P4
 **Effort:** Small (2h)
 **Dependencies:** PawCode CLI

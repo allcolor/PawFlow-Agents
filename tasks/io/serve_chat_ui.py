@@ -26,7 +26,7 @@ _JS_MODULES = [
     "active_agents.js", "typing.js", "sse.js",
     "dialogs.js",
     "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
-    "commands.js", "context_editor.js", "memories.js",
+    "commands.js", "file_mention.js", "context_editor.js", "memories.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
     "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
 ]

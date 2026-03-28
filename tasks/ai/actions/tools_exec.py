@@ -16,6 +16,31 @@ logger = logging.getLogger(__name__)
 def _handle_tools_exec(self, action, body, store, user_id, flowfile):
     """Handle tools exec actions. Returns [flowfile] or None."""
 
+    if action == "exec_inline":
+        # !cmd — execute shell command on relay, return output to client
+        command = body.get("command", "")
+        if not command:
+            flowfile.set_content(json.dumps({"error": "Missing command"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from core.handlers._fs_base import find_fs_service
+            service_name = body.get("service", "")
+            svc = find_fs_service(user_id, service_name)
+            if not svc:
+                flowfile.set_content(json.dumps({"error": "No relay connected"}).encode())
+                return [flowfile]
+            result = svc.exec(".", command, timeout=30)
+            output = result.get("stdout", "")
+            if result.get("stderr"):
+                output += ("\nSTDERR:\n" if output else "STDERR:\n") + result["stderr"]
+            if result.get("returncode", 0) != 0:
+                output += f"\n(exit code: {result['returncode']})"
+            flowfile.set_content(json.dumps({"output": output or "(no output)"}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "background_tool":
         tc_id = body.get("tc_id", "")
         if not tc_id:

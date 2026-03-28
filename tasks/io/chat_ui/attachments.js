@@ -229,6 +229,7 @@ async function send() {
     if (handled) { input.value = ''; input.style.height = 'auto'; input.focus(); return; }
   }
 
+
   // Capture and clear attachments
   const attachments = pendingFiles.map(f => ({
     filename: f.filename, mime_type: f.mime_type, data: f.data,

@@ -426,9 +426,16 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": "Preview an image, PDF, text, or code file.",
     },
     "/run": {
-        "usage": "/run <command>",
+        "usage": "/run [@service] <command>",
         "short": "Execute shell command via relay",
-        "detail": "Run a shell command through the connected relay.",
+        "detail": (
+            "Run a shell command through the connected relay.\n"
+            "Output is shown directly, not sent to the agent.\n\n"
+            "  /run git status\n"
+            "  /run @my-relay ls -la\n"
+            "  /run npm test\n\n"
+            "If multiple relays are connected, use @service to pick one."
+        ),
     },
     "/diff": {
         "usage": "/diff",
@@ -892,10 +899,16 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     # ── Files ──
     if cmd == "/run":
-        return {"action": "relay_exec", "command": arg, **base}
+        _run_arg = arg.strip()
+        _run_svc = ""
+        if _run_arg.startswith("@"):
+            _parts = _run_arg.split(None, 1)
+            _run_svc = _parts[0][1:]  # strip @
+            _run_arg = _parts[1] if len(_parts) > 1 else ""
+        return {"action": "exec_inline", "command": _run_arg, "service": _run_svc, **base}
 
     if cmd == "/diff":
-        return {"action": "relay_exec", "command": "git diff", **base}
+        return {"action": "exec_inline", "command": "git diff", **base}
 
     if cmd == "/view":
         return {"action": "view_file", "path": arg.strip(), **base}

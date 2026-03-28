@@ -437,13 +437,9 @@ class AgentActionsMixin:
             pass
         # Clean up dead session data from workdir
         try:
-            import os
             import shutil
-            _base = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-                "data", "claude_sessions",
-            )
-            workdir = os.path.join(_base, conv_id or "default", agent_name or "default")
+            from core.llm_providers.claude_code import _SESSIONS_BASE
+            workdir = os.path.join(_SESSIONS_BASE, conv_id or "default", agent_name or "default")
             for subdir in ("projects", "sessions", ".cache"):
                 _path = os.path.join(workdir, subdir)
                 if os.path.isdir(_path):

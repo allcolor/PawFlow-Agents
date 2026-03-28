@@ -24,11 +24,8 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store) -> str:
     if not session_id:
         return ""
 
-    _base = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-        "data", "claude_sessions",
-    )
-    workdir = os.path.join(_base, conv_id or "default", agent_name or "default")
+    from core.llm_providers.claude_code import _SESSIONS_BASE
+    workdir = os.path.join(_SESSIONS_BASE, conv_id or "default", agent_name or "default")
     projects_dir = os.path.join(workdir, "projects", "-workspace")
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 

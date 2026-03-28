@@ -285,6 +285,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         _err_agent = _ares.get("agent", "")
                     except Exception:
                         pass
+                bus.publish_event(conversation_id, "compact_progress", {
+                    "stage": "error", "error": str(e),
+                })
                 bus.publish_event(conversation_id, "error_event", {
                     "message": f"Context preparation failed: {e}",
                     "agent_name": _err_agent,

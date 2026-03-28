@@ -29,7 +29,7 @@ function trackAgentStart(agentName, msgPreview) {
   if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
 }
 function _ensureInteraction(agentName) {
-  // Ensure an activeInteractions entry exists (creates one if done event cleared it)
+  if (!agentName) return '';
   const key = agentKey(agentName);
   if (!activeInteractions[key]) {
     activeInteractions[key] = {

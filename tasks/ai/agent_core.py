@@ -607,6 +607,16 @@ class AgentCoreMixin:
                     if _is_claude_code and not ctx.get("_claude_has_session"):
                         if getattr(client, '_claude_session_id', ''):
                             ctx["_claude_has_session"] = True
+                        # Check: if context was offloaded to file, did CC read it?
+                        _cc_fid = getattr(self, '_cc_context_file_id', '')
+                        if _cc_fid and iteration == 1 and response.tool_calls:
+                            _read_calls = [tc for tc in response.tool_calls
+                                           if tc.name in ("read", "mcp__pawflow__use_tool")]
+                            if not _read_calls:
+                                logger.warning(
+                                    "[cc-context] Claude Code did NOT read the history "
+                                    "file %s on first turn — context may be lost", _cc_fid)
+                            self._cc_context_file_id = ''  # check once
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out
                     final_model = response.model

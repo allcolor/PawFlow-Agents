@@ -134,6 +134,9 @@ class AgentCompactionMixin:
                     "keeping %d recent messages in prompt",
                     len(old_messages), len(jsonl_content), file_id, len(recent_messages))
 
+        # Tag: the agent loop checks if CC actually read this file
+        self._cc_context_file_id = file_id
+
         # Build compact context
         result: List[LLMMessage] = []
         if system_msg:

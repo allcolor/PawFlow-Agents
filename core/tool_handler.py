@@ -28,8 +28,8 @@ class ToolHandler(ABC):
 
     @property
     def display_name(self) -> str:
-        """Display name for UI (e.g., 'Bash', 'Read', 'Update')."""
-        return self.name.replace('_', ' ').title().replace(' ', '')
+        """Display name for UI (e.g., 'Bash', 'Read', 'List Dir')."""
+        return self.name.replace('_', ' ').title()
 
     @abstractmethod
     def execute(self, arguments: Dict[str, Any]) -> str:

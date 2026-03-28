@@ -11,10 +11,6 @@ class ListDirHandler(BaseFsHandler):
         return "list_dir"
 
     @property
-    def display_name(self):
-        return "ListDir"
-
-    @property
     def description(self):
         return "List files and directories. Use source='filestore' to list server FileStore."
 

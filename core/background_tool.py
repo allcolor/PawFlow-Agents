@@ -90,6 +90,37 @@ def cancel(tc_id: str) -> bool:
     return True
 
 
+def has_pending(conversation_id: str) -> bool:
+    """Check if any bg tasks are still running for this conversation."""
+    with _lock:
+        return any(
+            t["conversation_id"] == conversation_id and t["status"] == "running"
+            for t in _backgrounded.values()
+        )
+
+
+def wait_pending(conversation_id: str, timeout: float = 120) -> int:
+    """Wait for all pending bg tasks for this conversation. Returns count completed."""
+    deadline = time.time() + timeout
+    completed = 0
+    while time.time() < deadline:
+        with _lock:
+            pending = [
+                tc_id for tc_id, t in _backgrounded.items()
+                if t["conversation_id"] == conversation_id and t["status"] == "running"
+            ]
+        if not pending:
+            break
+        time.sleep(1)
+        # Check how many completed
+        for tc_id in pending:
+            with _lock:
+                t = _backgrounded.get(tc_id)
+                if t and t["status"] != "running":
+                    completed += 1
+    return completed
+
+
 def list_tasks(conversation_id: str = "") -> List[dict]:
     """List background tasks, optionally filtered by conversation."""
     with _lock:

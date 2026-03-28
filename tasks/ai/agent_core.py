@@ -649,8 +649,27 @@ class AgentCoreMixin:
                         ctx["chars_per_token"] = self._get_cpt(
                             _svc_id, ctx.get("chars_per_token", 0))
 
-                    # No tools → final response
+                    # No tools → final response (but wait for bg tasks first)
                     if not response.tool_calls:
+                        # If bg tasks are pending, wait and apply results before exiting
+                        import core.background_tool as _bg_wait
+                        if _bg_wait.has_pending(conversation_id):
+                            logger.info("[agent:%s] waiting for background tasks before exit",
+                                        conversation_id[:8])
+                            emitter.on_status("Waiting for background tasks...")
+                            _bg_wait.wait_pending(conversation_id, timeout=120)
+                            # Apply completed results
+                            for m in messages:
+                                if (m.role == "tool" and isinstance(m.content, str)
+                                        and "Running in background" in m.content
+                                        and getattr(m, 'tool_call_id', None)):
+                                    _bg_r = _bg_wait.pop_completed(
+                                        conversation_id, m.tool_call_id)
+                                    if _bg_r is not None:
+                                        m.content = _bg_r
+                            # Continue loop so LLM sees the results
+                            continue
+
                         _resp_text = response.content or ""
                         # Claude-code: turn_callback persisted all content.
                         # response.content is "" — don't persist an empty msg.

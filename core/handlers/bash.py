@@ -46,7 +46,7 @@ class BashHandler(BaseFsHandler):
         command = arguments.get("command", "")
         if not command:
             logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])
-            return "Error: 'command' is required"
+            return "(no command provided — ignored)"
 
         relay = arguments.get("relay", "")
         svc, workdir = self._resolve(relay)

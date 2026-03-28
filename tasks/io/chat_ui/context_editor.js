@@ -184,7 +184,12 @@ function _buildCtxAgentDropdown(data) {
   html += '<option value=""' + (!_ctxAgentFilter ? ' selected' : '') + '>' + sharedLabel + '</option>';
   for (const n of names) {
     const status = agents[n] || 'messages';
-    const label = n + (status === 'diverged' ? ' \u2733' : '');
+    let label;
+    if (n.startsWith('cc_session:')) {
+      label = n.replace('cc_session:', '') + ' (CC session \uD83D\uDC33)';
+    } else {
+      label = n + (status === 'diverged' ? ' \u2733' : '');
+    }
     html += '<option value="' + n + '"' + (_ctxAgentFilter === n ? ' selected' : '') + '>' + label + '</option>';
   }
   html += '</select>';

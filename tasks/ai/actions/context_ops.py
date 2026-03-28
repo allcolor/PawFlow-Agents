@@ -14,6 +14,173 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _find_cc_session_jsonl(conv_id: str, agent_name: str, store) -> str:
+    """Find the JSONL file path for an active Claude Code session."""
+    import os
+    import glob as _glob
+
+    session_key = f"claude_session:{agent_name or 'default'}"
+    session_id = store.get_extra(conv_id, session_key)
+    if not session_id:
+        return ""
+
+    _base = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "data", "claude_sessions",
+    )
+    workdir = os.path.join(_base, conv_id or "default", agent_name or "default")
+    projects_dir = os.path.join(workdir, "projects", "-workspace")
+    jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
+
+    if not os.path.exists(jsonl_path):
+        candidates = _glob.glob(os.path.join(projects_dir, "*.jsonl"))
+        if candidates:
+            jsonl_path = max(candidates, key=os.path.getmtime)
+        else:
+            return ""
+    return jsonl_path
+
+
+def _rewrite_cc_session(conv_id: str, agent_name: str, store,
+                         remove_indices: set = None):
+    """Rewrite Claude Code session JSONL without specified entries.
+
+    Recalculates parentUuid chains so removed entries don't break --resume.
+    Only user/assistant entries are indexed (matching _load_cc_session_context).
+    """
+    jsonl_path = _find_cc_session_jsonl(conv_id, agent_name, store)
+    if not jsonl_path:
+        raise RuntimeError("No active CC session found")
+
+    # Read all lines
+    with open(jsonl_path, "r", encoding="utf-8") as f:
+        all_lines = f.readlines()
+
+    # Parse entries, tracking which are user/assistant (indexed in UI)
+    entries = []
+    ui_index = 0
+    for raw_line in all_lines:
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            entry = json.loads(raw_line)
+        except json.JSONDecodeError:
+            entries.append({"_raw": raw_line, "_keep": True})
+            continue
+        etype = entry.get("type", "")
+        if etype in ("user", "assistant"):
+            keep = ui_index not in (remove_indices or set())
+            entries.append({"_parsed": entry, "_keep": keep, "_uuid": entry.get("uuid", "")})
+            ui_index += 1
+        else:
+            entries.append({"_parsed": entry, "_keep": True, "_uuid": entry.get("uuid", "")})
+
+    # Build uuid → parent mapping for kept entries
+    removed_uuids = {e["_uuid"] for e in entries if not e["_keep"] and e.get("_uuid")}
+
+    # Rewrite: fix parentUuid references to skip removed entries
+    uuid_to_parent = {}
+    for e in entries:
+        if "_parsed" in e:
+            uuid_to_parent[e["_parsed"].get("uuid", "")] = e["_parsed"].get("parentUuid", "")
+
+    def _resolve_parent(uuid):
+        """Walk up the chain to find the first non-removed ancestor."""
+        visited = set()
+        while uuid in removed_uuids and uuid not in visited:
+            visited.add(uuid)
+            uuid = uuid_to_parent.get(uuid, "")
+        return uuid
+
+    # Write back
+    with open(jsonl_path, "w", encoding="utf-8") as f:
+        for e in entries:
+            if not e["_keep"]:
+                continue
+            if "_raw" in e:
+                f.write(e["_raw"] + "\n")
+            else:
+                parsed = e["_parsed"]
+                parent = parsed.get("parentUuid", "")
+                if parent in removed_uuids:
+                    parsed["parentUuid"] = _resolve_parent(parent)
+                f.write(json.dumps(parsed, ensure_ascii=False) + "\n")
+
+    logger.info("[cc-session] rewrote %s: removed %d entries, %d remaining",
+                jsonl_path, len(remove_indices or set()),
+                sum(1 for e in entries if e["_keep"]))
+
+
+def _load_cc_session_context(conv_id: str, agent_name: str, store) -> list:
+    """Load Claude Code session JSONL and convert to PawFlow message format."""
+    jsonl_path = _find_cc_session_jsonl(conv_id, agent_name, store)
+    if not jsonl_path:
+        return []
+
+    messages = []
+    try:
+        with open(jsonl_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                etype = entry.get("type", "")
+                if etype not in ("user", "assistant"):
+                    continue
+                msg = entry.get("message", {})
+                role = msg.get("role", etype)
+                content_blocks = msg.get("content", "")
+
+                # Convert content blocks to text
+                if isinstance(content_blocks, list):
+                    parts = []
+                    tool_calls = []
+                    for block in content_blocks:
+                        btype = block.get("type", "")
+                        if btype == "text":
+                            parts.append(block.get("text", ""))
+                        elif btype == "thinking":
+                            parts.append(f"[thinking: {block.get('thinking', '')[:200]}...]")
+                        elif btype == "tool_use":
+                            tool_calls.append({
+                                "id": block.get("id", ""),
+                                "name": block.get("name", ""),
+                                "arguments": block.get("input", {}),
+                            })
+                        elif btype == "tool_result":
+                            _tr_content = block.get("content", "")
+                            if isinstance(_tr_content, list):
+                                _tr_content = " ".join(
+                                    b.get("text", "") for b in _tr_content
+                                    if isinstance(b, dict))
+                            parts.append(f"[tool_result: {str(_tr_content)[:200]}]")
+                    content = "\n".join(parts) if parts else ""
+                    msg_entry = {"role": role, "content": content}
+                    if tool_calls:
+                        msg_entry["tool_calls"] = tool_calls
+                elif isinstance(content_blocks, str):
+                    msg_entry = {"role": role, "content": content_blocks}
+                else:
+                    msg_entry = {"role": role, "content": str(content_blocks)}
+
+                # Add metadata
+                msg_entry["msg_id"] = entry.get("uuid", "")
+                if msg.get("model"):
+                    msg_entry["source"] = {"name": "claude-code", "model": msg["model"]}
+
+                messages.append(msg_entry)
+    except Exception as e:
+        logger.error("[cc-session] Failed to read session JSONL: %s", e)
+        return []
+
+    return messages
+
+
 def _handle_context_ops(self, action, body, store, user_id, flowfile):
     """Handle context ops actions. Returns [flowfile] or None."""
 
@@ -418,6 +585,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         if _ctx_agent == "transcript":
             context_data = store.load(conv_id, user_id=user_id) or []
             diverged = False
+        elif _ctx_agent.startswith("cc_session:"):
+            _cc_agent = _ctx_agent[len("cc_session:"):]
+            context_data = _load_cc_session_context(conv_id, _cc_agent, store)
+            diverged = True
         elif _ctx_agent.startswith("task:"):
             _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
             _sub_cid = f"{conv_id}::task::{_sub_tid}"
@@ -448,8 +619,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             })
         # Include agent context status map
         _agent_ctx_map = store.list_agent_contexts(conv_id)
-        # Include active sub-conversations (task contexts)
+        # Include active Claude Code sessions
         _extras = store.get_extras(conv_id, user_id=user_id) or {}
+        for ek, ev in _extras.items():
+            if ek.startswith("claude_session:") and ev:
+                _cc_agent = ek[len("claude_session:"):]
+                _agent_ctx_map[f"cc_session:{_cc_agent}"] = "cc-active"
+        # Include active sub-conversations (task contexts)
         for ek in _extras:
             if ek.startswith("task_log:"):
                 _tid = ek[9:]
@@ -526,6 +702,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "delete_agent_context":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")
+        # CC session: invalidate instead of deleting context
+        if agent_name.startswith("cc_session:"):
+            _cc_agent = agent_name[len("cc_session:"):]
+            try:
+                self._clear_claude_session(conv_id, _cc_agent)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
         if not conv_id or not agent_name:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -567,6 +752,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
         indices = body.get("indices", [])
+        # CC session: rewrite JSONL without selected entries
+        if _ctx_agent.startswith("cc_session:"):
+            _cc_agent = _ctx_agent[len("cc_session:"):]
+            try:
+                _rewrite_cc_session(conv_id, _cc_agent, store, remove_indices=set(indices))
+                flowfile.set_content(json.dumps({"ok": True, "deleted": len(indices)}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
         if not conv_id or not indices:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or indices"}).encode())
             flowfile.set_attribute("http.response.status", "400")

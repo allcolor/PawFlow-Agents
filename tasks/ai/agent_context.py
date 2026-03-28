@@ -413,7 +413,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Inject {agent_name}.md project instructions if available
         _agent_md_content = ""
         if _active_agent_name and conversation_id:
-            _agent_md = _find_agent_md(_active_agent_name, user_id)
+            _agent_md = _find_agent_md(_active_agent_name, _user_id_for_svc)
             if _agent_md:
                 _agent_md_content = _agent_md[1]
                 # Insert after system prompt (index 1 or after summary)

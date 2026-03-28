@@ -13,6 +13,60 @@ from core.docker_utils import docker_cmd as _docker_cmd, to_host_path
 
 logger = logging.getLogger(__name__)
 
+_OAUTH_URL = "https://console.anthropic.com/v1/oauth/token"
+_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+
+
+def _refresh_claude_token(refresh_token: str) -> dict:
+    """Refresh Claude OAuth token via Anthropic's endpoint.
+
+    Returns dict with accessToken, refreshToken, expiresAt.
+    """
+    import urllib.request
+    import urllib.error
+
+    payload = json.dumps({
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+        "client_id": _OAUTH_CLIENT_ID,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        _OAUTH_URL, data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace")[:200]
+        raise RuntimeError(f"OAuth refresh failed ({e.code}): {body}") from e
+
+    if "accessToken" not in data:
+        raise RuntimeError(f"OAuth response missing accessToken: {list(data.keys())}")
+    return data
+
+
+def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at):
+    """Save refreshed tokens back to the service config."""
+    try:
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        greg = GlobalServiceRegistry.get_instance()
+        for sid, sdef in greg.get_all_definitions().items():
+            if getattr(sdef, "service_type", "") == "llmConnection":
+                cfg = getattr(sdef, "config", {}) or {}
+                if cfg.get("provider") == "claude-code":
+                    cfg["claude_access_token"] = access_token
+                    cfg["claude_refresh_token"] = refresh_token
+                    cfg["claude_expires_at"] = int(expires_at)
+                    greg.update_service(sid, config=cfg)
+                    logger.info("[claude-code] refreshed tokens persisted to service '%s'", sid)
+                    break
+    except Exception as e:
+        logger.warning("[claude-code] failed to persist refreshed tokens: %s", e)
+
+
 # Base directory for per-session Claude Code workdirs
 _SESSIONS_BASE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -150,6 +204,24 @@ class ClaudeCodeSessionMixin:
                 "Claude Code credentials not configured. "
                 "Go to Admin → Services → claude_code_llm_service → Login "
                 "to authenticate with your Claude subscription.")
+
+        # Auto-refresh if token expired or expires within 5 minutes
+        import time as _t
+        if refresh_token and expires_at and _t.time() * 1000 > (expires_at - 300000):
+            try:
+                refreshed = _refresh_claude_token(refresh_token)
+                access_token = refreshed["accessToken"]
+                refresh_token = refreshed.get("refreshToken", refresh_token)
+                expires_at = refreshed.get("expiresAt", 0)
+                # Persist new tokens
+                self.claude_access_token = access_token
+                self.claude_refresh_token = refresh_token
+                self.claude_expires_at = expires_at
+                _persist_refreshed_tokens(access_token, refresh_token, expires_at)
+                logger.info("[claude-code] token refreshed (expires in %ds)",
+                            (expires_at - _t.time() * 1000) / 1000)
+            except Exception as e:
+                logger.warning("[claude-code] token refresh failed: %s — using existing token", e)
 
         creds = {
             "claudeAiOauth": {

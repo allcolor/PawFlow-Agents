@@ -275,13 +275,58 @@ class ToolRelayService(BaseService):
             "parameters": handler.parameters_schema,
         }}
 
+    # Cache for idempotent retries: request_id → result dict
+    _result_cache = {}  # shared across instances (class-level)
+    _executing = {}     # request_id → threading.Event (in-flight)
+    _cache_lock = threading.Lock()
+
     def _handle_execute(self, request_id: str, tool_name: str,
                         arguments: dict, user_id: str,
                         conversation_id: str, agent_name: str) -> dict:
+        # Idempotent: if this request_id was already executed, return cached result
+        with self._cache_lock:
+            if request_id in self._result_cache:
+                logger.info("[tool-relay] returning cached result for %s", request_id)
+                return self._result_cache[request_id]
+            if request_id in self._executing:
+                # Another connection is executing this — wait for it
+                evt = self._executing[request_id]
+        if request_id in self._executing:
+            logger.info("[tool-relay] waiting for in-flight request %s", request_id)
+            evt.wait(timeout=300)
+            with self._cache_lock:
+                if request_id in self._result_cache:
+                    return self._result_cache[request_id]
+            return {"type": "result", "request_id": request_id,
+                    "data": "Error: in-flight request timed out"}
+
+        # Mark as executing
+        evt = threading.Event()
+        with self._cache_lock:
+            self._executing[request_id] = evt
+
+        try:
+            result = self._do_execute(request_id, tool_name, arguments,
+                                       user_id, conversation_id, agent_name)
+        finally:
+            with self._cache_lock:
+                self._result_cache[request_id] = result
+                self._executing.pop(request_id, None)
+                evt.set()
+            # Cleanup old cache entries (keep last 100)
+            with self._cache_lock:
+                if len(self._result_cache) > 100:
+                    oldest = list(self._result_cache.keys())[:50]
+                    for k in oldest:
+                        self._result_cache.pop(k, None)
+
+        return result
+
+    def _do_execute(self, request_id, tool_name, arguments,
+                    user_id, conversation_id, agent_name):
         registry = self._get_registry(user_id, conversation_id)
 
-        # ── Tool Approval Gate ───────────────────────────────────
-        # Check approval before executing — same gate used by API providers.
+        # Tool Approval Gate
         try:
             from core.tool_approval import ToolApprovalGate
             if ToolApprovalGate.is_enabled(conversation_id):
@@ -296,11 +341,6 @@ class ToolRelayService(BaseService):
         except Exception as e:
             logger.warning("Tool approval check failed: %s", e)
 
-        # NO SSE events here — the stream handler (claude_code.py) publishes
-        # tool_call/tool_result events from the Claude Code output stream.
-        # Publishing here would create duplicates.
-
-        # Execute
         try:
             result = registry.execute(tool_name, arguments)
             result_str = str(result) if result is not None else "(no output)"

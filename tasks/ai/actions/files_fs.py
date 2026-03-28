@@ -476,4 +476,39 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "fs_zip_dir":
+        """Zip a directory on a relay filesystem and return a FileStore download URL."""
+        import mimetypes as _mt_zip
+        from core.handlers._fs_base import find_fs_service as _find_svc
+        _fs_svc = _find_svc(user_id, body.get("service", ""))
+        if not _fs_svc:
+            flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            dir_path = body.get("path", ".")
+            # Sanitize dir_path for use as a filename
+            _safe_name = dir_path.strip("/").replace("/", "_").replace("..", "") or "workspace"
+            zip_name = f"{_safe_name}.zip"
+            tmp_zip = f"/tmp/pawflow_zip_{zip_name}"
+            # Build zip inside the relay via exec
+            zip_cmd = f"cd '{dir_path}' && zip -r '{tmp_zip}' . && cat '{tmp_zip}' | base64"
+            result = _fs_svc.exec(".", zip_cmd, 120)
+            if result.get("returncode", 1) != 0:
+                raise RuntimeError(result.get("stderr", "zip failed"))
+            import base64 as _b64
+            zip_bytes = _b64.b64decode(result["stdout"].strip())
+            from core.file_store import FileStore
+            fid = FileStore.instance().store(zip_name, zip_bytes, "application/zip", user_id=user_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "file_id": fid,
+                "url": f"/files/{fid}/{zip_name}",
+                "filename": zip_name,
+                "size": len(zip_bytes),
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     return None

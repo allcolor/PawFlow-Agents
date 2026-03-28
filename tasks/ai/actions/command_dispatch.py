@@ -280,6 +280,15 @@ HELP: Dict[str, Dict[str, str]] = {
         "short": "Manage LLM and external services",
         "detail": "Manage LLM services, image/video services, filesystem services, etc.",
     },
+    "/workspace": {
+        "usage": "/workspace [status | destroy]",
+        "short": "Server-side workspace (Docker, persistent)",
+        "detail": (
+            "  /workspace          — Create a server workspace for this conversation\n"
+            "  /workspace status   — Show workspace status\n"
+            "  /workspace destroy  — Stop container and delete workspace volume"
+        ),
+    },
     "/flow": {
         "usage": "/flow list | templates | deploy | start | stop | undeploy | promote",
         "short": "Manage data flows",
@@ -1001,6 +1010,16 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     if cmd in ("/feedback", "/bug"):
         return {"action": "feedback", "report": arg, **base}
+
+    # ── Server workspace ──
+    if cmd == "/workspace":
+        sub = arg.strip().lower()
+        if sub == "destroy":
+            return {"action": "destroy_server_workspace", **base}
+        if sub == "status":
+            return {"action": "server_workspace_status", **base}
+        # Default: create (idempotent)
+        return {"action": "create_server_workspace", **base}
 
     # ── Client-only (not handled server-side) ──
     if cmd in ("/clear-ui", "/connect", "/disconnect", "/exit", "/quit",

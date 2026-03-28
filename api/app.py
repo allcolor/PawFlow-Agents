@@ -37,6 +37,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Crash recovery failed: {e}")
 
+    # Restart server relay containers that survived a server restart
+    try:
+        from core.server_relay_manager import ServerRelayManager
+        restarted = ServerRelayManager.get_instance().restart_orphans()
+        if restarted:
+            logger.info("Restarted %d orphaned server relay(s)", restarted)
+    except Exception as e:
+        logger.error(f"Server relay orphan restart failed: {e}")
+
     yield
 
     # Shutdown: save final state for all running executors

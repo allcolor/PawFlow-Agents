@@ -773,6 +773,74 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    if action == "create_server_workspace":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            meta = ServerRelayManager.get_instance().spawn(conv_id, user_id)
+            # Give the relay container 3s to connect back
+            import time as _time
+            _time.sleep(3)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "relay_id": meta["relay_id"],
+                "ws_url": meta["ws_url"],
+                "volume": meta["volume"],
+                "message": (
+                    f"Server workspace ready. "
+                    f"Use filesystem service '{meta['relay_id']}' to access your files."
+                ),
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "destroy_server_workspace":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            destroyed = ServerRelayManager.get_instance().destroy(conv_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "destroyed": destroyed,
+                "message": "Server workspace destroyed." if destroyed else "No server workspace found.",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "server_workspace_status":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            conv_id = flowfile.get_attribute("http.conversation_id") or ""
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            meta = ServerRelayManager.get_instance().get_metadata(conv_id) if conv_id else None
+            if not meta:
+                flowfile.set_content(json.dumps({"exists": False}).encode())
+            else:
+                from core.server_relay_manager import ServerRelayManager as _SRM
+                running = _SRM.get_instance()._is_container_running(meta.get("container_id", ""))
+                flowfile.set_content(json.dumps({
+                    "exists": True,
+                    "relay_id": meta["relay_id"],
+                    "running": running,
+                    "volume": meta.get("volume", ""),
+                }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "update_flow_params":
         iid = body.get("instance_id", "")
         params = body.get("parameters", {})

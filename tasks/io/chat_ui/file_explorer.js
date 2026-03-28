@@ -105,6 +105,7 @@ function _feCtx(e,name,kind){
   let items='';
   if(kind==='directory'){
     items+=`<div onclick="_feDbl('${_feEsc(name)}','directory')">&#128193; Open</div>`;
+    items+=`<div onclick="_feZipDir('${_feEsc(name)}')" title="Download directory as zip">&#128230; Download as zip</div>`;
   } else {
     items+=`<div onclick="_fePreview('${_feEsc(name)}')">&#128065; Preview</div>`;
     items+=`<div onclick="_feDl('${_feEsc(name)}')">&#11015; Download</div>`;
@@ -214,6 +215,22 @@ async function _feCopyToStore(name){
   const d=await _feApi('fs_copy_to_store',{service:_fe.svc,path:_fePath(name)});
   if(d.error){alert('Error: '+d.error);return;}
   alert('Stored as: '+d.filename+'\nURL: '+d.url);
+}
+
+async function _feZipDir(name){
+  const dirPath=_fePath(name);
+  const btn=event&&event.target;
+  if(btn)btn.textContent='Zipping...';
+  const d=await _feApi('fs_zip_dir',{service:_fe.svc,path:dirPath});
+  if(btn)btn.textContent='\u{1F4E6} Download as zip';
+  if(d.error){alert('Zip error: '+d.error);return;}
+  // Trigger download via temporary anchor
+  const a=document.createElement('a');
+  a.href=d.url;
+  a.download=d.filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 async function _fePreview(name){

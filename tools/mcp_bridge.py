@@ -129,31 +129,33 @@ class ToolRelayClient:
     def request(self, method: str, **kwargs) -> any:
         """Send a request and wait for the response.
 
-        Auto-reconnects on connection failure with backoff (up to 3 retries).
-        The caller must never see transient connection errors.
+        Auto-reconnects on connection failure with backoff (up to 10 retries).
+        Same request_id is reused across retries — server returns cached result
+        if the tool already completed on a previous connection.
         """
         import time as _time
+        request_id = uuid.uuid4().hex[:12]
         last_err = None
-        for attempt in range(4):
+        max_retries = 10
+        for attempt in range(max_retries):
             try:
                 self._ensure_connected()
-                return self._do_request(method, **kwargs)
+                return self._do_request(method, request_id, **kwargs)
             except (ConnectionError, OSError, BrokenPipeError) as e:
                 last_err = e
                 self._sock = None  # force reconnect
-                if attempt < 3:
-                    delay = min(1.0 * (2 ** attempt), 8.0)
-                    _log(f"Connection lost (attempt {attempt + 1}/4), "
+                if attempt < max_retries - 1:
+                    delay = min(1.0 * (2 ** min(attempt, 4)), 16.0)
+                    _log(f"Connection lost (attempt {attempt + 1}/{max_retries}), "
                          f"retrying in {delay}s: {e}")
                     _time.sleep(delay)
                     continue
-                _log(f"Connection failed after 4 attempts: {e}")
+                _log(f"Connection failed after {max_retries} attempts: {e}")
                 raise ConnectionError(
-                    f"Tool relay unavailable after 4 attempts: {last_err}"
+                    f"Tool relay unavailable after {max_retries} attempts: {last_err}"
                 ) from last_err
 
-    def _do_request(self, method: str, **kwargs) -> any:
-        request_id = uuid.uuid4().hex[:12]
+    def _do_request(self, method: str, request_id: str, **kwargs) -> any:
         payload = {"type": "request", "request_id": request_id,
                    "method": method, **kwargs}
         with self._lock:

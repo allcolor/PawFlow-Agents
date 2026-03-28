@@ -1220,16 +1220,23 @@ def _auto_register(args):
 
 
 def main():
+    # Env var fallback — used when running as a server-spawned container
+    _env_server = os.environ.get("PAWFLOW_RELAY_SERVER", "")
+    _env_token = os.environ.get("PAWFLOW_RELAY_TOKEN", "")
+    _env_relay_id = os.environ.get("PAWFLOW_RELAY_ID", "")
+    _env_dir = os.environ.get("PAWFLOW_RELAY_DIR", "")
+    _env_allow_exec = os.environ.get("PAWFLOW_RELAY_ALLOW_EXEC", "").lower() in ("1", "true", "yes")
+
     parser = argparse.ArgumentParser(
         description="PawFlow Relay — Connects to PawFlow server for filesystem access",
     )
-    parser.add_argument("--server",
+    parser.add_argument("--server", default=_env_server,
                         help="PawFlow server WS URL (manual mode)")
-    parser.add_argument("--relay-id", default="",
+    parser.add_argument("--relay-id", default=_env_relay_id,
                         help="Service ID (auto-generated from username+dir if omitted)")
-    parser.add_argument("--token",
+    parser.add_argument("--token", default=_env_token,
                         help="Token for manual WS auth")
-    parser.add_argument("--dir", required=True,
+    parser.add_argument("--dir", required=not bool(_env_dir), default=_env_dir,
                         help="Root directory for filesystem access")
     parser.add_argument("--readonly", action="store_true",
                         help="Reject write/delete operations")
@@ -1251,6 +1258,9 @@ def main():
     parser.add_argument("--docker-image", default="",
                         help="Run exec/git commands inside this Docker image (mounts --dir as /workspace)")
     args = parser.parse_args()
+    # Apply env var defaults that argparse store_true can't handle natively
+    if _env_allow_exec:
+        args.allow_exec = True
 
     root_dir = str(Path(args.dir).resolve())
     if not Path(root_dir).is_dir():

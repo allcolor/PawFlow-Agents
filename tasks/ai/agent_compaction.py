@@ -718,6 +718,15 @@ class AgentCompactionMixin:
         if not target_tokens:
             target_tokens = max(500, int(max_tokens / 4))
 
+        # Claude-code: no chunking — write full text to file, Claude reads it
+        _provider = getattr(client, 'provider', '') or (
+            getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
+        if _provider == "claude-code":
+            total_text = "\n".join(
+                self._sanitize_for_llm(self._messages_to_text([m]))
+                for m in old_messages)
+            return self._call_summarize(client, total_text, target_tokens, agent_name=agent_name)
+
         # 60% of context = safe input limit (leaves room for system prompt + output)
         safe_limit = int(max_tokens * 0.60)
 

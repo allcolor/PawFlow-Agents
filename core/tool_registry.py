@@ -199,6 +199,7 @@ class GetToolSchemaHandler(ToolHandler):
                                "available": available})
         return json.dumps({
             "name": handler.name,
+            "display_name": handler.display_name,
             "description": handler.description,
             "parameters": handler.parameters_schema,
         }, indent=2)

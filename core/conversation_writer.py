@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _IDLE_TIMEOUT = 300  # 5 minutes idle → writer thread exits
+_CONTEXT_OP_TIMEOUT = 300  # 5 minutes max for a context op before force-unblock
 
 
 class ConversationWriter:
@@ -47,6 +48,7 @@ class ConversationWriter:
         self._stop = False
         self._alive = True
         self._context_op_active = False
+        self._context_op_started: float = 0.0
         self._resume_event = threading.Event()
         self._thread = threading.Thread(
             target=self._writer_loop, daemon=True,
@@ -108,6 +110,7 @@ class ConversationWriter:
 
     def pause_for_context_op(self):
         """Pause message writing — context operation in progress."""
+        self._context_op_started = time.time()
         self._context_op_active = True
 
     def resume_after_context_op(self):
@@ -126,8 +129,14 @@ class ConversationWriter:
         store = ConversationStore.instance()
 
         while not self._stop:
-            # Wait for context op to finish
+            # Wait for context op to finish (with timeout guard)
             while self._context_op_active and not self._stop:
+                if time.time() - self._context_op_started > _CONTEXT_OP_TIMEOUT:
+                    logger.warning(
+                        "[conv-writer:%s] context op exceeded %ds timeout, force-unblocking",
+                        self._cid[:8], _CONTEXT_OP_TIMEOUT)
+                    self._context_op_active = False
+                    break
                 self._resume_event.wait(timeout=1)
                 self._resume_event.clear()
 

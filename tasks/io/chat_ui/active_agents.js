@@ -80,10 +80,7 @@ function trackAgentDone(agentName) {
 function updateActivePanel() {
   const panel = document.getElementById('activePanel');
   const rows = document.getElementById('activeRows');
-  const now0 = Date.now();
-  for (const k of Object.keys(activeInteractions)) {
-    if (now0 - (activeInteractions[k].updatedAt || activeInteractions[k].startedAt) > 120000) delete activeInteractions[k];
-  }
+  // No client-side timeout cleanup — syncActiveFromServer is the single source of truth.
   const names = Object.keys(activeInteractions);
   const wasVisible = panel.classList.contains('visible');
   const wasAtBottom = isNearBottom();
@@ -146,7 +143,7 @@ function updateActivePanel() {
 let _syncActiveTimer = null;
 function startActiveSync() {
   if (_syncActiveTimer) return;
-  _syncActiveTimer = setInterval(syncActiveFromServer, 2000);
+  _syncActiveTimer = setInterval(syncActiveFromServer, 12000);
 }
 function stopActiveSync() {
   if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
@@ -181,7 +178,9 @@ async function syncActiveFromServer() {
         startedAt: existing ? existing.startedAt : now - (a.duration_s * 1000),
         iteration: a.iteration || (existing ? existing.iteration : 0),
         lastTool: a.last_tool || (existing ? existing.lastTool : ''),
+        activeTools: existing ? (existing.activeTools || []) : [],
         totalTools: existing ? (existing.totalTools || 0) : 0,
+        status: a.status || (existing ? existing.status : 'thinking'),
         msgPreview: a.message_preview || '',
         updatedAt: now,
       };

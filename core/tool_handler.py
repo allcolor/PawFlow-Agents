@@ -26,6 +26,11 @@ class ToolHandler(ABC):
     def parameters_schema(self) -> Dict[str, Any]:
         """JSON Schema describing the tool's input parameters."""
 
+    @property
+    def display_name(self) -> str:
+        """Display name for UI (e.g., 'Bash', 'Read', 'Update')."""
+        return self.name.replace('_', ' ').title().replace(' ', '')
+
     @abstractmethod
     def execute(self, arguments: Dict[str, Any]) -> str:
         """Execute the tool and return a text result."""

@@ -15,6 +15,10 @@ class EditHandler(BaseFsHandler):
         return "edit"
 
     @property
+    def display_name(self):
+        return "Update"
+
+    @property
     def description(self):
         return (
             "Edit a file by exact string replacement (old_string → new_string) or "

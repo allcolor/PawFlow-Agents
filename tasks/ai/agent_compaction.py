@@ -30,20 +30,19 @@ def _select_recent_messages(
     """Find split point: keep recent messages with guaranteed conversation ratio.
 
     Algorithm:
-    1. Walk backwards to find the last `min_conversation` user/assistant messages
-    2. Include all tool/other messages between them
-    3. Cap at max_total messages
-    4. If at max_total and < min_conversation user/assistant, continue backwards:
-       skip non-user/assistant, keep user/assistant, until we have min_conversation
+    1. Walk backward, collect the last min_conversation user/assistant messages
+    2. Include ALL messages between them (tool, system, etc.) — the recent window
+    3. If total > max_total, drop oldest tool/system messages until <= max_total
 
     Returns the split index (messages[split:] = recent to keep).
+    Does NOT modify the messages list.
     """
     n = len(messages)
     if n <= start_idx + min_conversation:
         return start_idx  # not enough messages to compact
 
-    # Step 1: walk backwards to find min_conversation user/assistant messages
-    # Include all messages between them (tool, system, etc.)
+    # Step 1: walk backward to find min_conversation user/assistant messages;
+    # include every message in between.
     conv_count = 0
     scan = n
     while scan > start_idx and conv_count < min_conversation:
@@ -54,57 +53,18 @@ def _select_recent_messages(
     split = scan
     total = n - split
 
-    # Step 2: if total > max_total, we have too many messages
-    # Drop oldest non-user/assistant messages to fit, then if still short
-    # on conversation messages, continue backwards selectively
+    # Step 2: if too many messages, advance split forward — prefer dropping
+    # non-conversation messages, but drop conversation messages too if needed.
     if total > max_total:
-        selected = list(messages[split:])
-        # Count conversation messages in selected
-        _conv_in_selected = sum(1 for m in selected if m.role in ("user", "assistant"))
-
-        if _conv_in_selected >= min_conversation:
-            # We have enough conversation, just drop oldest tools to fit max_total
-            while len(selected) > max_total:
-                dropped = False
-                for i, m in enumerate(selected):
-                    if m.role not in ("user", "assistant"):
-                        selected.pop(i)
-                        dropped = True
-                        break
-                if not dropped:
-                    break
-        else:
-            # Not enough conversation in max_total window — go further back selectively
-            # Keep what we have, drop tools from front to make room
-            while len(selected) > max_total:
-                dropped = False
-                for i, m in enumerate(selected):
-                    if m.role not in ("user", "assistant"):
-                        selected.pop(i)
-                        dropped = True
-                        break
-                if not dropped:
-                    break
-            # Now scan further back, picking only user/assistant
-            _extra_scan = split - 1
-            while _extra_scan >= start_idx and _conv_in_selected < min_conversation:
-                m = messages[_extra_scan]
-                if m.role in ("user", "assistant"):
-                    # Drop an old non-conversation message to make room
-                    room_made = False
-                    for i, sm in enumerate(selected):
-                        if sm.role not in ("user", "assistant"):
-                            selected.pop(i)
-                            room_made = True
-                            break
-                    if not room_made and len(selected) >= max_total:
-                        break  # can't make room, all are conversation
-                    selected.insert(0, m)
-                    _conv_in_selected += 1
-                _extra_scan -= 1
-
-        messages[split:] = selected
-        return len(messages) - len(selected)
+        # First pass: skip non-user/assistant messages from the front
+        while n - split > max_total and split < n:
+            if messages[split].role not in ("user", "assistant"):
+                split += 1
+            else:
+                break
+        # Second pass: if still over budget, drop from the front regardless
+        while n - split > max_total and split < n:
+            split += 1
 
     return split
 
@@ -776,7 +736,7 @@ class AgentCompactionMixin:
         if not target_tokens:
             target_tokens = max(500, int(max_tokens / 4))
 
-        # Claude-code: no chunking — write full text to file, Claude reads it
+        # Claude-code: no chunking — write full text to file, Claude reads it via MCP
         _provider = getattr(client, 'provider', '') or (
             getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
         if _provider == "claude-code":

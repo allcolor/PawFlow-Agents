@@ -24,7 +24,9 @@ _CHAT_UI_DIR = Path(__file__).parent / "chat_ui"
 _JS_MODULES = [
     "i18n.js", "state.js", "conversations.js", "messages.js",
     "active_agents.js", "typing.js", "sse.js",
-    "dialogs.js", "commands.js", "context_editor.js", "memories.js",
+    "dialogs.js",
+    "cmd_agent.js", "cmd_context.js", "cmd_resources.js", "cmd_conversation.js", "cmd_misc.js",
+    "commands.js", "context_editor.js", "memories.js",
     "secrets.js", "files_panel.js", "plans_panel.js", "attachments.js",
     "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
 ]

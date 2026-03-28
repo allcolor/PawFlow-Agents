@@ -120,6 +120,20 @@ def cleanup_done(max_age: float = 300):
             _backgrounded.pop(tc_id, None)
 
 
+def _periodic_cleanup():
+    """Daemon timer: purge old completed tasks every 60s."""
+    cleanup_done(max_age=300)
+    _cleanup_timer = threading.Timer(60, _periodic_cleanup)
+    _cleanup_timer.daemon = True
+    _cleanup_timer.start()
+
+
+# Start periodic cleanup on module import
+_cleanup_timer = threading.Timer(60, _periodic_cleanup)
+_cleanup_timer.daemon = True
+_cleanup_timer.start()
+
+
 def _watch_future(tc_id: str):
     """Wait for a backgrounded tool's future to complete."""
     with _lock:

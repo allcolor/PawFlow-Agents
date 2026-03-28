@@ -1,0 +1,151 @@
+// ── Context commands ────────────────────────────────────────────
+// /compact, /rebuild, /rebuild_clean, /restart_from, /context, /summary, /resume
+// Loaded before commands.js — all functions are global.
+
+async function cmdRestartFrom(text, parts) {
+  let restartAgent = '';
+  let restartN = 5;
+  for (let i = 1; i < parts.length; i++) {
+    const v = parseInt(parts[i]);
+    if (!isNaN(v)) { restartN = v; }
+    else { restartAgent = parts[i]; }
+  }
+  if (!conversationId) { addMsg('system', t('noConv')); return true; }
+  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+  contextOpInProgress = true;
+  showContextOp('Restarting');
+  const restartBody = { action: 'restart_from', conversation_id: conversationId, keep_last: restartN };
+  if (restartAgent) restartBody.agent_name = restartAgent;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(restartBody),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
+  }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; })
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+  return true;
+}
+
+async function cmdResume(text) {
+  const rargs = parseQuotedArgs(text);
+  const target = resolveAgentName(rargs[1] || '');
+  if (!target) { addMsg('system', 'Usage: /resume <agent|ALL>'); return true; }
+  const resumeMsg = rargs.slice(2).join(' ') || 'Continue from where you left off.';
+  if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(resumeMsg); }
+  else { await cmdAgentMsg(target, resumeMsg); }
+  return true;
+}
+
+async function cmdSummary(text, parts) {
+  let summaryAgent = '';
+  let summaryTokens = 500;
+  for (let i = 1; i < parts.length; i++) {
+    const v = parseInt(parts[i]);
+    if (!isNaN(v)) { summaryTokens = v; }
+    else { summaryAgent = parts[i]; }
+  }
+  if (!conversationId) { addMsg('system', t('noConv')); return true; }
+  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+  contextOpInProgress = true;
+  const label = summaryAgent ? 'Summarizing (' + summaryAgent + ')' : 'Summarizing';
+  showContextOp(label);
+  const summaryBody = { action: 'resume_conversation', conversation_id: conversationId, max_tokens: summaryTokens };
+  if (summaryAgent) summaryBody.agent_name = summaryAgent;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(summaryBody),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
+  }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; });
+  return true;
+}
+
+function cmdCompactCmd(text, parts) {
+  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+  cmdCompact(parts[1] || '');
+  return true;
+}
+
+function cmdRebuildCmd(text, parts) {
+  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+  cmdRebuild(parts[1] || '');
+  return true;
+}
+
+function cmdRebuildFullCmd(text, parts) {
+  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
+  const rfAgent = parts[1] || '';
+  if (!conversationId) { addMsg('system', t('noConv')); return true; }
+  contextOpInProgress = true;
+  const rfLabel = rfAgent ? 'Rebuilding full (' + rfAgent + ')' : 'Rebuilding full';
+  showContextOp(rfLabel);
+  const rfBody = { action: 'rebuild_full', conversation_id: conversationId };
+  if (rfAgent) rfBody.agent_name = rfAgent;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(rfBody),
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', 'Rebuild full failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
+  }).catch(e => { addMsg('error', 'Rebuild full failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
+  return true;
+}
+
+async function cmdContextCmd(text, parts) {
+  await cmdShowContext(parts[1] || '');
+  return true;
+}
+
+function cmdCompact(agentName) {
+  if (!conversationId) { addMsg('system', 'No active conversation'); return; }
+  contextOpInProgress = true;
+  const _compactLabel = agentName || selectedAgent || '';
+  const label = _compactLabel ? 'Compacting (' + _compactLabel + ')' : 'Compacting';
+  showContextOp(label);
+  const body = { action: 'compact', conversation_id: conversationId };
+  const _compactAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
+  if (_compactAgent) body.agent_name = _compactAgent;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(data => {
+    if (data.error) {
+      addMsg('error', 'Compaction failed: ' + data.error);
+      hideContextOp(); contextOpInProgress = false;
+    }
+  }).catch(e => {
+    addMsg('error', 'Compaction failed: ' + e.message);
+    hideContextOp(); contextOpInProgress = false;
+  });
+}
+
+function cmdRebuild(agentName) {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  contextOpInProgress = true;
+  const label = agentName ? 'Rebuilding (' + agentName + ')' : 'Rebuilding';
+  showContextOp(label);
+  const body = { action: 'rebuild', conversation_id: conversationId };
+  const _rebuildAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
+  if (_rebuildAgent) body.agent_name = _rebuildAgent;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
+  }).catch(e => { addMsg('error', 'Rebuild failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
+}
+
+function cmdRebuildClean() {
+  if (!conversationId) { addMsg('system', t('noConv')); return; }
+  contextOpInProgress = true;
+  showContextOp('Rebuilding');
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
+    if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
+    addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
+  }).catch(e => addMsg('error', 'Rebuild clean failed: ' + e.message))
+    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+}

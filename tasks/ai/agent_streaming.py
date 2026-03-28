@@ -259,9 +259,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             self._user_active_conversations.add(conversation_id)
         ConversationStore.instance().set_status(conversation_id, "active")
 
-        bus.publish_event(conversation_id, "thinking", {
-            "conversation_id": conversation_id, "agent_name": _target or "",
-        })
+        if _target:
+            bus.publish_event(conversation_id, "thinking", {
+                "conversation_id": conversation_id, "agent_name": _target,
+            })
 
         # Clone flowfile for background thread (main thread overwrites with ack)
         from core import FlowFile as _FF

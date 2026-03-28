@@ -223,7 +223,7 @@ class AgentCompactionMixin:
 
         def _is_clear_ref(content):
             """Don't re-truncate already-cleared results (they contain critical info)."""
-            return "[Result cleared" in content or "[...truncated]" in content or "[...cleared]" in content
+            return "[result cleared]" in content or "[...truncated]" in content or "[...cleared]" in content
 
         # Pass 1: truncate long tool results to 200 chars
         for i in range(1, safe_end):

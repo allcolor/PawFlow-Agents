@@ -574,7 +574,7 @@ class AgentCoreMixin:
                             emitter.on_overflow_retry(iteration)
                             if _is_claude_code:
                                 llm_context = self._prepare_cc_file_context(
-                                    list(messages), max_recent=10)
+                                    list(messages), max_recent=20)
                             else:
                                 llm_context = self._compact(
                                     llm_context, compact_client,

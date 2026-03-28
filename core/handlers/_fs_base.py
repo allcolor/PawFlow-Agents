@@ -176,7 +176,7 @@ class BaseFsHandler(ToolHandler):
     def _find_service(self, service_name: str = ""):
         """Find a filesystem service by name or auto-detect.
 
-        Search order: injected _fs_service → GlobalServiceRegistry → UserServiceRegistry.
+        Search order: injected _fs_service → find_fs_service (registries).
         """
         if self._fs_service:
             if not service_name or service_name == getattr(
@@ -186,47 +186,7 @@ class BaseFsHandler(ToolHandler):
         if service_name and service_name.lower() in ("workspace", "ws", "local"):
             return self._find_service("")
 
-        def _set_uid(svc):
-            if hasattr(svc, 'set_user_id') and self._user_id:
-                svc.set_user_id(self._user_id)
-            return svc
-
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            if service_name:
-                svc = greg.get_live_instance(service_name)
-                if svc:
-                    return _set_uid(svc)
-            else:
-                for sid, sdef in greg.get_all_definitions().items():
-                    if not getattr(sdef, "enabled", True):
-                        continue
-                    if getattr(sdef, "service_type", "") in _FS_TYPES:
-                        svc = greg.get_live_instance(sid)
-                        if svc:
-                            return _set_uid(svc)
-        except Exception:
-            pass
-
-        if self._user_id:
-            try:
-                from gui.services.user_service_registry import UserServiceRegistry
-                ureg = UserServiceRegistry.get_instance()
-                if service_name:
-                    svc = ureg.get_live_instance(self._user_id, service_name)
-                    if svc:
-                        return _set_uid(svc)
-                else:
-                    for fs_type in _FS_TYPES:
-                        compatible = ureg.get_compatible(fs_type, self._user_id)
-                        for sdef in compatible:
-                            if sdef.enabled:
-                                svc = ureg.get_live_instance(self._user_id, sdef.service_id)
-                                if svc:
-                                    return _set_uid(svc)
-            except Exception:
-                pass
+        return find_fs_service(self._user_id, service_name)
 
         return None
 

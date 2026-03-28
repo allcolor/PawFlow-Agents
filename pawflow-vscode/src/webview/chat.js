@@ -369,12 +369,28 @@ function _toolSummary(name, args) {
 function _attachResult(tcEl, result) {
   var bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.className = 'tc-bullet done'; }
+  // Remove BG button (tool is done)
+  var bgBtn = tcEl.querySelector('.tc-bg-btn');
+  if (bgBtn) bgBtn.remove();
   var toolHint = tcEl.dataset.tool || '';
   var pathHint = tcEl.dataset.path || '';
   var rd = document.createElement('div');
   rd.className = 'tc-result';
   rd.innerHTML = '\u23bf ' + renderToolResult(result, toolHint, pathHint);
   tcEl.appendChild(rd);
+}
+
+function backgroundTool(tcId) {
+  if (!tcId) return;
+  vscode.postMessage({ type: 'backgroundTool', tcId: tcId });
+  // Optimistic UI: mark bullet as bg, remove button
+  var tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+  if (tcEl) {
+    var btn = tcEl.querySelector('.tc-bg-btn');
+    if (btn) btn.remove();
+    var bullet = tcEl.querySelector('.tc-bullet');
+    if (bullet) { bullet.style.color = '#f0ad4e'; bullet.title = 'Running in background'; }
+  }
 }
 
 function addToolResult(tool, result, filePath, tcId) {
@@ -536,6 +552,7 @@ function handleSSE(event) {
       tcDiv.dataset.tool = data.tool || '';
       if (tcArgs.path) tcDiv.dataset.path = tcArgs.path;
 
+      var bgBtn = tcId ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background" style="font-size:10px;padding:1px 6px;margin-left:8px;background:transparent;border:1px solid #555;color:#888;border-radius:3px;cursor:pointer;vertical-align:middle">\u2192 BG</button>' : '';
       if (data.tool === 'edit' && tcArgs.path) {
         var editPath = tcArgs.path || '?';
         var editHeader = '<span class="tc-bullet pending">\u25cf</span> Edit(' + fileLink(editPath) + ')';
@@ -547,9 +564,9 @@ function handleSSE(event) {
         if (tcArgs.new_string) tcArgs.new_string.split('\n').slice(0, 6).forEach(function(l) {
           diffLines.push('<span style="color:#3fb950">+ ' + esc(l) + '</span>');
         });
-        tcDiv.innerHTML = editHeader + (diffLines.length ? '<pre style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('\n') + '</pre>' : '');
+        tcDiv.innerHTML = editHeader + bgBtn + (diffLines.length ? '<pre style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('\n') + '</pre>' : '');
       } else {
-        tcDiv.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + esc(_toolSummary(data.tool || '', tcArgs));
+        tcDiv.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + esc(_toolSummary(data.tool || '', tcArgs)) + bgBtn;
       }
       messagesEl.appendChild(tcDiv);
       messagesEl.scrollTop = messagesEl.scrollHeight;
@@ -764,6 +781,19 @@ function handleSSE(event) {
         loadPlansPanel();
       }
       break;
+
+    case 'bg_task_update': {
+      var bgTcId = data.tc_id || '';
+      if (bgTcId) {
+        var bgTcEl = document.querySelector('[data-tc-id="' + bgTcId + '"]');
+        if (bgTcEl) {
+          if (data.status === 'done' || data.status === 'cancelled') {
+            _attachResult(bgTcEl, data.result || (data.status === 'cancelled' ? '[Cancelled]' : '[Done]'));
+          }
+        }
+      }
+      break;
+    }
 
     default:
       break;

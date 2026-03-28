@@ -49,6 +49,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'approval':
           await this.handleApproval(msg.requestId, msg.result, msg.approvalType);
           break;
+        case 'backgroundTool':
+          await this.handleBackgroundTool(msg.tcId);
+          break;
         case 'reconnectRelay':
           await vscode.commands.executeCommand('pawflow.toggleRelay');
           break;
@@ -519,6 +522,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
     } catch (e: any) {
       vscode.window.showErrorMessage(`Assign failed: ${e.message}`);
+    }
+  }
+
+  private async handleBackgroundTool(tcId: string): Promise<void> {
+    const api = this.getApi();
+    if (!api || !tcId) { return; }
+    try {
+      await api.sendAction('background_tool', {
+        tc_id: tcId,
+        conversation_id: this.conversationId || '',
+      });
+    } catch (e: any) {
+      this.postMessage({ type: 'error', message: `Background tool failed: ${e.message}` });
     }
   }
 

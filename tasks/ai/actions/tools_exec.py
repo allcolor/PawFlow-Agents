@@ -16,6 +16,34 @@ logger = logging.getLogger(__name__)
 def _handle_tools_exec(self, action, body, store, user_id, flowfile):
     """Handle tools exec actions. Returns [flowfile] or None."""
 
+    if action == "background_tool":
+        tc_id = body.get("tc_id", "")
+        if not tc_id:
+            flowfile.set_content(json.dumps({"error": "Missing tc_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        import core.background_tool as _bg
+        _bg.background(tc_id)
+        flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
+        return [flowfile]
+
+    if action == "cancel_bg_tool":
+        tc_id = body.get("tc_id", "")
+        if not tc_id:
+            flowfile.set_content(json.dumps({"error": "Missing tc_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        import core.background_tool as _bg
+        ok = _bg.cancel(tc_id)
+        flowfile.set_content(json.dumps({"ok": ok, "tc_id": tc_id}).encode())
+        return [flowfile]
+
+    if action == "list_bg_tools":
+        conv_id = body.get("conversation_id", "")
+        import core.background_tool as _bg
+        tasks = _bg.list_tasks(conv_id)
+        flowfile.set_content(json.dumps({"tasks": tasks}).encode())
+        return [flowfile]
 
     if action == "tool_approval_result":
         # Plan A: User responding to a universal tool approval dialog

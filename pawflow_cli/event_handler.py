@@ -235,6 +235,13 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         plan_id = data.get("plan_id", "")
         app.renderer.print_system(f"\U0001f4cb Plan deleted: {plan_id}")
 
+    elif ev_type == "bg_task_update":
+        tc_id = data.get("tc_id", "")
+        tool_name = data.get("tool", tc_id[:8] if tc_id else "?")
+        status = data.get("status", "")
+        result = data.get("result", "")
+        app.renderer.print_bg_task_update(tool_name, status, result)
+
     elif ev_type == "command_result":
         _action = data.get("action", "")
         if data.get("error"):

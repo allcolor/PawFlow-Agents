@@ -362,6 +362,20 @@ function connectSSE(cid) {
     if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
   });
 
+  eventSource.addEventListener('bg_task_update', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    const tcId = data.tc_id || '';
+    if (tcId) {
+      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      if (tcEl) {
+        if (data.status === 'done' || data.status === 'cancelled') {
+          _attachToolResult(tcEl, data.result || (data.status === 'cancelled' ? '[Cancelled]' : '[Done]'));
+        }
+      }
+    }
+  });
+
   eventSource.addEventListener('compact_progress', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

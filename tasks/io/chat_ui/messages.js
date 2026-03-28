@@ -172,10 +172,11 @@ function addMsg(role, text, extra) {
     if (args && args.path) el.dataset.path = args.path;
     if (args && args.command) el.dataset.command = args.command.substring(0, 200);
 
+    const bgBtn = tcId ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
     if (toolName === 'edit' && args && args.path) {
-      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + _renderToolCallEdit('', args);
+      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn;
     } else {
-      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {}));
+      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn;
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
@@ -333,6 +334,9 @@ function _renderToolOutput(text, toolHint, pathHint) {
 function _attachToolResult(tcEl, resultText) {
   const bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
+  // Remove BG button (tool is done)
+  const bgBtn = tcEl.querySelector('.tc-bg-btn');
+  if (bgBtn) bgBtn.remove();
   const toolHint = tcEl.dataset.tool || '';
   const pathHint = tcEl.dataset.path || '';
   const resultDiv = document.createElement('div');
@@ -345,6 +349,36 @@ function _attachToolResult(tcEl, resultText) {
     resultDiv.innerHTML = '\u23bf ' + _renderToolOutput(resultText, toolHint, pathHint);
   }
   tcEl.appendChild(resultDiv);
+}
+
+function backgroundTool(tcId) {
+  if (!conversationId || !tcId) return;
+  fetch(API, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'background_tool', conversation_id: conversationId, tc_id: tcId}),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      if (tcEl) {
+        const btn = tcEl.querySelector('.tc-bg-btn');
+        if (btn) btn.remove();
+        const bullet = tcEl.querySelector('.tc-bullet');
+        if (bullet) { bullet.classList.add('bg'); bullet.title = 'Running in background'; }
+      }
+    }
+  }).catch(() => {});
+}
+
+function cancelBgTool(tcId) {
+  if (!conversationId || !tcId) return;
+  fetch(API, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'cancel_bg_tool', conversation_id: conversationId, tc_id: tcId}),
+    credentials: 'same-origin',
+  }).catch(() => {});
 }
 
 function _renderToolCallEdit(srcLabel, args) {

@@ -459,6 +459,36 @@ class TerminalRenderer:
         else:
             print(f"  ⎿  {result[:200]}")
 
+    # ── Background tasks ──
+
+    def print_bg_task_update(self, tool_name: str, status: str, result: str):
+        """Render a background task status update."""
+        if status == "done":
+            display = result if len(result) <= 300 else result[:300] + "..."
+            if self.console:
+                from rich.markup import escape
+                self.console.print(
+                    f"  [dim]\u23bf  [bg] {escape(tool_name)}:[/dim] {escape(display)}"
+                )
+            else:
+                print(f"  \u23bf  [bg] {tool_name}: {display}")
+        elif status == "cancelled":
+            if self.console:
+                from rich.markup import escape
+                self.console.print(
+                    f"  [dim]\u23bf  [bg] {escape(tool_name)}:[/dim] [yellow][Cancelled][/yellow]"
+                )
+            else:
+                print(f"  \u23bf  [bg] {tool_name}: [Cancelled]")
+        else:
+            if self.console:
+                from rich.markup import escape
+                self.console.print(
+                    f"  [dim]\u23bf  [bg] {escape(tool_name)}: {escape(status)}[/dim]"
+                )
+            else:
+                print(f"  \u23bf  [bg] {tool_name}: {status}")
+
     # ── Approval ──
 
     def print_approval_request(self, tool: str, summary: str, request_id: str):

@@ -45,6 +45,7 @@ _COMMANDS = [
     "/rename", "/delete-msg", "/search", "/link",
     "/vidservice", "/imgservice", "/share", "/install", "/uninstall",
     "/rebuild-full", "/rebuild_clean", "/setname", "/autoconv",
+    "/bg", "/cancel",
 ]
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 

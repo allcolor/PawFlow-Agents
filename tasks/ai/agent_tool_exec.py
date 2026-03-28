@@ -137,15 +137,39 @@ class AgentToolExecMixin:
                 return tc, f"Error: {e}"
 
         if not parallel or len(tool_calls) == 1:
-            return [_exec_one(tc) for tc in tool_calls]
+            # Sequential: check background between each tool
+            results = []
+            for tc in tool_calls:
+                import core.background_tool as _bg
+                if _bg.is_backgrounded(tc.id):
+                    results.append((tc, "[Running in background — result will appear when done]"))
+                    continue
+                results.append(_exec_one(tc))
+            return results
 
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=len(tool_calls)) as pool:
-            futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
-            results_map = {}
-            for future in as_completed(futures):
-                tc, result_text = future.result()
-                results_map[tc.id] = (tc, result_text)
+        from concurrent.futures import ThreadPoolExecutor, wait
+        import core.background_tool as _bg
+        pool = ThreadPoolExecutor(max_workers=len(tool_calls))
+        futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
+        results_map = {}
+        pending = set(futures.keys())
+
+        while pending:
+            done, pending = wait(pending, timeout=1.0, return_when='FIRST_COMPLETED')
+            for f in done:
+                tc = futures[f]
+                tc_result, result_text = f.result()
+                results_map[tc.id] = (tc_result, result_text)
+            # Check if any pending tools were backgrounded by user
+            for f in list(pending):
+                tc = futures[f]
+                if _bg.is_backgrounded(tc.id):
+                    _bg.register(tc.id, f, conversation_id, agent_name,
+                                 tool_name=tc.name)
+                    results_map[tc.id] = (tc, "[Running in background — result will appear when done]")
+                    pending.discard(f)
+
+        pool.shutdown(wait=False)
         return [results_map[tc.id] for tc in tool_calls]
 
 

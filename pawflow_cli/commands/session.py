@@ -45,6 +45,14 @@ def handle_session_commands(app, cmd, arg, text):
         app.renderer.print_system(f"Re-authenticated as {app.username}")
         return True
 
+    if cmd == "/bg":
+        _list_bg_tools(app)
+        return True
+
+    if cmd == "/cancel":
+        _cancel_bg_tool(app, arg.strip() if arg else "")
+        return True
+
     if cmd == "/link":
         parts = arg.split() if arg else []
         try:
@@ -109,6 +117,47 @@ def _connect_relay(app, path: str):
         app.connect_relay(directory)
     except Exception as e:
         app.renderer.print_error(f"Relay failed: {e}")
+
+
+def _list_bg_tools(app):
+    """List background tasks."""
+    if not app.api or not app.conversation_id:
+        app.renderer.print_error("No active conversation.")
+        return
+    try:
+        data = app.api.send_action("list_bg_tools",
+                                    conversation_id=app.conversation_id)
+        tasks = data.get("tasks", [])
+        if not tasks:
+            app.renderer.print_system("No background tasks.")
+            return
+        for t in tasks:
+            tc_id = t.get("tc_id", "?")[:8]
+            tool = t.get("tool", "?")
+            status = t.get("status", "?")
+            app.renderer.print_system(f"  {tc_id}  {tool}  [{status}]")
+    except Exception as e:
+        app.renderer.print_error(f"Failed: {e}")
+
+
+def _cancel_bg_tool(app, tc_id: str):
+    """Cancel a background task."""
+    if not app.api or not app.conversation_id:
+        app.renderer.print_error("No active conversation.")
+        return
+    if not tc_id:
+        app.renderer.print_error("Usage: /cancel <tc_id>")
+        return
+    try:
+        data = app.api.send_action("cancel_bg_tool",
+                                    conversation_id=app.conversation_id,
+                                    tc_id=tc_id)
+        if data.get("ok"):
+            app.renderer.print_system(f"Cancelled {tc_id}")
+        else:
+            app.renderer.print_error(data.get("error", "Cancel failed"))
+    except Exception as e:
+        app.renderer.print_error(f"Failed: {e}")
 
 
 def _disconnect_relay(app, path: str):

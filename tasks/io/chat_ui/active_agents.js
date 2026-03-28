@@ -70,12 +70,10 @@ function trackAgentToolDone(agentName, toolName) {
 }
 function trackAgentDone(agentName) {
   const key = agentKey(agentName);
+  if (!key) return;
   _agentDoneAt[key] = Date.now();
   delete activeInteractions[key];
   updateActivePanel();
-  if (Object.keys(activeInteractions).length === 0 && activeTimer) {
-    clearInterval(activeTimer); activeTimer = null;
-  }
 }
 function updateActivePanel() {
   const panel = document.getElementById('activePanel');
@@ -143,7 +141,7 @@ function updateActivePanel() {
 let _syncActiveTimer = null;
 function startActiveSync() {
   if (_syncActiveTimer) return;
-  _syncActiveTimer = setInterval(syncActiveFromServer, 12000);
+  _syncActiveTimer = setInterval(syncActiveFromServer, 5000);
 }
 function stopActiveSync() {
   if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
@@ -165,7 +163,7 @@ async function syncActiveFromServer() {
     // Remove entries the server no longer knows about
     // BUT keep entries added by SSE less than 5s ago (race condition guard)
     for (const key of Object.keys(activeInteractions)) {
-      if (!serverKeys.has(key) && (now - (activeInteractions[key].updatedAt || 0)) > 5000) {
+      if (!serverKeys.has(key) && (now - (activeInteractions[key].updatedAt || 0)) > 2000) {
         delete activeInteractions[key];
       }
     }

@@ -277,6 +277,17 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
         except Exception:
             pass
+        # Wake up the assigned agent to start working
+        try:
+            from core.poll_scheduler import PollScheduler
+            PollScheduler.instance().schedule_delay(
+                conv_id, 0,
+                key=f"{conv_id}::plan::{plan_id}",
+                reason=f"[plan:{plan_id}] assigned to {agent}",
+                user_id=user_id,
+            )
+        except Exception:
+            pass
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 

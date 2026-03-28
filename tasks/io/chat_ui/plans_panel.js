@@ -77,10 +77,25 @@ async function loadPlans() {
         const color = _planStepColor(step.status);
         const textDecor = step.status === 'skipped' ? 'line-through' : 'none';
         const assignee = step.assigned_to ? ' [' + step.assigned_to + ']' : '';
-        stepDiv.innerHTML = '<span style="color:' + color + ';font-size:13px;">' + icon + '</span>' +
-          '<span style="color:' + color + ';text-decoration:' + textDecor + ';">' + step.index + '. ' + escapeHtml(step.description) + '</span>' +
-          (assignee ? '<span style="color:#6c5ce7;font-size:9px;">' + escapeHtml(assignee) + '</span>' : '') +
-          (step.note ? '<span style="color:#555;font-size:10px;margin-left:4px;font-style:italic;">' + escapeHtml(step.note) + '</span>' : '');
+        const canAssign = step.status === 'pending' || step.status === 'in_progress' || step.status === 'error';
+        stepDiv.style.cssText += 'justify-content:space-between;';
+        const stepLeft = document.createElement('div');
+        stepLeft.style.cssText = 'display:flex;align-items:center;gap:4px;flex:1;min-width:0;';
+        stepLeft.innerHTML = '<span style="color:' + color + ';font-size:13px;flex-shrink:0;">' + icon + '</span>' +
+          '<span style="color:' + color + ';text-decoration:' + textDecor + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + step.index + '. ' + escapeHtml(step.description) + '</span>' +
+          (assignee ? '<span style="color:#6c5ce7;font-size:9px;flex-shrink:0;">' + escapeHtml(assignee) + '</span>' : '') +
+          (step.note ? '<span style="color:#555;font-size:10px;margin-left:4px;font-style:italic;flex-shrink:0;">' + escapeHtml(step.note) + '</span>' : '');
+        stepDiv.appendChild(stepLeft);
+        if (canAssign && planStatus !== 'cancelled' && planStatus !== 'completed') {
+          const assignBtn = document.createElement('button');
+          assignBtn.title = 'Assign step to agent';
+          assignBtn.textContent = '\u{1F464}';
+          assignBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:11px;padding:0 2px;color:#6c5ce7;flex-shrink:0;';
+          assignBtn.onclick = (function(planId, stepIdx) {
+            return function(e) { e.stopPropagation(); showAssignStepDialog(planId, stepIdx); };
+          })(pid, step.index);
+          stepDiv.appendChild(assignBtn);
+        }
         stepsDiv.appendChild(stepDiv);
       }
 
@@ -226,16 +241,20 @@ async function planAction(action, planId) {
   }
 }
 
+async function _fetchConvAgents() {
+  const resp = await fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+  });
+  const data = await resp.json();
+  // list_resources returns agents active in this conversation
+  return (data.agents || []).map(function(a) { return a.name || a; });
+}
+
 async function showAssignPlanDialog(planId) {
-  // Fetch agents list
   let agents = [];
   try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
-    agents = Object.keys(data.agents || {});
+    agents = await _fetchConvAgents();
   } catch (e) { addMsg('error', 'Failed to list agents'); return; }
 
   // Build dialog
@@ -296,12 +315,7 @@ async function assignPlanTo(planId, agent, stepRange) {
 async function showAssignStepDialog(planId, stepIndex) {
   let agents = [];
   try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
-    agents = Object.keys(data.agents || {});
+    agents = await _fetchConvAgents();
   } catch (e) { addMsg('error', 'Failed to list agents'); return; }
 
   const overlay = document.createElement('div');

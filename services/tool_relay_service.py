@@ -256,8 +256,8 @@ class ToolRelayService(BaseService):
         for h in registry.list_tools():
             tools.append({
                 "name": h.name,
-                "description": h.description or "",
-                "parameters": h.parameters_schema or {},
+                "display_name": h.display_name,
+                "description": (h.description or "")[:150],
             })
         return {"type": "result", "request_id": request_id, "data": tools}
 

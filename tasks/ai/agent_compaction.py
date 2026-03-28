@@ -942,19 +942,24 @@ class AgentCompactionMixin:
         set_compact_key(compact_key)
 
         prompt = (
-            f"Read the file '{file_id}' using show_file(file_id='{file_id}'), "
-            f"then summarize the content in maximum {target_tokens} tokens.\n\n"
-            f"Preserve: project state, files modified, key decisions, last action, pending work.\n"
-            f"Skip raw tool output details.\n\n"
-            f"You MUST call compact_result(summary='your summary') to return the result.\n"
-            f"Do NOT respond with text. ONLY call compact_result."
+            f"Summarize the conversation transcript stored in FileStore.\n\n"
+            f"Steps:\n"
+            f"1. Use read_file(file_id='{file_id}') to read the content — "
+            f"it may be large, read multiple pages if needed (offset parameter)\n"
+            f"2. Summarize ALL the content in maximum {target_tokens} tokens\n"
+            f"3. Call compact_result(summary='your summary here')\n\n"
+            f"Preserve: project state, files modified with paths, key decisions, "
+            f"last action taken, and any pending/unfinished work.\n"
+            f"Skip raw tool output, JSON blobs, and technical plumbing details.\n\n"
+            f"CRITICAL: You MUST call compact_result with the summary. "
+            f"Do NOT respond with text. Your ONLY output must be the compact_result call."
         )
 
-        _pub(f"Claude Code compacting {len(text)} chars...")
+        _pub(f"Compacting {len(text)} chars via Claude Code...")
 
         max_retries = 3
         for attempt in range(1, max_retries + 1):
-            _pub(f"attempt {attempt}/{max_retries}")
+            _pub(f"Compacting... attempt {attempt}/{max_retries}")
             logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
             if attempt > 1:
                 prompt = (

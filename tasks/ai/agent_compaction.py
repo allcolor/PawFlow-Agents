@@ -468,13 +468,15 @@ class AgentCompactionMixin:
             old_conversation = old_messages[-2:] if len(old_messages) > 1 else old_messages
 
         # Check if dropping tool plumbing alone is enough
+        # But only if the message count is sane (< 200) — 4000 conversation
+        # messages may fit in tokens but no LLM handles that many messages.
         if not force:
             _slim = ([system_msg] if system_msg else []) + old_conversation + recent_messages
             _slim_est = self._estimate_tokens(_slim, tool_defs=tool_defs,
                                                chars_per_token=chars_per_token)
-            if _slim_est <= limit:
+            if _slim_est <= limit and len(_slim) < 200:
                 logger.info(f"[compact] Dropping tool plumbing sufficient: "
-                            f"{estimated} → {_slim_est} tokens")
+                            f"{estimated} → {_slim_est} tokens, {len(_slim)} msgs")
                 compacted = []
                 if system_msg:
                     compacted.append(system_msg)
@@ -483,6 +485,9 @@ class AgentCompactionMixin:
                 self._truncate_tool_results(compacted)
                 self._persist_context(compacted, conversation_id, agent_name)
                 return compacted
+            elif _slim_est <= limit:
+                logger.info(f"[compact] Tool plumbing drop fits tokens ({_slim_est}) "
+                            f"but too many messages ({len(_slim)}), summarizing...")
 
         # Summarize
         _summary_target = max(1000, int(max_tokens * 0.05))

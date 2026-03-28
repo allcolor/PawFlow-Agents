@@ -167,12 +167,17 @@ Ordered by priority within each category. Dependencies noted.
 **What:** A project instructions file that survives compaction. Always re-injected after summary.
 
 **Plan:**
-1. Convention: `AGENT.md` in the agent workdir (or relay root)
-2. After compaction, insert its content as a user message after the summary:
-   `[System: Project instructions from AGENT.md]\n{content}`
-3. Read from relay via `read(path="AGENT.md")` at context build time
-4. Cache content (don't re-read every iteration)
-5. For Claude Code agents: already have CLAUDE.md in workdir — just read and inject
+1. Convention: `{agent_name}.md` in the relay root (case-insensitive match).
+   Agent "toto" matches `toto.md`, `Toto.md`, `TOTO.MD`, etc.
+   Agent "claude" matches `CLAUDE.md` — natural alignment with Claude Code.
+2. At context build time (`_prepare_agent_context`): scan relay root for
+   matching file via case-insensitive glob. Cache content per conversation.
+3. After compaction, insert its content as a user message after the summary:
+   `[System: Project instructions from {filename}]\n{content}`
+4. Also re-inject at every context load (not just post-compact).
+5. For Claude Code agents: CLAUDE.md in workdir is already read natively
+   by CC. The injection ensures LLM API agents get the same instructions.
+6. If no match: no injection, no error. Silent.
 
 ---
 

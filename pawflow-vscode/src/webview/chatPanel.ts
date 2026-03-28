@@ -389,7 +389,8 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.conversationId = cid;
         this.saveLastConversation(cid);
         this.setupSSE();
-        this.postMessage({ type: 'history', data });
+        const isLoadMore = (offset || 0) > 0;
+        this.postMessage({ type: 'history', data, append: isLoadMore });
       }
     } catch (e) {
       console.error('[PawFlow] resumeConversation failed:', e);

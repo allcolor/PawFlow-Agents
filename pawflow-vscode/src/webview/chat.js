@@ -336,7 +336,11 @@ window.addEventListener('message', function(e) {
       showConvList(msg.conversations);
       break;
     case 'history':
-      replayHistory(msg.data);
+      if (msg.append) {
+        prependHistory(msg.data);
+      } else {
+        replayHistory(msg.data);
+      }
       break;
     case 'newConversation':
       messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
@@ -760,26 +764,62 @@ function replayHistory(data) {
   messagesEl.innerHTML = '';
   _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
-  currentHistoryOffset += (data.messages || []).length;
+  currentHistoryOffset = (data.messages || []).length;
 
-  if (data.has_more) {
-    var more = document.createElement('div');
-    more.className = 'load-more';
-    more.textContent = '\u25b2 Load more messages (' + (data.message_count || '?') + ' total)';
-    more.onclick = function() {
-      vscode.postMessage({
-        type: 'resumeConversation',
-        conversationId: currentHistoryConvId,
-        offset: currentHistoryOffset,
-      });
-    };
-    messagesEl.appendChild(more);
-  }
+  _addLoadMoreBanner(data);
   var msgs = data.messages || [];
   for (var i = 0; i < msgs.length; i++) {
     addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]);
   }
-  statusEl.textContent = msgs.length + ' of ' + (data.message_count || '?') + ' messages';
+  statusEl.textContent = currentHistoryOffset + ' of ' + (data.message_count || '?') + ' messages';
+}
+
+function prependHistory(data) {
+  currentHistoryOffset += (data.messages || []).length;
+  var prevHeight = messagesEl.scrollHeight;
+
+  // Remove old load-more banner
+  var oldBanner = messagesEl.querySelector('.load-more');
+  if (oldBanner) oldBanner.remove();
+
+  // Add new banner if more messages exist
+  _addLoadMoreBanner(data);
+
+  // Render new messages, collect them, then prepend
+  var beforeCount = messagesEl.children.length;
+  var msgs = data.messages || [];
+  for (var i = 0; i < msgs.length; i++) {
+    addMsg(msgs[i].type || msgs[i].role, msgs[i].content || '', msgs[i]);
+  }
+  // Move newly added (appended at end) to after banner
+  var insertPoint = messagesEl.querySelector('.load-more');
+  insertPoint = insertPoint ? insertPoint.nextSibling : messagesEl.firstChild;
+  var newEls = [];
+  while (messagesEl.children.length > beforeCount) {
+    newEls.push(messagesEl.lastChild);
+    messagesEl.removeChild(messagesEl.lastChild);
+  }
+  for (var i = newEls.length - 1; i >= 0; i--) {
+    messagesEl.insertBefore(newEls[i], insertPoint);
+  }
+  // Preserve scroll position
+  messagesEl.scrollTop = messagesEl.scrollHeight - prevHeight;
+  statusEl.textContent = currentHistoryOffset + ' of ' + (data.message_count || '?') + ' messages';
+}
+
+function _addLoadMoreBanner(data) {
+  if (!data.has_more) return;
+  var more = document.createElement('div');
+  more.className = 'load-more';
+  more.textContent = '\u25b2 Load more messages (' + (data.message_count || '?') + ' total)';
+  more.onclick = function() {
+    vscode.postMessage({
+      type: 'resumeConversation',
+      conversationId: currentHistoryConvId,
+      offset: currentHistoryOffset,
+    });
+  };
+  messagesEl.insertBefore(more, messagesEl.firstChild);
 }
 
 function updateRelayStatus(status) {

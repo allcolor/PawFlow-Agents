@@ -286,25 +286,35 @@ class AgentCompactionMixin:
         ))
         compacted.extend(recent_messages)
 
-        # Post-compaction: note recently accessed files for agent awareness
-        _recent_files = set()
-        for m in recent_messages:
+        # Post-compaction: re-read recently accessed files (like Claude Code)
+        # Extract unique file paths from recent tool calls, limit to 5 most recent
+        _recent_files = []
+        _seen_paths = set()
+        for m in reversed(recent_messages):
             if m.role == "assistant" and m.tool_calls:
                 for tc in m.tool_calls:
                     _args = tc.arguments if isinstance(tc.arguments, dict) else {}
                     _action = _args.get("action", "")
                     _path = _args.get("path", "")
-                    if _action in ("read_file", "edit", "write_file") and _path:
-                        _recent_files.add(_path)
+                    if _action in ("read_file", "edit", "write_file") and _path and _path not in _seen_paths:
+                        _recent_files.append(_path)
+                        _seen_paths.add(_path)
+                        if len(_recent_files) >= 5:
+                            break
+                if len(_recent_files) >= 5:
+                    break
         if _recent_files:
-            _files_note = "Recently accessed files: " + ", ".join(sorted(_recent_files)[:10])
+            _files_note = "Recently accessed files (re-read for context continuity):\n"
+            for _fp in _recent_files:
+                _files_note += f"  - {_fp}\n"
+            _files_note += "You can re-read these files with read_file/filesystem if you need their full current content."
             compacted.append(LLMMessage(
                 role="user",
-                content=f"[System: {_files_note}. You can re-read these files if you need their current content.]"
+                content=f"[System: {_files_note}]"
             ))
             compacted.append(LLMMessage(
                 role="assistant",
-                content="Noted."
+                content="Noted. I'm aware of these recently accessed files and can re-read them if needed."
             ))
 
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
@@ -495,6 +505,7 @@ class AgentCompactionMixin:
         agent_name: str = "",
         tool_defs: list = None,
         chars_per_token: float = 0,
+        compact_instructions: str = "",
     ) -> List[LLMMessage]:
         """Compact conversation history if approaching the token limit.
 
@@ -664,7 +675,8 @@ class AgentCompactionMixin:
             summary = self._summarize_messages(old_conversation, client, max_tokens,
                                                target_tokens=_summary_target,
                                                conversation_id=conversation_id,
-                                               agent_name=agent_name)
+                                               agent_name=agent_name,
+                                               compact_instructions=compact_instructions)
         except Exception as e:
             logger.error(f"[compact] Summarization failed: {e}")
             # NEVER return the original messages if they exceed the limit.
@@ -895,25 +907,28 @@ class AgentCompactionMixin:
                 conversation_id, compact_instructions)
 
         clean_text = self._sanitize_for_llm(text)
-        _focus = ""
-        if compact_instructions:
-            _focus = f"\nFOCUS: {compact_instructions}\n"
-        target_instruction = (
-            f"STRICT LIMIT: maximum {target_tokens} tokens. Be concise. "
-            f"Prioritize: current state, files modified, last action, pending work. "
-            f"You MUST output a summary. Do NOT output nothing."
+        _focus = f"\n<focus>{compact_instructions}</focus>\n" if compact_instructions else ""
+        _prompt = (
+            "Summarize this work session into a structured summary.\n"
+            "Use this checklist — every section MUST be present:\n\n"
+            "<checklist>\n"
+            "1. USER_INTENT: What the user asked for / is working on\n"
+            "2. DECISIONS: Key technical and architectural decisions made\n"
+            "3. FILES_MODIFIED: Files changed with paths (and line ranges if relevant)\n"
+            "4. ERRORS: Errors encountered and how they were resolved (verbatim if short)\n"
+            "5. CURRENT_STATE: What was accomplished, current project state\n"
+            "6. PENDING: Unfinished tasks, next steps, what the user expects next\n"
+            "7. CONTEXT: Any important constraints, preferences, or rules established\n"
+            "</checklist>\n\n"
+            f"STRICT LIMIT: maximum {target_tokens} tokens.\n"
+            f"{_focus}\n"
+            f"Wrap your output in <summary></summary> tags.\n\n"
+            f"SESSION:\n{clean_text}"
         )
         try:
             response = client.complete(
                 messages=[
-                    LLMMessage(role="user", content=(
-                        "Summarize this work session. Preserve: project state, "
-                        "files modified (with paths), decisions, last action, "
-                        "pending work. Skip tool details.\n\n"
-                        + _focus
-                        + target_instruction + "\n\n"
-                        "SESSION:\n" + clean_text
-                    )),
+                    LLMMessage(role="user", content=_prompt),
                 ],
                 max_tokens=min(target_tokens * 2, 4000),
             )
@@ -1009,8 +1024,9 @@ class AgentCompactionMixin:
             f"it may be large, read multiple pages if needed (offset parameter)\n"
             f"2. Summarize ALL the content in maximum {target_tokens} tokens\n"
             f"3. Call compact_result(summary='your summary here', compact_key='{compact_key}')\n\n"
-            f"Preserve: project state, files modified with paths, key decisions, "
-            f"last action taken, and any pending/unfinished work.\n"
+            f"Use this checklist — every section MUST be present:\n"
+            f"1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths) "
+            f"4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
             f"Skip raw tool output, JSON blobs, and technical plumbing details.\n"
             + (f"\nFOCUS: {compact_instructions}\n" if compact_instructions else "") +
             f"\n"

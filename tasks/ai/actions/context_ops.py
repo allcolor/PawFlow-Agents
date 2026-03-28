@@ -307,19 +307,13 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
 
         def _do_compact():
             msgs = self._deserialize_messages(_compact_source)
-            # Inject focus instructions if provided (like Claude Code's /compact <focus>)
-            if _compact_instructions:
-                from core.llm_client import LLMMessage as _LM
-                msgs.insert(1 if msgs and msgs[0].role == "system" else 0,
-                    _LM(role="user", content=(
-                        f"[Compaction focus: {_compact_instructions}. "
-                        f"Prioritize retaining information about this topic.]")))
             before = len(msgs)
             estimated = self._estimate_tokens(msgs)
             compacted = self._compact_if_needed(
                 msgs, _compact_client, _compact_max, 0.5,
                 _compact_keep, conversation_id=_compact_conv,
                 agent_name=_compact_agent_name,
+                compact_instructions=_compact_instructions,
             )
             after_tokens = self._estimate_tokens(compacted)
             # Manual compact → invalidate claude-code sessions

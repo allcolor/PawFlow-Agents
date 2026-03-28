@@ -958,12 +958,14 @@ class AgentCompactionMixin:
         _pub(f"Compacting {len(text)} chars via Claude Code...")
 
         # Save and clear session — compact uses a temporary session
-        _saved_session = getattr(client, '_claude_session_id', '')
-        _saved_conv = getattr(client, '_conversation_id', '')
-        _saved_agent = getattr(client, '_agent_name', '')
-        client._claude_session_id = ''
-        client._conversation_id = ''
-        client._agent_name = 'compact'
+        # The LLMClient may be nested inside a service wrapper
+        _inner = getattr(client, '_client', client)
+        _saved_session = getattr(_inner, '_claude_session_id', '')
+        _saved_conv = getattr(_inner, '_conversation_id', '')
+        _saved_agent = getattr(_inner, '_agent_name', '')
+        _inner._claude_session_id = ''
+        _inner._conversation_id = ''
+        _inner._agent_name = 'compact'
 
         max_retries = 3
         for attempt in range(1, max_retries + 1):
@@ -988,9 +990,9 @@ class AgentCompactionMixin:
                         FileStore.instance().delete(file_id)
                     except Exception:
                         pass
-                    client._claude_session_id = _saved_session
-                    client._conversation_id = _saved_conv
-                    client._agent_name = _saved_agent
+                    _inner._claude_session_id = _saved_session
+                    _inner._conversation_id = _saved_conv
+                    _inner._agent_name = _saved_agent
                     raise
                 continue
 
@@ -1002,9 +1004,9 @@ class AgentCompactionMixin:
                         FileStore.instance().delete(file_id)
                     except Exception:
                         pass
-                    client._claude_session_id = _saved_session
-                    client._conversation_id = _saved_conv
-                    client._agent_name = _saved_agent
+                    _inner._claude_session_id = _saved_session
+                    _inner._conversation_id = _saved_conv
+                    _inner._agent_name = _saved_agent
                     return summary
             except TimeoutError:
                 logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)

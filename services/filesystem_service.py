@@ -271,7 +271,6 @@ class WSListener:
                             self._loop)
                     _th.Thread(target=_exec, daemon=True,
                                name=f"tool-relay-{msg.get('method', '?')}").start()
-                return  # tool relay done
 
             # Filesystem relay
             service._set_relay(reader, writer, self._loop)

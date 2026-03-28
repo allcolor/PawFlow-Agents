@@ -129,31 +129,28 @@ class ToolRelayClient:
     def request(self, method: str, **kwargs) -> any:
         """Send a request and wait for the response.
 
-        Auto-reconnects on connection failure with backoff (up to 10 retries).
-        Same request_id is reused across retries — server returns cached result
-        if the tool already completed on a previous connection.
+        On connection failure: reconnect ONCE and retry with the same
+        request_id. Server caches results, so retrying the same ID
+        returns the already-computed result without re-executing.
         """
         import time as _time
         request_id = uuid.uuid4().hex[:12]
-        last_err = None
-        max_retries = 10
-        for attempt in range(max_retries):
+        for attempt in range(3):
             try:
                 self._ensure_connected()
                 return self._do_request(method, request_id, **kwargs)
             except (ConnectionError, OSError, BrokenPipeError) as e:
-                last_err = e
-                self._sock = None  # force reconnect
-                if attempt < max_retries - 1:
-                    delay = min(1.0 * (2 ** min(attempt, 4)), 16.0)
-                    _log(f"Connection lost (attempt {attempt + 1}/{max_retries}), "
-                         f"retrying in {delay}s: {e}")
-                    _time.sleep(delay)
+                _log(f"Connection lost during request (attempt {attempt + 1}/3): {e}")
+                # Close cleanly before reconnecting
+                try:
+                    self.close()
+                except Exception:
+                    pass
+                self._sock = None
+                if attempt < 2:
+                    _time.sleep(2)
                     continue
-                _log(f"Connection failed after {max_retries} attempts: {e}")
-                raise ConnectionError(
-                    f"Tool relay unavailable after {max_retries} attempts: {last_err}"
-                ) from last_err
+                raise ConnectionError(f"Tool relay unavailable: {e}") from e
 
     def _do_request(self, method: str, request_id: str, **kwargs) -> any:
         payload = {"type": "request", "request_id": request_id,

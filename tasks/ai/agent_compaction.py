@@ -813,7 +813,7 @@ class AgentCompactionMixin:
                         target_tokens: int = 0,
                         user_id: str = "", agent_name: str = "",
                         llm_service: str = "") -> str:
-        """Single LLM call to summarize text."""
+        """Single LLM call to summarize text. Routes to claude-code path if needed."""
         logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
                      f"target={target_tokens} tokens, input={len(text)} chars")
         if not target_tokens:

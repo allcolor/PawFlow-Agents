@@ -237,10 +237,11 @@ class WSListener:
                 _agent_name = reg.get("agent_name", "")
                 logger.info("Tool relay connected: user=%s conv=%s agent=%s addr=%s",
                              _user_id, _conv_id, _agent_name, tag)
+                _KEEPALIVE_INTERVAL = 120  # seconds between pings if no data
                 while True:
                     try:
                         opcode, payload = await asyncio.wait_for(
-                            self._ws_recv(reader), timeout=120)
+                            self._ws_recv(reader), timeout=_KEEPALIVE_INTERVAL)
                     except asyncio.TimeoutError:
                         await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
                         continue
@@ -291,12 +292,12 @@ class WSListener:
                 pass
 
             # Main loop: read results from relay
+            _KEEPALIVE_INTERVAL = 120  # seconds between pings if no data
             while True:
                 try:
                     opcode, payload = await asyncio.wait_for(
-                        self._ws_recv(reader), timeout=120)
+                        self._ws_recv(reader), timeout=_KEEPALIVE_INTERVAL)
                 except asyncio.TimeoutError:
-                    # Send ping
                     await self._ws_send(writer, json.dumps({"type": "ping"}).encode())
                     continue
 

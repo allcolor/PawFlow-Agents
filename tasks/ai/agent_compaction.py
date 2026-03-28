@@ -1043,60 +1043,48 @@ class AgentCompactionMixin:
         _inner._agent_name = 'compact'
 
         max_retries = 3
-        for attempt in range(1, max_retries + 1):
-            _pub(f"Compacting... attempt {attempt}/{max_retries}")
-            logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
-            if attempt > 1:
-                prompt = (
-                    f"RETRY {attempt}/{max_retries}: You must call compact_result.\n"
-                    f"Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) to read, "
-                    f"summarize in {target_tokens} tokens, then "
-                    f"mcp__pawflow__use_tool(tool_name='compact_result', arguments={{summary: '...', compact_key: '{compact_key}'}}). "
-                    f"DO IT NOW."
-                )
-                set_compact_key(compact_key)
-            try:
-                client.complete_stream(
-                    messages=[LLMMessage(role="user", content=prompt)],
-                    max_tokens=min(target_tokens * 3, 8000),
-                )
-            except Exception as e:
-                logger.error("[compact-cc] attempt %d failed: %s", attempt, e)
-                _is_auth = "auth" in str(e).lower() or "401" in str(e)
-                if _is_auth or attempt == max_retries:
-                    try:
-                        FileStore.instance().delete(file_id)
-                    except Exception:
-                        pass
-                    _inner._claude_session_id = _saved_session
-                    _inner._conversation_id = _saved_conv
-                    _inner._agent_name = _saved_agent
-                    raise
-                continue
-
-            try:
-                summary = wait_for_compact_result(compact_key, timeout=10)
-                if summary:
-                    logger.info("[compact-cc] got %d chars summary (attempt %d)", len(summary), attempt)
-                    try:
-                        FileStore.instance().delete(file_id)
-                    except Exception:
-                        pass
-                    _inner._claude_session_id = _saved_session
-                    _inner._conversation_id = _saved_conv
-                    _inner._agent_name = _saved_agent
-                    return summary
-            except TimeoutError:
-                logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
-
         try:
-            FileStore.instance().delete(file_id)
-        except Exception:
-            pass
-        _inner._claude_session_id = _saved_session
-        _inner._conversation_id = _saved_conv
-        _inner._agent_name = _saved_agent
-        raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
+            for attempt in range(1, max_retries + 1):
+                _pub(f"Compacting... attempt {attempt}/{max_retries}")
+                logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
+                if attempt > 1:
+                    prompt = (
+                        f"RETRY {attempt}/{max_retries}: You must call compact_result.\n"
+                        f"Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) to read, "
+                        f"summarize in {target_tokens} tokens, then "
+                        f"mcp__pawflow__use_tool(tool_name='compact_result', arguments={{summary: '...', compact_key: '{compact_key}'}}). "
+                        f"DO IT NOW."
+                    )
+                    set_compact_key(compact_key)
+                try:
+                    client.complete_stream(
+                        messages=[LLMMessage(role="user", content=prompt)],
+                        max_tokens=min(target_tokens * 3, 8000),
+                    )
+                except Exception as e:
+                    logger.error("[compact-cc] attempt %d failed: %s", attempt, e)
+                    _is_auth = "auth" in str(e).lower() or "401" in str(e)
+                    if _is_auth or attempt == max_retries:
+                        raise
+                    continue
+
+                try:
+                    summary = wait_for_compact_result(compact_key, timeout=10)
+                    if summary:
+                        logger.info("[compact-cc] got %d chars summary (attempt %d)", len(summary), attempt)
+                        return summary
+                except TimeoutError:
+                    logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
+
+            raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
+        finally:
+            _inner._claude_session_id = _saved_session
+            _inner._conversation_id = _saved_conv
+            _inner._agent_name = _saved_agent
+            try:
+                FileStore.instance().delete(file_id)
+            except Exception:
+                pass
 
     def _call_summarize_with_budget(self, client: LLMClient,
                                      text: str, max_tokens: int) -> str:

@@ -188,8 +188,6 @@ class BaseFsHandler(ToolHandler):
 
         return find_fs_service(self._user_id, service_name)
 
-        return None
-
     def _no_target_error(self, fs_param: str = "") -> str:
         """Error message when no FS target could be resolved."""
         available = self._available_services or []

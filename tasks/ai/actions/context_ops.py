@@ -573,7 +573,6 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     "agent": _rf_agent or "shared"}
 
         return self._run_bg_context_op(conv_id, "rebuild_full", _do_rebuild_full, flowfile)
-        return [flowfile]
 
     if action == "get_context":
         conv_id = body.get("conversation_id", "")

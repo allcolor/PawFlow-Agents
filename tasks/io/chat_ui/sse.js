@@ -329,6 +329,7 @@ function connectSSE(cid) {
       agent_name: tcAgent,
       llm_service: data.llm_service || '',
       ts: data.ts,
+      live: true,
     });
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });

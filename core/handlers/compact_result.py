@@ -107,7 +107,11 @@ class CompactResultHandler(ToolHandler):
                     logger.warning("[compact_result] key '%s' not found, delivered to "
                                    "sole pending key '%s' (%d chars)",
                                    compact_key, _fallback_key, len(summary))
-            if not delivered:
+            if not delivered and _pending:
+                _remaining = [k for k, v in _pending.items() if not v["summary"]]
+                if len(_remaining) > 1 and not compact_key:
+                    return ("Error: compact_key is required — multiple compacts pending. "
+                            "Check the instructions for the compact_key value.")
                 logger.warning("[compact_result] key '%s' not found in pending: %s",
                                compact_key, list(_pending.keys()))
         if not delivered:

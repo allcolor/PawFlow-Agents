@@ -176,7 +176,7 @@ class AgentToolExecMixin:
                 if _bg.is_backgrounded(tc.id):
                     _bg.register(tc.id, f, conversation_id, agent_name,
                                  tool_name=tc.name)
-                    results_map[tc.id] = (tc, "[Running in background — result will appear when done]")
+                    results_map[tc.id] = (tc, f"[Running in background (tool_call_id={tc.id}) — result will appear as a system message when done]")
                     pending.discard(f)
 
         pool.shutdown(wait=False)

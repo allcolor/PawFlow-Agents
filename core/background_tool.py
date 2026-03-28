@@ -183,10 +183,13 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     try:
         from core.conversation_writer import ConversationWriter
         if is_cancel:
-            content = f"[System: Background task {tool_name} was cancelled by user. The tool_call above returned a placeholder — ignore its result.]"
+            content = (
+                f"[System: Background task {tool_name} (tool_call_id={tc_id}) was cancelled by user. "
+                f"The tool_call returned a placeholder — ignore its result.]"
+            )
         else:
             content = (
-                f"[System: Background task {tool_name} has completed. "
+                f"[System: Background task {tool_name} (tool_call_id={tc_id}) has completed. "
                 f"The earlier tool_call returned '[Running in background]' as placeholder. "
                 f"Here is the actual result:\n\n{result_text}]"
             )

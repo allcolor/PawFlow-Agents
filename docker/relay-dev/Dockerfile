@@ -79,6 +79,9 @@ RUN curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.x
 # ── PawFlow relay + SDK (for containerized mode) ────────────────────
 COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
 COPY fs_actions.py /opt/pawflow/fs_actions.py
+COPY fs_exec.py /opt/pawflow/fs_exec.py
+COPY fs_screen.py /opt/pawflow/fs_screen.py
+COPY fs_mcp.py /opt/pawflow/fs_mcp.py
 COPY pawflow.py /opt/pawflow/pawflow.py
 ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
 ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"

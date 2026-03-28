@@ -21,9 +21,7 @@ from core.handlers.file_ops import (  # noqa: F401
     ScheduleContinuationHandler,
     ScheduleRecheckHandler,
 )
-from core.handlers.filesystem import (  # noqa: F401
-    FilesystemToolHandler,
-)
+from core.handlers._fs_base import BaseFsHandler  # noqa: F401
 from core.handlers.flow_management import (  # noqa: F401
     CreateToolHandler,
     FlowManagerHandler,
@@ -51,9 +49,6 @@ from core.handlers.memory import (  # noqa: F401
     SemanticRecallHandler,
     RecallHandler,
     ForgetHandler,
-)
-from core.handlers.remote_exec import (  # noqa: F401
-    RemoteExecutorHandler,
 )
 from core.handlers.resource_agent import (  # noqa: F401
     ManageResourceHandler,

@@ -426,7 +426,7 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         this.showApprovalNotification(event);
       }
 
-      if (event.event === 'tool_result' && event.data.tool === 'filesystem') {
+      if (event.event === 'tool_result' && ['edit', 'write', 'bash'].includes(event.data.tool)) {
         const result = (event.data.result || '') as string;
         if (result.includes('replacement') || result.includes('Edited ') || result.includes('Written ')) {
           const pathMatch = result.match(/(?:to |in |path=)(\S+)/);

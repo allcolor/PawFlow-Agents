@@ -294,24 +294,31 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
              getattr(client, 'provider', "")) == "claude-code"
         )
 
-        # Claude-code compact decision:
-        #   Case 1: first message (key doesn't exist) → compact OK, then create session
-        #   Case 2: session exists (key has value) → skip compact, --resume
-        #   Case 3: session invalidated (key exists but empty) → skip compact,
-        #           context was modified manually — user wants that exact context
+        # Claude-code session detection (3 cases):
+        #   Case 1: key doesn't exist (None) → first message, no session ever
+        #           → compact OK, then create session
+        #   Case 2: key has value → active session
+        #           → skip compact, --resume
+        #   Case 3: key exists but empty ("") → session invalidated (context modified)
+        #           → skip compact (user wants that exact context), new session
         _claude_has_session = False
+        _session_existed = False
         if _is_claude_code and conversation_id:
             try:
                 from core.conversation_store import ConversationStore as _CSSession
                 _session_key = f"claude_session:{_active_agent_name or _context_agent or 'default'}"
                 _session_val = _CSSession.instance().get_extra(conversation_id, _session_key)
+                _session_existed = _session_val is not None
                 _claude_has_session = bool(_session_val)
                 if _claude_has_session:
-                    logger.info("[claude-code] session exists (%s) — skipping auto-compact",
+                    logger.info("[claude-code] active session (%s) — will resume",
+                                _session_key)
+                elif _session_existed:
+                    logger.info("[claude-code] session invalidated (%s) — new session with current context",
                                 _session_key)
             except Exception:
                 pass
-        _skip_compact = _is_claude_code and _claude_has_session
+        _skip_compact = _is_claude_code and _session_existed
 
         # Resolve max_context early (needed for compact-if-not-fit decision)
         _svc_cfg_early = (getattr(resolved_svc, 'config', {}) or {})
@@ -972,43 +979,23 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                user_id: str,
                                max_context: int = 200000,
                                compact_instructions: str = "") -> List[LLMMessage]:
-        """Auto-compact messages if they exceed 90% of max_context."""
-        _threshold = int(max_context * 0.9)
-        _est = self._estimate_tokens(messages)
-        if _est <= _threshold:
-            logger.info(f"[context:{conversation_id[:8]}] context fits ({_est} tokens <= {_threshold} = 90%% of {max_context}), no compact needed")
-            return messages
-        try:
-            from core.conversation_event_bus import ConversationEventBus
-            bus = ConversationEventBus.instance()
-            bus.publish_event(conversation_id, "compact_progress", {
-                "stage": "summarizing",
-                "detail": f"Compacting {len(messages)} messages ({_est} tokens > {max_context})...",
-                "agent_name": agent_name,
-            })
-            _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
-            if not _sc:
-                raise RuntimeError(
-                    "No summarizer_service configured. Cannot compact context. "
-                    "Set summarizer_service in agent or flow config.")
-            if _sc:
-                _before = len(messages)
-                messages = self._compact_post_response(
-                    messages, _sc, max_context,
-                    conversation_id=conversation_id,
-                    agent_name=agent_name, llm_service=_sc_svc)
-                logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "
-                            f"{_before} → {len(messages)} messages (via {_sc_svc or 'default'})")
-                _tok_after = self._estimate_tokens(messages)
-                bus.publish_event(conversation_id, "compact_progress", {
-                    "stage": "done", "agent": agent_name,
-                    "before": _before, "after": len(messages),
-                    "tokens_after": _tok_after,
-                })
-        except Exception as e:
-            logger.error(f"[context] auto-compact FAILED: {e}")
-            raise  # compaction failure is critical — do not continue with bloated context
-        return messages
+        """Auto-compact messages if they exceed 90% of max_context.
+
+        Delegates to _compact which handles cleanup + threshold check + summarize.
+        """
+        _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
+        if not _sc:
+            raise RuntimeError(
+                "No summarizer_service configured. Cannot compact context. "
+                "Set summarizer_service in agent or flow config.")
+        return self._compact(
+            messages, _sc, max_context,
+            threshold=0.9,
+            conversation_id=conversation_id,
+            agent_name=agent_name,
+            chars_per_token=0,
+            compact_instructions=compact_instructions,
+        )
 
     # ── Context operation pause/resume ─────────────────────────────────
 

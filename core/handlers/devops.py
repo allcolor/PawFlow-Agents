@@ -84,12 +84,8 @@ class RunTestsHandler(ToolHandler):
         if not test_files:
             return "Error: no test files specified"
 
-        # Find filesystem service (reuse FilesystemToolHandler's logic)
-        fs_handler = FilesystemToolHandler()
-        fs_handler._user_id = self._user_id
-        svc = fs_handler._find_service(service_name)
-        if not svc:
-            svc = getattr(fs_handler, '_fs_service', None)
+        from core.handlers._fs_base import find_fs_service
+        svc = find_fs_service(self._user_id, service_name)
         if not svc:
             return "Error: no filesystem service available to run tests"
 
@@ -226,10 +222,8 @@ class GitHubHandler(ToolHandler):
         action = arguments.get("action", "")
         service_name = arguments.get("service", "")
 
-        # Find filesystem service to execute gh commands on
-        fsh = FilesystemToolHandler()
-        fsh._user_id = self._user_id
-        svc = fsh._find_service(service_name)
+        from core.handlers._fs_base import find_fs_service
+        svc = find_fs_service(self._user_id, service_name)
         if not svc:
             return "Error: no filesystem service available to run gh CLI"
 
@@ -344,9 +338,8 @@ class SecurityScanHandler(ToolHandler):
         tool = arguments.get("tool", "bandit")
         service_name = arguments.get("service", "")
 
-        fsh = FilesystemToolHandler()
-        fsh._user_id = self._user_id
-        svc = fsh._find_service(service_name)
+        from core.handlers._fs_base import find_fs_service
+        svc = find_fs_service(self._user_id, service_name)
         if not svc:
             return "Error: no filesystem service available"
 

@@ -234,12 +234,11 @@ class AgentCoreMixin:
             try:
                 from core.checkpoint import CheckpointManager
                 _cp_id = CheckpointManager.start_checkpoint(conversation_id)
-                # Set checkpoint_id on FilesystemToolHandler
-                from core.handlers.filesystem import FilesystemToolHandler as _FSH
+                # Set checkpoint_id on all BaseFsHandler instances
+                from core.handlers._fs_base import BaseFsHandler as _BFH
                 for _h in registry.list_tools():
-                    if isinstance(_h, _FSH):
+                    if isinstance(_h, _BFH):
                         _h.set_checkpoint_id(_cp_id)
-                        break
             except Exception as _cp_err:
                 logger.debug(f"[checkpoint] init failed: {_cp_err}")
 
@@ -273,11 +272,10 @@ class AgentCoreMixin:
                     if ctx.get("_is_claude_code"):
                         llm_context = list(messages)
                     else:
-                        llm_context = self._compact_if_needed(
+                        llm_context = self._compact(
                             copy.deepcopy(messages), compact_client,
                             ctx.get("max_context_size", 64000),
-                            ctx.get("context_compact_threshold", 0.75),
-                            ctx.get("context_keep_recent", 6),
+                            threshold=ctx.get("context_compact_threshold", 0.75),
                             conversation_id=conversation_id,
                             agent_name=ctx.get("active_agent_name") or "",
                             tool_defs=ctx.get("tool_defs"),
@@ -324,20 +322,18 @@ class AgentCoreMixin:
                                 "user can ask you to continue if needed.]"),
                         ))
                         _irpt_resp = client.complete_stream(
-                            messages=self._compact_if_needed(
+                            messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), 0.6,
-                                ctx.get("context_keep_recent", 6)),
+                                ctx.get("max_context_size", 64000), threshold=0.6),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
                             tools=None,
                             callback=emitter.get_token_callback(False),
                         ) if emitter.is_streaming else client.complete(
-                            messages=self._compact_if_needed(
+                            messages=self._compact(
                                 copy.deepcopy(messages), compact_client,
-                                ctx.get("max_context_size", 64000), 0.6,
-                                ctx.get("context_keep_recent", 6)),
+                                ctx.get("max_context_size", 64000), threshold=0.6),
                             model=model or None,
                             temperature=ctx["temperature"],
                             max_tokens=ctx["max_tokens"],
@@ -567,10 +563,9 @@ class AgentCoreMixin:
                         elif "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)
-                            llm_context = self._compact_if_needed(
+                            llm_context = self._compact(
                                 llm_context, compact_client,
-                                ctx.get("max_context_size", 64000), 0.5,
-                                ctx.get("context_keep_recent", 6),
+                                ctx.get("max_context_size", 64000), threshold=0.5,
                                 conversation_id=conversation_id,
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=ctx.get("chars_per_token", 0))

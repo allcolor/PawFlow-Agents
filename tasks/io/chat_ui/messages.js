@@ -136,7 +136,7 @@ function addMsg(role, text, extra) {
         return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
       });
       el.innerHTML = escapeHtml(lines.join('\n'));
-    } else if (toolName === 'filesystem' && args.action === 'edit' && args.path) {
+    } else if (toolName === 'edit' && args.path) {
       el.innerHTML = _renderToolCallEdit(srcLabel, args);
     } else {
       const argKeys = typeof args === 'object' && args ? Object.keys(args) : [];

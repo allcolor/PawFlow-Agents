@@ -315,9 +315,9 @@ function addMsg(type, content, meta) {
 function addToolResult(tool, result, filePath, fsAction) {
   var div = document.createElement('div');
   div.className = 'msg tool_result';
-  // Add clickable file link for filesystem operations
+  // Add clickable file link for file operations
   var pathLink = '';
-  if (filePath && (fsAction === 'read_file' || fsAction === 'edit' || fsAction === 'write_file')) {
+  if (filePath && (tool === 'read_file' || tool === 'edit' || tool === 'write_file')) {
     pathLink = '&#128196; ' + fileLink(filePath) + ' ';
   }
   div.innerHTML = pathLink + renderToolResult(result);
@@ -455,7 +455,7 @@ function handleSSE(event) {
     case 'tool_call':
       finalizeThinking(agent);
       var tcArgs = data.arguments || {};
-      if (data.tool === 'filesystem' && tcArgs.action === 'edit' && tcArgs.path) {
+      if (data.tool === 'edit' && tcArgs.path) {
         // Render edit as inline diff preview with clickable file path
         var editPath = tcArgs.path || '?';
         var editHeader = '&#9998; ' + esc(agent) + ' Edit(' + fileLink(editPath) + ')';

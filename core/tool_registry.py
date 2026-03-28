@@ -43,7 +43,6 @@ from core.handlers import (  # noqa: F401
     CreateToolHandler,
     DeletePlanHandler,
     ExecuteScriptHandler,
-    FilesystemToolHandler,
     FlowManagerHandler,
     ForgetHandler,
     GetAgentResultsHandler,
@@ -57,11 +56,9 @@ from core.handlers import (  # noqa: F401
     ManageResourceHandler,
     NotifyUserHandler,
     PawFlowHelpHandler,
-    ReadFileHandler,
     ReadParentContextHandler,
     RecallHandler,
     RememberHandler,
-    RemoteExecutorHandler,
     RunTestsHandler,
     ScheduleContinuationHandler,
     ScheduleRecheckHandler,
@@ -277,11 +274,9 @@ def create_default_registry() -> ToolRegistry:
     registry.register(WebSearchHandler())
     registry.register(WebFetchHandler())
     registry.register(ScraplingFetchHandler())
-    registry.register(ReadFileHandler())
     registry.register(CreateFileHandler())
     registry.register(ScheduleContinuationHandler())
     registry.register(ScheduleRecheckHandler())
-    registry.register(RemoteExecutorHandler())
     registry.register(ImageGenerationHandler())
     registry.register(ImageModelInfoHandler())
     registry.register(VideoGenerationHandler())
@@ -336,8 +331,29 @@ def create_default_registry() -> ToolRegistry:
     # Identity linking
     registry.register(LinkIdentityHandler())
 
-    # Filesystem
-    registry.register(FilesystemToolHandler())
+    # Filesystem tools (split from monolithic FilesystemToolHandler)
+    from core.handlers.read import ReadHandler
+    from core.handlers.write import WriteHandler
+    from core.handlers.edit_handler import EditHandler
+    from core.handlers.batch_edit import BatchEditHandler
+    from core.handlers.apply_patch import ApplyPatchHandler
+    from core.handlers.find_replace import FindReplaceHandler
+    from core.handlers.delete import DeleteHandler
+    from core.handlers.mkdir import MkdirHandler
+    from core.handlers.stat import StatHandler
+    from core.handlers.exists import ExistsHandler
+    from core.handlers.list_dir import ListDirHandler
+    from core.handlers.glob_handler import GlobHandler
+    from core.handlers.grep_handler import GrepHandler
+    from core.handlers.bash import BashHandler
+    from core.handlers.notebook import NotebookEditHandler
+    from core.handlers.copy import CopyHandler
+    for _h_cls in (ReadHandler, WriteHandler, EditHandler, BatchEditHandler,
+                   ApplyPatchHandler, FindReplaceHandler, DeleteHandler,
+                   MkdirHandler, StatHandler, ExistsHandler, ListDirHandler,
+                   GlobHandler, GrepHandler, BashHandler, NotebookEditHandler,
+                   CopyHandler):
+        registry.register(_h_cls())
 
     # Test runner
     registry.register(RunTestsHandler())

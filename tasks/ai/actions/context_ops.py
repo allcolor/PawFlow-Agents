@@ -309,11 +309,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             msgs = self._deserialize_messages(_compact_source)
             before = len(msgs)
             estimated = self._estimate_tokens(msgs)
-            compacted = self._compact_if_needed(
-                msgs, _compact_client, _compact_max, 0.5,
-                _compact_keep, conversation_id=_compact_conv,
+            compacted = self._compact(
+                msgs, _compact_client, _compact_max,
+                conversation_id=_compact_conv,
                 agent_name=_compact_agent_name,
                 compact_instructions=_compact_instructions,
+                force=True,
             )
             after_tokens = self._estimate_tokens(compacted)
             # Manual compact → invalidate claude-code sessions

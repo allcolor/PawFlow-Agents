@@ -83,8 +83,8 @@ function fetchFsFile(service, fpath) {
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({
-      action: 'call_tool', tool_name: 'filesystem',
-      arguments: { action: 'read_file', path: fpath, service: service },
+      action: 'call_tool', tool_name: 'read',
+      arguments: { path: fpath, service: service },
       conversation_id: conversationId,
     }),
   }).then(r => r.json()).then(data => {

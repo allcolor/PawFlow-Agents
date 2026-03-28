@@ -345,7 +345,6 @@ function connectSSE(cid) {
       agent_name: data.agent_name || '',
       llm_service: data.llm_service || '',
       path: data.path || '',
-      fs_action: data.fs_action || '',
       ts: data.ts,
     });
     if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }

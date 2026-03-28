@@ -706,10 +706,10 @@ class AgentLoopTask(
                                 role="tool", content="[Unavailable]", tool_call_id=tc_id))
 
                 # Compact + call LLM (stream tokens to user)
-                compact_msgs = self._compact_if_needed(
+                compact_msgs = self._compact(
                     messages, client,
                     ctx.get("max_context_size", 64000) if 'ctx' in dir() else 64000,
-                    0.6, 6, conversation_id=conversation_id)
+                    threshold=0.6, conversation_id=conversation_id)
 
 
                 def _on_token(text):

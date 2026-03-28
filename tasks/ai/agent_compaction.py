@@ -188,171 +188,6 @@ class AgentCompactionMixin:
 
         return current_tokens
 
-    def _compact_post_response(
-        self,
-        messages: List[LLMMessage],
-        client: LLMClient,
-        max_context: int,
-        keep_recent: int = 6,
-        conversation_id: str = "",
-        agent_name: str = "",
-        llm_service: str = "",
-        chars_per_token: float = 0,
-        compact_instructions: str = "",
-    ) -> List[LLMMessage]:
-        """Compact context AFTER the agent's final response.
-
-        Called at the end of every agent turn to minimize token usage on
-        the next turn. Strategy:
-        1. Keep system prompt (message[0])
-        2. Summarize the full conversation into a short state summary (~500 tokens)
-        3. Summarize the last work in more detail (~1000 tokens)
-        4. Keep the last `keep_recent` messages verbatim
-
-        The full history is always available via read_history tool.
-        """
-        system_msg = messages[0] if messages[0].role == "system" else None
-        start_idx = 1 if system_msg else 0
-
-        _split = _select_recent_messages(messages, start_idx)
-        if _split <= start_idx:
-            return messages
-
-        old_messages = messages[start_idx:_split]
-        recent_messages = messages[_split:]
-
-        # Clear oversized tool results in ALL messages before compacting
-        # (prevents 2MB blobs from inflating the token estimate)
-        self._clear_seen_tool_results(messages, keep_recent=0,
-                                       conversation_id=conversation_id,
-                                       agent_name=agent_name)
-
-        # Filter old messages: only conversation (no tool plumbing)
-        old_conv = [
-            m for m in old_messages
-            if m.role in ("user", "assistant")
-            and not getattr(m, "tool_calls", None)
-            and not (m.role == "user" and isinstance(m.content, str)
-                     and m.content.startswith("[System:"))
-        ]
-        if not old_conv:
-            logger.info(f"[compact-post] No conversation messages to summarize (all tool plumbing)")
-            return messages
-
-        logger.info(f"[compact-post] {len(messages)} msgs → split at {_split}: "
-                     f"{len(old_messages)} old ({len(old_conv)} conv), {len(recent_messages)} recent")
-
-        # Summarize
-        try:
-            _text_to_summarize = self._messages_to_text(old_conv)
-            logger.info(f"[compact-post] Summarizing {len(_text_to_summarize)} chars from {len(old_conv)} msgs...")
-            _summary_target = max(1000, int(max_context * 0.05))
-            summary = self._summarize_messages(
-                old_conv, client, max_context,
-                target_tokens=_summary_target,
-                conversation_id=conversation_id,
-                agent_name=agent_name,
-                compact_instructions=compact_instructions,
-            )
-            logger.info(f"[compact-post] Summary done: {len(summary)} chars")
-        except Exception as e:
-            logger.error(f"[compact-post] Summary FAILED: {e}", exc_info=True)
-            raise RuntimeError(f"Compaction failed: {e}") from e
-
-        # Guard: empty summary = LLM returned nothing → critical error
-        if not summary or len(summary.strip()) < 20:
-            logger.error(f"[compact-post] CRITICAL: Summary too short ({len(summary)} chars) — "
-                         f"summarizer LLM returned empty. Check service config (temperature, model).")
-            raise RuntimeError(
-                f"Compaction failed: summarizer returned {len(summary)} chars. "
-                f"Service: {llm_service or 'default'}")
-
-        # Build compacted context
-        compacted: List[LLMMessage] = []
-        if system_msg:
-            compacted.append(system_msg)
-        compacted.append(LLMMessage(
-            role="user",
-            content=(
-                f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                f"Use read_history tool to access older messages if needed. "
-                f"The recent messages below are the current state."
-            ),
-        ))
-        compacted.append(LLMMessage(
-            role="assistant",
-            content="Understood. I have the summary of our earlier conversation "
-                    "and can use read_history if I need details from older messages.",
-        ))
-        compacted.extend(recent_messages)
-
-        # Post-compaction: re-read recently accessed files (like Claude Code)
-        # Extract unique file paths from recent tool calls, limit to 5 most recent
-        _recent_files = []
-        _seen_paths = set()
-        for m in reversed(recent_messages):
-            if m.role == "assistant" and m.tool_calls:
-                for tc in m.tool_calls:
-                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
-                    _action = _args.get("action", "")
-                    _path = _args.get("path", "")
-                    if _action in ("read_file", "edit", "write_file") and _path and _path not in _seen_paths:
-                        _recent_files.append(_path)
-                        _seen_paths.add(_path)
-                        if len(_recent_files) >= 5:
-                            break
-                if len(_recent_files) >= 5:
-                    break
-        if _recent_files:
-            _files_note = "Recently accessed files (re-read for context continuity):\n"
-            for _fp in _recent_files:
-                _files_note += f"  - {_fp}\n"
-            _files_note += "You can re-read these files with read_file/filesystem if you need their full current content."
-            compacted.append(LLMMessage(
-                role="user",
-                content=f"[System: {_files_note}]"
-            ))
-            compacted.append(LLMMessage(
-                role="assistant",
-                content="Noted. I'm aware of these recently accessed files and can re-read them if needed."
-            ))
-
-        _cpt = chars_per_token if chars_per_token > 0 else 3.5
-        new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
-        logger.info(
-            f"[compact-post] {len(messages)} messages → {len(compacted)} "
-            f"(~{new_est} tokens)")
-
-        # Fallback: if still over max_context, retry with aggressive params
-        if new_est > max_context and len(recent_messages) > 10:
-            logger.info("[compact-post] still over max_context, retrying aggressive (6 conv, max 20)")
-            _split2 = _select_recent_messages(messages, start_idx,
-                                               min_conversation=6, max_total=20)
-            if _split2 > start_idx:
-                recent_messages = messages[_split2:]
-                compacted = []
-                if system_msg:
-                    compacted.append(system_msg)
-                compacted.append(LLMMessage(role="user", content=(
-                    f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                    f"Use read_history tool to access older messages if needed.")))
-                compacted.append(LLMMessage(role="assistant", content="Understood."))
-                compacted.extend(recent_messages)
-                new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
-                logger.info(f"[compact-post] aggressive: {len(compacted)} msgs (~{new_est} tokens)")
-
-        # Persist compacted context
-        if conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                serialized = self._serialize_messages(compacted)
-                ConversationStore.instance().save_agent_context(
-                    conversation_id, agent_name, serialized)
-            except Exception as e:
-                logger.warning(f"[compact-post] Persist failed: {e}")
-
-        return compacted
-
     def _force_synthesis(self, messages, client, ctx, *, prompt: str,
                          compact_client=None, use_streaming: bool = False,
                          token_callback=None, tools_called: list = None,
@@ -364,11 +199,10 @@ class AgentCompactionMixin:
         """
         messages.append(LLMMessage(role="user", content=prompt))
         _cc = compact_client or client
-        synth_context = self._compact_if_needed(
+        synth_context = self._compact(
             list(messages), _cc,
             ctx.get("max_context_size", 64000),
-            compact_threshold,
-            ctx.get("context_keep_recent", 6),
+            threshold=compact_threshold,
             conversation_id=conversation_id,
         )
         model = ctx.get("model") or None
@@ -394,10 +228,10 @@ class AgentCompactionMixin:
                 err_str = str(synth_err)
                 if _attempt == 0 and ("exceed_context_size" in err_str or "n_prompt_tokens" in err_str):
                     logger.warning("[agent] synthesis overflow, forcing aggressive compaction...")
-                    synth_context = self._compact_if_needed(
+                    synth_context = self._compact(
                         synth_context, _cc,
                         ctx.get("max_context_size", 64000),
-                        0.4, ctx.get("context_keep_recent", 4),
+                        threshold=0.4,
                         conversation_id=conversation_id,
                     )
                     continue
@@ -494,38 +328,37 @@ class AgentCompactionMixin:
         return keep
 
 
-    def _compact_if_needed(
+    def _compact(
         self,
         messages: List[LLMMessage],
         client: LLMClient,
         max_tokens: int,
-        threshold: float,
-        keep_recent: int,
+        threshold: float = 0.9,
         conversation_id: str = "",
         agent_name: str = "",
         tool_defs: list = None,
         chars_per_token: float = 0,
         compact_instructions: str = "",
+        force: bool = False,
     ) -> List[LLMMessage]:
-        """Compact conversation history if approaching the token limit.
+        """Unified compaction: cleanup + threshold check + summarize + rebuild.
+
+        When force=True, always compacts (used at context load time).
+        When force=False, only compacts if estimated tokens exceed threshold.
 
         Strategy:
-        1. First pass: truncate long tool_results (>500 chars → 200 + "...truncated")
-        2. If still over threshold: summarize old messages via LLM call
-
-        Always preserves:
-        - System prompt (first message)
-        - Last `keep_recent` messages (never compacted)
-
-        If *conversation_id* is given, the resulting summary is persisted
-        to the ConversationStore so it can be reused after a restart.
+        Phase 0: Cleanup (orphans, images, base64, oversized tool results)
+        Phase 1: Progressive clearing of old tool results
+        Phase 2: LLM-based summarization of old messages
+        Phase 3: Rebuild (system + summary + recent + file re-read)
+        Phase 4: Persist + notify
         """
-        # Ensure no display-only messages leak into compaction
+        _cpt = chars_per_token if chars_per_token > 0 else 3.5
+
+        # ── Phase 0: Cleanup ──
         messages = [m for m in messages if getattr(m, 'role', '') != 'sub_agent_trace']
 
-        # Remove orphan tool results — tool messages whose tool_call_id has
-        # no matching assistant message with that tool_call. These accumulate
-        # when tool chains are partially compacted or messages are dropped.
+        # Remove orphan tool results
         _valid_tc_ids = set()
         for m in messages:
             if m.role == "assistant" and m.tool_calls:
@@ -540,64 +373,68 @@ class AgentCompactionMixin:
         if len(messages) < _pre_orphan:
             logger.info(f"[compact] Removed {_pre_orphan - len(messages)} orphan tool result(s)")
 
-        # Deflate old images before estimating — but keep the last one
-        # (the LLM hasn't seen it yet in this iteration)
+        # Deflate old images
         self._deflate_image_messages(messages, keep_last=True)
-        # Strip base64 blobs from ALL messages — images, tool results, user attachments
+
+        # Strip base64 blobs
         import re as _re_b64
         for m in messages:
             if not isinstance(m.content, str) or len(m.content) < 5000:
                 continue
             if not self._detect_base64_blob(m.content):
                 continue
-            # Strip data URIs (data:image/png;base64,...)
             m.content = _re_b64.sub(
                 r'data:[^;]*;base64,[A-Za-z0-9+/=]+',
                 '[base64 image removed — use show_file to view]',
                 m.content,
             )
-            # Strip raw base64 blobs (>1000 chars of base64 alphabet)
             m.content = _re_b64.sub(
                 r'[A-Za-z0-9+/=]{1000,}',
                 '[binary data removed]',
                 m.content,
             )
 
+        # Clear oversized tool results to FileStore refs
+        self._clear_seen_tool_results(messages, keep_recent=0,
+                                       conversation_id=conversation_id,
+                                       agent_name=agent_name)
+
+        # ── Threshold check (skip when forced) ──
+        _original_count = len(messages)
         estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
                                           chars_per_token=chars_per_token)
+        _original_tokens = estimated
         limit = int(max_tokens * threshold)
 
         logger.debug(f"[compact] check: {estimated} est. tokens, limit={limit} "
                      f"(max={max_tokens}×{threshold}), {len(messages)} msgs, "
-                     f"cpt={chars_per_token:.2f}")
+                     f"force={force}")
 
-        if estimated <= limit:
+        if not force and estimated <= limit:
             return messages
 
-        logger.info(f"[compact] TRIGGERED: {estimated} > {limit}, compacting...")
+        logger.info(f"[compact] {'FORCED' if force else 'TRIGGERED'}: "
+                    f"{estimated} tokens, limit={limit}, compacting...")
 
-        # Pass 1: Progressive clearing of old tool results (oldest first)
-        _cpt = chars_per_token if chars_per_token > 0 else 3.5
+        # ── Phase 1: Progressive clearing of old tool results ──
         estimated = self._progressive_clear_tool_results(
             messages, limit, estimated,
-            keep_recent=keep_recent,
+            keep_recent=6,
             chars_per_token=_cpt,
         )
-        if estimated <= limit:
-            logger.info(f"[compact] Pass 1 (progressive clear) sufficient: ~{estimated} tokens")
+        if not force and estimated <= limit:
+            logger.info(f"[compact] Progressive clear sufficient: ~{estimated} tokens")
             return messages
 
-        # Pass 1b: If still way over, truncate ALL non-recent messages aggressively
+        # Aggressive truncation if still way over
         if estimated > limit * 2:
-            logger.warning(f"[compact] Still {estimated} tokens after truncation, "
-                           f"aggressive truncation of old messages")
-            _keep_n = max(keep_recent, 6)
-            _cutoff = len(messages) - _keep_n
+            logger.warning(f"[compact] Still {estimated} tokens, aggressive truncation")
+            _cutoff = len(messages) - 6
             for i, m in enumerate(messages):
                 if i == 0 and m.role == "system":
-                    continue  # preserve system prompt
+                    continue
                 if i >= _cutoff:
-                    break  # preserve recent
+                    break
                 if isinstance(m.content, str) and len(m.content) > 200:
                     m.content = m.content[:100] + "\n...[aggressively truncated]..."
                 elif isinstance(m.content, list):
@@ -605,20 +442,14 @@ class AgentCompactionMixin:
             estimated = self._estimate_tokens(messages, tool_defs=tool_defs,
                                               chars_per_token=chars_per_token)
 
-        # Pass 2: LLM-based summarization of old messages
-        if len(messages) <= keep_recent + 1:
-            # Not enough messages to compact
+        # ── Phase 2: Split + summarize ──
+        if len(messages) <= 7:
             logger.info(f"[compact] Only {len(messages)} messages, cannot compact further")
             return messages
 
-        # Split: system prompt | old messages | recent messages
-        # Guarantee: keep at least 3 complete assistant responses AND all
-        # trailing tool-call chains (assistant+tool_results) intact.
         system_msg = messages[0] if messages[0].role == "system" else None
         start_idx = 1 if system_msg else 0
 
-        # Walk backwards to find the split point:
-        # 1. Count "conversation messages" = user messages + assistant TEXT responses
         split_point = _select_recent_messages(messages, start_idx)
         if split_point <= start_idx:
             return messages
@@ -626,10 +457,7 @@ class AgentCompactionMixin:
         old_messages = messages[start_idx:split_point]
         recent_messages = messages[split_point:]
 
-        # Filter old_messages for summarizer: only conversation messages
-        # (user + assistant text). Tool calls/results are noise — they cost
-        # tokens and the summarizer can't do anything useful with JSON args
-        # or raw tool output. The relevant tool state is in recent_messages.
+        # Filter old messages for summarizer: only conversation (no tool plumbing)
         old_conversation = [
             m for m in old_messages
             if m.role in ("user", "assistant") and not getattr(m, "tool_calls", None)
@@ -637,57 +465,53 @@ class AgentCompactionMixin:
                      and m.content.startswith("[System:"))
         ]
         if not old_conversation:
-            # Only tool plumbing in old zone — nothing to summarize
             old_conversation = old_messages[-2:] if len(old_messages) > 1 else old_messages
 
-        # Check if dropping tool plumbing alone is enough — skip summarizer if so
-        _slim_messages = ([system_msg] if system_msg else []) + old_conversation + recent_messages
-        _slim_est = self._estimate_tokens(_slim_messages, tool_defs=tool_defs,
-                                           chars_per_token=chars_per_token)
-        if _slim_est <= limit:
-            logger.info(f"[compact] Dropping tool plumbing sufficient: "
-                        f"{estimated} → {_slim_est} tokens (limit={limit}), no summary needed")
-            # Rebuild: system + old conversation messages + recent
-            compacted = []
-            if system_msg:
-                compacted.append(system_msg)
-            compacted.extend(old_conversation)
-            compacted.extend(recent_messages)
-            # Truncate large tool results in recent zone
-            for m in compacted:
-                if m.role == "tool" and isinstance(m.content, str) and len(m.content) > self._TOOL_TRUNC_LIMIT:
-                    m.content = m.content[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
-            # Persist stripped context so we don't re-compact next iteration
-            if conversation_id:
-                try:
-                    from core.conversation_store import ConversationStore
-                    serialized = self._serialize_messages(compacted)
-                    ConversationStore.instance().save_agent_context(
-                        conversation_id, agent_name, serialized,
-                    )
-                except Exception as e:
-                    logger.warning(f"[compact] Failed to persist stripped context: {e}")
-            return compacted
+        # Check if dropping tool plumbing alone is enough
+        if not force:
+            _slim = ([system_msg] if system_msg else []) + old_conversation + recent_messages
+            _slim_est = self._estimate_tokens(_slim, tool_defs=tool_defs,
+                                               chars_per_token=chars_per_token)
+            if _slim_est <= limit:
+                logger.info(f"[compact] Dropping tool plumbing sufficient: "
+                            f"{estimated} → {_slim_est} tokens")
+                compacted = []
+                if system_msg:
+                    compacted.append(system_msg)
+                compacted.extend(old_conversation)
+                compacted.extend(recent_messages)
+                self._truncate_tool_results(compacted)
+                self._persist_context(compacted, conversation_id, agent_name)
+                return compacted
 
-        # Summarize old conversation — target = 1/4 of context max
-        _summary_target = max(500, int(max_tokens / 4))
+        # Summarize
+        _summary_target = max(1000, int(max_tokens * 0.05))
         try:
-            summary = self._summarize_messages(old_conversation, client, max_tokens,
-                                               target_tokens=_summary_target,
-                                               conversation_id=conversation_id,
-                                               agent_name=agent_name,
-                                               compact_instructions=compact_instructions)
+            summary = self._summarize_messages(
+                old_conversation, client, max_tokens,
+                target_tokens=_summary_target,
+                conversation_id=conversation_id,
+                agent_name=agent_name,
+                compact_instructions=compact_instructions,
+            )
         except Exception as e:
+            if force:
+                logger.error(f"[compact] Summary FAILED: {e}", exc_info=True)
+                raise RuntimeError(f"Compaction failed: {e}") from e
             logger.error(f"[compact] Summarization failed: {e}")
-            # NEVER return the original messages if they exceed the limit.
-            # Build a minimal context with just system + placeholder + recent.
-            logger.warning("[compact] Falling back to drop-old strategy (no summary)")
             summary = (
                 f"[Earlier conversation ({len(old_messages)} messages) could not be "
                 f"summarized due to: {e}. Context was dropped to fit within limits.]"
             )
 
-        # Rebuild messages: system + summary + recent
+        # Guard: empty summary
+        if not summary or len(summary.strip()) < 20:
+            if force:
+                raise RuntimeError(
+                    f"Compaction failed: summarizer returned {len(summary or '')} chars")
+            summary = f"[Summary unavailable — {len(old_messages)} earlier messages dropped]"
+
+        # ── Phase 3: Rebuild ──
         compacted: List[LLMMessage] = []
         if system_msg:
             compacted.append(system_msg)
@@ -695,41 +519,103 @@ class AgentCompactionMixin:
             role="user",
             content=(
                 f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
-                f"IMPORTANT: The above is a summary of our earlier conversation. "
-                f"The recent messages below contain the CURRENT state of our work. "
-                f"Do NOT restart or re-propose work that is already done. "
-                f"Continue from where you left off based on the recent messages. "
-                f"Some tool outputs may have been compacted — if you need data "
-                f"from a compacted tool output, re-call the tool to get fresh results."
+                f"The recent messages below are the current state. "
+                f"Do NOT restart or re-propose completed work. "
+                f"Use read_history tool to access older messages if needed."
             ),
         ))
         compacted.append(LLMMessage(
             role="assistant",
-            content=(
-                "Understood. I've read the summary of our earlier conversation. "
-                "I'll continue from the current state shown in the recent messages below, "
-                "without restarting or re-proposing completed work. "
-                "If I need data from a compacted tool output, I'll re-call the tool."
-            ),
+            content="Understood. I have the summary and will continue from the recent messages.",
         ))
         compacted.extend(recent_messages)
 
-        # Truncate large tool results in the recent zone — they can blow up
-        # the context budget on their own (e.g. scrape_url, read_file).
-        for m in compacted:
-            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > self._TOOL_TRUNC_LIMIT:
-                m.content = m.content[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
-            elif m.role == "tool" and isinstance(m.content, list):
-                text_parts = [p for p in m.content if p.get("type") == "text"]
-                text = " ".join(p.get("text", "") for p in text_parts)
-                m.content = text[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..." if len(text) > self._TOOL_TRUNC_LIMIT else text
+        # File re-read: extract last read_file per file from OLD messages
+        # with exact offset/limit so re-read matches what the LLM saw.
+        _file_reads = {}
+        for m in old_messages:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    _path = _args.get("path", "")
+                    _tool = getattr(tc, "name", "") or ""
+                    if _tool == "read" and _path:
+                        _read_info = {"path": _path}
+                        _off = _args.get("offset")
+                        _lim = _args.get("limit")
+                        _svc = _args.get("source", "")
+                        if _off:
+                            _read_info["offset"] = int(_off)
+                        if _lim:
+                            _read_info["limit"] = int(_lim)
+                        if _svc:
+                            _read_info["service"] = _svc
+                        _file_reads[_path] = _read_info
+                    elif _tool in ("edit", "write") and _path:
+                        _file_reads[_path] = {"path": _path}
+        for m in recent_messages:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    _path = _args.get("path", "")
+                    if _path:
+                        _file_reads.pop(_path, None)
+        _file_list = list(_file_reads.values())[-5:]
+        if _file_list:
+            _files_note = "Files you were working with (lost after compaction). Re-read them now to restore context:\n"
+            for _fr in _file_list:
+                _desc = f"  - read_file {_fr['path']}"
+                if _fr.get("offset") or _fr.get("limit"):
+                    _params = []
+                    if _fr.get("offset"):
+                        _params.append(f"offset={_fr['offset']}")
+                    if _fr.get("limit"):
+                        _params.append(f"limit={_fr['limit']}")
+                    _desc += f" ({', '.join(_params)})"
+                if _fr.get("service"):
+                    _desc += f" [service: {_fr['service']}]"
+                _files_note += _desc + "\n"
+            _files_note += "Call read_file with the exact same parameters to restore your working context."
+            compacted.append(LLMMessage(
+                role="user",
+                content=f"[System: {_files_note}]"
+            ))
+            compacted.append(LLMMessage(
+                role="assistant",
+                content="I'll re-read these files now to restore my working context."
+            ))
 
+        # Truncate large tool results in recent zone
+        self._truncate_tool_results(compacted)
+
+        # Fallback: if still over max after summary, retry with aggressive split
         new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
                                               chars_per_token=chars_per_token)
-        logger.info(f"[compact] Final: {new_estimate} tokens (was {estimated}), "
-                    f"{len(compacted)} messages (was {len(messages)})")
+        if new_estimate > max_tokens and len(recent_messages) > 10:
+            logger.info(f"[compact] Still over max ({new_estimate}), aggressive split (6 conv, max 20)")
+            _split2 = _select_recent_messages(messages, start_idx,
+                                               min_conversation=6, max_total=20)
+            if _split2 > start_idx:
+                recent_messages = messages[_split2:]
+                compacted = []
+                if system_msg:
+                    compacted.append(system_msg)
+                compacted.append(LLMMessage(role="user", content=(
+                    f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
+                    f"Use read_history tool to access older messages if needed.")))
+                compacted.append(LLMMessage(role="assistant", content="Understood."))
+                compacted.extend(recent_messages)
+                self._truncate_tool_results(compacted)
+                new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,
+                                                      chars_per_token=chars_per_token)
+                logger.info(f"[compact] Aggressive: {len(compacted)} msgs (~{new_estimate} tokens)")
 
-        # Notify UI that compaction is done
+        logger.info(f"[compact] Final: {new_estimate} tokens (was {_original_tokens}), "
+                    f"{len(compacted)} messages (was {_original_count})")
+
+        # ── Phase 4: Persist + notify ──
+        self._persist_context(compacted, conversation_id, agent_name)
+
         if conversation_id:
             try:
                 from core.conversation_event_bus import ConversationEventBus
@@ -745,20 +631,36 @@ class AgentCompactionMixin:
             except Exception:
                 pass
 
-        # Persist the compacted context so it survives restarts
-        if conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                serialized = self._serialize_messages(compacted)
-                ConversationStore.instance().save_agent_context(
-                    conversation_id, agent_name, serialized,
-                )
-                logger.info(f"[compact] Persisted context for {conversation_id[:8]} "
-                            f"({len(compacted)} messages)")
-            except Exception as e:
-                logger.warning(f"[compact] Failed to persist context: {e}")
-
         return compacted
+
+    def _truncate_tool_results(self, messages: List[LLMMessage]):
+        """Truncate oversized tool results in-place."""
+        for m in messages:
+            if m.role == "tool" and isinstance(m.content, str) and len(m.content) > self._TOOL_TRUNC_LIMIT:
+                m.content = m.content[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
+            elif m.role == "tool" and isinstance(m.content, list):
+                text_parts = [p for p in m.content if p.get("type") == "text"]
+                text = " ".join(p.get("text", "") for p in text_parts)
+                if len(text) > self._TOOL_TRUNC_LIMIT:
+                    m.content = text[:self._TOOL_TRUNC_LIMIT] + "\n...[compacted — re-call tool if needed]..."
+                else:
+                    m.content = text
+
+    def _persist_context(self, compacted: List[LLMMessage],
+                         conversation_id: str, agent_name: str):
+        """Persist compacted context to ConversationStore."""
+        if not conversation_id:
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            serialized = self._serialize_messages(compacted)
+            ConversationStore.instance().save_agent_context(
+                conversation_id, agent_name, serialized,
+            )
+            logger.info(f"[compact] Persisted context for {conversation_id[:8]} "
+                        f"({len(compacted)} messages)")
+        except Exception as e:
+            logger.warning(f"[compact] Failed to persist context: {e}")
 
 
     def _summarize_messages(
@@ -1095,9 +997,9 @@ class AgentCompactionMixin:
             FileStore.instance().delete(file_id)
         except Exception:
             pass
-        client._claude_session_id = _saved_session
-        client._conversation_id = _saved_conv
-        client._agent_name = _saved_agent
+        _inner._claude_session_id = _saved_session
+        _inner._conversation_id = _saved_conv
+        _inner._agent_name = _saved_agent
         raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
 
     def _call_summarize_with_budget(self, client: LLMClient,

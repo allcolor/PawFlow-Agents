@@ -178,16 +178,17 @@ class ToolRelayService(BaseService):
                     except Exception:
                         pass
 
-        fs_handler = registry.get("filesystem")
-        if fs_handler:
-            # Populate available filesystem services (global + user)
+        # Populate available services on all BaseFsHandler instances
+        from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
+        _fs_handlers = [h for h in registry.list_tools() if isinstance(h, BaseFsHandler)]
+        if _fs_handlers:
             try:
                 available = []
                 from gui.services.global_service_registry import GlobalServiceRegistry
                 greg = GlobalServiceRegistry.get_instance()
                 for sid, sdef in greg.get_all_definitions().items():
                     stype = getattr(sdef, "service_type", "")
-                    if stype in fs_handler._FS_TYPES:
+                    if stype in _FS_TYPES:
                         svc = greg.get_live_instance(sid)
                         if svc:
                             available.append({
@@ -199,7 +200,7 @@ class ToolRelayService(BaseService):
                     ureg = UserServiceRegistry.get_instance()
                     for sid, sdef in ureg.get_all_for_user(user_id).items():
                         stype = getattr(sdef, "service_type", "")
-                        if stype in fs_handler._FS_TYPES:
+                        if stype in _FS_TYPES:
                             svc = ureg.get_live_instance(user_id, sid)
                             if svc:
                                 available.append({
@@ -207,7 +208,8 @@ class ToolRelayService(BaseService):
                                     "root": getattr(svc, "root_path", "?"),
                                 })
                 if available:
-                    fs_handler._available_services = available
+                    for h in _fs_handlers:
+                        h._available_services = available
                     logger.info("Filesystem services for user '%s': %s",
                                 user_id, [s["id"] for s in available])
             except Exception as e:
@@ -283,11 +285,8 @@ class ToolRelayService(BaseService):
         try:
             from core.tool_approval import ToolApprovalGate
             if ToolApprovalGate.is_enabled(conversation_id):
-                action_summary = tool_name
-                if tool_name == "filesystem" and isinstance(arguments, dict):
-                    action = arguments.get("action", "")
-                    path = arguments.get("path", "")
-                    action_summary = f"filesystem.{action}({path})" if path else f"filesystem.{action}"
+                _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
+                action_summary = f"{tool_name}({_path})" if _path else tool_name
                 approval = ToolApprovalGate.check(
                     tool_name, action_summary, conversation_id, user_id, arguments
                 )

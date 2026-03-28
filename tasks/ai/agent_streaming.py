@@ -24,7 +24,6 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
         return ""
     _VERBS = {
         "generate_image": ("Generating", "image"),
-        "filesystem": None,
         "web_search": ("Searching the web", None),
         "scrape_url": ("Scraping", "page"),
         "execute_script": ("Running", "script"),
@@ -32,22 +31,30 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
         "read_file": ("Reading", "file"),
         "schedule_continuation": ("Scheduling continuation", None),
         "spawn_agents": ("Spawning", "agent"),
+        # Split filesystem tools — tool name IS the action
+        "read": ("Reading", "file"),
+        "write": ("Writing", "file"),
+        "edit": ("Editing", "file"),
+        "batch_edit": ("Batch editing", "file"),
+        "apply_patch": ("Applying", "patch"),
+        "find_replace": ("Find & replace", None),
+        "delete": ("Deleting", "file"),
+        "mkdir": ("Creating", "directory"),
+        "stat": ("Checking", "file"),
+        "exists": ("Checking existence", None),
+        "list_dir": ("Listing", "directory"),
+        "glob": ("Searching", "file"),
+        "grep": ("Searching file contents", None),
+        "bash": ("Running", "command"),
+        "notebook_edit": ("Editing", "notebook"),
+        "copy": ("Copying", "file"),
     }
     counts = {}
     for tc in tool_calls:
         counts[tc.name] = counts.get(tc.name, 0) + 1
     parts = []
     for name, count in counts.items():
-        if name == "filesystem":
-            actions = {}
-            for tc in tool_calls:
-                if tc.name == "filesystem":
-                    a = tc.arguments.get("action", "filesystem op")
-                    actions[a] = actions.get(a, 0) + 1
-            for a, c in actions.items():
-                label = a.replace("_", " ")
-                parts.append(f"{label} ({c})" if c > 1 else label)
-        elif name in _VERBS:
+        if name in _VERBS:
             v = _VERBS[name]
             if v is None:
                 continue

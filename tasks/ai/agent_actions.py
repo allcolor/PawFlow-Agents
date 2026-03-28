@@ -422,6 +422,7 @@ class AgentActionsMixin:
 
         Called after rebuild/compact/summary/restart — the context changed,
         so Claude Code must start a new session with the updated context.
+        Also cleans up dead session data (transcripts, cache) from the workdir.
         """
         try:
             from core.conversation_store import ConversationStore
@@ -432,6 +433,22 @@ class AgentActionsMixin:
                 store.set_extra(conv_id, key, "")
                 logger.info("Cleared Claude Code session for %s/%s",
                             conv_id[:8], agent_name or "default")
+        except Exception:
+            pass
+        # Clean up dead session data from workdir
+        try:
+            import os
+            import shutil
+            _base = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+                "data", "claude_sessions",
+            )
+            workdir = os.path.join(_base, conv_id or "default", agent_name or "default")
+            for subdir in ("projects", "sessions", ".cache"):
+                _path = os.path.join(workdir, subdir)
+                if os.path.isdir(_path):
+                    shutil.rmtree(_path, ignore_errors=True)
+                    logger.info("Cleaned up %s/%s/%s", conv_id[:8], agent_name or "default", subdir)
         except Exception:
             pass
 

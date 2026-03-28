@@ -44,13 +44,13 @@ class AgentToolConfigMixin:
             CancelPlanHandler,
             CreatePlanHandler,
             DeletePlanHandler,
-            CreateToolHandler, ExecuteScriptHandler, FilesystemToolHandler,
+            CreateToolHandler, ExecuteScriptHandler,
             FlowManagerHandler,
             ForgetHandler, GetAgentResultsHandler,
             ImageGenerationHandler, ImageModelInfoHandler, VideoGenerationHandler, AudioGenerationHandler,
             LinkIdentityHandler, ManageResourceHandler,
             NotifyUserHandler,
-            RecallHandler, RememberHandler, RemoteExecutorHandler,
+            RecallHandler, RememberHandler,
             SemanticRecallHandler,
             AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler,
             ListSecretsHandler,
@@ -58,6 +58,7 @@ class AgentToolConfigMixin:
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
             GitHubHandler, SecurityScanHandler,
         )
+        from core.handlers._fs_base import BaseFsHandler
         from core.handlers.compact_result import CompactResultHandler
 
         file_base_url = self.config.get("file_base_url", "")
@@ -214,30 +215,16 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if user_id:
                     h.set_user_id(user_id)
-            elif isinstance(h, RemoteExecutorHandler):
-                if conversation_id:
-                    h.set_conversation_id(conversation_id)
-                if user_id:
-                    h.set_user_id(user_id)
-                exec_svc = self._find_executor_service(user_id)
-                if exec_svc:
-                    h.set_service(exec_svc)
-                # Plan D: pass available services list
-                exec_services = self._list_available_services(user_id, "remoteExecutor")
-                if exec_services:
-                    h.set_available_services(exec_services)
-            elif isinstance(h, FilesystemToolHandler):
+            elif isinstance(h, BaseFsHandler):
                 if user_id:
                     h.set_user_id(user_id)
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
-                # Try to inject filesystem service (Plan B: cross-channel)
                 fs_svc = self._find_filesystem_service(user_id)
                 if fs_svc:
                     if hasattr(fs_svc, 'set_user_id') and user_id:
                         fs_svc.set_user_id(user_id)
                     h.set_fs_service(fs_svc)
-                # Plan D: pass available services list
                 fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
                     h.set_available_services(fs_services)

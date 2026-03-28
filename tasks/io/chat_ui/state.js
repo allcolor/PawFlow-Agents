@@ -75,16 +75,6 @@ let messageHistory = JSON.parse(localStorage.getItem('pawflow_msg_history') || '
 let historyIndex = -1;    // -1 = not navigating, 0 = most recent
 let savedDraft = '';      // text being typed before navigating
 
-// ── Watchdog: if sending and no SSE activity for 15s, try recovery ──
-setInterval(() => {
-  if (!sending || !conversationId || contextOpInProgress) return;
-  const now = Date.now();
-  if (lastSSEActivity > 0 && (now - lastSSEActivity) > 15000) {
-    console.log('[watchdog] no SSE activity for 15s while sending — recovering');
-    lastSSEActivity = now;  // reset to avoid re-triggering immediately
-    _recoverConversation(conversationId);
-  }
-}, 5000);
 
 // ── Keep-alive: ping every 4 min to renew sliding session ──
 // Note: cookie is HttpOnly so getToken() returns null — use conversationId as auth indicator

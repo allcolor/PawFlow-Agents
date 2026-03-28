@@ -238,6 +238,8 @@ class WebSearchHandler(ToolHandler):
             import re as _re
 
             # Use DuckDuckGo HTML lite (no JS needed, no API key)
+            import ssl
+            import http.client
             path = f"/html/?{urlencode({'q': query})}"
             ctx = ssl.create_default_context()
             conn = http.client.HTTPSConnection("html.duckduckgo.com", timeout=15, context=ctx)

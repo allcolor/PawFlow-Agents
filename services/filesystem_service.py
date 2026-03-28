@@ -637,7 +637,6 @@ class RelayService(BaseService):
             raise Exception(f"Failed to send to relay: {last_err}")
 
         # Wait for relay response — no limit unless timeout explicitly given
-        # Wait for relay response — no limit unless timeout explicitly given
         _wait_timeout = kwargs.get("timeout")
         if not evt.wait(timeout=_wait_timeout):
             with self._pending_lock:

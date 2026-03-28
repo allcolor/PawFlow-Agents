@@ -200,11 +200,14 @@ function renderMd(text) {
     .replace(/\n/g, '<br>');
 }
 
-function renderToolResult(content) {
+function renderToolResult(content, toolHint, pathHint) {
   var text = content.replace(/\[TOOL OUTPUT[^\]]*\]\n?/g, '').replace(/\n\[\/TOOL OUTPUT\]/g, '');
   var lines = text.split('\n');
+
+  // Detect diff (has +/- lines with context)
   var hasDiff = lines.some(function(l) { return l.trimStart().startsWith('+ ') || l.trimStart().startsWith('- '); });
-  if (hasDiff && (text.includes('replacement') || text.includes('Edited ') || text.includes('Written '))) {
+  if (hasDiff && (text.includes('replacement') || text.includes('Edited ') || text.includes('Written ')
+      || text.includes('@@') || text.includes('diff ') || lines.some(function(l) { return l.startsWith('---') || l.startsWith('+++'); }))) {
     return '<pre class="diff">' + lines.map(function(l) {
       var s = l.trimStart();
       if (s.startsWith('+ ') || s.match(/^\d+\s+\+ /)) return '<span class="diff-add">' + esc(l) + '</span>';
@@ -213,6 +216,33 @@ function renderToolResult(content) {
       return '<span class="diff-ctx">' + esc(l) + '</span>';
     }).join('\n') + '</pre>';
   }
+
+  // Detect file read (line numbers: "  42\tcontent")
+  var lnCount = lines.filter(function(l) { return /^\s*\d+\t/.test(l); }).length;
+  if (lines.length > 3 && lnCount > lines.length * 0.5) {
+    return '<pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto">' + lines.map(function(l) {
+      var m = l.match(/^(\s*\d+)\t(.*)$/);
+      if (m) return '<span style="color:#6e7681;user-select:none">' + esc(m[1]) + '</span>\t' + esc(m[2]);
+      return esc(l);
+    }).join('\n') + '</pre>';
+  }
+
+  // Detect JSON
+  var trimmed = text.trim();
+  if ((trimmed.charAt(0) === '{' && trimmed.charAt(trimmed.length - 1) === '}')
+      || (trimmed.charAt(0) === '[' && trimmed.charAt(trimmed.length - 1) === ']')) {
+    return '<pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto">' + esc(text) + '</pre>';
+  }
+
+  // Grep/glob results: color file:line: locations
+  if (toolHint === 'grep' || toolHint === 'glob') {
+    return '<pre style="font-size:11px;white-space:pre-wrap;max-height:300px;overflow-y:auto">' + lines.map(function(l) {
+      var m = l.match(/^([^:]+:\d+:)\s*(.*)$/);
+      if (m) return '<span style="color:#58a6ff">' + esc(m[1]) + '</span> ' + esc(m[2]);
+      return esc(l);
+    }).join('\n') + '</pre>';
+  }
+
   if (text.length > 300) {
     var firstLine = esc(text.split('\n')[0].slice(0, 200));
     return '<details><summary style="cursor:pointer">' + firstLine + '</summary><pre style="font-size:11px;color:#8b949e;white-space:pre-wrap;max-height:300px;overflow-y:auto">' + esc(text) + '</pre></details>';
@@ -339,9 +369,11 @@ function _toolSummary(name, args) {
 function _attachResult(tcEl, result) {
   var bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.className = 'tc-bullet done'; }
+  var toolHint = tcEl.dataset.tool || '';
+  var pathHint = tcEl.dataset.path || '';
   var rd = document.createElement('div');
   rd.className = 'tc-result';
-  rd.innerHTML = '\u23bf ' + renderToolResult(result);
+  rd.innerHTML = '\u23bf ' + renderToolResult(result, toolHint, pathHint);
   tcEl.appendChild(rd);
 }
 
@@ -501,6 +533,8 @@ function handleSSE(event) {
       var tcDiv = document.createElement('div');
       tcDiv.className = 'msg tool_call';
       if (tcId) tcDiv.dataset.tcId = tcId;
+      tcDiv.dataset.tool = data.tool || '';
+      if (tcArgs.path) tcDiv.dataset.path = tcArgs.path;
 
       if (data.tool === 'edit' && tcArgs.path) {
         var editPath = tcArgs.path || '?';

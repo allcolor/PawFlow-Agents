@@ -420,6 +420,21 @@ class TerminalRenderer:
                         self.console.print(f"  [bold]{escape(line)}[/bold]")
                     else:
                         self.console.print(f"  [dim]{escape(line)}[/dim]")
+            elif tool == "grep" or tool == "glob":
+                # Grep/glob results: highlight file:line: locations
+                from rich.text import Text as _GrepText
+                gt = _GrepText()
+                for i, line in enumerate(lines):
+                    if i > 0:
+                        gt.append("\n")
+                    m = re.match(r'^([^:]+:\d+:)(.*)', line)
+                    if m:
+                        gt.append(m.group(1), style="bold cyan")
+                        gt.append(m.group(2))
+                    else:
+                        gt.append(line, style="dim")
+                self.console.print(gt)
+                return
             else:
                 # Syntax highlight for read_file results
                 _lang = _lang_from_path(path) if path else ""

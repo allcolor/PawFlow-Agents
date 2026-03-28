@@ -368,11 +368,12 @@ def create_default_registry() -> ToolRegistry:
     from core.handlers.bash import BashHandler
     from core.handlers.notebook import NotebookEditHandler
     from core.handlers.copy import CopyHandler
+    from core.handlers.see import SeeHandler
     for _h_cls in (ReadHandler, WriteHandler, EditHandler, BatchEditHandler,
                    ApplyPatchHandler, FindReplaceHandler, DeleteHandler,
                    MkdirHandler, StatHandler, ExistsHandler, ListDirHandler,
                    GlobHandler, GrepHandler, BashHandler, NotebookEditHandler,
-                   CopyHandler):
+                   CopyHandler, SeeHandler):
         registry.register(_h_cls())
 
     # Test runner

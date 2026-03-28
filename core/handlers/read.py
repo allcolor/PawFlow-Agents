@@ -90,17 +90,23 @@ class ReadHandler(BaseFsHandler):
 
         fname = path.rsplit("/", 1)[-1] if "/" in path else path
 
-        # Images
+        # Images — return metadata + hint to use see() for visual inspection
         _img_exts = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".bmp")
         if any(fname.lower().endswith(ext) for ext in _img_exts):
-            from core.file_store import FileStore
             import mimetypes
-            import base64 as _b64
             mime = mimetypes.guess_type(fname)[0] or "image/png"
-            fid = FileStore.instance().store(fname, data, mime, user_id=self._user_id)
-            url = f"/files/{fid}/{fname}"
-            b64 = _b64.b64encode(data).decode("ascii")
-            return f"Image: {url}\n__image_data__:{mime}:{b64}"
+            return (f"Image file: {fname} ({len(data):,} bytes, {mime})\n"
+                    f"[To visually inspect this image, use see(path=\"{path}\") instead of read]")
+
+        # Video/audio — hint to use see()
+        _vid_exts = (".mp4", ".avi", ".mov", ".mkv", ".webm", ".flv")
+        _aud_exts = (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac")
+        if any(fname.lower().endswith(ext) for ext in _vid_exts):
+            return (f"Video file: {fname} ({len(data):,} bytes)\n"
+                    f"[To view frames from this video, use see(path=\"{path}\") instead of read]")
+        if any(fname.lower().endswith(ext) for ext in _aud_exts):
+            return (f"Audio file: {fname} ({len(data):,} bytes)\n"
+                    f"[To transcribe this audio, use see(path=\"{path}\") instead of read]")
 
         # PDF auto-redirect
         if fname.lower().endswith(".pdf"):

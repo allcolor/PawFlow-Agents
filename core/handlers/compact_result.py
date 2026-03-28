@@ -84,8 +84,6 @@ class CompactResultHandler(ToolHandler):
         if not summary:
             return "Error: summary is required"
         compact_key = arguments.get("compact_key", "")
-        if not compact_key:
-            return "Error: compact_key is required. Check the instructions for the compact_key value."
         with _pending_lock:
             delivered = False
             if compact_key and compact_key in _pending:

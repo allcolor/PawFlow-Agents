@@ -24,25 +24,26 @@ logger = logging.getLogger(__name__)
 def _select_recent_messages(
     messages: List[LLMMessage],
     start_idx: int = 1,
-    min_conversation: int = 20,
-    min_total: int = 30,
+    min_conversation: int = 25,
     max_total: int = 100,
 ) -> int:
     """Find split point: keep recent messages with guaranteed conversation ratio.
 
     Algorithm:
     1. Walk backwards to find the last `min_conversation` user/assistant messages
-    2. Include all tool messages between them
-    3. If total < min_total, extend further back (any role)
-    4. If total > max_total, drop oldest tool messages to fit
+    2. Include all tool/other messages between them
+    3. Cap at max_total messages
+    4. If at max_total and < min_conversation user/assistant, continue backwards:
+       skip non-user/assistant, keep user/assistant, until we have min_conversation
 
     Returns the split index (messages[split:] = recent to keep).
     """
     n = len(messages)
-    if n <= start_idx + min_total:
+    if n <= start_idx + min_conversation:
         return start_idx  # not enough messages to compact
 
-    # Step 1: find the 20 most recent user/assistant messages
+    # Step 1: walk backwards to find min_conversation user/assistant messages
+    # Include all messages between them (tool, system, etc.)
     conv_count = 0
     scan = n
     while scan > start_idx and conv_count < min_conversation:
@@ -53,28 +54,57 @@ def _select_recent_messages(
     split = scan
     total = n - split
 
-    # Step 2: if total < min_total, extend back further
-    while total < min_total and split > start_idx:
-        split -= 1
-        total = n - split
-
-    # Step 3: if total > max_total, trim oldest tool messages
+    # Step 2: if total > max_total, we have too many messages
+    # Drop oldest non-user/assistant messages to fit, then if still short
+    # on conversation messages, continue backwards selectively
     if total > max_total:
-        recent = list(messages[split:])
-        # Drop tool messages from the front (oldest) until at max_total
-        while len(recent) > max_total:
-            # Find first tool message to drop
-            dropped = False
-            for i, m in enumerate(recent):
-                if m.role == "tool":
-                    recent.pop(i)
-                    dropped = True
+        selected = list(messages[split:])
+        # Count conversation messages in selected
+        _conv_in_selected = sum(1 for m in selected if m.role in ("user", "assistant"))
+
+        if _conv_in_selected >= min_conversation:
+            # We have enough conversation, just drop oldest tools to fit max_total
+            while len(selected) > max_total:
+                dropped = False
+                for i, m in enumerate(selected):
+                    if m.role not in ("user", "assistant"):
+                        selected.pop(i)
+                        dropped = True
+                        break
+                if not dropped:
                     break
-            if not dropped:
-                break  # only user/assistant left, can't trim more
-        # Replace messages in-place and return new split
-        messages[split:] = recent
-        return len(messages) - len(recent)
+        else:
+            # Not enough conversation in max_total window — go further back selectively
+            # Keep what we have, drop tools from front to make room
+            while len(selected) > max_total:
+                dropped = False
+                for i, m in enumerate(selected):
+                    if m.role not in ("user", "assistant"):
+                        selected.pop(i)
+                        dropped = True
+                        break
+                if not dropped:
+                    break
+            # Now scan further back, picking only user/assistant
+            _extra_scan = split - 1
+            while _extra_scan >= start_idx and _conv_in_selected < min_conversation:
+                m = messages[_extra_scan]
+                if m.role in ("user", "assistant"):
+                    # Drop an old non-conversation message to make room
+                    room_made = False
+                    for i, sm in enumerate(selected):
+                        if sm.role not in ("user", "assistant"):
+                            selected.pop(i)
+                            room_made = True
+                            break
+                    if not room_made and len(selected) >= max_total:
+                        break  # can't make room, all are conversation
+                    selected.insert(0, m)
+                    _conv_in_selected += 1
+                _extra_scan -= 1
+
+        messages[split:] = selected
+        return len(messages) - len(selected)
 
     return split
 
@@ -264,7 +294,7 @@ class AgentCompactionMixin:
         if new_est > max_context and len(recent_messages) > 10:
             logger.info("[compact-post] still over max_context, retrying aggressive (6 conv, max 20)")
             _split2 = _select_recent_messages(messages, start_idx,
-                                               min_conversation=6, min_total=10, max_total=20)
+                                               min_conversation=6, max_total=20)
             if _split2 > start_idx:
                 recent_messages = messages[_split2:]
                 compacted = []

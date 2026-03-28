@@ -313,6 +313,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 pass
         _skip_compact = _is_claude_code and _claude_has_session
 
+        # Resolve max_context early (needed for compact-if-not-fit decision)
+        _svc_cfg_early = (getattr(resolved_svc, 'config', {}) or {})
+        _max_ctx = int(_svc_cfg_early.get("max_context_size", 0) or 0) or 200000
+
         _context_diverged = False
         if preloaded_messages is not None:
             # Caller provided messages (e.g. poller task sub-conversation)
@@ -327,7 +331,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if messages and not _skip_compact:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
-                    messages, conversation_id or "", _context_agent, _uid_pl)
+                    messages, conversation_id or "", _context_agent, _uid_pl,
+                    max_context=_max_ctx)
         elif use_conv_store and conversation_id:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
@@ -347,7 +352,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 if not _skip_compact:
                     _uid = flowfile.get_attribute("http.auth.principal") or ""
                     messages = self._auto_compact_messages(
-                        messages, conversation_id, _context_agent, _uid)
+                        messages, conversation_id, _context_agent, _uid,
+                        max_context=_max_ctx)
             else:
                 # No divergence — use messages as context
                 existing = store.load(conversation_id)
@@ -364,7 +370,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     if not _skip_compact:
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
-                            messages, conversation_id, _context_agent, _uid2)
+                            messages, conversation_id, _context_agent, _uid2,
+                            max_context=_max_ctx)
                 else:
                     logger.warning(f"[context:{conversation_id[:8]}] store.load() returned None — "
                                    f"starting fresh conversation")
@@ -962,15 +969,20 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
     def _auto_compact_messages(self, messages: List[LLMMessage],
                                conversation_id: str, agent_name: str,
-                               user_id: str) -> List[LLMMessage]:
-        """Auto-compact messages on context load if >20 messages."""
-        if len(messages) <= 20:
+                               user_id: str,
+                               max_context: int = 200000) -> List[LLMMessage]:
+        """Auto-compact messages if they don't fit in max_context."""
+        # Estimate tokens — only compact if context doesn't fit
+        _est = self._estimate_tokens(messages)
+        if _est <= max_context:
+            logger.info(f"[context:{conversation_id[:8]}] context fits ({_est} tokens <= {max_context}), no compact needed")
             return messages
         try:
             from core.conversation_event_bus import ConversationEventBus
             bus = ConversationEventBus.instance()
-            bus.publish_event(conversation_id, "thinking", {
-                "detail": f"compacting {len(messages)} messages...",
+            bus.publish_event(conversation_id, "compact_progress", {
+                "stage": "summarizing",
+                "detail": f"Compacting {len(messages)} messages ({_est} tokens > {max_context})...",
                 "agent_name": agent_name,
             })
             _sc, _sc_max, _sc_svc = self._get_summarizer_client(user_id)
@@ -981,7 +993,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             if _sc:
                 _before = len(messages)
                 messages = self._compact_post_response(
-                    messages, _sc, 200000,
+                    messages, _sc, max_context,
                     conversation_id=conversation_id,
                     agent_name=agent_name, llm_service=_sc_svc)
                 logger.info(f"[context:{conversation_id[:8]}] auto-compacted: "

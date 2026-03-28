@@ -334,7 +334,7 @@ export function executeAction(
       case 'exec': {
         if (!allowExec) { return { ok: false, error: 'Shell execution disabled' }; }
         const command = req.command || '';
-        const timeout = Math.min((req.timeout || 30) * 1000, 120000);
+        const timeout = req.timeout ? req.timeout * 1000 : undefined;
         if (!command) { return { ok: false, error: 'Missing command' }; }
 
         // Like Claude Code: use native Windows shell (cmd.exe).
@@ -391,7 +391,7 @@ export function executeAction(
         // The main thread forwards exec_output frames to the WS socket.
         if (!allowExec) { return { ok: false, error: 'Shell execution disabled' }; }
         const sCommand = req.command || '';
-        const sTimeout = Math.min((req.timeout || 30) * 1000, 120000);
+        const sTimeout = req.timeout ? req.timeout * 1000 : undefined;
         if (!sCommand) { return { ok: false, error: 'Missing command' }; }
         const emitOutput = (stream: string, data: string) => {
           try {
@@ -554,7 +554,7 @@ except ImportError:
         const tmpFile = path.join(require('os').tmpdir(), `pawflow_screen_${Date.now()}.py`);
         fs.writeFileSync(tmpFile, pyScript, 'utf-8');
         try {
-          const result = cp.execSync(`python "${tmpFile}"`, { timeout: 30000, encoding: 'utf-8' });
+          const result = cp.execSync(`python "${tmpFile}"`, { encoding: 'utf-8' });
           fs.unlinkSync(tmpFile);
           const parsed = JSON.parse(result.trim());
           if (parsed.error) { return { ok: false, error: parsed.error }; }

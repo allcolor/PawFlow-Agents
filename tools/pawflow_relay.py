@@ -102,8 +102,7 @@ def generate_relay_id(username: str, directory: str) -> str:
 # ── Actions that require write access ─────────────────────────────
 
 _WRITE_ACTIONS = frozenset({
-    "write_file", "delete_file", "mkdir", "find_replace", "edit",
-    "git_commit", "git_push", "exec",
+    "write_file", "delete_file", "mkdir", "find_replace", "edit", "exec",
 })
 
 
@@ -503,7 +502,7 @@ def _action_exec(handler, path, req):
     if not getattr(handler, 'allow_exec', False):
         raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
     command = req.get("command", "")
-    timeout = min(req.get("timeout", 30), 120)  # cap at 2 minutes
+    timeout = req.get("timeout")  # None = no limit
     if not command:
         raise ValueError("Missing 'command' parameter")
 
@@ -556,96 +555,6 @@ def _action_exec(handler, path, req):
     }
 
 
-# ── Git actions ───────────────────────────────────────────────────
-
-def _git_run(cwd, args, timeout=30):
-    """Run a git command and return CompletedProcess."""
-    return subprocess.run(
-        ["git"] + args, cwd=cwd,
-        capture_output=True, text=True, timeout=timeout,
-    )
-
-
-def _action_git_status(handler, path, req):
-    # Get branch
-    br = _git_run(path, ["branch", "--show-current"])
-    branch = br.stdout.strip() or "HEAD"
-
-    # Get porcelain status
-    st = _git_run(path, ["status", "--porcelain"])
-    staged, modified, untracked = [], [], []
-    for line in st.stdout.splitlines():
-        if len(line) < 3:
-            continue
-        x, y = line[0], line[1]
-        name = line[3:]
-        if x == "?":
-            untracked.append(name)
-        elif x != " " and x != "?":
-            staged.append(name)
-        if y != " " and y != "?":
-            modified.append(name)
-
-    return {
-        "branch": branch,
-        "clean": not staged and not modified and not untracked,
-        "staged": staged,
-        "modified": modified,
-        "untracked": untracked,
-    }
-
-
-def _action_git_log(handler, path, req):
-    count = req.get("count", 10)
-    r = _git_run(path, [
-        "log", f"-n{count}",
-        "--pretty=format:%H%x00%an%x00%aI%x00%s",
-    ])
-    entries = []
-    for line in r.stdout.splitlines():
-        parts = line.split("\x00", 3)
-        if len(parts) == 4:
-            entries.append({
-                "hash": parts[0], "author": parts[1],
-                "date": parts[2], "message": parts[3],
-            })
-    return entries
-
-
-def _action_git_diff(handler, path, req):
-    ref = req.get("ref", "")
-    cmd = ["diff", ref] if ref else ["diff"]
-    r = _git_run(path, cmd)
-    return r.stdout
-
-
-def _action_git_commit(handler, path, req):
-    message = req.get("message", "PawFlow auto-commit")
-    _git_run(path, ["add", "-A"])
-    _git_run(path, ["commit", "-m", message])
-    h = _git_run(path, ["rev-parse", "HEAD"])
-    return {"hash": h.stdout.strip(), "message": message}
-
-
-def _action_git_pull(handler, path, req):
-    r = _git_run(path, ["pull"], timeout=60)
-    return {
-        "updated": r.returncode == 0,
-        "conflicts": "conflict" in r.stdout.lower() or r.returncode != 0,
-    }
-
-
-def _action_git_push(handler, path, req):
-    r = _git_run(path, ["push"], timeout=120)
-    return {"pushed": r.returncode == 0, "remote": "origin"}
-
-
-def _action_git_checkout(handler, path, req):
-    ref = req.get("ref", "main")
-    _git_run(path, ["checkout", ref])
-    br = _git_run(path, ["branch", "--show-current"])
-    return {"branch": br.stdout.strip() or ref}
-
 
 # ── Action dispatch table ─────────────────────────────────────────
 
@@ -660,13 +569,6 @@ _ACTIONS = {
     "search": _action_search,
     "grep": _action_grep,
     "find_replace": _action_find_replace,
-    "git_status": _action_git_status,
-    "git_log": _action_git_log,
-    "git_diff": _action_git_diff,
-    "git_commit": _action_git_commit,
-    "git_pull": _action_git_pull,
-    "git_push": _action_git_push,
-    "git_checkout": _action_git_checkout,
     "edit": _action_edit,
     "batch_edit": _action_batch_edit,
     "exec": _action_exec,
@@ -814,7 +716,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     while True:
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
-            sock = socket.create_connection((host, port), timeout=30)
+            sock = socket.create_connection((host, port))
             if use_ssl:
                 ctx = ssl.create_default_context()
                 # Accept self-signed ephemeral certs from the PawFlow service
@@ -877,7 +779,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] Registered as '{reg_resp.get('relay_id')}'\n")
 
             reconnect_delay = 1
-            sock.settimeout(60)
+            _KEEPALIVE_INTERVAL = 60
+            sock.settimeout(_KEEPALIVE_INTERVAL)
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")

@@ -224,7 +224,7 @@ class AgentToolExecMixin:
                 try:
                     exec_svc = self._find_executor_service(user_id)
                     if exec_svc:
-                        exec_svc.execute(cmd, timeout=30)
+                        exec_svc.execute(cmd)
                 except Exception as he:
                     logger.warning(f"[hook] {key} failed: {he}")
         except Exception as e:

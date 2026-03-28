@@ -70,7 +70,7 @@ def _ensure_connected():
     path = parsed.path or "/ws/tools"
     use_tls = parsed.scheme == "wss"
 
-    sock = socket.create_connection((host, port), timeout=10)
+    sock = socket.create_connection((host, port))
     if use_tls:
         ctx = ssl.create_default_context()
         ctx.check_hostname = False

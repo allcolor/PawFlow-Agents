@@ -184,7 +184,7 @@ class ExecutorRelayHandler(BaseHTTPRequestHandler):
             self._send_json(False, error=f"Unknown action: {action}")
             return
 
-        timeout = min(int(req.get("timeout", 30)), 300)  # cap at 5min
+        timeout = req.get("timeout")  # None = no limit
 
         try:
             result = handler(self, cwd, req, timeout)
@@ -263,64 +263,6 @@ def _action_python_exec(handler, cwd, req, timeout):
     return result
 
 
-def _action_git(handler, cwd, req, timeout, git_args):
-    """Run a git command with given args."""
-    result = _run_process(["git"] + git_args, cwd, timeout)
-    result["platform"] = sys.platform
-    return result
-
-
-def _action_git_status(handler, cwd, req, timeout):
-    return _action_git(handler, cwd, req, timeout, ["status", "--short"])
-
-
-def _action_git_diff(handler, cwd, req, timeout):
-    ref = req.get("ref", "")
-    args = ["diff", ref] if ref else ["diff"]
-    return _action_git(handler, cwd, req, timeout, args)
-
-
-def _action_git_log(handler, cwd, req, timeout):
-    count = req.get("count", 10)
-    return _action_git(handler, cwd, req, timeout, [
-        "log", f"-n{count}", "--oneline",
-    ])
-
-
-def _action_git_add(handler, cwd, req, timeout):
-    files = req.get("files", "").split()
-    args = ["add"] + (files if files else ["-A"])
-    return _action_git(handler, cwd, req, timeout, args)
-
-
-def _action_git_commit(handler, cwd, req, timeout):
-    message = req.get("message", "PawFlow auto-commit")
-    return _action_git(handler, cwd, req, timeout, ["commit", "-m", message])
-
-
-def _action_git_push(handler, cwd, req, timeout):
-    return _action_git(handler, cwd, req, timeout, ["push"])
-
-
-def _action_git_pull(handler, cwd, req, timeout):
-    return _action_git(handler, cwd, req, timeout, ["pull"])
-
-
-def _action_git_checkout(handler, cwd, req, timeout):
-    ref = req.get("ref", "main")
-    return _action_git(handler, cwd, req, timeout, ["checkout", ref])
-
-
-def _action_git_reset(handler, cwd, req, timeout):
-    ref = req.get("ref", "HEAD")
-    mode = req.get("mode", "--mixed")
-    if mode not in ("--soft", "--mixed", "--hard"):
-        mode = "--mixed"
-    return _action_git(handler, cwd, req, timeout, ["reset", mode, ref])
-
-
-def _action_git_branch(handler, cwd, req, timeout):
-    return _action_git(handler, cwd, req, timeout, ["branch", "-a"])
 
 
 # ── Action dispatch table ────────────────────────────────────────
@@ -328,16 +270,6 @@ def _action_git_branch(handler, cwd, req, timeout):
 _ACTIONS = {
     "shell": _action_shell,
     "python_exec": _action_python_exec,
-    "git_status": _action_git_status,
-    "git_diff": _action_git_diff,
-    "git_log": _action_git_log,
-    "git_add": _action_git_add,
-    "git_commit": _action_git_commit,
-    "git_push": _action_git_push,
-    "git_pull": _action_git_pull,
-    "git_checkout": _action_git_checkout,
-    "git_reset": _action_git_reset,
-    "git_branch": _action_git_branch,
 }
 
 
@@ -486,7 +418,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
         if not handler_func:
             return {"ok": False, "error": f"Unknown action: {action}"}
 
-        timeout_val = min(int(msg.get("timeout", 30)), 300)
+        timeout_val = msg.get("timeout")  # None = no limit
         try:
             result = handler_func(mock, cwd, msg, timeout_val)
             return {"ok": True, "data": result}
@@ -500,7 +432,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
             sys.stderr.write(f"[ExecRelay] Connecting to {url} ...\n")
 
             # TCP connect
-            sock = socket.create_connection((host, port), timeout=30)
+            sock = socket.create_connection((host, port))
             if use_ssl:
                 ctx = ssl.create_default_context()
                 sock = ctx.wrap_socket(sock, server_hostname=host)
@@ -555,8 +487,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
 
             reconnect_delay = 1  # Reset on successful connect
 
-            # Set timeout for keepalive
-            sock.settimeout(60)
+            # Keepalive: recv timeout triggers ping check
+            _KEEPALIVE_INTERVAL = 60
+            sock.settimeout(_KEEPALIVE_INTERVAL)
 
             # Main loop
             ping_interval = 30

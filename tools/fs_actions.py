@@ -106,7 +106,7 @@ def detect_available_shells() -> Dict[str, str]:
             shells[_interp] = _p
     # Docker-based shells (isolated execution)
     try:
-        _dr = subprocess.run(_docker_cmd() + ["info"], capture_output=True, timeout=5)
+        _dr = subprocess.run(_docker_cmd() + ["info"], capture_output=True, timeout=10)
         if _dr.returncode == 0:
             _docker_bin = _docker_cmd()[0]
             shells["docker-python"] = _docker_bin
@@ -245,7 +245,7 @@ def action_project_context(root_dir: str, path: str, req: Dict[str, Any]) -> Any
         try:
             import subprocess
             br = subprocess.run(["git", "branch", "--show-current"],
-                                cwd=root_dir, capture_output=True, text=True, timeout=5)
+                                cwd=root_dir, capture_output=True, text=True, timeout=10)
             context["git_branch"] = br.stdout.strip()
         except Exception:
             pass

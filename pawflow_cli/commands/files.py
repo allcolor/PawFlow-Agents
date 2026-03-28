@@ -79,7 +79,7 @@ def handle_files_commands(app, cmd, arg, text):
         try:
             result = app.api.send_action("fs_exec",
                 service=app.relay.relay_id if app.relay else "",
-                command=arg, timeout=30)
+                command=arg)
             if result.get("error"):
                 app.renderer.print_error(result["error"])
             else:
@@ -97,7 +97,7 @@ def handle_files_commands(app, cmd, arg, text):
         try:
             data = app.api.send_action("fs_exec",
                 service=app.relay.relay_id if app.relay else "",
-                command=f"git diff {arg}", timeout=15)
+                command=f"git diff {arg}")
             output = data.get("stdout", "")
             if not output:
                 app.renderer.print_system("No changes.")

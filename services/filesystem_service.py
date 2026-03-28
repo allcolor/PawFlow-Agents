@@ -558,7 +558,7 @@ class RelayService(BaseService):
                     await listener._ws_send(w, payload)
 
             try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
                 self._relay_idx = idx + 1
                 last_err = None
                 break
@@ -571,10 +571,7 @@ class RelayService(BaseService):
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
 
-        if not evt.wait(timeout=60):
-            with self._pending_lock:
-                self._pending.pop(request_id, None)
-            raise Exception(f"Relay timeout for {action} on {self._service_id}")
+        evt.wait()  # no limit — relay operations take as long as they take
 
         if "error" in holder:
             raise Exception(holder["error"])
@@ -626,7 +623,7 @@ class RelayService(BaseService):
                     await listener._ws_send(w, payload)
 
             try:
-                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
                 self._relay_idx = idx + 1
                 last_err = None
                 break
@@ -639,6 +636,7 @@ class RelayService(BaseService):
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
 
+        # Wait for relay response — no limit unless timeout explicitly given
         # Wait for relay response — no limit unless timeout explicitly given
         _wait_timeout = kwargs.get("timeout")
         if not evt.wait(timeout=_wait_timeout):

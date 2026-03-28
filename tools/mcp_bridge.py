@@ -55,7 +55,7 @@ class ToolRelayClient:
         use_tls = parsed.scheme == "wss"
 
         # TCP connect with keepalive
-        sock = socket.create_connection((host, port), timeout=10)
+        sock = socket.create_connection((host, port))
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
         # Windows TCP keepalive: probe after 30s, interval 10s
         try:

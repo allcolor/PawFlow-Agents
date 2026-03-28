@@ -74,9 +74,6 @@ def find_fs_service(user_id: str, service_name: str = ""):
         except Exception:
             pass
 
-    if service_name:
-        return find_fs_service(user_id, "")
-
     return None
 
 
@@ -102,17 +99,15 @@ class BaseFsHandler(ToolHandler):
     This base provides service resolution and workdir fallback.
     """
 
-    # ── Injected state (set by tool_relay_service / agent_tool_config) ──
-    _fs_service = None
-    _available_services: List[Dict[str, Any]] = []
-    _user_id: str = ""
-    _conversation_id: str = ""
-    _checkpoint_id: str = ""
-    _tool_result_max_chars: int = 50000
-
-    # ── Workdir state (set by agent loop for Claude Code) ──
-    _workdir: str = ""           # data/claude_sessions/{conv_id}/{agent_name}/
-    _is_claude_code: bool = False
+    def __init__(self):
+        self._fs_service = None
+        self._available_services = []
+        self._user_id = ""
+        self._conversation_id = ""
+        self._checkpoint_id = ""
+        self._tool_result_max_chars = 50000
+        self._workdir = ""
+        self._is_claude_code = False
 
     # ── Setters (called by tool_relay_service and agent_tool_config) ──
 
@@ -233,23 +228,7 @@ class BaseFsHandler(ToolHandler):
             except Exception:
                 pass
 
-        if service_name:
-            only = self._find_service("")
-            if only:
-                return only
-
         return None
-
-    def _resolve_or_error(self, fs_param: str = "") -> Tuple[Any, Optional[str]]:
-        """Like _resolve but returns an error string if nothing found."""
-        svc, workdir = self._resolve(fs_param)
-        if svc is None and workdir is None:
-            available = self._available_services or []
-            if not available:
-                return (None, None)
-            names = [s.get("id", "?") for s in available]
-            return (None, None)
-        return (svc, workdir)
 
     def _no_target_error(self, fs_param: str = "") -> str:
         """Error message when no FS target could be resolved."""

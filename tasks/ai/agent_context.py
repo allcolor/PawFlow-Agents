@@ -50,7 +50,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             task_llm_service, _user_id_for_svc,
             raise_on_missing=True, default_model=model,
         )
-        # _is_claude_code and _skip_compact are set after agent resolution below
+        # _is_claude_code and _claude_has_session are set after agent resolution below
 
         registry = self.get_tool_registry()
         # Handlers are fully configured later (after conversation_id/user_id are known)
@@ -294,31 +294,22 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
              getattr(client, 'provider', "")) == "claude-code"
         )
 
-        # Claude-code session detection (3 cases):
-        #   Case 1: key doesn't exist (None) → first message, no session ever
-        #           → compact OK, then create session
-        #   Case 2: key has value → active session
-        #           → skip compact, --resume
-        #   Case 3: key exists but empty ("") → session invalidated (context modified)
-        #           → skip compact (user wants that exact context), new session
+        # Claude-code session detection (2 states):
+        #   _claude_has_session = True → active session, --resume, skip compact
+        #   _claude_has_session = False → no session or invalidated, full context
+        # Compact decision is made per-path below (diverged context = skip compact)
         _claude_has_session = False
-        _session_existed = False
         if _is_claude_code and conversation_id:
             try:
                 from core.conversation_store import ConversationStore as _CSSession
                 _session_key = f"claude_session:{_active_agent_name or _context_agent or 'default'}"
                 _session_val = _CSSession.instance().get_extra(conversation_id, _session_key)
-                _session_existed = _session_val is not None
                 _claude_has_session = bool(_session_val)
                 if _claude_has_session:
                     logger.info("[claude-code] active session (%s) — will resume",
                                 _session_key)
-                elif _session_existed:
-                    logger.info("[claude-code] session invalidated (%s) — new session with current context",
-                                _session_key)
             except Exception:
                 pass
-        _skip_compact = _is_claude_code and _session_existed
 
         # Resolve max_context early (needed for compact-if-not-fit decision)
         _svc_cfg_early = (getattr(resolved_svc, 'config', {}) or {})
@@ -334,8 +325,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             f"{len(messages)} messages")
             except (KeyError, TypeError) as e:
                 logger.error(f"[context] preloaded messages deser failed: {e}")
-            # Auto-compact on preloaded messages (skip for claude-code with session)
-            if messages and not _skip_compact:
+            # Auto-compact on preloaded messages (skip for claude-code with active session)
+            if messages and not _claude_has_session:
                 _uid_pl = flowfile.get_attribute("http.auth.principal") or ""
                 messages = self._auto_compact_messages(
                     messages, conversation_id or "", _context_agent, _uid_pl,
@@ -355,8 +346,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 f"{len(messages)} messages")
                 except (KeyError, TypeError) as deser_err:
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
-                # Auto-compact on load (skip for claude-code with session)
-                if not _skip_compact:
+                # Diverged context = manually edited → send as-is, no compact
+                # (the user/operation wanted this exact context)
+                if not _claude_has_session and not _context_diverged:
                     _uid = flowfile.get_attribute("http.auth.principal") or ""
                     messages = self._auto_compact_messages(
                         messages, conversation_id, _context_agent, _uid,
@@ -373,8 +365,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                     f"{len(messages)} messages")
                     except (KeyError, TypeError) as deser_err:
                         logger.error(f"[context:{conversation_id[:8]}] message load failed: {deser_err}")
-                    # Auto-compact on load (skip for claude-code with session)
-                    if not _skip_compact:
+                    # Normal load — compact if needed (skip only for active resume)
+                    if not _claude_has_session:
                         _uid2 = flowfile.get_attribute("http.auth.principal") or ""
                         messages = self._auto_compact_messages(
                             messages, conversation_id, _context_agent, _uid2,

@@ -360,6 +360,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             except Exception:
                 pass
         finally:
+            # Cancel any bg tasks still running for this conversation
+            try:
+                import core.background_tool as _bg
+                for t in _bg.list_tasks(conversation_id):
+                    if t["status"] == "running":
+                        _bg.cancel(t["tc_id"])
+                        logger.info("[agent:%s] cancelled bg task %s on exit",
+                                    conversation_id[:8], t["tc_id"])
+                # Purge unclaimed results (agent won't pick them up)
+                for t in _bg.list_tasks(conversation_id):
+                    _bg.pop_completed(conversation_id, t["tc_id"])
+            except Exception:
+                pass
             self._decrement_active(conversation_id, ctx)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:

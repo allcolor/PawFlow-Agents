@@ -957,6 +957,14 @@ class AgentCompactionMixin:
 
         _pub(f"Compacting {len(text)} chars via Claude Code...")
 
+        # Save and clear session — compact uses a temporary session
+        _saved_session = getattr(client, '_claude_session_id', '')
+        _saved_conv = getattr(client, '_conversation_id', '')
+        _saved_agent = getattr(client, '_agent_name', '')
+        client._claude_session_id = ''
+        client._conversation_id = ''
+        client._agent_name = 'compact'
+
         max_retries = 3
         for attempt in range(1, max_retries + 1):
             _pub(f"Compacting... attempt {attempt}/{max_retries}")
@@ -980,6 +988,9 @@ class AgentCompactionMixin:
                         FileStore.instance().delete(file_id)
                     except Exception:
                         pass
+                    client._claude_session_id = _saved_session
+                    client._conversation_id = _saved_conv
+                    client._agent_name = _saved_agent
                     raise
                 continue
 
@@ -991,6 +1002,9 @@ class AgentCompactionMixin:
                         FileStore.instance().delete(file_id)
                     except Exception:
                         pass
+                    client._claude_session_id = _saved_session
+                    client._conversation_id = _saved_conv
+                    client._agent_name = _saved_agent
                     return summary
             except TimeoutError:
                 logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
@@ -999,6 +1013,9 @@ class AgentCompactionMixin:
             FileStore.instance().delete(file_id)
         except Exception:
             pass
+        client._claude_session_id = _saved_session
+        client._conversation_id = _saved_conv
+        client._agent_name = _saved_agent
         raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
 
     def _call_summarize_with_budget(self, client: LLMClient,

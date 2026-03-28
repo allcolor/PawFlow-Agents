@@ -69,7 +69,7 @@ class CompactResultHandler(ToolHandler):
                     "description": "The compact key provided in the instructions",
                 },
             },
-            "required": ["summary"],
+            "required": ["summary", "compact_key"],
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
@@ -84,6 +84,8 @@ class CompactResultHandler(ToolHandler):
         if not summary:
             return "Error: summary is required"
         compact_key = arguments.get("compact_key", "")
+        if not compact_key:
+            return "Error: compact_key is required. Check the instructions for the compact_key value."
         with _pending_lock:
             delivered = False
             if compact_key and compact_key in _pending:
@@ -95,9 +97,8 @@ class CompactResultHandler(ToolHandler):
                     logger.info("[compact_result] delivered %d chars to key '%s'",
                                 len(summary), compact_key)
             if not delivered:
-                # No key match — log error, don't guess
-                logger.warning("[compact_result] no matching key '%s', %d pending keys: %s",
-                               compact_key, len(_pending), list(_pending.keys()))
+                logger.warning("[compact_result] key '%s' not found in pending: %s",
+                               compact_key, list(_pending.keys()))
         if not delivered:
             logger.info("[compact_result] called but no compact pending, ignoring")
             return "No compact in progress. Summary ignored."

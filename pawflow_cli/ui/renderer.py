@@ -47,6 +47,49 @@ def _agent_color(name: str) -> str:
     return _AGENT_COLORS[h % len(_AGENT_COLORS)]
 
 
+_TOOL_DISPLAY_NAMES = {
+    "bash": "Bash", "read": "Read", "write": "Write", "edit": "Edit",
+    "glob": "Glob", "grep": "Grep", "delete": "Delete", "mkdir": "Mkdir",
+    "stat": "Stat", "exists": "Exists", "list_dir": "ListDir",
+    "batch_edit": "BatchEdit", "apply_patch": "ApplyPatch",
+    "find_replace": "FindReplace", "notebook_edit": "NotebookEdit",
+    "copy": "Copy", "execute_script": "Script",
+    "web_search": "WebSearch", "web_fetch": "WebFetch", "scrape_url": "Scrape",
+    "generate_image": "ImageGen", "remember": "Remember", "recall": "Recall",
+    "spawn_agents": "SpawnAgents", "ask_agent": "AskAgent",
+    "show_file": "ShowFile", "get_tool_schema": "GetToolSchema",
+}
+
+
+def _tool_summary(tool: str, args: dict) -> str:
+    """Smart argument summary — show primary arg instead of all key=value."""
+    if tool in ("bash", "execute_script"):
+        s = args.get("command") or args.get("code") or ""
+    elif tool in ("read", "write", "edit", "delete", "stat", "exists",
+                  "mkdir", "list_dir", "batch_edit", "apply_patch",
+                  "find_replace", "notebook_edit"):
+        s = args.get("path") or ""
+    elif tool == "glob":
+        s = args.get("pattern") or ""
+    elif tool == "grep":
+        s = (args.get("pattern") or "") + (", " + args["path"] if args.get("path") else "")
+    elif tool in ("web_search",):
+        s = args.get("query") or ""
+    elif tool in ("web_fetch", "scrape_url"):
+        s = args.get("url") or ""
+    else:
+        parts = []
+        for k, v in list(args.items())[:3]:
+            vs = v if isinstance(v, str) else repr(v)
+            if len(vs) > 60:
+                vs = vs[:60] + "..."
+            parts.append(f"{k}={vs}")
+        s = ", ".join(parts)
+    if len(s) > 120:
+        s = s[:120] + "\u2026"
+    return s
+
+
 _EXT_LANG = {
     "js": "javascript", "ts": "typescript", "py": "python", "rb": "ruby",
     "rs": "rust", "go": "go", "java": "java", "cpp": "cpp", "c": "c",
@@ -287,8 +330,8 @@ class TerminalRenderer:
                         service: str = ""):
         self._set_status(f"▶ {agent or ''}  {tool}...")
 
-        # Special rendering for filesystem edit — inline diff preview
-        if tool == "filesystem" and arguments.get("action") == "edit" and arguments.get("path"):
+        # Special rendering for edit — inline diff preview
+        if tool == "edit" and arguments.get("path"):
             fpath = arguments.get("path", "?")
             old_s = arguments.get("old_string", "")
             new_s = arguments.get("new_string", "")
@@ -322,27 +365,20 @@ class TerminalRenderer:
                         print(f"    + {line}")
             return
 
-        # Default: compact argument preview
-        args_parts = []
-        for k, v in arguments.items():
-            vs = repr(v) if not isinstance(v, str) else v
-            if len(vs) > 60:
-                vs = vs[:60] + "..."
-            args_parts.append(f"{k}={vs}")
-        args_str = ", ".join(args_parts)
-        if len(args_str) > 200:
-            args_str = args_str[:200] + "..."
+        # Smart argument summary (show primary arg, not all key=value)
+        display = _TOOL_DISPLAY_NAMES.get(tool, tool)
+        summary = _tool_summary(tool, arguments)
 
         if self.console:
             from rich.markup import escape
             color = _agent_color(agent) if agent else "yellow"
             self.console.print(
-                f"  [{color}]● {escape(agent or '')}[/{color}] "
-                f"[yellow]{escape(tool)}[/yellow]"
-                f"[dim]({escape(args_str)})[/dim]"
+                f"  [{color}]●[/{color}] "
+                f"[yellow]{escape(display)}[/yellow]"
+                f"[dim]({escape(summary)})[/dim]"
             )
         else:
-            print(f"  ● {agent or ''} {tool}({args_str})")
+            print(f"  ● {display}({summary})")
 
     def print_tool_result(self, tool: str, result: str, agent: str = "",
                           path: str = ""):
@@ -402,11 +438,11 @@ class TerminalRenderer:
                         pass
                 first_line = result.split("\n")[0][:200]
                 if len(result) > len(first_line):
-                    self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}...[/dim]")
+                    self.console.print(f"  [dim]⎿  {escape(first_line)}...[/dim]")
                 else:
-                    self.console.print(f"  [green]✓[/green] [dim]{escape(first_line)}[/dim]")
+                    self.console.print(f"  [dim]⎿  {escape(first_line)}[/dim]")
         else:
-            print(f"  ✓ {result[:200]}")
+            print(f"  ⎿  {result[:200]}")
 
     # ── Approval ──
 

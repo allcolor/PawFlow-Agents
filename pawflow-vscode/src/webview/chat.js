@@ -312,15 +312,58 @@ function addMsg(type, content, meta) {
   return div;
 }
 
-function addToolResult(tool, result, filePath, fsAction) {
+var _TOOL_DISPLAY = {
+  bash:'Bash',read:'Read',write:'Write',edit:'Edit',glob:'Glob',grep:'Grep',
+  delete:'Delete',mkdir:'Mkdir',stat:'Stat',exists:'Exists',list_dir:'ListDir',
+  batch_edit:'BatchEdit',apply_patch:'ApplyPatch',find_replace:'FindReplace',
+  notebook_edit:'NotebookEdit',copy:'Copy',execute_script:'Script',
+  web_search:'WebSearch',web_fetch:'WebFetch',scrape_url:'Scrape',
+  generate_image:'ImageGen',remember:'Remember',recall:'Recall',
+  spawn_agents:'SpawnAgents',show_file:'ShowFile',get_tool_schema:'GetToolSchema',
+};
+
+function _toolSummary(name, args) {
+  var display = _TOOL_DISPLAY[name] || name;
+  var s = '';
+  if (name === 'bash' || name === 'execute_script') s = args.command || args.code || '';
+  else if (['read','write','edit','delete','stat','exists','mkdir','list_dir'].indexOf(name) >= 0) s = args.path || '';
+  else if (name === 'glob') s = args.pattern || '';
+  else if (name === 'grep') s = (args.pattern || '') + (args.path ? ', ' + args.path : '');
+  else if (name === 'web_search') s = args.query || '';
+  else if (name === 'web_fetch' || name === 'scrape_url') s = args.url || '';
+  else s = JSON.stringify(args || {}).substring(0, 100);
+  if (s.length > 120) s = s.substring(0, 120) + '\u2026';
+  return display + '(' + s + ')';
+}
+
+function _attachResult(tcEl, result) {
+  var bullet = tcEl.querySelector('.tc-bullet');
+  if (bullet) { bullet.className = 'tc-bullet done'; }
+  var rd = document.createElement('div');
+  rd.className = 'tc-result';
+  if (result.length > 300) {
+    var first = result.split('\n')[0].substring(0, 120);
+    rd.innerHTML = '<details><summary>\u23bf ' + esc(first) + '</summary><pre style="font-size:11px;margin:2px 0 0 16px;max-height:300px;overflow-y:auto">' + esc(result) + '</pre></details>';
+  } else {
+    rd.innerHTML = '\u23bf ' + esc(result);
+  }
+  tcEl.appendChild(rd);
+}
+
+function addToolResult(tool, result, filePath, tcId) {
+  // Try to attach to matching tool_call
+  if (tcId) {
+    var tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+    if (tcEl) {
+      _attachResult(tcEl, result);
+      return;
+    }
+  }
+  // Fallback: standalone
   var div = document.createElement('div');
   div.className = 'msg tool_result';
-  // Add clickable file link for file operations
-  var pathLink = '';
-  if (filePath && (tool === 'read' || tool === 'edit' || tool === 'write')) {
-    pathLink = '&#128196; ' + fileLink(filePath) + ' ';
-  }
-  div.innerHTML = pathLink + renderToolResult(result);
+  var display = _TOOL_DISPLAY[tool] || tool;
+  div.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + esc(display) + '<div class="tc-result">\u23bf ' + esc(result.substring(0, 200)) + '</div>';
   messagesEl.appendChild(div);
   messagesEl.scrollTop = messagesEl.scrollHeight;
 }
@@ -459,10 +502,14 @@ function handleSSE(event) {
     case 'tool_call':
       finalizeThinking(agent);
       var tcArgs = data.arguments || {};
+      var tcId = data.tc_id || '';
+      var tcDiv = document.createElement('div');
+      tcDiv.className = 'msg tool_call';
+      if (tcId) tcDiv.dataset.tcId = tcId;
+
       if (data.tool === 'edit' && tcArgs.path) {
-        // Render edit as inline diff preview with clickable file path
         var editPath = tcArgs.path || '?';
-        var editHeader = '&#9998; ' + esc(agent) + ' Edit(' + fileLink(editPath) + ')';
+        var editHeader = '<span class="tc-bullet pending">\u25cf</span> Edit(' + fileLink(editPath) + ')';
         if (tcArgs.start_line && tcArgs.end_line) editHeader += ' <span style="color:#8b949e">lines ' + tcArgs.start_line + '-' + tcArgs.end_line + '</span>';
         var diffLines = [];
         if (tcArgs.old_string) tcArgs.old_string.split('\n').slice(0, 6).forEach(function(l) {
@@ -471,22 +518,19 @@ function handleSSE(event) {
         if (tcArgs.new_string) tcArgs.new_string.split('\n').slice(0, 6).forEach(function(l) {
           diffLines.push('<span style="color:#3fb950">+ ' + esc(l) + '</span>');
         });
-        var editDiv = document.createElement('div');
-        editDiv.className = 'msg tool_call';
-        editDiv.innerHTML = editHeader + (diffLines.length ? '<pre style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('\n') + '</pre>' : '');
-        messagesEl.appendChild(editDiv);
-        _lastToolCall = agent + ' Edit(' + editPath + ')';
+        tcDiv.innerHTML = editHeader + (diffLines.length ? '<pre style="margin:2px 0 0 0;font-size:11px">' + diffLines.join('\n') + '</pre>' : '');
       } else {
-        _lastToolCall = agent + ' ' + (data.tool || '') + '(' +
-          JSON.stringify(tcArgs).slice(0, 100) + ')';
-        addMsg('tool_call', _lastToolCall, data);
+        tcDiv.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + esc(_toolSummary(data.tool || '', tcArgs));
       }
+      messagesEl.appendChild(tcDiv);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      _lastToolCall = (_TOOL_DISPLAY[data.tool] || data.tool) + '(...)';
       _hadToolCalls = true;
       updateActiveAgents(agent, data.tool || 'tool');
       break;
 
     case 'tool_result':
-      addToolResult(data.tool || '', data.result || '', data.path || '', data.fs_action || '');
+      addToolResult(data.tool || '', data.result || '', data.path || '', data.tc_id || '');
       break;
 
     case 'done': {

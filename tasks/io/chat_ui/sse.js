@@ -324,6 +324,7 @@ function connectSSE(cid) {
     addMsg('tool_call', data.tool, {
       tool_name: data.tool,
       tool_args: data.arguments || {},
+      tc_id: data.tc_id || '',
       source: data.source || {type: 'agent', name: tcAgent, llm_service: data.llm_service || ''},
       agent_name: tcAgent,
       llm_service: data.llm_service || '',
@@ -337,7 +338,17 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
-    // Single rendering path: addMsg handles ALL tool_result rendering
+    // Try to attach to matching tool_call element
+    const tcId = data.tc_id || '';
+    if (tcId) {
+      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      if (tcEl) {
+        _attachToolResult(tcEl, data.result || '');
+        if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
+        return;
+      }
+    }
+    // Fallback: standalone element
     addMsg('tool_result', data.result || '', {
       tool_name: data.tool,
       tool: data.tool,
@@ -346,6 +357,7 @@ function connectSSE(cid) {
       llm_service: data.llm_service || '',
       path: data.path || '',
       ts: data.ts,
+      tc_id: tcId,
     });
     if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
   });

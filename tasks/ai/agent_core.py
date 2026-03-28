@@ -154,6 +154,7 @@ class AgentCoreMixin:
                             _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
                             _sse.append({"type": "tool_call", "data": {
                                 "tool": _tc_name, "arguments": _tc_args,
+                                "tc_id": tc.id,
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
                     if msg.role == "tool":
@@ -168,6 +169,7 @@ class AgentCoreMixin:
                         _sse.append({"type": "tool_result", "data": {
                             "tool": getattr(msg, '_tool_name', ''),
                             "result": _preview,
+                            "tc_id": getattr(msg, 'tool_call_id', ''),
                             "agent_name": _agent, "llm_service": _svc,
                         }})
                     ConversationWriter.for_conversation(conversation_id).enqueue(

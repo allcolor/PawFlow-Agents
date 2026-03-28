@@ -894,6 +894,7 @@ class LLMClaudeCodeMixin:
                             _pub("tool_call", {
                                 "tool": _tc_name,
                                 "arguments": _tc_args,
+                                "tc_id": block.get("id", ""),
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
@@ -942,6 +943,7 @@ class LLMClaudeCodeMixin:
                             _pub("tool_result", {
                                 "tool": _tr_name,
                                 "result": result_str[:300],
+                                "tc_id": tc_id,
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",

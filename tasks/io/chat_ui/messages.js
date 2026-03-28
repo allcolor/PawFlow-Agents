@@ -1,3 +1,46 @@
+const _TOOL_DISPLAY = {
+  bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit',
+  glob: 'Glob', grep: 'Grep', delete: 'Delete', mkdir: 'Mkdir',
+  stat: 'Stat', exists: 'Exists', list_dir: 'ListDir',
+  batch_edit: 'BatchEdit', apply_patch: 'ApplyPatch',
+  find_replace: 'FindReplace', notebook_edit: 'NotebookEdit',
+  copy: 'Copy', execute_script: 'Script',
+  web_search: 'WebSearch', web_fetch: 'WebFetch', scrape_url: 'Scrape',
+  generate_image: 'ImageGen', generate_video: 'VideoGen',
+  remember: 'Remember', recall: 'Recall', semantic_recall: 'SemanticRecall',
+  forget: 'Forget', spawn_agents: 'SpawnAgents', ask_agent: 'AskAgent',
+  show_file: 'ShowFile', compact_result: 'CompactResult',
+  get_tool_schema: 'GetToolSchema',
+};
+
+function _toolCallSummary(name, args) {
+  const display = _TOOL_DISPLAY[name] || name;
+  let summary = '';
+  if (name === 'bash' || name === 'execute_script') {
+    summary = args.command || args.code || '';
+  } else if (['read','write','edit','delete','stat','exists','mkdir','list_dir','batch_edit','apply_patch','find_replace','notebook_edit'].includes(name)) {
+    summary = args.path || '';
+  } else if (name === 'glob') {
+    summary = args.pattern || '';
+  } else if (name === 'grep') {
+    summary = (args.pattern || '') + (args.path ? ', ' + args.path : '');
+  } else if (name === 'web_search') {
+    summary = args.query || '';
+  } else if (name === 'web_fetch' || name === 'scrape_url') {
+    summary = args.url || '';
+  } else if (name === 'spawn_agents' && args.tasks) {
+    summary = args.tasks.length + ' task(s)';
+  } else {
+    const keys = Object.keys(args || {});
+    summary = keys.slice(0, 3).map(k => {
+      const v = typeof args[k] === 'string' ? args[k] : JSON.stringify(args[k]);
+      return k + '=' + v;
+    }).join(', ');
+  }
+  if (summary.length > 120) summary = summary.substring(0, 120) + '\u2026';
+  return display + '(' + summary + ')';
+}
+
 function sourceBadge(source) {
   if (!source) return '';
   const name = source.name ? displayAgentName(source.name) : '';
@@ -119,60 +162,41 @@ function addMsg(role, text, extra) {
   if (role === 'assistant') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + renderMarkdown(text) + buildMetaLine(extra);
   } else if (role === 'tool_call' || role === 'tool') {
-    // Unified tool_call rendering (used by BOTH SSE live AND transcript reload)
     const toolName = (extra && (extra.tool_name || extra.tool)) || text || '?';
     const toolArgs = (extra && extra.tool_args) || (extra && extra.arguments) || {};
-    const srcAgent = (extra && extra.source) ? (extra.source.name || extra.agent_name || '') : (extra && extra.agent_name || '');
-    const srcSvc = (extra && extra.source) ? (extra.source.llm_service || '') : (extra && extra.llm_service || '');
-    const srcLabel = displayAgentName(srcAgent) + (srcSvc ? ' via ' + srcSvc : '');
-    // Parse args if string
     let args = toolArgs;
     if (typeof args === 'string') { try { args = JSON.parse(args); } catch(e) {} }
+    const tcId = (extra && extra.tc_id) || '';
+    if (tcId) el.dataset.tcId = tcId;
 
-    if (toolName === 'spawn_agents' && args && args.tasks) {
-      const lines = args.tasks.map(task => {
-        const dst = displayAgentName(task.agent || '?');
-        const preview = (task.message || '').substring(0, 80);
-        return '\u27A1 ' + srcLabel + ' \u2192 ' + dst + (preview ? ': ' + preview : '');
-      });
-      el.innerHTML = escapeHtml(lines.join('\n'));
-    } else if (toolName === 'edit' && args.path) {
-      el.innerHTML = _renderToolCallEdit(srcLabel, args);
+    if (toolName === 'edit' && args && args.path) {
+      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + _renderToolCallEdit('', args);
     } else {
-      const argKeys = typeof args === 'object' && args ? Object.keys(args) : [];
-      let argPreview = '';
-      if (argKeys.length > 0) {
-        argPreview = argKeys.map(k => {
-          const v = typeof args[k] === 'string' ? args[k].substring(0, 60) : JSON.stringify(args[k]).substring(0, 60);
-          return k + '=' + v;
-        }).join(', ');
-        if (argPreview.length > 120) argPreview = argPreview.substring(0, 120) + '...';
-      }
-      el.innerHTML = '\u{1F527} [' + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName)
-        + (argPreview ? '(' + escapeHtml(argPreview) + ')' : '');
+      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {}));
     }
   } else if (role === 'tool_result') {
-    // Unified tool_result rendering
-    const toolName = (extra && extra.tool_name) || (extra && extra.tool) || '';
-    const srcAgent = (extra && extra.source) ? (extra.source.name || '') : (extra && extra.agent_name || '');
-    const srcSvc = (extra && extra.source) ? (extra.source.llm_service || '') : (extra && extra.llm_service || '');
-    const srcLabel = displayAgentName(srcAgent) + (srcSvc ? ' via ' + srcSvc : '');
+    const tcId = (extra && extra.tc_id) || '';
     const resultText = text || '';
-    // Collapsible if long
+    // Try to attach to the matching tool_call element
+    if (tcId) {
+      const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+      if (tcEl) {
+        _attachToolResult(tcEl, resultText);
+        el.style.display = 'none';  // hide this standalone element
+        return el;
+      }
+    }
+    // Fallback: standalone tool_result (no matching tool_call found)
+    const toolName = (extra && extra.tool_name) || (extra && extra.tool) || '';
+    const display = _TOOL_DISPLAY[toolName] || toolName;
     if (resultText.length > 200) {
       const firstLine = resultText.split('\n')[0].substring(0, 100);
-      el.innerHTML = '<details><summary style="color:#4ecdc4;font-size:11px;cursor:pointer">\u2705 ['
-        + escapeHtml(srcLabel) + '] ' + escapeHtml(toolName || '') + ': ' + escapeHtml(firstLine)
-        + '</summary><pre style="font-size:11px;margin:4px 0 0 0;max-height:300px;overflow-y:auto"><code>'
-        + escapeHtml(resultText) + '</code></pre></details>';
+      el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
+        + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+        + '<pre><code>' + escapeHtml(resultText) + '</code></pre></details></div>';
     } else {
-      const diffHtml = _renderDiff(resultText);
-      if (diffHtml) {
-        el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 </span>' + diffHtml;
-      } else {
-        el.innerHTML = '<span style="color:#4ecdc4;font-size:11px">\u2705 [' + escapeHtml(srcLabel) + '] '
-          + escapeHtml(toolName ? toolName + ': ' : '') + escapeHtml(resultText) + '</span>';
-      }
+      el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
+        + '<div class="tc-result">\u23bf ' + escapeHtml(resultText) + '</div>';
     }
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -242,6 +266,24 @@ function _synLine(code, lang) {
   if (!lang || typeof hljs === 'undefined') return escapeHtml(code);
   try { return hljs.highlight(code, {language: lang, ignoreIllegals: true}).value; }
   catch(e) { return escapeHtml(code); }
+}
+
+function _attachToolResult(tcEl, resultText) {
+  // Change bullet from pending (green) to done (grey)
+  const bullet = tcEl.querySelector('.tc-bullet');
+  if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
+  // Append result inside the tool_call element
+  const resultDiv = document.createElement('div');
+  resultDiv.className = 'tc-result';
+  if (resultText.length > 300) {
+    const firstLine = resultText.split('\n')[0].substring(0, 120);
+    resultDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine)
+      + '</summary><pre style="font-size:11px;margin:2px 0 0 16px;max-height:300px;overflow-y:auto"><code>'
+      + escapeHtml(resultText) + '</code></pre></details>';
+  } else {
+    resultDiv.innerHTML = '\u23bf ' + escapeHtml(resultText);
+  }
+  tcEl.appendChild(resultDiv);
 }
 
 function _renderToolCallEdit(srcLabel, args) {

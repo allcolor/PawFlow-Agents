@@ -566,11 +566,15 @@ class AgentCoreMixin:
                                 break
                         if _resume_retried:
                             pass  # resume fallback succeeded
-                        elif "exceed_context_size" in err_str or "n_prompt_tokens" in err_str:
+                        elif ("exceed_context_size" in err_str
+                              or "n_prompt_tokens" in err_str
+                              or "Prompt is too long" in err_str
+                              or "prompt_too_long" in err_str):
                             logger.warning(f"[agent:{conversation_id[:8]}] Context overflow, retrying...")
                             emitter.on_overflow_retry(iteration)
                             if _is_claude_code:
-                                llm_context = self._prepare_cc_file_context(list(messages))
+                                llm_context = self._prepare_cc_file_context(
+                                    list(messages), max_recent=10)
                             else:
                                 llm_context = self._compact(
                                     llm_context, compact_client,

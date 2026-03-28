@@ -376,6 +376,10 @@ def main():
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
                 tool_args = args.get("arguments", {})
+                if not tool_args or tool_args == {} or tool_args == "{}":
+                    _log(f"EMPTY ARGS for {tool_name}! "
+                         f"raw args type={type(args).__name__}, "
+                         f"raw params={json.dumps(params)[:500]}")
                 for _ in range(3):
                     if not isinstance(tool_args, str):
                         break

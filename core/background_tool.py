@@ -99,8 +99,13 @@ def has_pending(conversation_id: str) -> bool:
         )
 
 
-def wait_pending(conversation_id: str, timeout: float = 120) -> int:
-    """Wait for all pending bg tasks for this conversation. Returns count completed."""
+def wait_pending(conversation_id: str, timeout: float = 120,
+                 cancel_check=None) -> int:
+    """Wait for all pending bg tasks. Returns count completed.
+
+    cancel_check: callable that raises if the agent was preempted
+    (e.g., user sent a new message). Called every second.
+    """
     deadline = time.time() + timeout
     completed = 0
     while time.time() < deadline:
@@ -112,7 +117,8 @@ def wait_pending(conversation_id: str, timeout: float = 120) -> int:
         if not pending:
             break
         time.sleep(1)
-        # Check how many completed
+        if cancel_check:
+            cancel_check()  # raises AgentCancelled if preempted
         for tc_id in pending:
             with _lock:
                 t = _backgrounded.get(tc_id)

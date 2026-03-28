@@ -657,7 +657,8 @@ class AgentCoreMixin:
                             logger.info("[agent:%s] waiting for background tasks before exit",
                                         conversation_id[:8])
                             emitter.on_status("Waiting for background tasks...")
-                            _bg_wait.wait_pending(conversation_id, timeout=120)
+                            _bg_wait.wait_pending(conversation_id, timeout=120,
+                                                  cancel_check=emitter.check_cancelled)
                             # Apply completed results
                             for m in messages:
                                 if (m.role == "tool" and isinstance(m.content, str)

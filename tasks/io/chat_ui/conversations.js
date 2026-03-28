@@ -90,7 +90,7 @@ async function resumeConv(cid, force) {
       addMsg(m.type || m.role, content, m);
     }
     serverMsgCount = data.message_count || 0;
-    currentOffset = 0;
+    currentOffset = (data.messages || []).length;
     hasMoreMessages = data.has_more || false;
     _updateLoadMoreBanner();
     selectedAgent = data.active_agent || '';
@@ -151,9 +151,8 @@ async function loadMoreMessages() {
   // Save scroll state
   const prevHeight = container.scrollHeight;
 
-  // Calculate next offset: current loaded messages count
-  const loadedCount = document.querySelectorAll('#messages > .msg').length;
-  const nextOffset = loadedCount;
+  // Offset = total transcript messages already loaded (not DOM count)
+  const nextOffset = currentOffset;
 
   try {
     const resp = await fetch(API, {
@@ -171,6 +170,7 @@ async function loadMoreMessages() {
     if (data.error) { loadingMore = false; return; }
 
     hasMoreMessages = data.has_more || false;
+    currentOffset += (data.messages || []).length;
 
     // Prepend older messages before existing ones (after banner)
     const insertPoint = banner ? banner.nextSibling : container.firstChild;

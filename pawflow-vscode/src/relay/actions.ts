@@ -13,9 +13,8 @@ const MAX_EXEC_OUTPUT = 10 * 1024 * 1024;
 
 const WRITE_ACTIONS = new Set([
   'write_file', 'delete_file', 'mkdir', 'find_replace', 'edit',
-  'git_commit', 'git_push', 'exec', 'exec_stream', 'batch_edit', 'apply_patch',
-  'edit_notebook', 'git_add', 'git_reset', 'git_stash', 'git_branch',
-  'git_merge', 'git_rebase', 'git_cherry_pick', 'git_tag', 'project_init',
+  'exec', 'exec_stream', 'batch_edit', 'apply_patch',
+  'edit_notebook', 'project_init',
   'screen_click', 'screen_double_click', 'screen_type', 'screen_key', 'screen_move', 'screen_scroll',
 ]);
 
@@ -50,15 +49,6 @@ function rel(absPath: string, root: string): string {
     return path.relative(root, absPath).replace(/\\/g, '/');
   } catch {
     return absPath;
-  }
-}
-
-function gitRun(cwd: string, args: string[], timeout = 30000): { stdout: string; stderr: string; returncode: number } {
-  try {
-    const result = cp.spawnSync('git', args, { cwd, timeout, encoding: 'utf-8' });
-    return { stdout: result.stdout || '', stderr: result.stderr || '', returncode: result.status ?? -1 };
-  } catch (e: any) {
-    return { stdout: '', stderr: e.message, returncode: -1 };
   }
 }
 
@@ -421,69 +411,6 @@ export function executeAction(
         return { ok: true, data: { stdout: so, stderr: se, returncode: spawnResult.status ?? -1 } };
       }
 
-      // Git actions
-      case 'git_status': {
-        const br = gitRun(absPath, ['branch', '--show-current']);
-        const st = gitRun(absPath, ['status', '--porcelain']);
-        const staged: string[] = [], modified: string[] = [], untracked: string[] = [];
-        for (const line of st.stdout.split('\n')) {
-          if (line.length < 3) continue;
-          const [x, y] = [line[0], line[1]];
-          const fname = line.slice(3);
-          if (x === '?' && y === '?') untracked.push(fname);
-          else if (x !== ' ' && x !== '?') staged.push(fname);
-          if (y !== ' ' && y !== '?') modified.push(fname);
-        }
-        return { ok: true, data: { branch: br.stdout.trim() || 'HEAD', staged, modified, untracked } };
-      }
-
-      case 'git_log': {
-        const count = req.count || 10;
-        const r = gitRun(absPath, ['log', `-${count}`, '--format=%H|%ai|%s']);
-        const entries = r.stdout.trim().split('\n').filter(Boolean).map(line => {
-          const [hash, date, ...msg] = line.split('|');
-          return { hash, date, message: msg.join('|') };
-        });
-        return { ok: true, data: entries };
-      }
-
-      case 'git_diff': {
-        const ref = req.ref || '';
-        const args = ref ? ['diff', ref] : ['diff'];
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { diff: r.stdout.slice(0, 50000) } };
-      }
-
-      case 'git_commit': {
-        const message = req.message || '';
-        if (!message) { return { ok: false, error: 'Missing message' }; }
-        const files = req.files || [];
-        if (files.length) {
-          gitRun(absPath, ['add', '--', ...files]);
-        } else {
-          gitRun(absPath, ['add', '-A']);
-        }
-        const r = gitRun(absPath, ['commit', '-m', message]);
-        return { ok: true, data: { output: r.stdout, hash: '' } };
-      }
-
-      case 'git_pull': {
-        const r = gitRun(absPath, ['pull'], 60000);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_push': {
-        const r = gitRun(absPath, ['push'], 120000);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_checkout': {
-        const ref = req.ref || '';
-        if (!ref) { return { ok: false, error: 'Missing ref' }; }
-        gitRun(absPath, ['checkout', ref]);
-        return { ok: true, data: { branch: ref } };
-      }
-
       case 'project_context': {
         // Minimal project context
         const entries = fs.readdirSync(rootDir, { withFileTypes: true }).slice(0, 100).map(e => ({
@@ -497,126 +424,6 @@ export function executeAction(
         if (names.has('Cargo.toml')) types.push('Rust');
         if (names.has('go.mod')) types.push('Go');
         return { ok: true, data: { root: rootDir, files: entries, project_types: types } };
-      }
-
-      // ── Missing git actions ──
-
-      case 'git_add': {
-        const files = req.files || [];
-        if (!files.length) { return { ok: false, error: 'Missing files' }; }
-        const r = gitRun(absPath, ['add', '--', ...files]);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_reset': {
-        const mode = req.mode || 'mixed';
-        const ref = req.ref || 'HEAD';
-        const files = req.files || [];
-        const args = files.length ? ['reset', '--', ...files] : ['reset', `--${mode}`, ref];
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_stash': {
-        const sub = (req.sub || 'push').toLowerCase();
-        const idx = req.index || 0;
-        let args: string[];
-        if (sub === 'list') args = ['stash', 'list'];
-        else if (sub === 'pop') args = ['stash', 'pop'];
-        else if (sub === 'drop') args = ['stash', 'drop', String(idx)];
-        else if (sub === 'apply') args = ['stash', 'apply', String(idx)];
-        else args = ['stash', 'push', '-m', req.message || 'stash'];
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_branch': {
-        const branch = req.branch || '';
-        const del = req.delete || false;
-        const force = req.force || false;
-        const base = req.base || '';
-        if (!branch) {
-          const r = gitRun(absPath, ['branch', '-a']);
-          return { ok: true, data: { branches: r.stdout.trim().split('\n') } };
-        }
-        if (del) {
-          const r = gitRun(absPath, ['branch', force ? '-D' : '-d', branch]);
-          return { ok: true, data: { output: r.stdout, error: r.stderr } };
-        }
-        const args = base ? ['branch', branch, base] : ['branch', branch];
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { output: r.stdout, branch } };
-      }
-
-      case 'git_merge': {
-        const branch = req.branch || req.ref || '';
-        if (!branch) { return { ok: false, error: 'Missing branch' }; }
-        const args = req.no_ff ? ['merge', '--no-ff', branch] : ['merge', branch];
-        const r = gitRun(absPath, args, 60000);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_rebase': {
-        const onto = req.onto || req.ref || '';
-        if (!onto) { return { ok: false, error: 'Missing onto' }; }
-        const r = gitRun(absPath, ['rebase', onto], 60000);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_cherry_pick': {
-        const commits = req.commits || [];
-        if (!commits.length) { return { ok: false, error: 'Missing commits' }; }
-        const r = gitRun(absPath, ['cherry-pick', ...commits], 60000);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_tag': {
-        const tag = req.tag || '';
-        if (!tag) {
-          const r = gitRun(absPath, ['tag', '-l']);
-          return { ok: true, data: { tags: r.stdout.trim().split('\n').filter(Boolean) } };
-        }
-        const message = req.message || '';
-        const args = message ? ['tag', '-a', tag, '-m', message] : ['tag', tag];
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { output: r.stdout, tag } };
-      }
-
-      case 'git_blame': {
-        const file = req.file || relPath;
-        const startLine = req.start_line || 0;
-        const endLine = req.end_line || 0;
-        const args = ['blame', '--porcelain'];
-        if (startLine && endLine) args.push(`-L${startLine},${endLine}`);
-        const rPath = resolvePath(rootDir, file);
-        if (!rPath) { return { ok: false, error: 'Invalid file path' }; }
-        args.push(rPath);
-        const r = gitRun(rootDir, args);
-        return { ok: true, data: { output: r.stdout.slice(0, 20000) } };
-      }
-
-      case 'git_worktree_list': {
-        const r = gitRun(absPath, ['worktree', 'list', '--porcelain']);
-        return { ok: true, data: { output: r.stdout } };
-      }
-
-      case 'git_worktree_add': {
-        const wPath = req.worktree_path || '';
-        const branch = req.branch || '';
-        if (!wPath) { return { ok: false, error: 'Missing worktree_path' }; }
-        const args = ['worktree', 'add'];
-        if (req.create_new_branch) args.push('-b', branch || 'new-branch');
-        args.push(wPath);
-        if (branch && !req.create_new_branch) args.push(branch);
-        const r = gitRun(absPath, args);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
-      }
-
-      case 'git_worktree_remove': {
-        const wPath = req.worktree_path || '';
-        if (!wPath) { return { ok: false, error: 'Missing worktree_path' }; }
-        const r = gitRun(absPath, ['worktree', 'remove', wPath]);
-        return { ok: true, data: { output: r.stdout, error: r.stderr } };
       }
 
       // ── File format actions ──

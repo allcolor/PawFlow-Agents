@@ -99,39 +99,6 @@ class FilesystemOpsTask(BaseTask):
             result = svc.find_replace(path, pattern, replacement)
             flowfile.set_content(json.dumps(result).encode())
 
-        # Git operations
-        elif action == "git_status":
-            result = svc.git_status(path)
-            flowfile.set_content(json.dumps(result).encode())
-
-        elif action == "git_log":
-            count = int(self.config.get("count", 10))
-            result = svc.git_log(path, count)
-            flowfile.set_content(json.dumps(result).encode())
-
-        elif action == "git_diff":
-            ref = self.config.get("ref", "")
-            result = svc.git_diff(path, ref)
-            flowfile.set_content(result.encode() if isinstance(result, str) else json.dumps(result).encode())
-
-        elif action == "git_commit":
-            message = self.resolve_value(self.config.get("message", ""), flowfile)
-            result = svc.git_commit(path, message)
-            flowfile.set_content(json.dumps(result).encode())
-
-        elif action == "git_pull":
-            result = svc.git_pull(path)
-            flowfile.set_content(json.dumps(result).encode())
-
-        elif action == "git_push":
-            result = svc.git_push(path)
-            flowfile.set_content(json.dumps(result).encode())
-
-        elif action == "git_checkout":
-            ref = self.config.get("ref", "")
-            result = svc.git_checkout(path, ref)
-            flowfile.set_content(json.dumps(result).encode())
-
         else:
             raise TaskError(f"Unknown filesystem action: {action}")
 
@@ -150,8 +117,6 @@ class FilesystemOpsTask(BaseTask):
                 "options": [
                     "list_dir", "read_file", "write_file", "delete_file",
                     "mkdir", "stat", "exists", "search", "grep", "find_replace",
-                    "git_status", "git_log", "git_diff", "git_commit",
-                    "git_pull", "git_push", "git_checkout",
                 ],
                 "description": "Operation (or use fs.action attribute)",
             },
@@ -174,18 +139,6 @@ class FilesystemOpsTask(BaseTask):
             "recursive": {
                 "type": "boolean", "required": False, "default": True,
                 "description": "Recursive search/grep",
-            },
-            "ref": {
-                "type": "string", "required": False,
-                "description": "Git ref for diff/checkout",
-            },
-            "message": {
-                "type": "string", "required": False,
-                "description": "Commit message for git_commit",
-            },
-            "count": {
-                "type": "integer", "required": False, "default": 10,
-                "description": "Number of entries for git_log",
             },
         }
 

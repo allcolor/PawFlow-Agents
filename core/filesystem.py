@@ -147,41 +147,6 @@ class FilesystemBackend(ABC):
         """Replace text in a file. Returns {replacements: int, path: str}."""
         raise NotImplementedError("find_replace not supported by this backend")
 
-    # ── Git operations (optional) ──
-
-    @property
-    def supports_git(self) -> bool:
-        """True if the backend supports git operations."""
-        return False
-
-    def git_status(self, path: str = ".") -> Dict[str, Any]:
-        """Return {branch, clean, staged, modified, untracked}."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_log(self, path: str = ".", count: int = 10) -> List[Dict[str, Any]]:
-        """Return [{hash, author, date, message}]."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_diff(self, path: str = ".", ref: str = "") -> str:
-        """Return the textual diff."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_commit(self, path: str = ".", message: str = "") -> Dict[str, Any]:
-        """Stage all + commit. Return {hash, message}."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_pull(self, path: str = ".") -> Dict[str, Any]:
-        """Pull. Return {updated, conflicts}."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_push(self, path: str = ".") -> Dict[str, Any]:
-        """Push. Return {pushed, remote}."""
-        raise NotImplementedError("git not supported by this backend")
-
-    def git_checkout(self, path: str = ".", ref: str = "") -> Dict[str, Any]:
-        """Checkout branch/tag. Return {branch}."""
-        raise NotImplementedError("git not supported by this backend")
-
     def close(self) -> None:
         """Release resources held by this backend."""
         pass
@@ -228,17 +193,10 @@ _OP_CATEGORY = {
     "exists": "read",
     "search": "read",
     "grep": "read",
-    "git_status": "read",
-    "git_log": "read",
-    "git_diff": "read",
     # Write operations
     "write_file": "write",
     "mkdir": "write",
     "find_replace": "write",
-    "git_commit": "write",
-    "git_pull": "write",
-    "git_push": "write",
-    "git_checkout": "write",
     # Delete operations
     "delete_file": "delete",
 }
@@ -252,10 +210,6 @@ class PermissionEnforcedFilesystem:
                  permissions: FilesystemPermissions):
         self._backend = backend
         self._permissions = permissions
-
-    @property
-    def supports_git(self) -> bool:
-        return self._backend.supports_git
 
     def _check(self, path: str, operation: str) -> str:
         """Normalize path and check permissions. Returns normalized path.
@@ -315,36 +269,6 @@ class PermissionEnforcedFilesystem:
     def find_replace(self, path: str, pattern: str, replacement: str) -> Dict[str, Any]:
         p = self._check(path, "find_replace")
         return self._backend.find_replace(p, pattern, replacement)
-
-    # ── Git operations ──
-
-    def git_status(self, path: str = ".") -> Dict[str, Any]:
-        p = self._check(path, "git_status")
-        return self._backend.git_status(p)
-
-    def git_log(self, path: str = ".", count: int = 10) -> List[Dict[str, Any]]:
-        p = self._check(path, "git_log")
-        return self._backend.git_log(p, count)
-
-    def git_diff(self, path: str = ".", ref: str = "") -> str:
-        p = self._check(path, "git_diff")
-        return self._backend.git_diff(p, ref)
-
-    def git_commit(self, path: str = ".", message: str = "") -> Dict[str, Any]:
-        p = self._check(path, "git_commit")
-        return self._backend.git_commit(p, message)
-
-    def git_pull(self, path: str = ".") -> Dict[str, Any]:
-        p = self._check(path, "git_pull")
-        return self._backend.git_pull(p)
-
-    def git_push(self, path: str = ".") -> Dict[str, Any]:
-        p = self._check(path, "git_push")
-        return self._backend.git_push(p)
-
-    def git_checkout(self, path: str = ".", ref: str = "") -> Dict[str, Any]:
-        p = self._check(path, "git_checkout")
-        return self._backend.git_checkout(p, ref)
 
     def close(self) -> None:
         self._backend.close()

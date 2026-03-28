@@ -18,7 +18,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
@@ -151,71 +150,6 @@ class ServerFilesystemBackend(FilesystemBackend):
             rel = str(p)
         return {"replacements": count, "path": rel}
 
-    # ── Git operations ──
-
-    @property
-    def supports_git(self) -> bool:
-        return True
-
-    def _git_run(self, path: str, args: List[str], timeout: int = 30):
-        p = self._resolve(path)
-        return subprocess.run(
-            ["git"] + args, cwd=str(p),
-            capture_output=True, text=True, timeout=timeout,
-        )
-
-    def git_status(self, path: str = ".") -> Dict[str, Any]:
-        br = self._git_run(path, ["branch", "--show-current"])
-        st = self._git_run(path, ["status", "--porcelain"])
-        staged, modified, untracked = [], [], []
-        for line in st.stdout.splitlines():
-            if len(line) < 3:
-                continue
-            x, y = line[0], line[1]
-            name = line[3:]
-            if x == "?":
-                untracked.append(name)
-            elif x != " ":
-                staged.append(name)
-            if y != " " and y != "?":
-                modified.append(name)
-        return {
-            "branch": br.stdout.strip() or "HEAD",
-            "clean": not staged and not modified and not untracked,
-            "staged": staged, "modified": modified, "untracked": untracked,
-        }
-
-    def git_log(self, path: str = ".", count: int = 10) -> List[Dict[str, Any]]:
-        r = self._git_run(path, ["log", f"-n{count}", "--pretty=format:%H%x00%an%x00%aI%x00%s"])
-        entries = []
-        for line in r.stdout.splitlines():
-            parts = line.split("\x00", 3)
-            if len(parts) == 4:
-                entries.append({"hash": parts[0], "author": parts[1], "date": parts[2], "message": parts[3]})
-        return entries
-
-    def git_diff(self, path: str = ".", ref: str = "") -> str:
-        cmd = ["diff", ref] if ref else ["diff"]
-        return self._git_run(path, cmd).stdout
-
-    def git_commit(self, path: str = ".", message: str = "") -> Dict[str, Any]:
-        self._git_run(path, ["add", "-A"])
-        self._git_run(path, ["commit", "-m", message or "PawFlow auto-commit"])
-        h = self._git_run(path, ["rev-parse", "HEAD"])
-        return {"hash": h.stdout.strip(), "message": message}
-
-    def git_pull(self, path: str = ".") -> Dict[str, Any]:
-        r = self._git_run(path, ["pull"], timeout=60)
-        return {"updated": r.returncode == 0, "conflicts": "conflict" in r.stdout.lower() or r.returncode != 0}
-
-    def git_push(self, path: str = ".") -> Dict[str, Any]:
-        r = self._git_run(path, ["push"], timeout=120)
-        return {"pushed": r.returncode == 0, "remote": "origin"}
-
-    def git_checkout(self, path: str = ".", ref: str = "") -> Dict[str, Any]:
-        self._git_run(path, ["checkout", ref or "main"])
-        br = self._git_run(path, ["branch", "--show-current"])
-        return {"branch": br.stdout.strip() or ref}
 
 
 class ServerFilesystemService(BaseService):
@@ -254,18 +188,7 @@ class ServerFilesystemService(BaseService):
     def search(self, path, pattern, recursive=True): return self._get_connection().search(path, pattern, recursive)
     def grep(self, path, regex, recursive=True): return self._get_connection().grep(path, regex, recursive)
     def find_replace(self, path, pattern, replacement): return self._get_connection().find_replace(path, pattern, replacement)
-    def git_status(self, path="."): return self._get_connection().git_status(path)
-    def git_log(self, path=".", count=10): return self._get_connection().git_log(path, count)
-    def git_diff(self, path=".", ref=""): return self._get_connection().git_diff(path, ref)
-    def git_commit(self, path=".", message=""): return self._get_connection().git_commit(path, message)
-    def git_pull(self, path="."): return self._get_connection().git_pull(path)
-    def git_push(self, path="."): return self._get_connection().git_push(path)
-    def git_checkout(self, path=".", ref=""): return self._get_connection().git_checkout(path, ref)
-
-    @property
-    def supports_git(self): return self._get_connection().supports_git
-
-    def get_parameter_schema(self) -> Dict[str, Any]:
+def get_parameter_schema(self) -> Dict[str, Any]:
         return {
             "root": {"type": "string", "required": True, "description": "Absolute path to root directory"},
             "mode": {"type": "select", "required": False, "default": "read", "options": ["read", "readwrite", "full"], "description": "Permission mode"},

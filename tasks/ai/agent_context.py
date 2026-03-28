@@ -970,12 +970,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
     def _auto_compact_messages(self, messages: List[LLMMessage],
                                conversation_id: str, agent_name: str,
                                user_id: str,
-                               max_context: int = 200000) -> List[LLMMessage]:
-        """Auto-compact messages if they don't fit in max_context."""
-        # Estimate tokens — only compact if context doesn't fit
+                               max_context: int = 200000,
+                               compact_instructions: str = "") -> List[LLMMessage]:
+        """Auto-compact messages if they exceed 90% of max_context."""
+        _threshold = int(max_context * 0.9)
         _est = self._estimate_tokens(messages)
-        if _est <= max_context:
-            logger.info(f"[context:{conversation_id[:8]}] context fits ({_est} tokens <= {max_context}), no compact needed")
+        if _est <= _threshold:
+            logger.info(f"[context:{conversation_id[:8]}] context fits ({_est} tokens <= {_threshold} = 90%% of {max_context}), no compact needed")
             return messages
         try:
             from core.conversation_event_bus import ConversationEventBus

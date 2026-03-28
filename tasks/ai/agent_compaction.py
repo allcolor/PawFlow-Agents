@@ -198,6 +198,7 @@ class AgentCompactionMixin:
         agent_name: str = "",
         llm_service: str = "",
         chars_per_token: float = 0,
+        compact_instructions: str = "",
     ) -> List[LLMMessage]:
         """Compact context AFTER the agent's final response.
 
@@ -251,6 +252,7 @@ class AgentCompactionMixin:
                 target_tokens=_summary_target,
                 conversation_id=conversation_id,
                 agent_name=agent_name,
+                compact_instructions=compact_instructions,
             )
             logger.info(f"[compact-post] Summary done: {len(summary)} chars")
         except Exception as e:
@@ -283,6 +285,27 @@ class AgentCompactionMixin:
                     "and can use read_history if I need details from older messages.",
         ))
         compacted.extend(recent_messages)
+
+        # Post-compaction: note recently accessed files for agent awareness
+        _recent_files = set()
+        for m in recent_messages:
+            if m.role == "assistant" and m.tool_calls:
+                for tc in m.tool_calls:
+                    _args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    _action = _args.get("action", "")
+                    _path = _args.get("path", "")
+                    if _action in ("read_file", "edit", "write_file") and _path:
+                        _recent_files.add(_path)
+        if _recent_files:
+            _files_note = "Recently accessed files: " + ", ".join(sorted(_recent_files)[:10])
+            compacted.append(LLMMessage(
+                role="user",
+                content=f"[System: {_files_note}. You can re-read these files if you need their current content.]"
+            ))
+            compacted.append(LLMMessage(
+                role="assistant",
+                content="Noted."
+            ))
 
         _cpt = chars_per_token if chars_per_token > 0 else 3.5
         new_est = self._estimate_tokens(compacted, chars_per_token=_cpt)
@@ -734,6 +757,7 @@ class AgentCompactionMixin:
         target_tokens: int = 0,
         conversation_id: str = "",
         agent_name: str = "",
+        compact_instructions: str = "",
     ) -> str:
         """Summarize messages iteratively until they fit.
 
@@ -756,7 +780,8 @@ class AgentCompactionMixin:
                 self._sanitize_for_llm(self._messages_to_text([m]))
                 for m in old_messages)
             return self._call_summarize(client, total_text, target_tokens,
-                                       agent_name=agent_name, conversation_id=conversation_id)
+                                       agent_name=agent_name, conversation_id=conversation_id,
+                                       compact_instructions=compact_instructions)
 
         # 60% of context = safe input limit (leaves room for system prompt + output)
         safe_limit = int(max_tokens * 0.60)
@@ -853,7 +878,8 @@ class AgentCompactionMixin:
                         target_tokens: int = 0,
                         user_id: str = "", agent_name: str = "",
                         llm_service: str = "",
-                        conversation_id: str = "") -> str:
+                        conversation_id: str = "",
+                        compact_instructions: str = "") -> str:
         """Single LLM call to summarize text. Routes to claude-code path if needed."""
         logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
                      f"target={target_tokens} tokens, input={len(text)} chars")
@@ -866,9 +892,12 @@ class AgentCompactionMixin:
         if _provider == "claude-code":
             return self._call_summarize_via_cc(
                 client, text, target_tokens, user_id, agent_name, llm_service,
-                conversation_id)
+                conversation_id, compact_instructions)
 
         clean_text = self._sanitize_for_llm(text)
+        _focus = ""
+        if compact_instructions:
+            _focus = f"\nFOCUS: {compact_instructions}\n"
         target_instruction = (
             f"STRICT LIMIT: maximum {target_tokens} tokens. Be concise. "
             f"Prioritize: current state, files modified, last action, pending work. "
@@ -881,6 +910,7 @@ class AgentCompactionMixin:
                         "Summarize this work session. Preserve: project state, "
                         "files modified (with paths), decisions, last action, "
                         "pending work. Skip tool details.\n\n"
+                        + _focus
                         + target_instruction + "\n\n"
                         "SESSION:\n" + clean_text
                     )),
@@ -947,7 +977,8 @@ class AgentCompactionMixin:
     def _call_summarize_via_cc(self, client, text: str, target_tokens: int,
                               user_id: str = "", agent_name: str = "",
                               llm_service: str = "",
-                              conversation_id: str = "") -> str:
+                              conversation_id: str = "",
+                              compact_instructions: str = "") -> str:
         """Summarize via Claude Code streaming — write file, ask Claude to read + call compact_result."""
         from core.file_store import FileStore
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
@@ -980,7 +1011,9 @@ class AgentCompactionMixin:
             f"3. Call compact_result(summary='your summary here', compact_key='{compact_key}')\n\n"
             f"Preserve: project state, files modified with paths, key decisions, "
             f"last action taken, and any pending/unfinished work.\n"
-            f"Skip raw tool output, JSON blobs, and technical plumbing details.\n\n"
+            f"Skip raw tool output, JSON blobs, and technical plumbing details.\n"
+            + (f"\nFOCUS: {compact_instructions}\n" if compact_instructions else "") +
+            f"\n"
             f"CRITICAL: You MUST call compact_result with the summary. "
             f"Do NOT respond with text. Your ONLY output must be the compact_result call."
         )

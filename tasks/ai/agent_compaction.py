@@ -818,6 +818,14 @@ class AgentCompactionMixin:
                      f"target={target_tokens} tokens, input={len(text)} chars")
         if not target_tokens:
             target_tokens = 2000
+
+        # Claude-code: use streaming with file + compact_result tool
+        _provider = getattr(client, 'provider', '') or (
+            getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
+        if _provider == "claude-code":
+            return self._call_summarize_via_cc(
+                client, text, target_tokens, user_id, agent_name, llm_service)
+
         clean_text = self._sanitize_for_llm(text)
         target_instruction = (
             f"STRICT LIMIT: maximum {target_tokens} tokens. Be concise. "
@@ -893,6 +901,74 @@ class AgentCompactionMixin:
                 llm_service=llm_service or "summarizer")
         return summary
 
+
+    def _call_summarize_via_cc(self, client, text: str, target_tokens: int,
+                              user_id: str = "", agent_name: str = "",
+                              llm_service: str = "") -> str:
+        """Summarize via Claude Code streaming — write file, ask Claude to read + call compact_result."""
+        from core.file_store import FileStore
+        from core.handlers.compact_result import set_compact_key, wait_for_compact_result
+        import uuid
+
+        compact_key = uuid.uuid4().hex[:12]
+        file_id = FileStore.instance().store(
+            "compact_input.txt", text.encode("utf-8"), "text/plain",
+            category="compact")
+        logger.info("[compact-cc] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
+
+        set_compact_key(compact_key)
+
+        prompt = (
+            f"Read the file '{file_id}' using show_file(file_id='{file_id}'), "
+            f"then summarize the content in maximum {target_tokens} tokens.\n\n"
+            f"Preserve: project state, files modified, key decisions, last action, pending work.\n"
+            f"Skip raw tool output details.\n\n"
+            f"You MUST call compact_result(summary='your summary') to return the result.\n"
+            f"Do NOT respond with text. ONLY call compact_result."
+        )
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
+            if attempt > 1:
+                prompt = (
+                    f"RETRY {attempt}/{max_retries}: You must call compact_result.\n"
+                    f"Read file '{file_id}' with show_file, summarize in {target_tokens} tokens, "
+                    f"call compact_result(summary='...'). DO IT NOW."
+                )
+                set_compact_key(compact_key)
+            try:
+                client.complete_stream(
+                    messages=[LLMMessage(role="user", content=prompt)],
+                    max_tokens=min(target_tokens * 3, 8000),
+                )
+            except Exception as e:
+                logger.error("[compact-cc] attempt %d failed: %s", attempt, e)
+                if attempt == max_retries:
+                    try:
+                        FileStore.instance().delete(file_id)
+                    except Exception:
+                        pass
+                    raise
+                continue
+
+            try:
+                summary = wait_for_compact_result(compact_key, timeout=10)
+                if summary:
+                    logger.info("[compact-cc] got %d chars summary (attempt %d)", len(summary), attempt)
+                    try:
+                        FileStore.instance().delete(file_id)
+                    except Exception:
+                        pass
+                    return summary
+            except TimeoutError:
+                logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
+
+        try:
+            FileStore.instance().delete(file_id)
+        except Exception:
+            pass
+        raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
 
     def _call_summarize_with_budget(self, client: LLMClient,
                                      text: str, max_tokens: int) -> str:

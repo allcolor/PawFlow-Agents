@@ -58,6 +58,7 @@ class AgentToolConfigMixin:
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
             GitHubHandler, SecurityScanHandler,
         )
+        from core.handlers.compact_result import CompactResultHandler
 
         file_base_url = self.config.get("file_base_url", "")
         # file_ttl is set per-request to match conversation TTL

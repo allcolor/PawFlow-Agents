@@ -1,0 +1,82 @@
+"""compact_result tool — receives summary from Claude Code during compaction."""
+
+import logging
+import threading
+from typing import Any, Dict
+
+from core.tool_handler import ToolHandler
+
+logger = logging.getLogger(__name__)
+
+# Global state: when a compact is waiting, these are set
+_pending_lock = threading.Lock()
+_pending: Dict[str, dict] = {}  # key → {"event": Event, "summary": str}
+
+
+def wait_for_compact_result(key: str, timeout: float = 300) -> str:
+    """Block until compact_result is called for this key. Returns summary or raises."""
+    event = threading.Event()
+    with _pending_lock:
+        _pending[key] = {"event": event, "summary": ""}
+    if not event.wait(timeout=timeout):
+        with _pending_lock:
+            _pending.pop(key, None)
+        raise TimeoutError(f"compact_result not called within {timeout}s")
+    with _pending_lock:
+        entry = _pending.pop(key, {})
+    return entry.get("summary", "")
+
+
+def set_compact_key(key: str):
+    """Register a key to listen for. Called before launching Claude Code."""
+    event = threading.Event()
+    with _pending_lock:
+        _pending[key] = {"event": event, "summary": ""}
+
+
+class CompactResultHandler(ToolHandler):
+
+    @property
+    def name(self):
+        return "compact_result"
+
+    @property
+    def description(self):
+        return (
+            "Return the result of a compaction/summarization task. "
+            "Call this with your summary when asked to summarize content. "
+            "This is the ONLY way to return a summary — do NOT respond with text."
+        )
+
+    @property
+    def parameters_schema(self):
+        return {
+            "type": "object",
+            "properties": {
+                "summary": {
+                    "type": "string",
+                    "description": "The summary text",
+                },
+            },
+            "required": ["summary"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        summary = arguments.get("summary", "")
+        if not summary:
+            return "Error: summary is required"
+        with _pending_lock:
+            # Find any pending compact and deliver the summary
+            delivered = False
+            for key, entry in _pending.items():
+                if not entry["summary"]:
+                    entry["summary"] = summary
+                    entry["event"].set()
+                    delivered = True
+                    logger.info("[compact_result] delivered %d chars to key '%s'",
+                                len(summary), key)
+                    break
+        if not delivered:
+            logger.info("[compact_result] called but no compact pending, ignoring")
+            return "No compact in progress. Summary ignored."
+        return "Summary received."

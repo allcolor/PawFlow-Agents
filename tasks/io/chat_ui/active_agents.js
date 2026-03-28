@@ -6,6 +6,7 @@ function agentKey(name) { return (name || '').toLowerCase(); }
 
 let _agentDoneAt = {};  // agentKey → timestamp of last done (prevents ghost re-register)
 function trackAgentStart(agentName, msgPreview) {
+  if (!agentName) return;  // ignore empty agent names (compact, internal)
   const key = agentKey(agentName);
   // Ignore thinking events that arrive within 500ms after a done (race condition guard)
   const doneTs = _agentDoneAt[key];

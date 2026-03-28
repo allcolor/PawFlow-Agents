@@ -195,14 +195,16 @@ function addMsg(role, text, extra) {
     // Fallback: standalone tool_result (no matching tool_call found)
     const toolName = (extra && extra.tool_name) || (extra && extra.tool) || '';
     const display = _TOOL_DISPLAY[toolName] || toolName;
-    if (resultText.length > 200) {
-      const firstLine = resultText.split('\n')[0].substring(0, 100);
+    const firstLine = resultText.split('\n')[0].substring(0, 120);
+    const rendered = _renderToolOutput(resultText);
+    if (resultText.length > 500) {
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result"><details open><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-        + _renderToolOutput(resultText) + '</details></div>';
+        + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+        + rendered + '</details></div>';
     } else {
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result">\u23bf ' + _renderToolOutput(resultText) + '</div>';
+        + '<div class="tc-result"><details open><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+        + rendered + '</details></div>';
     }
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -398,14 +400,22 @@ function _attachToolResult(tcEl, resultText) {
   const pathHint = tcEl.dataset.path || '';
   const resultDiv = document.createElement('div');
   resultDiv.className = 'tc-result';
+  const firstLine = resultText.split('\n')[0].substring(0, 120);
+  const rendered = _renderToolOutput(resultText, toolHint, pathHint);
+  // Always collapsible — short results open, long results closed
   if (resultText.length > 500) {
-    const firstLine = resultText.split('\n')[0].substring(0, 120);
-    resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
-      + '</summary>' + _renderToolOutput(resultText, toolHint, pathHint) + '</details>';
+    resultDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine)
+      + '</summary>' + rendered + '</details>';
   } else {
-    resultDiv.innerHTML = '\u23bf ' + _renderToolOutput(resultText, toolHint, pathHint);
+    resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
+      + '</summary>' + rendered + '</details>';
   }
   tcEl.appendChild(resultDiv);
+  // Auto-scroll
+  if (isNearBottom()) {
+    const container = document.getElementById('messages');
+    if (container) container.scrollTop = container.scrollHeight;
+  }
 }
 
 function backgroundTool(tcId) {

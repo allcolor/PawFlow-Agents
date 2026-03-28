@@ -192,11 +192,11 @@ function addMsg(role, text, extra) {
     if (resultText.length > 200) {
       const firstLine = resultText.split('\n')[0].substring(0, 100);
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-        + '<pre><code>' + escapeHtml(resultText) + '</code></pre></details></div>';
+        + '<div class="tc-result"><details open><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+        + '<div class="tc-result-body">' + renderMarkdown(resultText) + '</div></details></div>';
     } else {
       el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result">\u23bf ' + escapeHtml(resultText) + '</div>';
+        + '<div class="tc-result">\u23bf ' + renderMarkdown(resultText) + '</div>';
     }
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
@@ -275,13 +275,13 @@ function _attachToolResult(tcEl, resultText) {
   // Append result inside the tool_call element
   const resultDiv = document.createElement('div');
   resultDiv.className = 'tc-result';
-  if (resultText.length > 300) {
+  if (resultText.length > 500) {
     const firstLine = resultText.split('\n')[0].substring(0, 120);
-    resultDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine)
-      + '</summary><pre style="font-size:11px;margin:2px 0 0 16px;max-height:300px;overflow-y:auto"><code>'
-      + escapeHtml(resultText) + '</code></pre></details>';
+    resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
+      + '</summary><div class="tc-result-body">' + renderMarkdown(resultText)
+      + '</div></details>';
   } else {
-    resultDiv.innerHTML = '\u23bf ' + escapeHtml(resultText);
+    resultDiv.innerHTML = '\u23bf ' + renderMarkdown(resultText);
   }
   tcEl.appendChild(resultDiv);
 }

@@ -341,12 +341,7 @@ function _attachResult(tcEl, result) {
   if (bullet) { bullet.className = 'tc-bullet done'; }
   var rd = document.createElement('div');
   rd.className = 'tc-result';
-  if (result.length > 300) {
-    var first = result.split('\n')[0].substring(0, 120);
-    rd.innerHTML = '<details><summary>\u23bf ' + esc(first) + '</summary><pre style="font-size:11px;margin:2px 0 0 16px;max-height:300px;overflow-y:auto">' + esc(result) + '</pre></details>';
-  } else {
-    rd.innerHTML = '\u23bf ' + esc(result);
-  }
+  rd.innerHTML = '\u23bf ' + renderToolResult(result);
   tcEl.appendChild(rd);
 }
 

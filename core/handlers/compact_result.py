@@ -95,15 +95,9 @@ class CompactResultHandler(ToolHandler):
                     logger.info("[compact_result] delivered %d chars to key '%s'",
                                 len(summary), compact_key)
             if not delivered:
-                # Fallback: deliver to first pending (backward compat)
-                for key, entry in _pending.items():
-                    if not entry["summary"]:
-                        entry["summary"] = summary
-                        entry["event"].set()
-                        delivered = True
-                        logger.info("[compact_result] delivered %d chars to key '%s' (fallback)",
-                                    len(summary), key)
-                        break
+                # No key match — log error, don't guess
+                logger.warning("[compact_result] no matching key '%s', %d pending keys: %s",
+                               compact_key, len(_pending), list(_pending.keys()))
         if not delivered:
             logger.info("[compact_result] called but no compact pending, ignoring")
             return "No compact in progress. Summary ignored."

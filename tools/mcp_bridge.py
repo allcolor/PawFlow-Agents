@@ -251,6 +251,11 @@ def _respond(req_id, result=None, error=None):
 def _log(msg):
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
     sys.stderr.flush()
+    try:
+        with open("/workspace/mcp_bridge.log", "a") as f:
+            f.write(f"[mcp-bridge] {msg}\n")
+    except Exception:
+        pass
 
 
 def main():
@@ -343,6 +348,12 @@ def main():
         elif method == "tools/call":
             name = params.get("name", "")
             args = params.get("arguments", {})
+            # Log the RAW stdin line for diagnosis of empty args
+            if name == "use_tool" and isinstance(args, dict):
+                _inner = args.get("arguments", {})
+                if not _inner or _inner == {} or _inner == "{}":
+                    _log(f"EMPTY INNER ARGS! raw stdin line: {line[:1000]}")
+                    _log(f"EMPTY INNER ARGS! parsed args: {json.dumps(args)[:500]}")
             # Robust: LLM sometimes double-encodes arguments as a JSON string
             for _ in range(3):
                 if isinstance(args, str):

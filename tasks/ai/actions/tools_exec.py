@@ -30,7 +30,10 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             if not svc:
                 flowfile.set_content(json.dumps({"error": "No relay connected"}).encode())
                 return [flowfile]
-            result = svc.exec(".", command, timeout=30)
+            _exec_kwargs = {}
+            if "timeout" in body:
+                _exec_kwargs["timeout"] = body["timeout"]
+            result = svc.exec(".", command, **_exec_kwargs)
             output = result.get("stdout", "")
             if result.get("stderr"):
                 output += ("\nSTDERR:\n" if output else "STDERR:\n") + result["stderr"]

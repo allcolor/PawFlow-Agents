@@ -638,9 +638,9 @@ class RelayService(BaseService):
                 self._pending.pop(request_id, None)
             raise Exception(f"Failed to send to relay: {last_err}")
 
-        # Streaming exec can take longer — use the command timeout + buffer
-        stream_timeout = kwargs.get("timeout", 30) + 30
-        if not evt.wait(timeout=stream_timeout):
+        # Wait for relay response — no limit unless timeout explicitly given
+        _wait_timeout = kwargs.get("timeout")
+        if not evt.wait(timeout=_wait_timeout):
             with self._pending_lock:
                 self._pending.pop(request_id, None)
             raise Exception(f"Relay timeout for {action} on {self._service_id}")
@@ -749,13 +749,15 @@ class RelayService(BaseService):
                               new_source=new_source, cell_type=cell_type,
                               operation=operation)
 
-    def exec(self, path: str, command: str, timeout: int = 30, shell: str = ""):
-        kwargs = {"command": command, "timeout": timeout}
+    def exec(self, path: str, command: str, timeout=None, shell: str = ""):
+        kwargs = {"command": command}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
         if shell:
             kwargs["shell"] = shell
         return self._request("exec", path, **kwargs)
 
-    def exec_stream(self, path: str, command: str, timeout: int = 30,
+    def exec_stream(self, path: str, command: str, timeout=None,
                     shell: str = "", on_output=None):
         """Execute a command with streaming output via on_output(stream, data).
 

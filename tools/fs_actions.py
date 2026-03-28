@@ -610,7 +610,7 @@ def action_apply_patch(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
             result = subprocess.run(
                 ["git", "apply", "-"],
                 input=patch, cwd=root_dir,
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True,
             )
             if result.returncode == 0:
                 return {"method": "git_apply", "stats": stat_output.strip(), "applied": True}

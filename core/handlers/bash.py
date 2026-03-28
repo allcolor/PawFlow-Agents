@@ -32,7 +32,7 @@ class BashHandler(BaseFsHandler):
                     "type": "string",
                     "description": "Shell to use (default: bash). Options: bash, powershell, cmd, python, node.",
                 },
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default: 30)"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (default: no limit)"},
                 "path": {"type": "string", "description": "Working directory for the command"},
                 "max_output": {"type": "integer", "description": "Max output chars (default: 50000)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit for default."},
@@ -68,12 +68,14 @@ class BashHandler(BaseFsHandler):
 
         try:
             path = arguments.get("path", ".")
-            timeout = arguments.get("timeout", 30)
             shell = arguments.get("shell", "")
             _cap = self._tool_result_max_chars
             _max_out = min(int(arguments.get("max_output", _cap) or _cap), _cap)
 
-            result = svc.exec(path, command, timeout, shell=shell)
+            _exec_kwargs = {"shell": shell}
+            if "timeout" in arguments:
+                _exec_kwargs["timeout"] = arguments["timeout"]
+            result = svc.exec(path, command, **_exec_kwargs)
             output = result.get("stdout", "")
             if result.get("stderr"):
                 output += "\nSTDERR:\n" + result["stderr"]
@@ -93,16 +95,18 @@ class BashHandler(BaseFsHandler):
     def _exec_local(self, command: str, arguments: dict) -> str:
         """Execute locally in the agent workdir (Claude Code container mode)."""
         import subprocess
-        timeout = int(arguments.get("timeout", 30) or 30)
         shell_name = arguments.get("shell", "") or "bash"
         cwd = arguments.get("path", "") or self._workdir
         if cwd and not cwd.startswith("/"):
             cwd = self._sandbox_path(cwd, self._workdir)
 
+        _run_kwargs = dict(shell=True, capture_output=True, text=True,
+                           cwd=cwd or self._workdir)
+        if "timeout" in arguments:
+            _run_kwargs["timeout"] = arguments["timeout"]
+
         try:
-            result = subprocess.run(
-                command, shell=True, capture_output=True, text=True,
-                timeout=timeout, cwd=cwd or self._workdir,
+            result = subprocess.run(command, **_run_kwargs,
                 executable=f"/bin/{shell_name}" if shell_name in ("bash", "sh") else None,
             )
             output = result.stdout

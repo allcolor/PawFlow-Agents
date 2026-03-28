@@ -25,7 +25,7 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     if not allow_exec:
         raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
     command = req.get("command", "")
-    timeout = min(req.get("timeout", 30), 120)
+    timeout = req.get("timeout")  # None = no limit
     shell_name = req.get("shell", "")  # optional: powershell, bash, python, node, cmd
     if not command:
         raise ValueError("Missing 'command' parameter")
@@ -155,7 +155,7 @@ def action_exec_stream(root_dir: str, path: str, req: Dict[str, Any], *,
     if not allow_exec:
         raise PermissionError("Shell execution disabled. Start relay with --allow-exec")
     command = req.get("command", "")
-    timeout = min(req.get("timeout", 30), 120)
+    timeout = req.get("timeout")  # None = no limit
     shell_name = req.get("shell", "")
     if not command:
         raise ValueError("Missing 'command' parameter")

@@ -13,7 +13,6 @@ from core.handlers.agent_tools import (  # noqa: F401
 from core.handlers.devops import (  # noqa: F401
     RunTestsHandler,
     ReadParentContextHandler,
-    GitHubHandler,
     SecurityScanHandler,
 )
 from core.handlers.file_ops import (  # noqa: F401

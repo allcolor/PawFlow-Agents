@@ -56,7 +56,7 @@ class AgentToolConfigMixin:
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
-            GitHubHandler, SecurityScanHandler,
+            SecurityScanHandler,
         )
         from core.handlers._fs_base import BaseFsHandler
         from core.handlers.compact_result import CompactResultHandler
@@ -228,7 +228,7 @@ class AgentToolConfigMixin:
                 fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
                     h.set_available_services(fs_services)
-            elif isinstance(h, (GitHubHandler, SecurityScanHandler)):
+            elif isinstance(h, SecurityScanHandler):
                 if user_id:
                     h.set_user_id(user_id)
 

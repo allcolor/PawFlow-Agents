@@ -402,12 +402,6 @@ def main():
                                         tool_name=tool_name,
                                         arguments=tool_args)
                 result = str(result) if result else "(no output)"
-                # Phantom call detection: empty args + "required" error
-                # → silently swallow (Claude Code sends these spuriously)
-                if (not tool_args or tool_args == {}) and isinstance(result, str) \
-                        and "required" in result.lower() and result.startswith("Error:"):
-                    _log(f"PHANTOM SKIP {tool_name}() → {result[:200]}")
-                    result = ""
             else:
                 result = f"Error: unknown tool '{name}'"
 

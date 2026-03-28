@@ -470,7 +470,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             """Emit the accumulated turn via turn_callback."""
             nonlocal _turn_text_parts, _turn_tool_calls, _turn_thinking, content_parts
             text = "".join(_turn_text_parts).strip()
-            tc = _turn_tool_calls[:]
+            # Drop phantom tool calls: empty args + no result (never executed)
+            tc = [t for t in _turn_tool_calls
+                  if t.get("arguments") or t.get("id", "") in _tool_results]
+            _dropped = len(_turn_tool_calls) - len(tc)
+            if _dropped:
+                logger.info("[claude-code] dropped %d phantom tool call(s) from turn", _dropped)
             thinking = _turn_thinking
             # Attach results to tool calls
             for t in tc:
@@ -557,11 +562,25 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 if callback:
                                     callback(text)
                         elif btype == "tool_use":
-                            _turn_tool_calls.append({
+                            _block_id = block.get("id", "")
+                            _block_entry = {
                                 "name": block.get("name", ""),
                                 "arguments": block.get("input", {}),
-                                "id": block.get("id", ""),
-                            })
+                                "id": _block_id,
+                            }
+                            # Dedup: Claude Code may send the same tool_use block
+                            # multiple times for the same msg_id (incremental updates).
+                            # First time: input={} (empty), later: input={real args}.
+                            # Replace by id instead of blindly appending.
+                            _existing_idx = None
+                            for _i, _tc in enumerate(_turn_tool_calls):
+                                if _tc.get("id") == _block_id:
+                                    _existing_idx = _i
+                                    break
+                            if _existing_idx is not None:
+                                _turn_tool_calls[_existing_idx] = _block_entry
+                            else:
+                                _turn_tool_calls.append(_block_entry)
                             # Unwrap MCP wrapper for display:
                             # mcp__pawflow__use_tool(tool_name=X, arguments={...})
                             # → X({...})
@@ -572,10 +591,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _tc_args = _tc_args.get("arguments", _tc_args)
                             elif _tc_name == "mcp__pawflow__get_tool_schema":
                                 _tc_args = _tc_args  # keep as-is
+                            # Don't emit SSE for empty-arg tool calls — likely
+                            # an incremental update that will be followed by the
+                            # real one with actual arguments.
+                            if not _tc_args or _tc_args == {}:
+                                logger.debug("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
+                                             _tc_name, _block_id)
+                                continue
                             _pub("tool_call", {
                                 "tool": _tc_name,
                                 "arguments": _tc_args,
-                                "tc_id": block.get("id", ""),
+                                "tc_id": _block_id,
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",

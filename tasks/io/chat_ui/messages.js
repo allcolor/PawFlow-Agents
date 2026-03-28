@@ -197,15 +197,10 @@ function addMsg(role, text, extra) {
     const display = _TOOL_DISPLAY[toolName] || toolName;
     const firstLine = resultText.split('\n')[0].substring(0, 120);
     const rendered = _renderToolOutput(resultText);
-    if (resultText.length > 500) {
-      el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-        + rendered + '</details></div>';
-    } else {
-      el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
-        + '<div class="tc-result"><details open><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
-        + rendered + '</details></div>';
-    }
+    // Reload: always collapsed
+    el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
+      + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+      + rendered + '</details></div>';
   } else if (role === 'thinking') {
     // Collapsible thinking block (same as SSE thinking_content)
     el.className = 'msg thinking-block';
@@ -402,15 +397,13 @@ function _attachToolResult(tcEl, resultText) {
   resultDiv.className = 'tc-result';
   const firstLine = resultText.split('\n')[0].substring(0, 120);
   const rendered = _renderToolOutput(resultText, toolHint, pathHint);
-  // Always collapsible — short results open, long results closed
-  if (resultText.length > 500) {
-    resultDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine)
-      + '</summary>' + rendered + '</details>';
-  } else {
-    resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
-      + '</summary>' + rendered + '</details>';
-  }
+  // Open while streaming, auto-collapse after 1.5s
+  resultDiv.innerHTML = '<details open><summary>\u23bf ' + escapeHtml(firstLine)
+    + '</summary>' + rendered + '</details>';
   tcEl.appendChild(resultDiv);
+  // Auto-collapse after brief display
+  const _det = resultDiv.querySelector('details');
+  if (_det) setTimeout(() => { _det.removeAttribute('open'); }, 1500);
   // Auto-scroll
   if (isNearBottom()) {
     const container = document.getElementById('messages');

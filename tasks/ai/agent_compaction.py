@@ -129,7 +129,7 @@ class AgentCompactionMixin:
           [2] assistant: "Understood."
           [3..N] recent messages (last ~50)
 
-        Claude Code reads the JSONL file via read_file MCP tool — no prompt size limit.
+        Claude Code reads the JSONL file via read MCP tool — no prompt size limit.
         """
         if not messages:
             return messages
@@ -620,7 +620,7 @@ class AgentCompactionMixin:
         ))
         compacted.extend(recent_messages)
 
-        # File re-read: extract last read_file per file from OLD messages
+        # File re-read: extract last read per file from OLD messages
         # with exact offset/limit so re-read matches what the LLM saw.
         _file_reads = {}
         for m in old_messages:
@@ -654,7 +654,7 @@ class AgentCompactionMixin:
         if _file_list:
             _files_note = "Files you were working with (lost after compaction). Re-read them now to restore context:\n"
             for _fr in _file_list:
-                _desc = f"  - read_file {_fr['path']}"
+                _desc = f"  - read(path=\"{_fr['path']}\""
                 if _fr.get("offset") or _fr.get("limit"):
                     _params = []
                     if _fr.get("offset"):
@@ -665,7 +665,7 @@ class AgentCompactionMixin:
                 if _fr.get("service"):
                     _desc += f" [service: {_fr['service']}]"
                 _files_note += _desc + "\n"
-            _files_note += "Call read_file with the exact same parameters to restore your working context."
+            _files_note += "Call read with the exact same parameters to restore your working context."
             compacted.append(LLMMessage(
                 role="user",
                 content=f"[System: {_files_note}]"

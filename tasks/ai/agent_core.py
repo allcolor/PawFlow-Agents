@@ -710,7 +710,7 @@ class AgentCoreMixin:
                                 _ctx_result = (
                                     result_text[:_TOOL_RESULT_MAX]
                                     + f"\n\n[... truncated — {len(result_text):,} chars total. "
-                                    f"Use read_history or filesystem to read full output. "
+                                    f"Use read_history or read(source='filestore') to read full output. "
                                     f"Stored as {_fid}]"
                                 )
                             except Exception:

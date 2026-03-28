@@ -532,14 +532,14 @@ class AgentUtilsMixin:
         and replaces them with a short reference in the context.
 
         Only clears results NOT in the last `keep_recent` messages.
-        The LLM can use read_file to retrieve them if needed.
+        The LLM can use read(path=url, source='filestore') to retrieve them if needed.
         """
         import re as _re_fs
         _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
         cleared = 0
 
         # Clear ALL tool results > threshold — recent or not.
-        # The LLM can use read_file(path=url, offset, limit) to paginate if needed.
+        # The LLM can use read(path=url, source='filestore', offset, limit) to paginate.
         for i in range(1, len(messages)):
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
@@ -582,7 +582,7 @@ class AgentUtilsMixin:
                 m.content = (
                     f"{_first_line}\n"
                     f"[Result cleared — {content_len:,} chars. "
-                    f"Full output: read_file(path=\"{url}\")]"
+                    f"Full output: read(path=\"{fid}\", source=\"filestore\")]"
                 )
                 cleared += 1
             except Exception:

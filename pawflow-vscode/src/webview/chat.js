@@ -317,7 +317,7 @@ function addToolResult(tool, result, filePath, fsAction) {
   div.className = 'msg tool_result';
   // Add clickable file link for file operations
   var pathLink = '';
-  if (filePath && (tool === 'read_file' || tool === 'edit' || tool === 'write_file')) {
+  if (filePath && (tool === 'read' || tool === 'edit' || tool === 'write')) {
     pathLink = '&#128196; ' + fileLink(filePath) + ' ';
   }
   div.innerHTML = pathLink + renderToolResult(result);

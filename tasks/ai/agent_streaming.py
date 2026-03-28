@@ -28,7 +28,6 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
         "scrape_url": ("Scraping", "page"),
         "execute_script": ("Running", "script"),
         "create_file": ("Creating", "file"),
-        "read_file": ("Reading", "file"),
         "schedule_continuation": ("Scheduling continuation", None),
         "spawn_agents": ("Spawning", "agent"),
         # Split filesystem tools — tool name IS the action

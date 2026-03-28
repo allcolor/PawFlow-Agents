@@ -238,7 +238,7 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": (
             "Execute any agent tool from the chat.\n\n"
             "  /call web_search(query=\"quantum computing\")\n"
-            "  /call filesystem(action=\"list_dir\", path=\"/home\")\n"
+            "  /call list_dir(path=\"/home\")\n"
             "  /call web_search {\"query\": \"quantum computing\"}"
         ),
     },
@@ -546,7 +546,7 @@ HELP: Dict[str, Dict[str, str]] = {
         "detail": (
             "Configure scripts that run before/after tool execution.\n\n"
             "  /hooks list                           — List active hooks\n"
-            "  /hooks add pre:filesystem.write eslint --fix ${path}\n"
+            "  /hooks add pre:write eslint --fix ${path}\n"
             "  /hooks del <hook_id>"
         ),
     },

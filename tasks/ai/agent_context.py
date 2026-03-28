@@ -809,8 +809,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "\n- Call mcp__pawflow__get_tool_schema() first to discover "
                 "available tools, then mcp__pawflow__use_tool(tool_name, arguments) "
                 "to execute them."
-                "\n- For filesystem operations, use the 'filesystem' tool with "
-                "the 'service' parameter set to the relay name."
+                "\n- For file operations use tools: read, write, edit, bash, glob, grep, etc. "
+                "Set the source/destination/relay parameter to the relay service name."
                 "\n- The user's files are ONLY accessible through the MCP pawflow tools."
                 + _fs_services_info
             )
@@ -840,7 +840,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             for td in tool_defs:
                 cat = "other"
                 _n = td.name.lower()
-                if "file" in _n or "exec" in _n or _n == "filesystem":
+                if _n in ("read", "write", "edit", "bash", "glob", "grep",
+                         "delete", "mkdir", "stat", "exists", "list_dir",
+                         "batch_edit", "apply_patch", "find_replace",
+                         "notebook_edit", "copy") or "file" in _n or "exec" in _n:
                     cat = "filesystem"
                 elif "git" in _n:
                     cat = "git"

@@ -1010,24 +1010,23 @@ class AgentCompactionMixin:
         set_compact_key(compact_key)
 
         prompt = (
-            f"Summarize the conversation transcript stored in FileStore.\n\n"
-            f"Steps:\n"
-            f"1. Call mcp__pawflow__get_tool_schema() to discover tools\n"
-            f"2. Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) "
-            f"to read the content — it may be large, use offset/limit to paginate\n"
-            f"3. Summarize ALL the content in maximum {target_tokens} tokens\n"
-            f"4. Call mcp__pawflow__use_tool(tool_name='compact_result', "
-            f"arguments={{summary: 'your summary here', compact_key: '{compact_key}'}})\n\n"
-            f"Use this checklist — every section MUST be present:\n"
-            f"1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths) "
-            f"4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
-            f"Skip raw tool output, JSON blobs, and technical plumbing details.\n"
-            + (f"\nFOCUS: {compact_instructions}\n" if compact_instructions else "") +
-            f"\n"
-            f"CRITICAL: After reading and summarizing, you MUST call compact_result via "
-            f"mcp__pawflow__use_tool. Do NOT respond with text.\n\n"
-            f"REMINDER — use EXACTLY this compact_key (copy-paste, do NOT invent one):\n"
-            f"compact_key: '{compact_key}'"
+            f"You are a summarizer. You have EXACTLY 2 tasks:\n\n"
+            f"TASK 1: Read the file by calling:\n"
+            f"  mcp__pawflow__use_tool(tool_name='read', arguments={{\"path\": \"{file_id}\", \"source\": \"filestore\"}})\n"
+            f"  The file is large — paginate with offset/limit until you've read it all.\n\n"
+            f"TASK 2: After reading ALL pages, summarize and deliver by calling:\n"
+            f"  mcp__pawflow__use_tool(tool_name='compact_result', arguments={{\"summary\": \"<your summary>\", \"compact_key\": \"{compact_key}\"}})\n\n"
+            f"RULES:\n"
+            f"- You may ONLY call these 2 tools: 'read' and 'compact_result'. NO other tools.\n"
+            f"- Do NOT call get_tool_schema, execute_script, bash, grep, or anything else.\n"
+            f"- Do NOT respond with text. Your ONLY output is tool calls.\n"
+            f"- Summary must be maximum {target_tokens} tokens.\n"
+            f"- Use this checklist — every section MUST be present:\n"
+            f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
+            f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
+            f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
+            + (f"- FOCUS: {compact_instructions}\n" if compact_instructions else "") +
+            f"\ncompact_key (use EXACTLY this, do NOT invent one): {compact_key}"
         )
 
         _pub(f"Compacting {len(text)} chars via Claude Code...")
@@ -1049,11 +1048,10 @@ class AgentCompactionMixin:
                 logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
                 if attempt > 1:
                     prompt = (
-                        f"RETRY {attempt}/{max_retries}: You must call compact_result.\n"
-                        f"Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) to read, "
-                        f"summarize in {target_tokens} tokens, then "
-                        f"mcp__pawflow__use_tool(tool_name='compact_result', arguments={{summary: '...', compact_key: '{compact_key}'}}). "
-                        f"DO IT NOW."
+                        f"RETRY {attempt}/{max_retries}. ONLY 2 tools allowed:\n"
+                        f"1. mcp__pawflow__use_tool(tool_name='read', arguments={{\"path\": \"{file_id}\", \"source\": \"filestore\"}})\n"
+                        f"2. mcp__pawflow__use_tool(tool_name='compact_result', arguments={{\"summary\": \"...\", \"compact_key\": \"{compact_key}\"}})\n"
+                        f"Read the file, summarize in {target_tokens} tokens, call compact_result. NO other tools."
                     )
                     set_compact_key(compact_key)
                 try:
@@ -1083,6 +1081,17 @@ class AgentCompactionMixin:
             _inner._agent_name = _saved_agent
             try:
                 FileStore.instance().delete(file_id)
+            except Exception:
+                pass
+            # Clean compact workdir — session data is disposable
+            try:
+                import shutil
+                from core.llm_providers.claude_code import _SESSIONS_BASE
+                _compact_workdir = os.path.join(_SESSIONS_BASE, "default", "compact")
+                for _subdir in ("projects", "sessions", ".cache"):
+                    _p = os.path.join(_compact_workdir, _subdir)
+                    if os.path.isdir(_p):
+                        shutil.rmtree(_p, ignore_errors=True)
             except Exception:
                 pass
 

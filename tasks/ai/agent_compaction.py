@@ -985,7 +985,8 @@ class AgentCompactionMixin:
                 )
             except Exception as e:
                 logger.error("[compact-cc] attempt %d failed: %s", attempt, e)
-                if attempt == max_retries:
+                _is_auth = "auth" in str(e).lower() or "401" in str(e)
+                if _is_auth or attempt == max_retries:
                     try:
                         FileStore.instance().delete(file_id)
                     except Exception:

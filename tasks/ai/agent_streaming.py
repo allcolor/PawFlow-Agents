@@ -276,12 +276,21 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             except Exception as e:
                 logger.error("[agent:%s] prepare_context failed: %s",
                              conversation_id[:8], e, exc_info=True)
+                # Resolve agent name for error events
+                _err_agent = _target
+                if not _err_agent:
+                    try:
+                        _ares = ConversationStore.instance().get_extra(
+                            conversation_id, "active_resources") or {}
+                        _err_agent = _ares.get("agent", "")
+                    except Exception:
+                        pass
                 bus.publish_event(conversation_id, "error_event", {
                     "message": f"Context preparation failed: {e}",
-                    "agent_name": _target,
+                    "agent_name": _err_agent,
                 })
                 bus.publish_event(conversation_id, "done", {
-                    "agent_name": _target, "response": "",
+                    "agent_name": _err_agent, "response": "",
                     "finish_reason": "error",
                 })
                 with self._active_lock:

@@ -630,6 +630,19 @@ class AgentCoreMixin:
                         conversation_id=conversation_id, user_id=user_id,
                         agent_name=ctx.get("active_agent_name", ""))
 
+                    # Apply pending background tool results to in-memory messages
+                    import core.background_tool as _bg_mod
+                    for m in messages:
+                        if (m.role == "tool" and isinstance(m.content, str)
+                                and "Running in background" in m.content
+                                and getattr(m, 'tool_call_id', None)):
+                            _bg_result = _bg_mod.pop_completed(
+                                conversation_id, m.tool_call_id)
+                            if _bg_result is not None:
+                                m.content = _bg_result
+                                logger.info("[bg-tool] applied result for %s in-memory",
+                                            m.tool_call_id)
+
                     if response.tokens_in > 0:
                         _svc_id = ctx.get("active_llm_service") or ""
                         self._calibrate_cpt(_svc_id, _pre_inject_chars, response.tokens_in)

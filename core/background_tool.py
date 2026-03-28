@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _backgrounded: Dict[str, dict] = {}  # tc_id → task info
+_completed: Dict[str, str] = {}  # "conv_id:tc_id" → result (pending agent pickup)
 _pending_bg: set = set()  # tc_ids flagged for backgrounding (before registered)
 
 
@@ -105,6 +106,13 @@ def list_tasks(conversation_id: str = "") -> List[dict]:
                 "agent_name": task["agent_name"],
             })
         return tasks
+
+
+def pop_completed(conversation_id: str, tc_id: str) -> Optional[str]:
+    """Get and remove a completed bg result. Returns None if not ready."""
+    key = f"{conversation_id}:{tc_id}"
+    with _lock:
+        return _completed.pop(key, None)
 
 
 def cleanup_done(max_age: float = 300):
@@ -211,22 +219,11 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     except Exception as e:
         logger.error("[bg-tool] failed to write tool_result to transcript: %s", e)
 
-    # 2. Replace placeholder in agent context (both providers)
-    try:
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        ctx_data = store.load_agent_context(conv_id, agent_name)
-        if ctx_data:
-            for msg in ctx_data:
-                if (msg.get("tool_call_id") == tc_id
-                        and isinstance(msg.get("content"), str)
-                        and "Running in background" in msg["content"]):
-                    msg["content"] = _result_content
-                    store.save_agent_context(conv_id, agent_name, ctx_data)
-                    logger.info("[bg-tool] replaced placeholder in agent context for %s", tc_id)
-                    break
-    except Exception:
-        pass
+    # 2. Store result for agent pickup (agent applies it to in-memory messages
+    #    between iterations — no race condition with agent's context writes)
+    with _lock:
+        _completed[f"{conv_id}:{tc_id}"] = _result_content
+    logger.info("[bg-tool] stored result for agent pickup: %s (%d chars)", tc_id, len(_result_content))
 
     # 3. Claude Code only: also inject system message
     # (CC has its own session — context replacement alone won't reach it,

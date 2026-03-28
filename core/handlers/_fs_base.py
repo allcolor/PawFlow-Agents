@@ -287,8 +287,8 @@ class BaseFsHandler(ToolHandler):
 
     # ── FileStore operations ──
 
-    def _filestore_read(self, path: str, arguments: dict = None) -> str:
-        """Read from server FileStore."""
+    def _filestore_read(self, path: str, offset: int = 0, limit: int = 0) -> str:
+        """Read from server FileStore — same pagination as relay read."""
         from core.file_store import FileStore
         store = FileStore.instance()
         _fid_match = re.search(r'/?(?:files/)?([a-f0-9]{12})(?:/|$)', path)
@@ -307,9 +307,10 @@ class BaseFsHandler(ToolHandler):
             url = f"/files/{file_id}/{fname}"
             return f"Image: {url}\n__image_data__:{ct}:{b64}"
         try:
-            return data.decode("utf-8")
+            text = data.decode("utf-8")
         except UnicodeDecodeError:
             return f"Binary file: {fname} ({len(data):,} bytes, {ct})"
+        return self._format_text_read(fname, text, offset, limit)
 
     def _filestore_list(self) -> str:
         """List all files in server FileStore."""

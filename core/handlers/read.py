@@ -67,14 +67,15 @@ class ReadHandler(BaseFsHandler):
 
         svc, workdir = self._resolve(source)
 
+        offset = int(arguments.get("offset", 0) or 0)
+        limit = int(arguments.get("limit", 0) or 0)
+
         # FileStore
         if svc == "filestore":
-            return self._filestore_read(path, arguments)
+            return self._filestore_read(path, offset, limit)
 
         # Workdir
         if workdir:
-            offset = int(arguments.get("offset", 0) or 0)
-            limit = int(arguments.get("limit", 0) or 0)
             return self._workdir_read(path, offset, limit)
 
         # No target
@@ -134,6 +135,4 @@ class ReadHandler(BaseFsHandler):
         except UnicodeDecodeError:
             return f"(binary file, {len(data)} bytes)"
 
-        offset = int(arguments.get("offset", 0) or 0)
-        limit = int(arguments.get("limit", 0) or 0)
         return self._format_text_read(fname, text, offset, limit)

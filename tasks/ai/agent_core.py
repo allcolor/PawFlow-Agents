@@ -147,9 +147,11 @@ class AgentCoreMixin:
                     _agent = (msg.source or {}).get("name", "") if msg.source else ""
                     _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
                     if msg.role == "assistant" and msg.tool_calls:
+                        from core.llm_client import unwrap_mcp_tool
                         for tc in msg.tool_calls:
+                            _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
                             _sse.append({"type": "tool_call", "data": {
-                                "tool": tc.name, "arguments": tc.arguments,
+                                "tool": _tc_name, "arguments": _tc_args,
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
                     if msg.role == "tool":
@@ -468,14 +470,9 @@ class AgentCoreMixin:
                                 tc_raw = tool_calls[i] if i < len(tool_calls) else {}
                                 _result = tc_raw.get("result") or ""
 
-                                # Unwrap MCP wrapper for display
-                                _display_name = tc_obj.name
-                                _display_args = tc_obj.arguments
-                                if _display_name == "mcp__pawflow__use_tool" and isinstance(_display_args, dict):
-                                    _display_name = _display_args.get("tool_name", _display_name)
-                                    _display_args = _display_args.get("arguments", _display_args)
-                                elif _display_name == "mcp__pawflow__get_tool_schema":
-                                    _display_name = "get_tool_schema"
+                                from core.llm_client import unwrap_mcp_tool
+                                _display_name, _display_args = unwrap_mcp_tool(
+                                    tc_obj.name, tc_obj.arguments)
 
                                 # Tool result (in LLM context)
                                 tr_content = _result or "(no output)"

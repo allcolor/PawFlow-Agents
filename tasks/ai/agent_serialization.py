@@ -130,15 +130,10 @@ class AgentSerializationMixin:
 
             if role == "assistant" and tool_calls:
                 # Build tc_id → display name map for tool_result matching
+                from core.llm_client import unwrap_mcp_tool
                 for tc in tool_calls:
-                    _raw_name = tc.get("name", "?")
-                    _raw_args = tc.get("arguments", {})
-                    if _raw_name == "mcp__pawflow__use_tool" and isinstance(_raw_args, dict):
-                        _tc_id_to_name[tc.get("id", "")] = _raw_args.get("tool_name", _raw_name)
-                    elif _raw_name == "mcp__pawflow__get_tool_schema":
-                        _tc_id_to_name[tc.get("id", "")] = "get_tool_schema"
-                    else:
-                        _tc_id_to_name[tc.get("id", "")] = _raw_name
+                    _unwrapped_name, _ = unwrap_mcp_tool(tc.get("name", "?"), tc.get("arguments", {}))
+                    _tc_id_to_name[tc.get("id", "")] = _unwrapped_name
                 # Thinking block (before tool calls, same as SSE live order)
                 _thinking = m.get("thinking", "")
                 if _thinking:
@@ -163,12 +158,7 @@ class AgentSerializationMixin:
                     # Build rich display matching SSE tool_call format
                     _tc_name = tc.get("name", "?")
                     _tc_args = tc.get("arguments", {})
-                    # Unwrap MCP wrappers for display (same as SSE live)
-                    if _tc_name == "mcp__pawflow__use_tool" and isinstance(_tc_args, dict):
-                        _tc_name = _tc_args.get("tool_name", _tc_name)
-                        _tc_args = _tc_args.get("arguments", _tc_args)
-                    elif _tc_name == "mcp__pawflow__get_tool_schema":
-                        _tc_name = "get_tool_schema"
+                    _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
                     _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
                     # Format source label
                     _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""

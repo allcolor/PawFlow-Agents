@@ -49,6 +49,20 @@ class LLMToolResult:
     content: str
 
 
+def unwrap_mcp_tool(name: str, arguments: dict) -> tuple:
+    """Unwrap MCP bridge tool names to the inner tool name + arguments.
+
+    mcp__pawflow__use_tool({tool_name: X, arguments: Y}) → (X, Y)
+    mcp__pawflow__get_tool_schema(...) → ("get_tool_schema", arguments)
+    anything_else → (name, arguments)
+    """
+    if name == "mcp__pawflow__use_tool" and isinstance(arguments, dict):
+        return arguments.get("tool_name", name), arguments.get("arguments", arguments)
+    if name == "mcp__pawflow__get_tool_schema":
+        return "get_tool_schema", arguments
+    return name, arguments
+
+
 @dataclass
 class LLMMessage:
     """A single message in a conversation.

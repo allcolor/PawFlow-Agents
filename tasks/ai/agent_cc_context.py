@@ -8,7 +8,6 @@ import logging
 from typing import List
 
 from core.llm_client import LLMMessage
-from tasks.ai.agent_compaction import _select_recent_messages
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +42,7 @@ class AgentCCContextMixin:
             return messages
 
         # Split: old messages → file, recent messages → prompt
+        from tasks.ai.agent_compaction import _select_recent_messages
         split = _select_recent_messages(messages, start_idx,
                                          min_conversation=25, max_total=max_recent)
         if split <= start_idx:

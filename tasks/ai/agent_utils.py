@@ -550,8 +550,13 @@ class AgentUtilsMixin:
             # Skip small results
             if content_len <= self._TOOL_RESULT_CLEAR_THRESHOLD:
                 continue
-            # Skip already cleared
-            if "[Result cleared" in content or ("[Full result" in content and _FS_REF.search(content)):
+            # Already fully cleared (short ref only) → skip
+            if content_len <= self._TOOL_RESULT_CLEAR_THRESHOLD:
+                continue
+            # Has a FileStore ref but still has content → shrink to ref only
+            _ref_match = _re_fs.search(r'(\[Result cleared[^\]]*\])', content)
+            if _ref_match:
+                m.content = _ref_match.group(1)
                 continue
 
             # Strip TOOL OUTPUT wrapper for storage

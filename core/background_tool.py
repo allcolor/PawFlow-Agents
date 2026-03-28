@@ -183,9 +183,12 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
         prefix = "Background task cancelled" if is_cancel else "Background task completed"
         msg = {
             "role": "user",
-            "content": f"[System: {prefix} — {tool_name}: {result_text[:2000]}]",
+            "content": f"[System: {prefix} — {tool_name}: {result_text}]",
             "source": {"type": "system", "name": "background"},
         }
         ConversationWriter.for_conversation(conv_id).enqueue([msg])
     except Exception as e:
         logger.error("[bg-tool] failed to inject result for %s: %s", tc_id, e)
+
+    # Cleanup old tasks periodically
+    cleanup_done(max_age=300)

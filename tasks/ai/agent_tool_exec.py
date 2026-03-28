@@ -98,9 +98,28 @@ class AgentToolExecMixin:
                         if candidates:
                             hint = ", ".join(candidates[:3])
                             result += f"\n[Related tests may exist: {hint} — use run_tests to verify]"
-                # No truncation at execution time — the LLM needs the full result.
-                # Old results are cleared AFTER the LLM has seen them (in the
-                # streaming loop, between iterations) via _clear_seen_tool_results.
+                # Safety cap: prevent 1GB results from crashing the server.
+                # Save full to FileStore, keep 50K in context for the LLM.
+                # _clear_seen_tool_results will later shrink to ref-only.
+                if isinstance(result, str) and len(result) > 50000:
+                    try:
+                        from core.file_store import FileStore
+                        _fid = FileStore.instance().store(
+                            f"tool_result_{tc.name}.txt",
+                            result.encode("utf-8"), "text/plain",
+                            category="tool_result",
+                            conversation_id=conversation_id,
+                            agent_name=agent_name,
+                        )
+                        _first = result.split("\n", 1)[0][:200]
+                        result = (
+                            result[:50000]
+                            + f"\n\n{_first}\n"
+                            f"[Result cleared — {len(result):,} chars. "
+                            f"Full output: read(path=\"{_fid}\", source=\"filestore\")]"
+                        )
+                    except Exception:
+                        result = result[:50000] + "\n\n[... truncated]"
                 # Wrap tool output so the LLM treats it as data, not instructions
                 if result and tc.name not in ("complete_task", "assign_task"):
                     result = (
@@ -136,20 +155,11 @@ class AgentToolExecMixin:
                 logger.error("Tool '%s' failed: %s", tc.name, e)
                 return tc, f"Error: {e}"
 
-        if not parallel or len(tool_calls) == 1:
-            # Sequential: check background between each tool
-            results = []
-            for tc in tool_calls:
-                import core.background_tool as _bg
-                if _bg.is_backgrounded(tc.id):
-                    results.append((tc, "[Running in background — result will appear when done]"))
-                    continue
-                results.append(_exec_one(tc))
-            return results
-
         from concurrent.futures import ThreadPoolExecutor, wait
         import core.background_tool as _bg
-        pool = ThreadPoolExecutor(max_workers=len(tool_calls))
+
+        # Always use thread pool (even for single tool) so user can background it
+        pool = ThreadPoolExecutor(max_workers=max(len(tool_calls), 1))
         futures = {pool.submit(_exec_one, tc): tc for tc in tool_calls}
         results_map = {}
         pending = set(futures.keys())

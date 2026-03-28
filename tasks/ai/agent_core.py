@@ -700,36 +700,13 @@ class AgentCoreMixin:
                         agent_svc=ctx.get("active_llm_service", ""),
                         conversation_id=conversation_id, user_id=user_id)
 
-                    _TOOL_RESULT_MAX = 4096  # max chars in context, rest goes to FileStore
-
                     for tc, result_text in results:
                         tools_called.append(tc.name)
                         emitter.check_cancelled()  # check after each tool
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue")
                             continuation_delay = int(tc.arguments.get("delay_seconds", 3))
-                        # Truncate large tool results — store full in FileStore
-                        _ctx_result = result_text
-                        if isinstance(result_text, str) and len(result_text) > _TOOL_RESULT_MAX:
-                            try:
-                                from core.file_store import FileStore
-                                _fid = FileStore.instance().store(
-                                    f"tool_result_full_{tc.name}.txt",
-                                    result_text.encode("utf-8"),
-                                    "text/plain",
-                                    category="tool_result",
-                                    conversation_id=conversation_id,
-                                    agent_name=ctx.get("active_agent_name", ""),
-                                )
-                                _ctx_result = (
-                                    result_text[:_TOOL_RESULT_MAX]
-                                    + f"\n\n[... truncated — {len(result_text):,} chars total. "
-                                    f"Use read_history or read(source='filestore') to read full output. "
-                                    f"Stored as {_fid}]"
-                                )
-                            except Exception:
-                                _ctx_result = result_text[:_TOOL_RESULT_MAX] + "\n\n[... truncated]"
-                        _tr_msg = LLMMessage(role="tool", content=_ctx_result, tool_call_id=tc.id)
+                        _tr_msg = LLMMessage(role="tool", content=result_text, tool_call_id=tc.id)
                         _tr_msg._tool_name = tc.name
                         _append(_tr_msg)
                         # Preview for SSE

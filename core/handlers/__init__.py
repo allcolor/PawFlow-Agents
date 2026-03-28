@@ -68,7 +68,6 @@ from core.handlers.user_interaction import (  # noqa: F401
 )
 from core.handlers.web_fetch import (  # noqa: F401
     ExecuteScriptHandler,
-    ReadFileHandler,
     WebSearchHandler,
     WebFetchHandler,
     ScraplingFetchHandler,

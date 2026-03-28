@@ -123,15 +123,13 @@ def cleanup_done(max_age: float = 300):
 def _periodic_cleanup():
     """Daemon timer: purge old completed tasks every 60s."""
     cleanup_done(max_age=300)
-    _cleanup_timer = threading.Timer(60, _periodic_cleanup)
-    _cleanup_timer.daemon = True
-    _cleanup_timer.start()
+    t = threading.Timer(60, _periodic_cleanup)
+    t.daemon = True
+    t.start()
 
 
 # Start periodic cleanup on module import
-_cleanup_timer = threading.Timer(60, _periodic_cleanup)
-_cleanup_timer.daemon = True
-_cleanup_timer.start()
+threading.Timer(60, _periodic_cleanup).start()
 
 
 def _watch_future(tc_id: str):

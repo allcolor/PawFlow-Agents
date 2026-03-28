@@ -370,8 +370,9 @@ function connectSSE(cid) {
     if (tcId) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
-        if (data.status === 'done' || data.status === 'cancelled') {
-          _attachToolResult(tcEl, data.result || (data.status === 'cancelled' ? '[Cancelled]' : '[Done]'));
+        if (data.status === 'done' || data.status === 'cancelled' || data.status === 'error') {
+          const fallback = data.status === 'cancelled' ? '[Cancelled]' : data.status === 'error' ? '[Error]' : '[Done]';
+          _attachToolResult(tcEl, data.result || fallback);
         }
       }
     }

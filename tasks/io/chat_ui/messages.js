@@ -273,61 +273,116 @@ function _synLine(code, lang) {
 }
 
 function _renderToolOutput(text, toolHint, pathHint) {
-  // Smart rendering: detect content type from hints + content analysis
+  // Smart rendering with highlight.js for syntax highlighting
   const lines = text.split('\n');
   const _ext = pathHint ? (pathHint.split('.').pop() || '').toLowerCase() : '';
+  const _hljs = typeof hljs !== 'undefined';
 
-  // Detect diff (has +/- lines with context)
+  // Extension → highlight.js language mapping
+  const _langMap = {
+    py:'python', js:'javascript', ts:'typescript', jsx:'javascript', tsx:'typescript',
+    java:'java', go:'go', rs:'rust', rb:'ruby', c:'c', cpp:'cpp', cs:'csharp',
+    php:'php', sh:'bash', bash:'bash', yaml:'yaml', yml:'yaml', toml:'ini',
+    sql:'sql', html:'html', css:'css', xml:'xml', json:'json', md:'markdown',
+    dockerfile:'dockerfile', makefile:'makefile',
+  };
+
+  // Detect diff
   const diffLines = lines.filter(l => /^\s*\d*\s*[+-] /.test(l) || l.startsWith('+ ') || l.startsWith('- '));
   const isDiff = diffLines.length >= 2 && (
     text.includes('replacement') || text.includes('Edited ') || text.includes('Written ')
     || text.includes('@@') || text.includes('diff ') || lines.some(l => l.startsWith('---') || l.startsWith('+++')));
   if (isDiff) {
-    return '<pre class="tc-output tc-diff">' + lines.map(l => {
+    return '<pre class="tc-output"><code class="language-diff hljs">' + lines.map(l => {
       const s = l.trimStart();
-      if (s.startsWith('+ ') || /^\s*\d+\s+\+ /.test(l)) return '<span class="diff-add">' + escapeHtml(l) + '</span>';
-      if (s.startsWith('- ') || /^\s*\d+\s+- /.test(l)) return '<span class="diff-del">' + escapeHtml(l) + '</span>';
-      if (s.startsWith('@@')) return '<span class="diff-hunk">' + escapeHtml(l) + '</span>';
-      return '<span class="diff-ctx">' + escapeHtml(l) + '</span>';
-    }).join('\n') + '</pre>';
+      if (s.startsWith('+ ') || /^\s*\d+\s+\+ /.test(l)) return '<span class="hljs-addition">' + escapeHtml(l) + '</span>';
+      if (s.startsWith('- ') || /^\s*\d+\s+- /.test(l)) return '<span class="hljs-deletion">' + escapeHtml(l) + '</span>';
+      if (s.startsWith('@@')) return '<span class="hljs-meta">' + escapeHtml(l) + '</span>';
+      return escapeHtml(l);
+    }).join('\n') + '</code></pre>';
   }
 
-  // Detect markdown (has code fences, headers, bold, lists)
+  // Detect markdown
   if (/^```|^\#{1,3} |^\*\*|^\- \[/.test(text) || text.includes('\n```')) {
     return '<div class="tc-md">' + renderMarkdown(text) + '</div>';
   }
 
-  // Detect file read (line numbers: "  42\tcontent")
+  // Detect file read with line numbers → extract code, detect language, highlight
   const hasLineNumbers = lines.length > 3 && lines.filter(l => /^\s*\d+\t/.test(l)).length > lines.length * 0.5;
-  if (hasLineNumbers) {
-    return '<pre class="tc-output tc-code">' + lines.map(l => {
+  if (hasLineNumbers && _hljs) {
+    const lang = _langMap[_ext] || '';
+    // Separate line numbers from code
+    const codeLines = lines.map(l => {
       const m = l.match(/^(\s*\d+)\t(.*)$/);
-      if (m) return '<span class="ln">' + m[1] + '</span>\t' + escapeHtml(m[2]);
-      return escapeHtml(l);
-    }).join('\n') + '</pre>';
+      return m ? m[2] : l;
+    });
+    const nums = lines.map(l => {
+      const m = l.match(/^(\s*\d+)\t/);
+      return m ? m[1] : '';
+    });
+    let highlighted;
+    try {
+      highlighted = lang
+        ? hljs.highlight(codeLines.join('\n'), {language: lang, ignoreIllegals: true}).value
+        : hljs.highlightAuto(codeLines.join('\n')).value;
+    } catch(e) { highlighted = escapeHtml(codeLines.join('\n')); }
+    // Re-inject line numbers
+    const hLines = highlighted.split('\n');
+    const final = hLines.map((hl, i) => '<span class="ln">' + (nums[i] || '') + '</span>\t' + hl).join('\n');
+    return '<pre class="tc-output"><code class="hljs">' + final + '</code></pre>';
   }
 
-  // Detect JSON
+  // JSON
   const trimmed = text.trim();
   if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-    return '<pre class="tc-output tc-json">' + escapeHtml(text) + '</pre>';
+    if (_hljs) {
+      try {
+        const h = hljs.highlight(text, {language: 'json', ignoreIllegals: true}).value;
+        return '<pre class="tc-output"><code class="hljs language-json">' + h + '</code></pre>';
+      } catch(e) {}
+    }
+    return '<pre class="tc-output">' + escapeHtml(text) + '</pre>';
   }
 
-  // Hint: tool-based styling
-  const _codeExts = ['py','js','ts','jsx','tsx','java','go','rs','rb','c','cpp','cs','php','sh','bash','yaml','yml','toml','sql','html','css','xml'];
-  if (_ext && _codeExts.includes(_ext)) {
-    return '<pre class="tc-output tc-code" data-lang="' + _ext + '">' + escapeHtml(text) + '</pre>';
+  // Code file by extension
+  if (_ext && _langMap[_ext] && _hljs) {
+    try {
+      const h = hljs.highlight(text, {language: _langMap[_ext], ignoreIllegals: true}).value;
+      return '<pre class="tc-output"><code class="hljs language-' + _langMap[_ext] + '">' + h + '</code></pre>';
+    } catch(e) {}
   }
-  // grep/glob results: path:line format
+
+  // Grep results
   if (toolHint === 'grep' || toolHint === 'glob') {
-    return '<pre class="tc-output tc-grep">' + lines.map(l => {
+    return '<pre class="tc-output">' + lines.map(l => {
       const m = l.match(/^([^:]+:\d+:)\s*(.*)$/);
       if (m) return '<span class="grep-loc">' + escapeHtml(m[1]) + '</span> ' + escapeHtml(m[2]);
       return escapeHtml(l);
     }).join('\n') + '</pre>';
   }
 
-  // Default: monospace terminal output
+  // Git output (commit, log, show) — auto-detect
+  if (_hljs && (toolHint === 'bash' || !toolHint)) {
+    const isGit = lines.some(l => /^commit [0-9a-f]{40}/.test(l) || /^Author:/.test(l));
+    if (isGit) {
+      return '<pre class="tc-output">' + lines.map(l => {
+        if (/^commit [0-9a-f]/.test(l)) return '<span class="hljs-string">' + escapeHtml(l) + '</span>';
+        if (/^Author:/.test(l)) return '<span class="hljs-attr">' + escapeHtml(l) + '</span>';
+        if (/^Date:/.test(l)) return '<span class="hljs-comment">' + escapeHtml(l) + '</span>';
+        if (l.startsWith('    ')) return '<span class="hljs-title">' + escapeHtml(l) + '</span>';
+        return escapeHtml(l);
+      }).join('\n') + '</pre>';
+    }
+    // Shell output: try auto-detect
+    try {
+      const h = hljs.highlightAuto(text, ['bash', 'shell', 'plaintext']).value;
+      if (h !== escapeHtml(text)) {
+        return '<pre class="tc-output"><code class="hljs">' + h + '</code></pre>';
+      }
+    } catch(e) {}
+  }
+
+  // Default
   return '<pre class="tc-output">' + escapeHtml(text) + '</pre>';
 }
 

@@ -64,6 +64,10 @@ class CompactResultHandler(ToolHandler):
                     "type": "string",
                     "description": "The summary text",
                 },
+                "compact_key": {
+                    "type": "string",
+                    "description": "The compact key provided in the instructions",
+                },
             },
             "required": ["summary"],
         }
@@ -79,17 +83,27 @@ class CompactResultHandler(ToolHandler):
         summary = arguments.get("summary", "")
         if not summary:
             return "Error: summary is required"
+        compact_key = arguments.get("compact_key", "")
         with _pending_lock:
-            # Find any pending compact and deliver the summary
             delivered = False
-            for key, entry in _pending.items():
+            if compact_key and compact_key in _pending:
+                entry = _pending[compact_key]
                 if not entry["summary"]:
                     entry["summary"] = summary
                     entry["event"].set()
                     delivered = True
                     logger.info("[compact_result] delivered %d chars to key '%s'",
-                                len(summary), key)
-                    break
+                                len(summary), compact_key)
+            if not delivered:
+                # Fallback: deliver to first pending (backward compat)
+                for key, entry in _pending.items():
+                    if not entry["summary"]:
+                        entry["summary"] = summary
+                        entry["event"].set()
+                        delivered = True
+                        logger.info("[compact_result] delivered %d chars to key '%s' (fallback)",
+                                    len(summary), key)
+                        break
         if not delivered:
             logger.info("[compact_result] called but no compact pending, ignoring")
             return "No compact in progress. Summary ignored."

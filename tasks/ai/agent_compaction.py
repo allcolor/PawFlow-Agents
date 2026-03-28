@@ -947,7 +947,7 @@ class AgentCompactionMixin:
             f"1. Use read_file(file_id='{file_id}') to read the content — "
             f"it may be large, read multiple pages if needed (offset parameter)\n"
             f"2. Summarize ALL the content in maximum {target_tokens} tokens\n"
-            f"3. Call compact_result(summary='your summary here')\n\n"
+            f"3. Call compact_result(summary='your summary here', compact_key='{compact_key}')\n\n"
             f"Preserve: project state, files modified with paths, key decisions, "
             f"last action taken, and any pending/unfinished work.\n"
             f"Skip raw tool output, JSON blobs, and technical plumbing details.\n\n"

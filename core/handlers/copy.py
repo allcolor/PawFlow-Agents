@@ -17,9 +17,8 @@ class CopyHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Copy a file between filesystem services, FileStore, and workspace. "
-            "source_service/dest_service: relay name, 'filestore', or omit for default "
-            "(workspace for Claude Code, first relay for LLM API)."
+            "Copy a file between filesystem services and FileStore. "
+            "source_service/dest_service: relay name, 'filestore', or omit for default."
         )
 
     @property

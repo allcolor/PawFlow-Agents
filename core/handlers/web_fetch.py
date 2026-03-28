@@ -71,8 +71,7 @@ class ExecuteScriptHandler(ToolHandler):
         return (
             "Execute Python code and return the result. "
             "By default runs ON THE SERVER in a sandbox. "
-            "Set destination to a filesystem service to execute on the user's machine "
-            "via the relay (e.g. destination='fs:workspace'). "
+            "Set destination to a relay service name to execute on the user's machine. "
             "File I/O uses URL schemes: "
             "open('filestore://name.zip', 'wb') to create downloadable files, "
             "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
@@ -95,7 +94,7 @@ class ExecuteScriptHandler(ToolHandler):
                     "type": "string",
                     "description": (
                         "Where to execute: 'server' (default, sandbox) or "
-                        "filesystem service name (e.g. 'fs:workspace') to run via relay"
+                        "relay service name to run on the user's machine"
                     ),
                 },
                 "max_output": {

@@ -197,7 +197,7 @@ class VideoGenerationHandler(ToolHandler):
                 },
                 "destination": {
                     "type": "string",
-                    "description": "Where to save: 'filestore' (default) or filesystem service (e.g. 'fs:workspace'). When using a filesystem, also provide 'path'.",
+                    "description": "Where to save: 'filestore' (default) or relay service name. When using a relay, also provide 'path'.",
                 },
                 "path": {
                     "type": "string",

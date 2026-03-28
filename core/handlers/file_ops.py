@@ -32,8 +32,8 @@ class CreateFileHandler(ToolHandler):
         return (
             "Create a file and return its location. "
             "By default writes to the server FileStore (downloadable URL). "
-            "Set destination to a filesystem service name to write directly "
-            "to the user's workspace (e.g. destination='fs:workspace')."
+            "Set destination to a relay service name to write directly "
+            "to the user's machine."
         )
 
     @property
@@ -55,7 +55,7 @@ class CreateFileHandler(ToolHandler):
                 },
                 "destination": {
                     "type": "string",
-                    "description": "Where to write: 'filestore' (default, server), or filesystem service name (e.g. 'fs:workspace')",
+                    "description": "Where to write: 'filestore' (default, server), or relay service name",
                 },
             },
             "required": ["filename", "content"],

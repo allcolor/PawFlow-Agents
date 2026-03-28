@@ -142,36 +142,38 @@ class AgentCoreMixin:
                             {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
                             for tc in msg.tool_calls
                         ]
-                    # Build SSE events to publish AFTER write (only if agent known)
+                    # Build SSE events to publish AFTER write
+                    # Skip for Claude Code — claude_code.py publishes SSE in real-time
                     _sse = []
-                    _agent = (msg.source or {}).get("name", "") if msg.source else ""
-                    if not _agent:
-                        _agent = ctx.get("active_agent_name", "")
-                    _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
-                    if msg.role == "assistant" and msg.tool_calls:
-                        from core.llm_client import unwrap_mcp_tool
-                        for tc in msg.tool_calls:
-                            _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
-                            _sse.append({"type": "tool_call", "data": {
-                                "tool": _tc_name, "arguments": _tc_args,
-                                "tc_id": tc.id,
+                    if not ctx.get("_is_claude_code"):
+                        _agent = (msg.source or {}).get("name", "") if msg.source else ""
+                        if not _agent:
+                            _agent = ctx.get("active_agent_name", "")
+                        _svc = (msg.source or {}).get("llm_service", "") if msg.source else ""
+                        if msg.role == "assistant" and msg.tool_calls:
+                            from core.llm_client import unwrap_mcp_tool
+                            for tc in msg.tool_calls:
+                                _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
+                                _sse.append({"type": "tool_call", "data": {
+                                    "tool": _tc_name, "arguments": _tc_args,
+                                    "tc_id": tc.id,
+                                    "agent_name": _agent, "llm_service": _svc,
+                                }})
+                        if msg.role == "tool":
+                            _preview = (msg.content[:2000] if isinstance(msg.content, str)
+                                        else str(msg.content)[:2000])
+                            if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
+                                _nl = _preview.find("\n")
+                                if _nl >= 0:
+                                    _preview = _preview[_nl + 1:]
+                                if _preview.endswith("[/TOOL OUTPUT]"):
+                                    _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                            _sse.append({"type": "tool_result", "data": {
+                                "tool": getattr(msg, '_tool_name', ''),
+                                "result": _preview,
+                                "tc_id": getattr(msg, 'tool_call_id', ''),
                                 "agent_name": _agent, "llm_service": _svc,
                             }})
-                    if msg.role == "tool":
-                        _preview = (msg.content[:2000] if isinstance(msg.content, str)
-                                    else str(msg.content)[:2000])
-                        if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
-                            _nl = _preview.find("\n")
-                            if _nl >= 0:
-                                _preview = _preview[_nl + 1:]
-                            if _preview.endswith("[/TOOL OUTPUT]"):
-                                _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                        _sse.append({"type": "tool_result", "data": {
-                            "tool": getattr(msg, '_tool_name', ''),
-                            "result": _preview,
-                            "tc_id": getattr(msg, 'tool_call_id', ''),
-                            "agent_name": _agent, "llm_service": _svc,
-                        }})
                     ConversationWriter.for_conversation(conversation_id).enqueue(
                         [_store_msg], user_id=user_id, sse_events=_sse if _sse else None)
                 except Exception:

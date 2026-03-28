@@ -1001,7 +1001,7 @@ class AgentCompactionMixin:
                 except Exception:
                     pass
 
-        compact_key = uuid.uuid4().hex[:12]
+        compact_key = "CK_" + uuid.uuid4().hex[:8]
         file_id = FileStore.instance().store(
             "compact_input.txt", text.encode("utf-8"), "text/plain",
             category="compact")
@@ -1024,8 +1024,10 @@ class AgentCompactionMixin:
             f"Skip raw tool output, JSON blobs, and technical plumbing details.\n"
             + (f"\nFOCUS: {compact_instructions}\n" if compact_instructions else "") +
             f"\n"
-            f"CRITICAL: You MUST call compact_result with the summary via mcp__pawflow__use_tool. "
-            f"Do NOT respond with text. Your ONLY output must be the compact_result tool call."
+            f"CRITICAL: After reading and summarizing, you MUST call compact_result via "
+            f"mcp__pawflow__use_tool. Do NOT respond with text.\n\n"
+            f"REMINDER — use EXACTLY this compact_key (copy-paste, do NOT invent one):\n"
+            f"compact_key: '{compact_key}'"
         )
 
         _pub(f"Compacting {len(text)} chars via Claude Code...")

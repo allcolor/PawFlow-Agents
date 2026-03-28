@@ -96,6 +96,19 @@ class CompactResultHandler(ToolHandler):
                     delivered = True
                     logger.info("[compact_result] delivered %d chars to key '%s'",
                                 len(summary), compact_key)
+            # Fallback: wrong key but exactly 1 pending → deliver anyway
+            # (Claude may hallucinate a key from the conversation content)
+            if not delivered and _pending:
+                _keys = [k for k, v in _pending.items() if not v["summary"]]
+                if len(_keys) == 1:
+                    _fallback_key = _keys[0]
+                    entry = _pending[_fallback_key]
+                    entry["summary"] = summary
+                    entry["event"].set()
+                    delivered = True
+                    logger.warning("[compact_result] key '%s' not found, delivered to "
+                                   "sole pending key '%s' (%d chars)",
+                                   compact_key, _fallback_key, len(summary))
             if not delivered:
                 logger.warning("[compact_result] key '%s' not found in pending: %s",
                                compact_key, list(_pending.keys()))

@@ -177,13 +177,22 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     except Exception:
         pass
 
-    # Inject a system message into the conversation so the agent sees it
+    # Inject result as a system message the agent will see on next turn.
+    # The tool_call already has a placeholder tool_result "[Running in background]".
+    # This message provides the REAL result so the agent can act on it.
     try:
         from core.conversation_writer import ConversationWriter
-        prefix = "Background task cancelled" if is_cancel else "Background task completed"
+        if is_cancel:
+            content = f"[System: Background task {tool_name} was cancelled by user. The tool_call above returned a placeholder — ignore its result.]"
+        else:
+            content = (
+                f"[System: Background task {tool_name} has completed. "
+                f"The earlier tool_call returned '[Running in background]' as placeholder. "
+                f"Here is the actual result:\n\n{result_text}]"
+            )
         msg = {
             "role": "user",
-            "content": f"[System: {prefix} — {tool_name}: {result_text}]",
+            "content": content,
             "source": {"type": "system", "name": "background"},
         }
         ConversationWriter.for_conversation(conv_id).enqueue([msg])

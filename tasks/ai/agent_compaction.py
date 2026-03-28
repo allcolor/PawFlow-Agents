@@ -185,8 +185,9 @@ class AgentCompactionMixin:
                 f"Your conversation history ({len(old_messages)} messages) is stored in "
                 f"FileStore file '{file_id}' (JSONL format, one message per line with "
                 f"role/content/tool_calls/tool_call_id fields).\n\n"
-                f"Read it with: read(path='{file_id}', source='filestore') to understand the full context.\n"
-                f"The file may be large — use offset parameter to paginate if needed.\n\n"
+                f"Read it with: mcp__pawflow__use_tool(tool_name='read', "
+                f"arguments={{path: '{file_id}', source: 'filestore'}}) to understand the full context.\n"
+                f"The file may be large — use offset/limit arguments to paginate.\n\n"
                 f"The {len(recent_messages)} most recent messages are below in the prompt. "
                 f"Continue from where you left off."
             ),
@@ -1011,18 +1012,20 @@ class AgentCompactionMixin:
         prompt = (
             f"Summarize the conversation transcript stored in FileStore.\n\n"
             f"Steps:\n"
-            f"1. Use read(path='{file_id}', source='filestore') to read the content — "
-            f"it may be large, use offset/limit to paginate\n"
-            f"2. Summarize ALL the content in maximum {target_tokens} tokens\n"
-            f"3. Call compact_result(summary='your summary here', compact_key='{compact_key}')\n\n"
+            f"1. Call mcp__pawflow__get_tool_schema() to discover tools\n"
+            f"2. Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) "
+            f"to read the content — it may be large, use offset/limit to paginate\n"
+            f"3. Summarize ALL the content in maximum {target_tokens} tokens\n"
+            f"4. Call mcp__pawflow__use_tool(tool_name='compact_result', "
+            f"arguments={{summary: 'your summary here', compact_key: '{compact_key}'}})\n\n"
             f"Use this checklist — every section MUST be present:\n"
             f"1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths) "
             f"4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
             f"Skip raw tool output, JSON blobs, and technical plumbing details.\n"
             + (f"\nFOCUS: {compact_instructions}\n" if compact_instructions else "") +
             f"\n"
-            f"CRITICAL: You MUST call compact_result with the summary. "
-            f"Do NOT respond with text. Your ONLY output must be the compact_result call."
+            f"CRITICAL: You MUST call compact_result with the summary via mcp__pawflow__use_tool. "
+            f"Do NOT respond with text. Your ONLY output must be the compact_result tool call."
         )
 
         _pub(f"Compacting {len(text)} chars via Claude Code...")
@@ -1044,8 +1047,10 @@ class AgentCompactionMixin:
             if attempt > 1:
                 prompt = (
                     f"RETRY {attempt}/{max_retries}: You must call compact_result.\n"
-                    f"Read file '{file_id}' with show_file, summarize in {target_tokens} tokens, "
-                    f"call compact_result(summary='...'). DO IT NOW."
+                    f"Use mcp__pawflow__use_tool(tool_name='read', arguments={{path: '{file_id}', source: 'filestore'}}) to read, "
+                    f"summarize in {target_tokens} tokens, then "
+                    f"mcp__pawflow__use_tool(tool_name='compact_result', arguments={{summary: '...', compact_key: '{compact_key}'}}). "
+                    f"DO IT NOW."
                 )
                 set_compact_key(compact_key)
             try:

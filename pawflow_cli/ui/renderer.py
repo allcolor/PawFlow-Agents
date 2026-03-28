@@ -48,7 +48,7 @@ def _agent_color(name: str) -> str:
 
 
 _TOOL_DISPLAY_NAMES = {
-    "bash": "Bash", "read": "Read", "write": "Write", "edit": "Edit",
+    "bash": "Bash", "read": "Read", "write": "Write", "edit": "Update",
     "glob": "Glob", "grep": "Grep", "delete": "Delete", "mkdir": "Mkdir",
     "stat": "Stat", "exists": "Exists", "list_dir": "ListDir",
     "batch_edit": "BatchEdit", "apply_patch": "ApplyPatch",

@@ -1,5 +1,5 @@
 const _TOOL_DISPLAY = {
-  bash: 'Bash', read: 'Read', write: 'Write', edit: 'Edit',
+  bash: 'Bash', read: 'Read', write: 'Write', edit: 'Update',
   glob: 'Glob', grep: 'Grep', delete: 'Delete', mkdir: 'Mkdir',
   stat: 'Stat', exists: 'Exists', list_dir: 'ListDir',
   batch_edit: 'BatchEdit', apply_patch: 'ApplyPatch',
@@ -529,9 +529,8 @@ function renderSubAgentTrace(content, extra) {
   const source = (extra && extra.source) || {};
   const trace = (extra && extra.trace) || [];
   const traceId = (extra && extra.trace_id) || '';
-  const parentAgent = source.parent_agent || 'assistant';
   const agentName = source.name || 'sub-agent';
-  // Summarize trace for header
+  // Summarize trace
   let totalTools = 0;
   let tokensIn = 0;
   let tokensOut = 0;
@@ -542,21 +541,28 @@ function renderSubAgentTrace(content, extra) {
       tokensOut = entry.tokens_out || 0;
     }
   }
-  const header = escapeHtml(displayAgentName(parentAgent)) + ' \u2192 ' + escapeHtml(displayAgentName(agentName))
-    + ' (' + totalTools + ' tool' + (totalTools !== 1 ? 's' : '') + ', ' + tokensIn + '\u2191 ' + tokensOut + '\u2193)';
-  // Build trace entries
+  const tokensK = ((tokensIn + tokensOut) / 1000).toFixed(1);
+  const header = escapeHtml(displayAgentName(agentName))
+    + ' \u00b7 ' + totalTools + ' tool use' + (totalTools !== 1 ? 's' : '')
+    + ' \u00b7 ' + tokensK + 'k tokens';
+  // Tool call list (first 3 shown, rest collapsed)
+  const toolCalls = trace.filter(e => e.type === 'tool_call');
   let traceHtml = '';
-  for (const entry of trace) {
-    if (entry.type === 'iteration') {
-      traceHtml += '<div class="trace-entry">iteration ' + entry.iteration + ' \u00b7 ' + (entry.total_tools || 0) + ' tools</div>';
-    } else if (entry.type === 'tool_call') {
-      traceHtml += '<div class="trace-entry">\u26a1 ' + escapeHtml(entry.tool || '?') + '</div>';
-    } else if (entry.type === 'done') {
-      const status = entry.status || 'done';
-      traceHtml += '<div class="trace-entry done">\u2713 ' + escapeHtml(status) + ' (' + (entry.tokens_in || 0) + '\u2191 ' + (entry.tokens_out || 0) + '\u2193)</div>';
-    }
+  const showN = 3;
+  for (let i = 0; i < Math.min(showN, toolCalls.length); i++) {
+    const tc = toolCalls[i];
+    const display = (_TOOL_DISPLAY[tc.tool] || tc.tool || '?');
+    traceHtml += '<div class="trace-entry">' + escapeHtml(display) + '(' + escapeHtml((tc.path || tc.query || '').substring(0, 60)) + ')</div>';
   }
-  // Content preview (truncated in header, full in body)
+  if (toolCalls.length > showN) {
+    traceHtml += '<div class="trace-entry" style="color:#6c6c8a">+' + (toolCalls.length - showN) + ' more tool uses</div>';
+  }
+  // Done status
+  const doneEntry = trace.find(e => e.type === 'done');
+  if (doneEntry) {
+    traceHtml += '<div class="trace-entry done">\u23bf  Done</div>';
+  }
+  // Content
   const contentText = content || '';
   if (contentText) {
     traceHtml += '<div class="trace-content">' + renderMarkdown(contentText) + '</div>';
@@ -565,6 +571,34 @@ function renderSubAgentTrace(content, extra) {
     + '<div class="sub-trace-header" onclick="toggleTrace(this)">\u25b6 ' + header + '</div>'
     + '<div class="sub-trace-body" style="display:none">' + traceHtml + '</div>'
     + '</div>';
+}
+
+// Render multiple sub-agent traces as a tree (Claude Code style)
+function renderMultiAgentTree(traces) {
+  if (!traces || traces.length === 0) return '';
+  const count = traces.length;
+  let html = '<div class="multi-agent-tree">';
+  html += '<div class="tree-header" onclick="toggleTrace(this)">\u25b6 '
+    + count + ' agent' + (count > 1 ? 's' : '') + ' finished</div>';
+  html += '<div class="tree-body" style="display:none">';
+  for (let i = 0; i < traces.length; i++) {
+    const t = traces[i];
+    const isLast = i === traces.length - 1;
+    const connector = isLast ? '\u2514\u2500 ' : '\u251c\u2500 ';
+    const pipe = isLast ? '   ' : '\u2502  ';
+    const name = escapeHtml(t.name || 'agent');
+    const tools = t.totalTools || 0;
+    const tokensK = ((t.tokensTotal || 0) / 1000).toFixed(1);
+    html += '<div class="tree-agent">'
+      + '<span style="color:#555">' + connector + '</span>'
+      + '<span style="color:#c0c0d0">' + name + '</span>'
+      + ' <span style="color:#6c6c8a">\u00b7 ' + tools + ' tool uses \u00b7 ' + tokensK + 'k tokens</span>'
+      + '</div>';
+    html += '<div class="tree-result"><span style="color:#555">' + pipe + '</span>\u23bf  '
+      + '<span style="color:#4ecdc4">' + escapeHtml(t.status || 'Done') + '</span></div>';
+  }
+  html += '</div></div>';
+  return html;
 }
 
 function toggleTrace(headerEl) {

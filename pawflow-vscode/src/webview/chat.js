@@ -313,7 +313,7 @@ function addMsg(type, content, meta) {
 }
 
 var _TOOL_DISPLAY = {
-  bash:'Bash',read:'Read',write:'Write',edit:'Edit',glob:'Glob',grep:'Grep',
+  bash:'Bash',read:'Read',write:'Write',edit:'Update',glob:'Glob',grep:'Grep',
   delete:'Delete',mkdir:'Mkdir',stat:'Stat',exists:'Exists',list_dir:'ListDir',
   batch_edit:'BatchEdit',apply_patch:'ApplyPatch',find_replace:'FindReplace',
   notebook_edit:'NotebookEdit',copy:'Copy',execute_script:'Script',

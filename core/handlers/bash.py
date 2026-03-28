@@ -45,6 +45,7 @@ class BashHandler(BaseFsHandler):
         arguments = self._resolve_expressions(arguments)
         command = arguments.get("command", "")
         if not command:
+            logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])
             return "Error: 'command' is required"
 
         relay = arguments.get("relay", "")

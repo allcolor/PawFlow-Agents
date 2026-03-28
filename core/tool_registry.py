@@ -46,7 +46,6 @@ from core.handlers import (  # noqa: F401
     FlowManagerHandler,
     ForgetHandler,
     GetAgentResultsHandler,
-    GitHubHandler,
     HTTPToolHandler,
     ImageGenerationHandler,
     ImageModelInfoHandler,
@@ -378,9 +377,6 @@ def create_default_registry() -> ToolRegistry:
 
     # Test runner
     registry.register(RunTestsHandler())
-
-    # GitHub CLI
-    registry.register(GitHubHandler())
 
     # Security scanning
     registry.register(SecurityScanHandler())

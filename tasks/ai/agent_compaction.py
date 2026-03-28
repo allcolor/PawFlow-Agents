@@ -115,6 +115,86 @@ class AgentCompactionMixin:
     # Max chars kept per tool result after compaction truncation
     _TOOL_TRUNC_LIMIT = 800
 
+    def _prepare_cc_file_context(
+        self,
+        messages: List[LLMMessage],
+        max_recent: int = 50,
+    ) -> List[LLMMessage]:
+        """Prepare context for Claude Code by offloading old messages to FileStore.
+
+        Instead of sending all messages as the API prompt (which hits "Prompt too long"),
+        writes old messages to a JSONL file in FileStore and returns a short context:
+          [0] system prompt (original)
+          [1] user: "Conversation history is in file {file_id}. Read it."
+          [2] assistant: "Understood."
+          [3..N] recent messages (last ~50)
+
+        Claude Code reads the JSONL file via read_file MCP tool — no prompt size limit.
+        """
+        if not messages:
+            return messages
+
+        system_msg = messages[0] if messages[0].role == "system" else None
+        start_idx = 1 if system_msg else 0
+
+        # If few enough messages, no need to offload
+        if len(messages) <= max_recent + start_idx + 5:
+            return messages
+
+        # Split: old messages → file, recent messages → prompt
+        split = _select_recent_messages(messages, start_idx,
+                                         min_conversation=25, max_total=max_recent)
+        if split <= start_idx:
+            return messages
+
+        old_messages = messages[start_idx:split]
+        recent_messages = messages[split:]
+
+        # Serialize old messages to JSONL
+        serialized = self._serialize_messages(old_messages)
+        jsonl_lines = []
+        for entry in serialized:
+            jsonl_lines.append(json.dumps(entry, ensure_ascii=False))
+        jsonl_content = "\n".join(jsonl_lines)
+
+        # Write to FileStore
+        from core.file_store import FileStore
+        file_id = FileStore.instance().store(
+            "conversation_history.jsonl",
+            jsonl_content.encode("utf-8"),
+            "application/jsonl",
+            category="context",
+        )
+
+        logger.info("[cc-context] offloaded %d old messages (%d chars) to FileStore %s, "
+                    "keeping %d recent messages in prompt",
+                    len(old_messages), len(jsonl_content), file_id, len(recent_messages))
+
+        # Build compact context
+        result: List[LLMMessage] = []
+        if system_msg:
+            result.append(system_msg)
+        result.append(LLMMessage(
+            role="user",
+            content=(
+                f"[Conversation context — {len(old_messages)} earlier messages offloaded]\n\n"
+                f"Your conversation history ({len(old_messages)} messages) is stored in "
+                f"FileStore file '{file_id}' (JSONL format, one message per line with "
+                f"role/content/tool_calls/tool_call_id fields).\n\n"
+                f"Read it with: read_file(file_id='{file_id}') to understand the full context.\n"
+                f"The file may be large — use offset parameter to paginate if needed.\n\n"
+                f"The {len(recent_messages)} most recent messages are below in the prompt. "
+                f"Continue from where you left off."
+            ),
+        ))
+        result.append(LLMMessage(
+            role="assistant",
+            content="Understood. I'll read the conversation history file to get full context, "
+                    "then continue from the recent messages.",
+        ))
+        result.extend(recent_messages)
+        return result
+
     @staticmethod
     def _progressive_clear_tool_results(messages: List[LLMMessage],
                                           target_tokens: int,

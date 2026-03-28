@@ -267,10 +267,10 @@ class AgentCoreMixin:
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
 
-                    # Compaction — claude-code manages its own context:
-                    # no per-iteration compaction (one compact at context load only)
+                    # Claude-code: offload old messages to FileStore if too many
+                    # (avoids "Prompt too long" — Claude reads history via MCP tool)
                     if ctx.get("_is_claude_code"):
-                        llm_context = list(messages)
+                        llm_context = self._prepare_cc_file_context(list(messages))
                     else:
                         llm_context = self._compact(
                             copy.deepcopy(messages), compact_client,

@@ -725,7 +725,8 @@ class AgentCompactionMixin:
             total_text = "\n".join(
                 self._sanitize_for_llm(self._messages_to_text([m]))
                 for m in old_messages)
-            return self._call_summarize(client, total_text, target_tokens, agent_name=agent_name)
+            return self._call_summarize(client, total_text, target_tokens,
+                                       agent_name=agent_name, conversation_id=conversation_id)
 
         # 60% of context = safe input limit (leaves room for system prompt + output)
         safe_limit = int(max_tokens * 0.60)
@@ -821,7 +822,8 @@ class AgentCompactionMixin:
     def _call_summarize(self, client: LLMClient, text: str,
                         target_tokens: int = 0,
                         user_id: str = "", agent_name: str = "",
-                        llm_service: str = "") -> str:
+                        llm_service: str = "",
+                        conversation_id: str = "") -> str:
         """Single LLM call to summarize text. Routes to claude-code path if needed."""
         logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
                      f"target={target_tokens} tokens, input={len(text)} chars")
@@ -833,7 +835,8 @@ class AgentCompactionMixin:
             getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
         if _provider == "claude-code":
             return self._call_summarize_via_cc(
-                client, text, target_tokens, user_id, agent_name, llm_service)
+                client, text, target_tokens, user_id, agent_name, llm_service,
+                conversation_id)
 
         clean_text = self._sanitize_for_llm(text)
         target_instruction = (
@@ -913,11 +916,22 @@ class AgentCompactionMixin:
 
     def _call_summarize_via_cc(self, client, text: str, target_tokens: int,
                               user_id: str = "", agent_name: str = "",
-                              llm_service: str = "") -> str:
+                              llm_service: str = "",
+                              conversation_id: str = "") -> str:
         """Summarize via Claude Code streaming — write file, ask Claude to read + call compact_result."""
         from core.file_store import FileStore
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
         import uuid
+
+        def _pub(detail):
+            if conversation_id:
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "compact_progress",
+                        {"stage": "summarizing", "detail": detail})
+                except Exception:
+                    pass
 
         compact_key = uuid.uuid4().hex[:12]
         file_id = FileStore.instance().store(
@@ -936,8 +950,11 @@ class AgentCompactionMixin:
             f"Do NOT respond with text. ONLY call compact_result."
         )
 
+        _pub(f"Claude Code compacting {len(text)} chars...")
+
         max_retries = 3
         for attempt in range(1, max_retries + 1):
+            _pub(f"attempt {attempt}/{max_retries}")
             logger.info("[compact-cc] attempt %d/%d", attempt, max_retries)
             if attempt > 1:
                 prompt = (

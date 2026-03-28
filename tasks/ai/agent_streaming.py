@@ -310,13 +310,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             with self._interactions_lock:
                 _msg_preview = (_user_text or "")[:80]
+                _resolved_agent = _target or ctx.get("active_agent_name", "")
                 self._active_interactions[_gen_key] = {
-                    "name": _target or ctx.get("active_agent_name", ""),
-                    "startedAt": time.time(),
-                    "lastTool": "", "activeTools": [], "status": "thinking",
-                    "msgPreview": _msg_preview,
+                    "agent_name": _resolved_agent,
+                    "name": _resolved_agent,
+                    "started_at": time.time(),
+                    "last_tool": "", "status": "thinking",
+                    "message_preview": _msg_preview,
                     "conversation_id": conversation_id,
-                    "updatedAt": time.time(),
                 }
 
             self._streaming_agent_loop(ctx, conversation_id, bus)

@@ -331,7 +331,7 @@ def create_default_registry() -> ToolRegistry:
     # Identity linking
     registry.register(LinkIdentityHandler())
 
-    # Filesystem tools (split from monolithic FilesystemToolHandler)
+    # Filesystem tools
     from core.handlers.read import ReadHandler
     from core.handlers.write import WriteHandler
     from core.handlers.edit_handler import EditHandler

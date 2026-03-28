@@ -537,59 +537,6 @@ class TestServiceHeartbeat(unittest.TestCase):
 # 5. Multi-service selection — Plan D (6 tests)
 # ═══════════════════════════════════════════════════════════════════
 
-class TestMultiServiceSelection(unittest.TestCase):
-    """Test multi-service selection for handlers."""
-
-    def test_executor_handler_service_param_in_schema(self):
-        from core.tool_registry import RemoteExecutorHandler
-        h = RemoteExecutorHandler()
-        schema = h.parameters_schema
-        self.assertIn("service", schema["properties"])
-
-    def test_filesystem_handler_service_param_in_schema(self):
-        from core.tool_registry import FilesystemToolHandler
-        h = FilesystemToolHandler()
-        schema = h.parameters_schema
-        self.assertIn("service", schema["properties"])
-
-    def test_executor_handler_description_multi_service(self):
-        from core.tool_registry import RemoteExecutorHandler
-        h = RemoteExecutorHandler()
-        h._available_services = [
-            {"id": "exec1", "root": "/project"},
-            {"id": "exec2", "root": "/data"},
-        ]
-        desc = h.description
-        self.assertIn("exec1", desc)
-        self.assertIn("exec2", desc)
-        self.assertIn("service", desc)
-
-    def test_executor_handler_description_single_service(self):
-        from core.tool_registry import RemoteExecutorHandler
-        h = RemoteExecutorHandler()
-        h._available_services = [{"id": "exec1", "root": "/project"}]
-        desc = h.description
-        self.assertNotIn("Available services:", desc)
-
-    def test_filesystem_handler_description_multi_service(self):
-        from core.tool_registry import FilesystemToolHandler
-        h = FilesystemToolHandler()
-        h._available_services = [
-            {"id": "fs1", "type": "localFilesystem", "root": "/data"},
-            {"id": "fs2", "type": "googleDrive", "root": "My Drive"},
-        ]
-        desc = h.description
-        self.assertIn("fs1", desc)
-        self.assertIn("fs2", desc)
-
-    def test_executor_resolve_service_default(self):
-        from core.tool_registry import RemoteExecutorHandler
-        h = RemoteExecutorHandler()
-        mock_svc = MagicMock()
-        h._service = mock_svc
-        resolved = h._resolve_service("")
-        self.assertIs(resolved, mock_svc)
-
 
 # ═══════════════════════════════════════════════════════════════════
 # 6. Tool Approval — Plan A (12 tests)

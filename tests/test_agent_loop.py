@@ -24,7 +24,7 @@ from core.llm_client import (
 )
 from core.tool_registry import (
     ToolRegistry, ToolHandler, create_default_registry,
-    ExecuteScriptHandler, ReadFileHandler,
+    ExecuteScriptHandler,
     HTTPToolHandler, TaskToolHandler, MCPToolHandler,
     ConfigurableToolHandler, load_agent_tools, discover_mcp_tools,
 )
@@ -349,32 +349,6 @@ class TestToolRegistry(unittest.TestCase):
         handler = ExecuteScriptHandler()
         result = handler.execute({"code": "result = 42"})
         assert result == "42"
-
-    def test_read_file_handler(self):
-        from core.file_store import FileStore
-        import shutil
-        _tmpdir = tempfile.mkdtemp()
-        _old_instance = FileStore._instance
-        store = FileStore(base_dir=_tmpdir)
-        FileStore._instance = store
-        try:
-            store.store("hello.txt", b"hello world", "text/plain")
-            handler = ReadFileHandler()
-            result = handler.execute({"path": "hello.txt"})
-            assert result == "hello world"
-        finally:
-            FileStore._instance = _old_instance
-            shutil.rmtree(_tmpdir, ignore_errors=True)
-
-    def test_read_file_nonexistent(self):
-        handler = ReadFileHandler()
-        result = handler.execute({"path": "nonexistent_file.txt"})
-        assert "not found" in result
-
-    def test_read_file_empty_path(self):
-        handler = ReadFileHandler()
-        result = handler.execute({"path": ""})
-        assert "Error" in result or "no path" in result
 
     def test_custom_handler(self):
         class EchoHandler(ToolHandler):

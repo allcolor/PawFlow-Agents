@@ -77,7 +77,7 @@ let savedDraft = '';      // text being typed before navigating
 
 // ── Watchdog: if sending and no SSE activity for 15s, try recovery ──
 setInterval(() => {
-  if (!sending || !conversationId) return;
+  if (!sending || !conversationId || contextOpInProgress) return;
   const now = Date.now();
   if (lastSSEActivity > 0 && (now - lastSSEActivity) > 15000) {
     console.log('[watchdog] no SSE activity for 15s while sending — recovering');

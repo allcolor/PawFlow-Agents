@@ -348,6 +348,10 @@ class LLMClaudeCodeMixin:
             "-e", "HOME=/workspace",
             "-e", "NODE_OPTIONS=--max-old-space-size=1536",
             "-e", f"PAWFLOW_HOST={host_addr}",
+            # Fix git "dubious ownership" — workdir is mounted from host with different uid
+            "-e", "GIT_CONFIG_COUNT=1",
+            "-e", "GIT_CONFIG_KEY_0=safe.directory",
+            "-e", "GIT_CONFIG_VALUE_0=/workspace",
             # Network: allow MCP bridge to reach host tool relay
             "--add-host", f"host.docker.internal:host-gateway",
             # Run as non-root: Claude Code refuses --dangerously-skip-permissions as root

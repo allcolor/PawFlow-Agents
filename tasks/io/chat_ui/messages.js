@@ -15,29 +15,31 @@ const _TOOL_DISPLAY = {
 
 function _toolCallSummary(name, args) {
   const display = _TOOL_DISPLAY[name] || name;
+  // Build summary from actual args sent (not hardcoded param names)
   let summary = '';
-  if (name === 'bash' || name === 'execute_script') {
-    summary = args.command || args.code || '';
-  } else if (['read','write','edit','delete','stat','exists','mkdir','list_dir','batch_edit','apply_patch','find_replace','notebook_edit'].includes(name)) {
-    summary = args.path || '';
-  } else if (name === 'glob') {
-    summary = args.pattern || '';
-  } else if (name === 'grep') {
-    summary = (args.pattern || '') + (args.path ? ', ' + args.path : '');
-  } else if (name === 'web_search') {
-    summary = args.query || '';
-  } else if (name === 'web_fetch' || name === 'scrape_url') {
-    summary = args.url || '';
-  } else if (name === 'spawn_agents' && args.tasks) {
-    summary = args.tasks.length + ' task(s)';
-  } else {
-    const keys = Object.keys(args || {});
-    summary = keys.slice(0, 3).map(k => {
-      const v = typeof args[k] === 'string' ? args[k] : JSON.stringify(args[k]);
-      return k + '=' + v;
-    }).join(', ');
+  if (args && typeof args === 'object') {
+    const keys = Object.keys(args);
+    if (keys.length === 0) {
+      summary = '';
+    } else if (keys.length === 1) {
+      // Single arg: show value directly (truncated)
+      const val = String(args[keys[0]]);
+      summary = val.length > 200 ? val.substring(0, 200) + '...' : val;
+    } else {
+      // Multiple args: show key=value pairs (truncated)
+      const parts = [];
+      let total = 0;
+      for (const k of keys) {
+        const val = String(args[k]);
+        const short = val.length > 80 ? val.substring(0, 80) + '...' : val;
+        const part = k + '=' + short;
+        if (total + part.length > 200) { parts.push('...'); break; }
+        parts.push(part);
+        total += part.length;
+      }
+      summary = parts.join(', ');
+    }
   }
-  if (summary.length > 120) summary = summary.substring(0, 120) + '\u2026';
   return display + '(' + summary + ')';
 }
 

@@ -12,6 +12,9 @@ from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
 
+# Claude Code PKCE state (in-memory, keyed by state token)
+_claude_pkce_states: Dict[str, dict] = {}
+
 # Pending OAuth flows (in-memory, keyed by service_id)
 _oauth_pending: Dict[str, Dict[str, str]] = {}
 
@@ -341,13 +344,48 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     # ── Claude Code OAuth login ──────────────────────────────────────
 
     if action == "claude_code_login_redirect":
-        """Return URL for Claude Code OAuth PKCE login."""
+        """Generate PKCE and return Anthropic authorize URL."""
+        import base64
+        import hashlib
+        import secrets as _secrets
+
         service_id = body.get("service_id", "")
         if not service_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
+
+        code_verifier = _secrets.token_urlsafe(64)
+        code_challenge = base64.urlsafe_b64encode(
+            hashlib.sha256(code_verifier.encode()).digest()
+        ).rstrip(b"=").decode()
+        state = _secrets.token_urlsafe(32)
+
+        # Store PKCE state for callback
+        from tasks.ai.actions.service_flow import _claude_pkce_states
+        # Use the same /auth/callback path — oauthCallback detects Claude
+        # login via the state token in _claude_pkce_states
+        from core.expression import resolve_value as _rv
+        redirect_uri = _rv("${global.oauth_redirect_uri}") or "http://localhost:9090/auth/callback"
+
+        _claude_pkce_states[state] = {
+            "code_verifier": code_verifier,
+            "service_id": service_id,
+            "redirect_uri": redirect_uri,
+        }
+
+        import urllib.parse
+        _CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+        params = urllib.parse.urlencode({
+            "client_id": _CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": "user:inference user:profile user:sessions:claude_code",
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
+            "state": state,
+        })
         flowfile.set_content(json.dumps({
-            "url": f"/api/v1/auth/claude-code/login?service_id={service_id}",
+            "url": f"https://console.anthropic.com/oauth/authorize?{params}",
             "message": "Login with your Claude subscription...",
         }).encode())
         return [flowfile]

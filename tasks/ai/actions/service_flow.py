@@ -485,8 +485,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 "--name", container_name,
                 "-p", f"{free_port}:6080",
                 "-v", f"{volume_name}:/workspace",
+                "--entrypoint", "bash",
                 image,
-                "bash", "/opt/pawflow/auth_login.sh",
+                "/opt/pawflow/auth_login.sh",
             ]
             logger.info("[vnc-login] docker run: %s", " ".join(docker_cmd))
             result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)

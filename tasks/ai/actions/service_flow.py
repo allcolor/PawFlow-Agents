@@ -347,7 +347,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
         flowfile.set_content(json.dumps({
-            "url": f"/api/auth/claude-code/login?service_id={service_id}",
+            "url": f"/api/v1/auth/claude-code/login?service_id={service_id}",
             "message": "Login with your Claude subscription...",
         }).encode())
         return [flowfile]

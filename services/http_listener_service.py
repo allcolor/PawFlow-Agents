@@ -90,6 +90,7 @@ class RouteEntry:
     regex: re.Pattern    # compiled regex with named groups
     owner_id: str        # flow_id or task_id that registered this route
     callback: Any        # callable(PendingRequest) -> None
+    ws_handler: Any = None  # callable(socket, path_params) for WebSocket upgrades
 
 
 class RouteConflictError(Exception):
@@ -104,7 +105,8 @@ class RouteRegistry:
         self._routes: List[RouteEntry] = []
         self._lock = threading.Lock()
 
-    def register(self, method: str, pattern: str, owner_id: str, callback) -> RouteEntry:
+    def register(self, method: str, pattern: str, owner_id: str, callback,
+                 ws_handler=None) -> RouteEntry:
         """Register a route.  Raises RouteConflictError on overlap."""
         method = method.upper()
         regex = self._compile_pattern(pattern)
@@ -123,6 +125,7 @@ class RouteRegistry:
             entry = RouteEntry(
                 method=method, pattern=pattern, regex=regex,
                 owner_id=owner_id, callback=callback,
+                ws_handler=ws_handler,
             )
             self._routes.append(entry)
             return entry
@@ -189,6 +192,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         method = self.command
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
+
+        # WebSocket upgrade detection
+        if (self.headers.get("Upgrade", "").lower() == "websocket" and
+                "upgrade" in self.headers.get("Connection", "").lower()):
+            return self._handle_websocket_upgrade(path, query)
 
         # Read body
         content_length = int(self.headers.get('Content-Length', 0))
@@ -278,6 +286,63 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 logger.error(f"Stream error for {req.request_id}: {e}")
         elif req.response_body:
             self.wfile.write(req.response_body)
+
+    def _handle_websocket_upgrade(self, path: str, query: str):
+        """Handle a WebSocket upgrade request.
+
+        Matches the route, verifies it has a ws_handler, performs the
+        RFC 6455 handshake, then hands the raw socket to the handler.
+        The handler runs in the current thread (thread-per-connection).
+        """
+        import base64
+        import hashlib
+
+        registry: RouteRegistry = self.server._route_registry
+        result = registry.match("GET", path)
+
+        if result is None or not result[0].ws_handler:
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({
+                "error": "Bad Request",
+                "message": f"WebSocket not supported on {path}",
+            }).encode())
+            return
+
+        entry, path_params = result
+
+        # RFC 6455 handshake
+        ws_key = self.headers.get("Sec-WebSocket-Key", "")
+        if not ws_key:
+            self.send_response(400)
+            self.end_headers()
+            return
+
+        _WS_MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
+        accept = base64.b64encode(
+            hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
+        ).decode()
+
+        # Send 101 Switching Protocols
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
+        self.end_headers()
+
+        # Hand off the raw socket to the WebSocket handler
+        # The handler blocks in the current thread until done
+        sock = self.request  # raw socket
+        try:
+            entry.ws_handler(sock, path_params, {
+                "path": path,
+                "query": query,
+                "headers": dict(self.headers),
+                "remote_addr": self.client_address[0] if self.client_address else "",
+            })
+        except Exception as e:
+            logger.debug(f"WebSocket handler error: {e}")
 
     # Handle all HTTP methods
     do_GET = _handle
@@ -511,9 +576,17 @@ class HTTPListenerService(BaseService):
 
     # -- Route management --
 
-    def register_route(self, method: str, pattern: str, owner_id: str, callback) -> RouteEntry:
-        """Register a route for a flow/task."""
-        return self._registry.register(method, pattern, owner_id, callback)
+    def register_route(self, method: str, pattern: str, owner_id: str, callback,
+                       ws_handler=None) -> RouteEntry:
+        """Register a route for a flow/task.
+
+        Args:
+            ws_handler: Optional WebSocket handler callable(socket, path_params, meta).
+                        If set, WebSocket upgrade requests on this route are accepted
+                        and the handler is called with the raw socket after handshake.
+        """
+        return self._registry.register(method, pattern, owner_id, callback,
+                                        ws_handler=ws_handler)
 
     def unregister_routes(self, owner_id: str):
         """Remove all routes for a flow/task."""

@@ -88,85 +88,25 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
 
-    # Use rfile/wfile from HTTP handler for the browser side
-    # (raw socket recv() returns EOF on Windows due to buffering)
-    client_rfile = meta.get("_rfile")
-    client_wfile = meta.get("_wfile")
-
-    # Bidirectional relay — 2 threads
+    # Bidirectional raw socket relay
     stop = threading.Event()
 
-    def _relay_read_write(reader, writer, name):
-        """Relay using file-like read/write."""
+    def _relay(src, dst, name):
         logger.info("VNC relay %s: started", name)
         try:
             while not stop.is_set():
-                data = reader.read(65536)
+                data = src.recv(65536)
                 if not data:
                     logger.info("VNC relay %s: EOF", name)
                     break
-                writer.write(data)
-                writer.flush()
+                dst.sendall(data)
         except Exception as e:
-            logger.info("VNC relay %s: error %s: %s", name, type(e).__name__, e)
+            logger.info("VNC relay %s: %s: %s", name, type(e).__name__, e)
         finally:
             stop.set()
 
-    def _relay_sock_to_file(src_sock, dst_file, name):
-        """Relay from socket to file-like."""
-        logger.info("VNC relay %s: started", name)
-        try:
-            while not stop.is_set():
-                data = src_sock.recv(65536)
-                if not data:
-                    logger.info("VNC relay %s: EOF", name)
-                    break
-                dst_file.write(data)
-                dst_file.flush()
-        except Exception as e:
-            logger.info("VNC relay %s: error %s: %s", name, type(e).__name__, e)
-        finally:
-            stop.set()
-
-    def _relay_file_to_sock(src_file, dst_sock, name):
-        """Relay from file-like to socket."""
-        logger.info("VNC relay %s: started", name)
-        try:
-            while not stop.is_set():
-                data = src_file.read1(65536)  # read1 = non-blocking read
-                if not data:
-                    logger.info("VNC relay %s: EOF", name)
-                    break
-                dst_sock.sendall(data)
-        except Exception as e:
-            logger.info("VNC relay %s: error %s: %s", name, type(e).__name__, e)
-        finally:
-            stop.set()
-
-    if client_rfile and client_wfile:
-        # browser→docker: read from rfile, send to backend socket
-        t1 = threading.Thread(target=_relay_file_to_sock,
-                              args=(client_rfile, backend_sock, "browser→docker"), daemon=True)
-        # docker→browser: recv from backend socket, write to wfile
-        t2 = threading.Thread(target=_relay_sock_to_file,
-                              args=(backend_sock, client_wfile, "docker→browser"), daemon=True)
-    else:
-        # Fallback: raw socket relay (for non-HTTP WS handlers)
-        def _relay_raw(src, dst, name):
-            logger.info("VNC relay %s: started (raw)", name)
-            try:
-                while not stop.is_set():
-                    data = src.recv(65536)
-                    if not data:
-                        break
-                    dst.sendall(data)
-            except Exception as e:
-                logger.info("VNC relay %s: %s", name, e)
-            finally:
-                stop.set()
-        t1 = threading.Thread(target=_relay_raw, args=(client_sock, backend_sock, "browser→docker"), daemon=True)
-        t2 = threading.Thread(target=_relay_raw, args=(backend_sock, client_sock, "docker→browser"), daemon=True)
-
+    t1 = threading.Thread(target=_relay, args=(client_sock, backend_sock, "browser->docker"), daemon=True)
+    t2 = threading.Thread(target=_relay, args=(backend_sock, client_sock, "docker->browser"), daemon=True)
     t1.start()
     t2.start()
 

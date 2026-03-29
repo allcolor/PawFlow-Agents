@@ -509,16 +509,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Register routes: HTTP (static files) + WS (VNC frames)
         try:
             from services.http_listener_service import HTTPListenerService
-            # Find the HTTP listener via GlobalServiceRegistry (any port)
+            # Find the HTTP listener (any port)
             svc = None
             try:
                 from gui.services.global_service_registry import GlobalServiceRegistry
                 greg = GlobalServiceRegistry.get_instance()
-                for _sid, _sdef in greg.get_all_definitions().items():
-                    if getattr(_sdef, "service_type", "") == "httpListener":
-                        svc = greg.get_live_instance(_sid)
-                        if svc:
-                            break
+                for _sid, _inst in list(greg._live_instances.items()):
+                    if isinstance(_inst, HTTPListenerService):
+                        svc = _inst
+                        break
             except Exception:
                 pass
             if svc:
@@ -626,14 +625,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Cleanup VNC proxy routes
         try:
             try:
+                from services.http_listener_service import HTTPListenerService
                 from gui.services.global_service_registry import GlobalServiceRegistry
                 greg = GlobalServiceRegistry.get_instance()
-                for _sid, _sdef in greg.get_all_definitions().items():
-                    if getattr(_sdef, "service_type", "") == "httpListener":
-                        _svc = greg.get_live_instance(_sid)
-                        if _svc:
-                            _svc.unregister_routes(f"vnc_proxy_{session_id}")
-                            break
+                for _sid, _inst in list(greg._live_instances.items()):
+                    if isinstance(_inst, HTTPListenerService):
+                        _inst.unregister_routes(f"vnc_proxy_{session_id}")
+                        break
             except Exception:
                 pass
         except Exception:

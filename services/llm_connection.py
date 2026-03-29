@@ -324,8 +324,16 @@ class LLMConnectionService(BaseService):
         """Custom actions for the admin UI."""
         return [
             {
+                "id": "claude_code_relay_login",
+                "label": "Login via relay",
+                "icon": "\U0001f50c",
+                "when": {"provider": ["claude-code"]},
+                "server_action": "claude_code_list_relays",
+                "flow": "claude_login_relay",
+            },
+            {
                 "id": "claude_code_login",
-                "label": "Login with Claude subscription",
+                "label": "Set credentials",
                 "icon": "\U0001f511",
                 "when": {"provider": ["claude-code"]},
                 "server_action": "claude_code_login_url",

@@ -265,11 +265,89 @@ def _action_python_exec(handler, cwd, req, timeout):
 
 
 
+def _action_claude_auth_login(handler, cwd, req, timeout, *, send_progress=None):
+    """Launch `claude auth login` on the HOST, intercept URL, return credentials.
+
+    This action runs directly on the host machine (not in Docker sandbox).
+    Only `claude auth login` is allowed — no arbitrary commands.
+    """
+    claude_path = req.get("claude_path", "").strip()
+    if not claude_path:
+        # Platform default
+        if sys.platform == "win32":
+            home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
+            claude_path = os.path.join(home, ".local", "bin", "claude.exe")
+            if not os.path.exists(claude_path):
+                claude_path = shutil.which("claude") or "claude"
+        else:
+            claude_path = shutil.which("claude") or "claude"
+
+    # Security: validate path — no shell injection
+    _bad = set(';|&`$(){}')
+    if any(c in claude_path for c in _bad):
+        return {"error": f"Invalid claude path: contains forbidden characters"}
+
+    sys.stderr.write(f"[ExecRelay] claude auth login: {claude_path}\n")
+
+    try:
+        proc = subprocess.Popen(
+            [claude_path, "auth", "login", "--no-browser"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            cwd=cwd,
+        )
+    except FileNotFoundError:
+        return {"error": f"Claude binary not found: {claude_path}"}
+    except Exception as e:
+        return {"error": f"Failed to start claude: {e}"}
+
+    # Parse stdout for the authorize URL
+    url_pattern = re.compile(r'https://claude\.ai/oauth/authorize\S+')
+    url_found = None
+
+    for line in proc.stdout:
+        line = line.rstrip()
+        sys.stderr.write(f"[ExecRelay] claude> {line}\n")
+        m = url_pattern.search(line)
+        if m and not url_found:
+            url_found = m.group(0)
+            sys.stderr.write(f"[ExecRelay] Auth URL found: {url_found[:80]}...\n")
+            if send_progress:
+                send_progress({"url": url_found})
+
+    proc.wait()
+    sys.stderr.write(f"[ExecRelay] claude auth login exited: {proc.returncode}\n")
+
+    if proc.returncode != 0 and not url_found:
+        return {"error": f"claude auth login failed (exit {proc.returncode})"}
+
+    # Read credentials
+    if sys.platform == "win32":
+        creds_path = os.path.join(
+            os.environ.get("USERPROFILE", os.environ.get("HOME", "")),
+            ".claude", ".credentials.json")
+    else:
+        creds_path = os.path.expanduser("~/.claude/.credentials.json")
+
+    if not os.path.exists(creds_path):
+        return {"error": f"Credentials file not found: {creds_path}"}
+
+    try:
+        with open(creds_path, "r", encoding="utf-8") as f:
+            credentials = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read credentials: {e}"}
+
+    return {"credentials": credentials}
+
+
 # ── Action dispatch table ────────────────────────────────────────
 
 _ACTIONS = {
     "shell": _action_shell,
     "python_exec": _action_python_exec,
+    "claude_auth_login": _action_claude_auth_login,
 }
 
 
@@ -311,6 +389,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
     path = parsed.path or "/ws/relay"
 
     actions = [a for a in ["shell", "python_exec", "git"] if a not in disabled]
+    actions.append("claude_auth_login")  # always available (host action)
     py_ver = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
     info = {
         "platform": sys.platform,
@@ -393,10 +472,38 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
 
         return opcode, payload
 
-    def _execute_command(msg):
+    def _execute_command(msg, ws_sock=None):
         """Execute a command from the server."""
         action = msg.get("action", "")
         request_id = msg.get("request_id", "")
+
+        # claude_auth_login: no secret check, no cwd, no disable check
+        # (whitelisted host action, not a sandbox command)
+        if action == "claude_auth_login":
+            handler_func = _ACTIONS.get(action)
+            if not handler_func:
+                return {"ok": False, "error": f"Unknown action: {action}"}
+
+            def _send_progress(data):
+                if ws_sock:
+                    progress = json.dumps({
+                        "type": "progress",
+                        "request_id": request_id,
+                        "data": data,
+                    }).encode("utf-8")
+                    try:
+                        _ws_frame_send(ws_sock, progress)
+                    except Exception as e:
+                        sys.stderr.write(f"[ExecRelay] progress send failed: {e}\n")
+
+            try:
+                result = handler_func(mock, str(Path(root_dir).resolve()),
+                                      msg, None, send_progress=_send_progress)
+                if "error" in result:
+                    return {"ok": False, "error": result["error"]}
+                return {"ok": True, "data": result}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
 
         # Check disabled
         base_action = "git" if action.startswith("git") else action
@@ -523,7 +630,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, shell, disabled, deny):
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[ExecRelay] Command: {msg.get('action', '?')} "
                                      f"(id={request_id[:8]})\n")
-                    result = _execute_command(msg)
+                    result = _execute_command(msg, ws_sock=sock)
                     response = json.dumps({
                         "type": "result",
                         "request_id": request_id,

@@ -1107,7 +1107,97 @@ function _renderServiceActions(actions, serviceId) {
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
-  if (flow === 'oauth_code') {
+  if (flow === 'claude_login_relay') {
+    try {
+      // Step 1: list relays
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction, service_id: serviceId })
+      }).then(r => r.json());
+      if (resp.error) { addMsg('error', resp.error); return; }
+      const relays = resp.relays || [];
+      if (relays.length === 0) {
+        addMsg('system', 'No relay connected. Use "Set credentials" instead.');
+        return;
+      }
+      // Step 2: show relay selector + claude path input
+      const container = btn ? btn.parentElement : null;
+      if (!container) return;
+      const div = document.createElement('div');
+      div.style.cssText = 'margin-top:8px;';
+      let selectHtml = '<select id="svc-relay-select" style="' + _svcInputStyle + 'margin-bottom:4px;">';
+      relays.forEach(r => {
+        const label = r.relay_id + ' (' + r.platform + ')';
+        selectHtml += '<option value="' + escapeHtml(r.relay_id) + '">' + escapeHtml(label) + '</option>';
+      });
+      selectHtml += '</select>';
+      const defaultPath = relays[0].platform === 'win32' ? '%HOME%\\.local\\bin\\claude.exe' : 'claude';
+      div.innerHTML = selectHtml
+        + '<input id="svc-claude-path" type="text" placeholder="Claude path (default: ' + defaultPath + ')" '
+        + 'style="' + _svcInputStyle + 'margin-bottom:4px;font-size:11px;">'
+        + '<button type="button" id="svc-relay-login-btn" style="background:#6c5ce7;color:white;border:none;'
+        + 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Start login</button>'
+        + '<div id="svc-relay-status" style="color:#aaa;font-size:11px;margin-top:4px;"></div>';
+      container.appendChild(div);
+
+      document.getElementById('svc-relay-login-btn').addEventListener('click', async () => {
+        const relayId = document.getElementById('svc-relay-select').value;
+        const claudePath = document.getElementById('svc-claude-path').value.trim();
+        const statusEl = document.getElementById('svc-relay-status');
+        const loginBtn = document.getElementById('svc-relay-login-btn');
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Launching...';
+        statusEl.textContent = 'Starting claude auth login on relay...';
+
+        try {
+          // Step 1: start login → get auth URL
+          const startResp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({
+              action: 'claude_code_relay_login',
+              service_id: serviceId,
+              relay_id: relayId,
+              claude_path: claudePath,
+            })
+          }).then(r => r.json());
+
+          if (startResp.error) {
+            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(startResp.error) + '</span>';
+            loginBtn.textContent = 'Start login';
+            loginBtn.disabled = false;
+            return;
+          }
+
+          if (startResp.url) {
+            statusEl.innerHTML = 'Authorize in your browser: <a href="' + escapeHtml(startResp.url)
+              + '" target="_blank" style="color:#6c5ce7;">Click here</a>';
+            window.open(startResp.url, '_blank');
+          }
+
+          // Step 2: poll for result (user authorizes in browser)
+          loginBtn.textContent = 'Waiting for authorization...';
+          const pollResp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+            body: JSON.stringify({
+              action: 'claude_code_relay_login_poll',
+              login_id: startResp.login_id,
+              service_id: serviceId,
+            })
+          }).then(r => r.json());
+
+          if (pollResp.error) {
+            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(pollResp.error) + '</span>';
+            loginBtn.textContent = 'Start login';
+            loginBtn.disabled = false;
+          } else if (pollResp.ok) {
+            statusEl.innerHTML = '<span style="color:#2ecc71;">\u2714 ' + escapeHtml(pollResp.message) + '</span>';
+            loginBtn.textContent = 'Done';
+          }
+        } catch (e) {
+          statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + e.message + '</span>';
+          loginBtn.textContent = 'Start login';
+          loginBtn.disabled = false;
+        }
+      });
+    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+  } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),

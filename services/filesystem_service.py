@@ -312,6 +312,12 @@ class WSListener:
                 msg = json.loads(payload.decode("utf-8"))
                 if msg.get("type") == "result" or msg.get("type") == "error":
                     service._resolve_pending(msg)
+                elif msg.get("type") == "progress":
+                    # Intermediate progress from long-running commands
+                    from core.relay_manager import RelayConnectionManager
+                    RelayConnectionManager.instance().dispatch_progress(
+                        user_id, relay_id, msg.get("request_id", ""),
+                        msg.get("data", {}))
                 elif msg.get("type") == "exec_output":
                     service._dispatch_exec_output(msg)
                 elif msg.get("type") == "ping":

@@ -254,6 +254,26 @@ class RelayConnectionManager:
             with conn._pending_lock:
                 conn._pending.pop(req_id, None)
 
+    # Progress callbacks: {request_id: callable}
+    _progress_callbacks: Dict[str, Any] = {}
+
+    def register_progress_callback(self, request_id: str, callback):
+        """Register a callback for progress messages from a relay command."""
+        self._progress_callbacks[request_id] = callback
+
+    def unregister_progress_callback(self, request_id: str):
+        self._progress_callbacks.pop(request_id, None)
+
+    def dispatch_progress(self, user_id: str, relay_id: str,
+                          request_id: str, data: Dict[str, Any]):
+        """Called when a relay sends a progress message."""
+        cb = self._progress_callbacks.get(request_id)
+        if cb:
+            try:
+                cb(data)
+            except Exception as e:
+                logger.warning("Progress callback failed: %s", e)
+
     def resolve_pending(self, user_id: str, relay_id: str,
                         request_id: str, data: Dict[str, Any]):
         """Called when a relay sends back a result for a pending command."""

@@ -338,7 +338,181 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
-    # ── Claude Code OAuth login ──────────────────────────────────────
+    # ── Claude Code login via relay ──────────────────────────────────
+
+    if action == "claude_code_list_relays":
+        """List connected relays for Claude Code login."""
+        from core.relay_manager import RelayConnectionManager
+        mgr = RelayConnectionManager.instance()
+        relays = mgr.list_for_user(user_id)
+        # Include all relays (Docker or not — login runs on host)
+        relay_list = []
+        for r in relays:
+            info = r.get("info", {})
+            relay_list.append({
+                "relay_id": r.get("relay_id", ""),
+                "platform": info.get("platform", "unknown"),
+                "root": info.get("root", ""),
+                "actions": info.get("actions", []),
+            })
+        flowfile.set_content(json.dumps({"relays": relay_list}).encode())
+        return [flowfile]
+
+    if action == "claude_code_relay_login":
+        """Launch claude auth login on a relay and retrieve credentials.
+
+        This is a long-running action (user must authorize in browser).
+        The relay sends a 'progress' with the auth URL, then 'result'
+        with credentials after auth completes.
+
+        Returns {url: "..."} when the URL is available, then the JS
+        polls claude_code_relay_login_poll for the final result.
+        """
+        service_id = body.get("service_id", "")
+        relay_id = body.get("relay_id", "")
+        claude_path = body.get("claude_path", "")
+
+        if not service_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
+            return [flowfile]
+
+        from core.relay_manager import RelayConnectionManager
+        mgr = RelayConnectionManager.instance()
+        conn = mgr.get(user_id, relay_id)
+        if not conn:
+            flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not connected"}).encode())
+            return [flowfile]
+
+        import uuid
+        request_id = uuid.uuid4().hex[:12]
+
+        # Progress captures auth URL; result stored for poll
+        _state = {"url": None, "result": None, "error": None}
+        _url_event = threading.Event()
+        _done_event = threading.Event()
+
+        def _on_progress(data):
+            url = data.get("url", "")
+            if url:
+                _state["url"] = url
+                _url_event.set()
+
+        # Store state for poll action
+        if not hasattr(_handle_service_flow, '_claude_login_pending'):
+            _handle_service_flow._claude_login_pending = {}
+        _handle_service_flow._claude_login_pending[request_id] = {
+            "state": _state, "done_event": _done_event,
+            "service_id": service_id,
+        }
+
+        mgr.register_progress_callback(request_id, _on_progress)
+
+        # Start the relay command in a background thread
+        def _bg_login():
+            try:
+                result = mgr.send_command_sync(
+                    user_id, relay_id, request_id,
+                    {"action": "claude_auth_login", "claude_path": claude_path},
+                    timeout=300,
+                )
+                _state["result"] = result
+            except Exception as e:
+                _state["error"] = str(e)
+            finally:
+                mgr.unregister_progress_callback(request_id)
+                _done_event.set()
+
+        t = threading.Thread(target=_bg_login, daemon=True)
+        t.start()
+
+        # Wait for URL (up to 30s — claude should print it quickly)
+        _url_event.wait(timeout=30)
+
+        if _state["url"]:
+            flowfile.set_content(json.dumps({
+                "url": _state["url"],
+                "login_id": request_id,
+            }).encode())
+        elif _state["error"]:
+            flowfile.set_content(json.dumps({"error": _state["error"]}).encode())
+        else:
+            flowfile.set_content(json.dumps({"error": "Timeout waiting for auth URL from relay"}).encode())
+        return [flowfile]
+
+    if action == "claude_code_relay_login_poll":
+        """Poll for relay login result after user authorized."""
+        login_id = body.get("login_id", "")
+        service_id = body.get("service_id", "")
+        pending = getattr(_handle_service_flow, '_claude_login_pending', {})
+        entry = pending.get(login_id)
+        if not entry:
+            flowfile.set_content(json.dumps({"error": "Unknown login_id"}).encode())
+            return [flowfile]
+
+        done_event = entry["done_event"]
+        state = entry["state"]
+
+        # Wait up to 120s for auth to complete
+        done_event.wait(timeout=120)
+
+        if not done_event.is_set():
+            flowfile.set_content(json.dumps({"error": "Timeout waiting for authorization"}).encode())
+            return [flowfile]
+
+        # Cleanup
+        pending.pop(login_id, None)
+
+        if state["error"]:
+            flowfile.set_content(json.dumps({"error": state["error"]}).encode())
+            return [flowfile]
+
+        result = state["result"]
+        if not result or not result.get("ok"):
+            error = result.get("error", "Unknown error") if result else "No response"
+            flowfile.set_content(json.dumps({"error": error}).encode())
+            return [flowfile]
+
+        credentials = result.get("data", {}).get("credentials", {})
+        if not credentials:
+            flowfile.set_content(json.dumps({"error": "No credentials returned"}).encode())
+            return [flowfile]
+
+        # Extract tokens and save to service config
+        oauth = credentials.get("claudeAiOauth", {})
+        access_token = oauth.get("accessToken", "")
+        refresh_token = oauth.get("refreshToken", "")
+        expires_at = oauth.get("expiresAt", 0)
+
+        if not access_token:
+            flowfile.set_content(json.dumps({"error": "No accessToken in credentials"}).encode())
+            return [flowfile]
+
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            sdef = greg.get_service(service_id)
+            if sdef:
+                cfg = getattr(sdef, "config", {}) or {}
+                cfg["claude_access_token"] = access_token
+                cfg["claude_refresh_token"] = refresh_token
+                cfg["claude_expires_at"] = int(expires_at)
+                greg.update_service(service_id, config=cfg)
+                # Update live instance
+                live = greg.get_live_instance(service_id)
+                if live and hasattr(live, '_client') and live._client:
+                    live._client.claude_access_token = access_token
+                    live._client.claude_refresh_token = refresh_token
+                    live._client.claude_expires_at = int(expires_at)
+        except Exception as e:
+            logger.warning("Failed to save credentials: %s", e)
+
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": "Claude Code credentials saved!",
+        }).encode())
+        return [flowfile]
+
+    # ── Claude Code set credentials (paste) ──────────────────────────
 
     if action == "claude_code_login_url":
         """Return instructions for Claude Code login (paste credentials)."""

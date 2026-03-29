@@ -301,6 +301,83 @@ class _RequestHandler(BaseHTTPRequestHandler):
     do_OPTIONS = _handle
 
 
+class _PrefixedSocket:
+    """Socket wrapper that prepends already-read data to recv().
+
+    Used when we read HTTP headers to detect WS, but the connection is
+    actually HTTP and needs to go through BaseHTTPRequestHandler which
+    expects to read from the start.
+    """
+
+    def __init__(self, sock, prefix: bytes):
+        self._sock = sock
+        self._prefix = prefix
+        # Copy attributes that BaseHTTPRequestHandler/socketserver need
+        self.family = sock.family
+        self.type = sock.type
+        self.proto = getattr(sock, 'proto', 0)
+
+    def recv(self, bufsize, flags=0):
+        if flags:
+            # MSG_PEEK etc. — can't handle with prefix, pass through
+            return self._sock.recv(bufsize, flags)
+        if self._prefix:
+            data = self._prefix[:bufsize]
+            self._prefix = self._prefix[bufsize:]
+            return data
+        return self._sock.recv(bufsize)
+
+    def makefile(self, mode='r', buffering=-1, **kwargs):
+        """Create a file-like wrapper — needed by BaseHTTPRequestHandler."""
+        if self._prefix and 'r' in mode:
+            import io
+            raw = self._sock.makefile(mode, buffering=0, **kwargs)
+            # Prepend our data to the raw stream
+            prefixed = io.BytesIO(self._prefix)
+            self._prefix = b""
+            return io.BufferedReader(_ConcatReader(prefixed, raw), buffer_size=buffering if buffering > 0 else 8192)
+        return self._sock.makefile(mode, buffering, **kwargs)
+
+    def __getattr__(self, name):
+        return getattr(self._sock, name)
+
+
+class _ConcatReader:
+    """Concatenate two readable streams — prefix + socket."""
+
+    def __init__(self, first, second):
+        self._first = first
+        self._second = second
+        self._first_done = False
+
+    def read(self, n=-1):
+        if not self._first_done:
+            data = self._first.read(n)
+            if data:
+                return data
+            self._first_done = True
+        return self._second.read(n)
+
+    def readinto(self, b):
+        if not self._first_done:
+            n = self._first.readinto(b)
+            if n:
+                return n
+            self._first_done = True
+        return self._second.readinto(b)
+
+    def readable(self):
+        return True
+
+    def close(self):
+        self._first.close()
+        self._second.close()
+
+    @property
+    def closed(self):
+        return self._second.closed
+
+
 class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     """Threaded HTTPServer with HTTP + WebSocket support.
 
@@ -343,29 +420,40 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         return client_socket, client_address
 
     def process_request(self, request, client_address):
-        """Intercept WebSocket upgrades before the HTTP handler.
+        """Route connections: WS goes to own thread, HTTP to BaseHTTPRequestHandler.
 
-        For WS: read headers from raw socket, do handshake, run handler
-        in a thread. The socket is NOT passed to BaseHTTPRequestHandler.
-
-        For HTTP: delegate to ThreadingMixIn (normal path).
+        Reads headers from the socket to detect WebSocket upgrade.
+        For WS: runs handler in own thread on raw socket.
+        For HTTP: wraps socket with pre-read data and delegates to normal path.
         """
+        # Read headers to determine HTTP vs WS
         try:
-            peek = request.recv(4096, socket.MSG_PEEK)
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = request.recv(4096)
+                if not chunk:
+                    request.close()
+                    return
+                data += chunk
         except Exception:
-            peek = b""
+            try:
+                request.close()
+            except Exception:
+                pass
+            return
 
-        if b"Upgrade: websocket" in peek or b"upgrade: websocket" in peek:
+        if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
             # WS — handle directly, NOT through BaseHTTPRequestHandler
             self._ws_sockets.add(id(request))
             t = threading.Thread(
-                target=self._handle_ws_connection,
-                args=(request, client_address),
+                target=self._handle_ws_connection_with_data,
+                args=(request, client_address, data),
                 daemon=True)
             t.start()
             return
 
-        # Normal HTTP
+        # HTTP — put the already-read data back via a wrapper socket
+        request = _PrefixedSocket(request, data)
         super().process_request(request, client_address)
 
     def shutdown_request(self, request):
@@ -375,20 +463,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             return  # WS handler will close it
         super().shutdown_request(request)
 
-    def _handle_ws_connection(self, sock, client_address):
-        """Handle a WebSocket connection directly on the raw socket."""
+    def _handle_ws_connection_with_data(self, sock, client_address, data):
+        """Handle a WebSocket connection directly on the raw socket.
+
+        Args:
+            data: Already-read HTTP request bytes.
+        """
         import base64, hashlib
 
         try:
-            # Read full HTTP headers
-            data = b""
-            while b"\r\n\r\n" not in data:
-                chunk = sock.recv(4096)
-                if not chunk:
-                    sock.close()
-                    return
-                data += chunk
-
             header_end = data.index(b"\r\n\r\n") + 4
             header_text = data[:header_end].decode("latin-1", errors="replace")
 

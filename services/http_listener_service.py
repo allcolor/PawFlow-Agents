@@ -793,6 +793,7 @@ class HTTPListenerService(BaseService):
         except Exception as e:
             logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
 
+        proto = "HTTPS" if self._default_ssl_ctx else "HTTP"
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
 

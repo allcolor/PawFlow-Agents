@@ -33,25 +33,29 @@ sleep 1
 
 echo "[auth-login] Display and noVNC ready on port 6080"
 
-# Configure Chromium as default browser for claude auth login
-export BROWSER="chromium --no-sandbox --disable-gpu --disable-dev-shm-usage"
+# Create a wrapper script that launches Chromium with Docker-safe flags
+# Claude Code uses xdg-open or $BROWSER to open URLs
+cat > /usr/local/bin/open-browser <<'BROWSER_SCRIPT'
+#!/bin/bash
+exec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage \
+    --disable-software-rasterizer --window-size=1280,800 "$@"
+BROWSER_SCRIPT
+chmod +x /usr/local/bin/open-browser
+export BROWSER=/usr/local/bin/open-browser
 
-# Launch claude auth login in background, capture output to find URL
-claude auth login 2>&1 | tee /tmp/claude_auth_output.txt &
-CLAUDE_PID=$!
+# Also set xdg-open alternative (some tools use this)
+mkdir -p /usr/local/share/applications
+cat > /usr/local/share/applications/chromium.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Chromium
+Exec=/usr/local/bin/open-browser %U
+MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
+DESKTOP
+export XDG_UTILS_DEBUG_LEVEL=0
 
-# Wait for the URL to appear, then open Chromium if claude didn't
-sleep 3
-AUTH_URL=$(grep -oP 'https://claude\S+' /tmp/claude_auth_output.txt | head -1)
-if [ -n "$AUTH_URL" ]; then
-    echo "[auth-login] Opening Chromium with auth URL"
-    chromium --no-sandbox --disable-gpu --disable-dev-shm-usage \
-        --disable-software-rasterizer --window-size=1280,800 \
-        "$AUTH_URL" &
-fi
-
-# Wait for claude auth login to complete
-wait $CLAUDE_PID 2>/dev/null || true
+# Launch claude auth login (it will use $BROWSER to open the auth URL)
+claude auth login || true
 
 echo "[auth-login] claude auth login completed"
 

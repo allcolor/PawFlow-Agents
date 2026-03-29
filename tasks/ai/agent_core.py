@@ -394,20 +394,21 @@ class AgentCoreMixin:
                         _flush()
                         raise _InterruptComplete()
 
-                    # Force-fit guard
-                    _pre_send_est = self._estimate_tokens(
-                        llm_context, tool_defs=ctx.get("tool_defs"),
-                        chars_per_token=ctx.get("chars_per_token", 0))
-                    logger.debug(
-                        f"[compact] pre-send: {_pre_send_est} est. tokens, "
-                        f"{len(llm_context)} msgs, max={_max_ctx}")
-                    if _pre_send_est > _max_ctx:
-                        logger.warning(
-                            f"[compact] STILL OVER ({_pre_send_est} > {_max_ctx}), force-fitting...")
-                        llm_context = self._force_fit_context(
-                            llm_context, _max_ctx,
-                            chars_per_token=ctx.get("chars_per_token", 0),
-                            tool_defs=ctx.get("tool_defs"))
+                    # Force-fit guard (skip for claude-code — it manages its own context)
+                    if not ctx.get("_is_claude_code"):
+                        _pre_send_est = self._estimate_tokens(
+                            llm_context, tool_defs=ctx.get("tool_defs"),
+                            chars_per_token=ctx.get("chars_per_token", 0))
+                        logger.debug(
+                            f"[compact] pre-send: {_pre_send_est} est. tokens, "
+                            f"{len(llm_context)} msgs, max={_max_ctx}")
+                        if _pre_send_est > _max_ctx:
+                            logger.warning(
+                                f"[compact] STILL OVER ({_pre_send_est} > {_max_ctx}), force-fitting...")
+                            llm_context = self._force_fit_context(
+                                llm_context, _max_ctx,
+                                chars_per_token=ctx.get("chars_per_token", 0),
+                                tool_defs=ctx.get("tool_defs"))
 
                     # Dynamic lazy tools fallback — for tools_mode=full that needs switching
                     if (tool_defs and not ctx.get("_lazy_tools_active")

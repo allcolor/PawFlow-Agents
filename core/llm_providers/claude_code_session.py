@@ -364,7 +364,7 @@ class ClaudeCodeSessionMixin:
             "--rm", "-i",
             "--cpus", cpu,
             "--memory", mem,
-            "--name", f"pawflow-claude-{os.getpid()}",
+            "--name", f"pawflow-claude-{os.getpid()}-{os.urandom(4).hex()}",
             # Mount session dir for persistence (memories, CLAUDE.md)
             "-v", f"{to_host_path(workdir)}:/workspace",
             # Environment — HOME must be /workspace so Claude Code

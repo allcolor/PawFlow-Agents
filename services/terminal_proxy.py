@@ -120,6 +120,7 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
             msg_type = msg.get("type", "")
 
             if msg_type == "terminal_input":
+                logger.info("Terminal input: session=%s, %d bytes", session_id, len(msg.get("data", "")))
                 _send_to_relay(relay_service, {
                     "type": "terminal_input",
                     "session_id": session_id,
@@ -166,8 +167,9 @@ def _send_to_relay(relay_service, msg: dict):
 
     try:
         asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
+        logger.info("Terminal relay send OK: %s", msg.get("type"))
     except Exception as e:
-        logger.debug("Terminal relay send error: %s", e)
+        logger.warning("Terminal relay send error: %s", e, exc_info=True)
 
 
 # ── WS frame helpers ──

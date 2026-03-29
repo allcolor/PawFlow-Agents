@@ -506,7 +506,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 sock.close()
                 return
 
-            _MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
+            _MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
             accept = base64.b64encode(
                 hashlib.sha1(ws_key.encode() + _MAGIC).digest()
             ).decode()

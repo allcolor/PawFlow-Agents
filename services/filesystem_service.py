@@ -199,7 +199,7 @@ class WSListener:
                 if line.lower().startswith(b"sec-websocket-key:"):
                     ws_key = line.split(b":", 1)[1].strip()
             accept = base64.b64encode(
-                hashlib.sha1(ws_key + b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B").digest()
+                hashlib.sha1(ws_key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()
             ).decode()
             writer.write(
                 f"HTTP/1.1 101 Switching Protocols\r\n"

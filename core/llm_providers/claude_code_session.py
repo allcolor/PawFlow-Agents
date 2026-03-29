@@ -51,21 +51,64 @@ def _refresh_claude_token(refresh_token: str) -> dict:
     return data
 
 
-def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at):
-    """Save refreshed tokens back to the service config."""
+def _persist_refreshed_tokens(access_token: str, refresh_token: str,
+                              expires_at, service_id: str = ""):
+    """Save refreshed tokens to secrets (encrypted).
+
+    If the service config uses ${secrets.global.*} expressions, writes
+    to the backing secret store. Otherwise writes to the service config
+    directly (legacy, pre-login services).
+    """
+    from pathlib import Path
+
     try:
         from gui.services.global_service_registry import GlobalServiceRegistry
         greg = GlobalServiceRegistry.get_instance()
-        for sid, sdef in greg.get_all_definitions().items():
-            if getattr(sdef, "service_type", "") == "llmConnection":
+
+        # Find the service (by id or first claude-code service)
+        sid = service_id
+        cfg = {}
+        if sid:
+            sdef = greg.get_service(sid)
+            if sdef:
                 cfg = getattr(sdef, "config", {}) or {}
-                if cfg.get("provider") == "claude-code":
-                    cfg["claude_access_token"] = access_token
-                    cfg["claude_refresh_token"] = refresh_token
-                    cfg["claude_expires_at"] = int(expires_at)
-                    greg.update_service(sid, config=cfg)
-                    logger.info("[claude-code] refreshed tokens persisted to service '%s'", sid)
-                    break
+        if not cfg:
+            for _sid, sdef in greg.get_all_definitions().items():
+                if getattr(sdef, "service_type", "") == "llmConnection":
+                    _cfg = getattr(sdef, "config", {}) or {}
+                    if _cfg.get("provider") == "claude-code":
+                        sid, cfg = _sid, _cfg
+                        break
+
+        if not sid:
+            logger.warning("[claude-code] no claude-code service found to persist tokens")
+            return
+
+        # Check if config uses secret expressions
+        _at_ref = cfg.get("claude_access_token", "")
+        if "${secrets." in str(_at_ref):
+            # Write to secrets store (the config already points to these)
+            from core.secrets import get_secrets_manager
+            sm = get_secrets_manager()
+            secrets_path = Path("config/global_secrets.json")
+            existing = {}
+            if secrets_path.exists():
+                existing = json.loads(secrets_path.read_text(encoding="utf-8"))
+
+            prefix = sid.replace("-", "_")
+            existing[f"{prefix}_access_token"] = sm.encrypt(access_token)
+            existing[f"{prefix}_refresh_token"] = sm.encrypt(refresh_token)
+            existing[f"{prefix}_expires_at"] = str(int(expires_at))
+            secrets_path.write_text(
+                json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+            logger.info("[claude-code] refreshed tokens saved to secrets for '%s'", sid)
+        else:
+            # Legacy: write directly to service config
+            cfg["claude_access_token"] = access_token
+            cfg["claude_refresh_token"] = refresh_token
+            cfg["claude_expires_at"] = int(expires_at)
+            greg.update_service(sid, config=cfg)
+            logger.info("[claude-code] refreshed tokens saved to service config '%s' (legacy)", sid)
     except Exception as e:
         logger.warning("[claude-code] failed to persist refreshed tokens: %s", e)
 
@@ -170,34 +213,43 @@ class ClaudeCodeSessionMixin:
     def _setup_credentials(self, workdir: str):
         """Write .credentials.json in session workdir for Claude Code auth.
 
-        Reads tokens from the LIVE service config (not cached attrs —
-        tokens may have been added after the client was created).
-        NO fallback to local ~/.claude/.
+        Reads tokens from the service config. If config values are
+        ${secrets.*} expressions, resolves them via the expression engine.
+
+        Auto-refreshes if token is expired or near expiry (5 min buffer).
+        Persists refreshed tokens back to secrets.
 
         Raises LLMClientError if no credentials configured.
         """
         from core.llm_client import LLMClientError
+        from core.expression import resolve_value as _rv
 
-        # Read from live service config (may have been updated since client creation)
-        access_token = getattr(self, 'claude_access_token', '') or ''
-        refresh_token = getattr(self, 'claude_refresh_token', '') or ''
-        expires_at = getattr(self, 'claude_expires_at', 0) or 0
+        # Read from self (set during service init from config)
+        access_token = _rv(getattr(self, 'claude_access_token', '') or '') or ''
+        refresh_token = _rv(getattr(self, 'claude_refresh_token', '') or '') or ''
+        expires_at_raw = getattr(self, 'claude_expires_at', 0) or 0
+        if isinstance(expires_at_raw, str):
+            expires_at_raw = _rv(expires_at_raw) or '0'
+        expires_at = int(float(expires_at_raw)) if expires_at_raw else 0
+
+        # Resolve service_id for persist
+        _service_id = getattr(self, '_agent_service', '') or ''
 
         if not access_token:
-            # Try live config from registry (tokens added after client init)
+            # Try live config from registry
             try:
                 from gui.services.global_service_registry import GlobalServiceRegistry
                 for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
                     if getattr(sdef, "service_type", "") == "llmConnection":
                         cfg = getattr(sdef, "config", {}) or {}
                         if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token"):
-                            access_token = cfg["claude_access_token"]
-                            refresh_token = cfg.get("claude_refresh_token", "")
-                            expires_at = cfg.get("claude_expires_at", 0)
-                            # Update self for next call
-                            self.claude_access_token = access_token
-                            self.claude_refresh_token = refresh_token
-                            self.claude_expires_at = expires_at
+                            access_token = _rv(cfg["claude_access_token"]) or ''
+                            refresh_token = _rv(cfg.get("claude_refresh_token", "")) or ''
+                            _ea = cfg.get("claude_expires_at", 0)
+                            if isinstance(_ea, str):
+                                _ea = _rv(_ea) or '0'
+                            expires_at = int(float(_ea)) if _ea else 0
+                            _service_id = sid
                             break
             except Exception:
                 pass
@@ -205,7 +257,7 @@ class ClaudeCodeSessionMixin:
         if not access_token:
             raise LLMClientError(
                 "Claude Code credentials not configured. "
-                "Go to Admin → Services → claude_code_llm_service → Login "
+                "Use /auth/claude-code/login?service_id=<your_service> "
                 "to authenticate with your Claude subscription.")
 
         # Auto-refresh if token expired or expires within 5 minutes
@@ -216,11 +268,14 @@ class ClaudeCodeSessionMixin:
                 access_token = refreshed["accessToken"]
                 refresh_token = refreshed.get("refreshToken", refresh_token)
                 expires_at = refreshed.get("expiresAt", 0)
-                # Persist new tokens
+                # Persist refreshed tokens to secrets
+                _persist_refreshed_tokens(
+                    access_token, refresh_token, expires_at,
+                    service_id=_service_id)
+                # Update in-memory for next call within same process
                 self.claude_access_token = access_token
                 self.claude_refresh_token = refresh_token
                 self.claude_expires_at = expires_at
-                _persist_refreshed_tokens(access_token, refresh_token, expires_at)
                 logger.info("[claude-code] token refreshed (expires in %ds)",
                             (expires_at - _t.time() * 1000) / 1000)
             except Exception as e:
@@ -274,17 +329,12 @@ class ClaudeCodeSessionMixin:
             self.claude_refresh_token = new_refresh
             self.claude_expires_at = new_expires
 
-            # Persist to service config
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
-                cfg = getattr(sdef, "config", {}) or {}
-                if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token") == old_access:
-                    cfg["claude_access_token"] = new_access
-                    cfg["claude_refresh_token"] = new_refresh
-                    cfg["claude_expires_at"] = new_expires
-                    GlobalServiceRegistry.get_instance()._save_to_disk()
-                    logger.info("Recovered refreshed Claude Code tokens for '%s'", sid)
-                    break
+            # Persist to secrets
+            _service_id = getattr(self, '_agent_service', '') or ''
+            _persist_refreshed_tokens(
+                new_access, new_refresh, new_expires,
+                service_id=_service_id)
+            logger.info("Recovered refreshed Claude Code tokens")
         except Exception as e:
             logger.debug("Token recovery failed: %s", e)
 

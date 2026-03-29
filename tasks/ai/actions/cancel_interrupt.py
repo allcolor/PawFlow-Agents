@@ -27,6 +27,12 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         self.cancel_agent(conv_id, agent_name=agent_name)
+        # Cancel in-flight tool calls for this agent
+        try:
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.cancel_agent(conv_id, agent_name)
+        except Exception:
+            pass
         # Force kill Claude Code subprocess
         if hasattr(self, '_active_claude_client'):
             client = self._active_claude_client.get(conv_id)

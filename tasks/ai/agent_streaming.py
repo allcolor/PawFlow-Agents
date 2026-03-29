@@ -239,15 +239,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         if _already_active:
             _active_client = getattr(self, '_active_claude_client', {}).get(conversation_id)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
-                # Cancel all in-flight tool calls for this agent FIRST
-                _agent_name = getattr(self, '_active_agent_names', {}).get(conversation_id, "")
-                try:
-                    from services.tool_relay_service import ToolRelayService
-                    ToolRelayService.cancel_agent(conversation_id, _agent_name)
-                except Exception:
-                    pass
                 if _active_client.send_user_message(_user_text):
-                    logger.info(f"[agent:{conversation_id[:8]}] preempt + cancel tools via claude-code stdin")
+                    logger.info(f"[agent:{conversation_id[:8]}] preempt via claude-code stdin")
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                                       "message_count": ConversationStore.instance().message_count(conversation_id)})
                     flowfile.set_content(ack.encode("utf-8"))

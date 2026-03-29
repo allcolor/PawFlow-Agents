@@ -376,16 +376,18 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         import urllib.parse
         _CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
         params = urllib.parse.urlencode({
+            "code": "true",
             "client_id": _CLIENT_ID,
             "redirect_uri": redirect_uri,
             "response_type": "code",
-            "scope": "user:inference user:profile user:sessions:claude_code",
+            "scope": "org:create_api_key user:profile user:inference "
+                     "user:sessions:claude_code user:mcp_servers user:file_upload",
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
             "state": state,
         })
         flowfile.set_content(json.dumps({
-            "url": f"https://console.anthropic.com/oauth/authorize?{params}",
+            "url": f"https://claude.ai/oauth/authorize?{params}",
             "message": "Login with your Claude subscription...",
         }).encode())
         return [flowfile]

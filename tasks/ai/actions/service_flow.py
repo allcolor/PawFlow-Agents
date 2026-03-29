@@ -1326,12 +1326,72 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            result = svc._request("start_code_server")
+            base_path = f"/code/{relay_id}"
+            result = svc._request("start_code_server", base_path=base_path)
             port = result.get("port") if isinstance(result, dict) else None
+            if not port:
+                flowfile.set_content(json.dumps({"error": "Failed to get code-server port"}).encode())
+                return [flowfile]
+
+            # Register HTTP/WS proxy routes
+            from services.code_server_proxy import (
+                register_code_server, code_http_proxy, code_ws_proxy,
+            )
+            register_code_server(relay_id, port, svc, base_path)
+
+            _owner = "_code_server_proxy"
+            http_svc = None
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for _sid, _sdef in greg.get_all_definitions().items():
+                if getattr(_sdef, "service_type", "") == "httpListener":
+                    http_svc = greg.get_live_instance(_sid)
+                    if http_svc:
+                        break
+            if http_svc:
+                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
+                if not existing:
+                    http_svc.register_route(
+                        "GET", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                        ws_handler=code_ws_proxy,
+                    )
+                    http_svc.register_route(
+                        "POST", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                    )
+                    http_svc.register_route(
+                        "PUT", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                    )
+                    http_svc.register_route(
+                        "DELETE", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                    )
+                    http_svc.register_route(
+                        "PATCH", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                    )
+                    http_svc.register_route(
+                        "OPTIONS", "/code/{path+}",
+                        _owner,
+                        callback=code_http_proxy,
+                    )
+
+            # Wait a bit for code-server to start
+            import time as _time
+            _time.sleep(2)
+
             flowfile.set_content(json.dumps({
                 "ok": True,
                 "port": port,
                 "relay_id": relay_id,
+                "url": f"/code/{relay_id}/",
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -1346,6 +1406,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             svc = _find_relay_svc(relay_id)
             if svc:
                 svc._request("stop_code_server")
+            # Unregister proxy session (routes stay for other relays)
+            try:
+                from services.code_server_proxy import unregister_code_server
+                unregister_code_server(relay_id)
+            except Exception:
+                pass
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

@@ -957,6 +957,34 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 ]
             }}
 
+        if action == "http_proxy":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            import http.client
+            _target_port = msg.get("port", 0)
+            _method = msg.get("method", "GET")
+            _req_path = msg.get("req_path", "/")
+            _req_headers = msg.get("req_headers", {})
+            _req_body = msg.get("req_body", "")  # base64
+            if not _target_port:
+                return {"ok": False, "error": "Missing port"}
+            try:
+                conn = http.client.HTTPConnection("127.0.0.1", _target_port, timeout=30)
+                _body_bytes = base64.b64decode(_req_body) if _req_body else None
+                conn.request(_method, _req_path, body=_body_bytes, headers=_req_headers)
+                resp = conn.getresponse()
+                _resp_body = resp.read()
+                _resp_headers = dict(resp.getheaders())
+                conn.close()
+                return {"ok": True, "data": {
+                    "status": resp.status,
+                    "reason": resp.reason,
+                    "headers": _resp_headers,
+                    "body": base64.b64encode(_resp_body).decode("ascii"),
+                }}
+            except Exception as e:
+                return {"ok": False, "error": f"Proxy error: {e}"}
+
         if action == "start_code_server":
             if not allow_exec:
                 return {"ok": False, "error": "Exec not allowed"}
@@ -965,27 +993,201 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if p.poll() is None:
                     return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
             _cs_port = msg.get("port", 0)
+            _base_path = msg.get("base_path", "")
             if not _cs_port:
-                # Find a free port
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
                     _s.bind(("", 0))
                     _cs_port = _s.getsockname()[1]
+            _cs_args = [
+                "code-server",
+                "--bind-addr", f"127.0.0.1:{_cs_port}",
+                "--auth", "none",
+                "--disable-telemetry",
+            ]
+            if _base_path:
+                _cs_args.extend(["--base-path", _base_path])
+            _cs_args.append(root_dir)
             try:
-                _cs_proc = subprocess.Popen([
-                    "code-server",
-                    "--bind-addr", f"127.0.0.1:{_cs_port}",
-                    "--auth", "none",
-                    "--disable-telemetry",
-                    root_dir,
-                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _cs_proc = subprocess.Popen(
+                    _cs_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 _execute_command._code_server_proc = _cs_proc
                 _execute_command._code_server_port = _cs_port
-                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port}\n")
+                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} base_path={_base_path}\n")
                 return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid}}
             except FileNotFoundError:
                 return {"ok": False, "error": "code-server not installed"}
             except Exception as e:
                 return {"ok": False, "error": f"Failed to start code-server: {e}"}
+
+        # -- Code-server WS tunnel --
+        if action == "cs_ws_open":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            _ws_sid = msg.get("session_id", "")
+            _ws_port = msg.get("port", 0)
+            _ws_path = msg.get("path", "/")
+            _ws_headers = msg.get("headers", {})
+            if not _ws_sid or not _ws_port:
+                return {"ok": False, "error": "Missing session_id or port"}
+            try:
+                _ws_key = base64.b64encode(os.urandom(16)).decode()
+                _hdr_lines = [
+                    f"GET {_ws_path} HTTP/1.1",
+                    f"Host: 127.0.0.1:{_ws_port}",
+                    "Upgrade: websocket",
+                    "Connection: Upgrade",
+                    f"Sec-WebSocket-Key: {_ws_key}",
+                    "Sec-WebSocket-Version: 13",
+                ]
+                for _hk, _hv in _ws_headers.items():
+                    _hkl = _hk.lower()
+                    if _hkl not in ("host", "upgrade", "connection",
+                                    "sec-websocket-key", "sec-websocket-version"):
+                        _hdr_lines.append(f"{_hk}: {_hv}")
+                _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
+                _cs_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
+                _cs_sock.sendall(_handshake.encode())
+                _resp = b""
+                while b"\r\n\r\n" not in _resp:
+                    _chunk = _cs_sock.recv(4096)
+                    if not _chunk:
+                        raise ConnectionError("WS handshake failed")
+                    _resp += _chunk
+                if b"101" not in _resp.split(b"\r\n")[0]:
+                    _cs_sock.close()
+                    return {"ok": False, "error": "WS handshake rejected"}
+                # Reader thread: code-server WS -> relay WS -> server -> browser
+                if not hasattr(_execute_command, '_cs_ws_sessions'):
+                    _execute_command._cs_ws_sessions = {}
+                _execute_command._cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
+
+                def _cs_ws_reader(_sock, _sid):
+                    try:
+                        while True:
+                            _data = b""
+                            # Read WS frame header
+                            _hdr2 = b""
+                            while len(_hdr2) < 2:
+                                _c = _sock.recv(2 - len(_hdr2))
+                                if not _c:
+                                    break
+                                _hdr2 += _c
+                            if len(_hdr2) < 2:
+                                break
+                            _op = _hdr2[0] & 0x0F
+                            _masked = bool(_hdr2[1] & 0x80)
+                            _plen = _hdr2[1] & 0x7F
+                            if _plen == 126:
+                                _lb = b""
+                                while len(_lb) < 2:
+                                    _c = _sock.recv(2 - len(_lb))
+                                    if not _c: break
+                                    _lb += _c
+                                _plen = struct.unpack("!H", _lb)[0]
+                            elif _plen == 127:
+                                _lb = b""
+                                while len(_lb) < 8:
+                                    _c = _sock.recv(8 - len(_lb))
+                                    if not _c: break
+                                    _lb += _c
+                                _plen = struct.unpack("!Q", _lb)[0]
+                            if _masked:
+                                _mask = b""
+                                while len(_mask) < 4:
+                                    _c = _sock.recv(4 - len(_mask))
+                                    if not _c: break
+                                    _mask += _c
+                            _payload = b""
+                            while len(_payload) < _plen:
+                                _c = _sock.recv(min(65536, _plen - len(_payload)))
+                                if not _c: break
+                                _payload += _c
+                            if _masked:
+                                _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
+                            if _op == 0x08:  # close
+                                break
+                            if _op == 0x09:  # ping -> pong
+                                _pong = bytes([0x80 | 0x0A])
+                                if len(_payload) < 126:
+                                    _pong += bytes([len(_payload)])
+                                _pong += _payload
+                                try:
+                                    _sock.sendall(_pong)
+                                except Exception:
+                                    break
+                                continue
+                            # Forward to server
+                            _fwd = json.dumps({
+                                "type": "cs_ws_data",
+                                "session_id": _sid,
+                                "data": base64.b64encode(_payload).decode("ascii"),
+                                "opcode": _op,
+                            })
+                            with _send_lock:
+                                _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
+                    except Exception:
+                        pass
+                    finally:
+                        try:
+                            _sock.close()
+                        except Exception:
+                            pass
+                        if hasattr(_execute_command, '_cs_ws_sessions'):
+                            _execute_command._cs_ws_sessions.pop(_sid, None)
+                        try:
+                            with _send_lock:
+                                _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "cs_ws_close", "session_id": _sid}).encode("utf-8"))
+                        except Exception:
+                            pass
+
+                _t = _threading.Thread(target=_cs_ws_reader, args=(_cs_sock, _ws_sid), daemon=True)
+                _t.start()
+                _execute_command._cs_ws_sessions[_ws_sid]["reader"] = _t
+                # Forward any leftover data after handshake
+                _hdr_end = _resp.index(b"\r\n\r\n") + 4
+                _leftover = _resp[_hdr_end:]
+                if _leftover:
+                    pass  # Leftover bytes will be read by the reader thread
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": f"cs_ws_open error: {e}"}
+
+        if action == "cs_ws_send":
+            _ws_sid = msg.get("session_id", "")
+            _ws_data = msg.get("data", "")
+            _ws_op = msg.get("opcode", 1)
+            if not hasattr(_execute_command, '_cs_ws_sessions'):
+                return {"ok": False, "error": "No WS sessions"}
+            _ws_sess = _execute_command._cs_ws_sessions.get(_ws_sid)
+            if not _ws_sess:
+                return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
+            try:
+                _raw = base64.b64decode(_ws_data)
+                # Build WS frame (unmasked, server->server)
+                _frame = bytes([0x80 | _ws_op])
+                if len(_raw) < 126:
+                    _frame += bytes([0x80 | len(_raw)])  # masked (client->server)
+                elif len(_raw) < 65536:
+                    _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
+                else:
+                    _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
+                # Mask with zeros (simplest valid mask)
+                _frame += b"\x00\x00\x00\x00" + _raw
+                _ws_sess["sock"].sendall(_frame)
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        if action == "cs_ws_close":
+            _ws_sid = msg.get("session_id", "")
+            if hasattr(_execute_command, '_cs_ws_sessions'):
+                _ws_sess = _execute_command._cs_ws_sessions.pop(_ws_sid, None)
+                if _ws_sess and _ws_sess.get("sock"):
+                    try:
+                        _ws_sess["sock"].close()
+                    except Exception:
+                        pass
+            return {"ok": True}
 
         if action == "stop_code_server":
             if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:

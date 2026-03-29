@@ -346,6 +346,26 @@ class WSListener:
                         dispatch_terminal_exit(msg.get("session_id", ""))
                     except Exception:
                         pass
+                elif msg.get("type") == "cs_ws_data":
+                    try:
+                        from services.code_server_proxy import dispatch_cs_ws_data
+                        dispatch_cs_ws_data(
+                            service._service_id,
+                            msg.get("session_id", ""),
+                            msg.get("data", ""),
+                            msg.get("opcode", 1),
+                        )
+                    except Exception:
+                        pass
+                elif msg.get("type") == "cs_ws_close":
+                    try:
+                        from services.code_server_proxy import dispatch_cs_ws_close
+                        dispatch_cs_ws_close(
+                            service._service_id,
+                            msg.get("session_id", ""),
+                        )
+                    except Exception:
+                        pass
                 elif msg.get("type") == "ping":
                     await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
 

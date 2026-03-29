@@ -90,19 +90,13 @@ async function cmdTerminal(text, parts) {
 }
 
 /** Open code-server on the given relay. */
+let _codeServerOverlay = null;
+let _codeServerRelayId = null;
+
 async function cmdCode(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'close') {
-    const relayId = parts[2] || '';
-    if (relayId) {
-      await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'close_code_server', relay_id: relayId }),
-      });
-    }
-    // Remove overlay if present
-    const ov = document.getElementById('code-server-overlay');
-    if (ov) ov.remove();
+    _closeCodeServerPanel();
     addMsg('system', 'Code server closed.');
     return true;
   }
@@ -138,13 +132,65 @@ async function cmdCode(text, parts) {
       return true;
     }
 
-    addMsg('system', 'code-server started on relay port ' + resp.port
-      + '. Note: code-server is only accessible from the relay host. '
-      + 'A reverse proxy will be needed for remote access.');
+    _openCodeServerPanel(relayId, resp.url || '/code/' + relayId + '/');
+    _codeServerRelayId = relayId;
+    addMsg('system', 'code-server started. Loading editor...');
   } catch (e) {
     addMsg('system', 'Failed: ' + e.message);
   }
   return true;
+}
+
+function _openCodeServerPanel(relayId, url) {
+  _closeCodeServerPanel();
+
+  const overlay = document.createElement('div');
+  overlay.id = 'code-server-overlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
+    + 'background:#1e1e1e;z-index:10000;display:flex;flex-direction:column;';
+
+  // Header bar
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;'
+    + 'padding:4px 12px;background:#007acc;flex-shrink:0;';
+  header.innerHTML = '<span style="color:#fff;font-size:12px;">VS Code \u2014 ' + escapeHtml(relayId) + '</span>'
+    + '<button id="code-close" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;">\u00d7</button>';
+
+  // iframe
+  const iframe = document.createElement('iframe');
+  iframe.src = url;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
+  iframe.allow = 'clipboard-read; clipboard-write';
+
+  overlay.appendChild(header);
+  overlay.appendChild(iframe);
+  document.body.appendChild(overlay);
+  _codeServerOverlay = overlay;
+
+  document.getElementById('code-close').onclick = () => _closeCodeServerPanel();
+
+  // ESC to close
+  overlay._escHandler = (e) => {
+    if (e.key === 'Escape' && e.ctrlKey) _closeCodeServerPanel();
+  };
+  document.addEventListener('keydown', overlay._escHandler);
+}
+
+function _closeCodeServerPanel() {
+  if (_codeServerOverlay) {
+    if (_codeServerOverlay._escHandler) {
+      document.removeEventListener('keydown', _codeServerOverlay._escHandler);
+    }
+    _codeServerOverlay.remove();
+    _codeServerOverlay = null;
+  }
+  if (_codeServerRelayId) {
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'close_code_server', relay_id: _codeServerRelayId }),
+    }).catch(() => {});
+    _codeServerRelayId = null;
+  }
 }
 
 function _openTerminalPanel(sessionId, relayId) {

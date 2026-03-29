@@ -616,7 +616,7 @@ def _claude_auth_login(req, *, send_progress=None):
 
     try:
         proc = subprocess.Popen(
-            [claude_path, "auth", "login", "--no-browser"],
+            [claude_path, "auth", "login"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True,
         )
@@ -627,9 +627,11 @@ def _claude_auth_login(req, *, send_progress=None):
 
     url_pattern = re.compile(r'https://claude\.ai/oauth/authorize\S+')
     url_found = None
+    all_output = []
 
     for line in proc.stdout:
         line = line.rstrip()
+        all_output.append(line)
         sys.stderr.write(f"[Relay] claude> {line}\n")
         m = url_pattern.search(line)
         if m and not url_found:
@@ -642,7 +644,8 @@ def _claude_auth_login(req, *, send_progress=None):
     sys.stderr.write(f"[Relay] claude auth login exited: {proc.returncode}\n")
 
     if proc.returncode != 0 and not url_found:
-        return {"error": f"claude auth login failed (exit {proc.returncode})"}
+        output = "\n".join(all_output[-10:])
+        return {"error": f"claude auth login failed (exit {proc.returncode}):\n{output}"}
 
     # Read credentials
     if sys.platform == "win32":

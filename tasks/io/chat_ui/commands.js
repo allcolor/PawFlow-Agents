@@ -126,6 +126,19 @@ const HELP_DATA = {
     short: 'Share a resource to another conversation',
     detail: 'Copies a resource activation to another conversation by ID.',
   },
+  '/claude-login-server': {
+    usage: '/claude-login-server <service_name>',
+    short: 'Login to Claude Code via server (noVNC)',
+    detail: 'Opens a browser in a server Docker container for Claude OAuth login.\n\n'
+      + '  /claude-login-server claude_code_llm_service',
+  },
+  '/claude-login-relay': {
+    usage: '/claude-login-relay <service_name> [relay_name]',
+    short: 'Login to Claude Code via relay',
+    detail: 'Runs claude auth login on the relay machine.\n\n'
+      + '  /claude-login-relay claude_code_llm_service\n'
+      + '  /claude-login-relay claude_code_llm_service my_relay',
+  },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
     short: 'Manage LLM and external services',
@@ -549,6 +562,8 @@ const _CMD_HANDLERS = {
   '/share':       (text, parts, cmd) => cmdShare(text, parts),
   '/view':        (text, parts, cmd) => cmdView(text, parts),
   '/service':     (text, parts, cmd) => cmdService(text, parts),
+  '/claude-login-server': (text, parts) => cmdClaudeLoginServer(parts),
+  '/claude-login-relay':  (text, parts) => cmdClaudeLoginRelay(parts),
   '/flow':        (text, parts, cmd) => cmdFlow(text, parts),
   '/prompt':      (text, parts, cmd) => cmdPrompt(text, parts),
   '/install':     (text, parts, cmd) => cmdInstall(),

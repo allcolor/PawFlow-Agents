@@ -1105,6 +1105,114 @@ function _renderServiceActions(actions, serviceId) {
   return html;
 }
 
+// -- Slash command handlers for claude login --
+
+async function cmdClaudeLoginServer(parts) {
+  const serviceId = parts[1];
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-server <service_name>'); return; }
+  addMsg('system', 'Starting Claude Code server login...');
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'claude_code_server_login', service_id: serviceId,
+        conversation_id: conversationId || '' })
+    }).then(r => r.json());
+    if (resp.error) { addMsg('error', resp.error); return; }
+    _openVncLoginDialog(resp.session_id, serviceId, null);
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+async function cmdClaudeLoginRelay(parts) {
+  const serviceId = parts[1];
+  const relayId = parts[2];
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-relay <service_name> [relay_name]'); return; }
+
+  if (relayId) {
+    // Explicit relay
+    await _startRelayLogin(serviceId, relayId);
+    return;
+  }
+
+  // No relay specified — list and auto-select if single
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'claude_code_list_relays', service_id: serviceId })
+    }).then(r => r.json());
+    const relays = resp.relays || [];
+    if (relays.length === 0) { addMsg('error', 'No relay connected.'); return; }
+    if (relays.length === 1) {
+      await _startRelayLogin(serviceId, relays[0].relay_id);
+    } else {
+      addMsg('system', 'Multiple relays available. Specify one:\n'
+        + relays.map(r => '  ' + r.relay_id + ' (' + r.platform + ')').join('\n'));
+    }
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
+function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
+  // Create overlay dialog 80%x80%
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';
+  const dialog = document.createElement('div');
+  dialog.style.cssText = 'width:80%;height:80%;background:#1a1a2e;border-radius:8px;display:flex;flex-direction:column;overflow:hidden;';
+  const header = document.createElement('div');
+  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;padding:8px 16px;background:#16213e;';
+  header.innerHTML = '<span style="color:#aaa;font-size:13px;">Claude Code Login</span>'
+    + '<button id="vnc-dialog-close" style="background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;">&times;</button>';
+  const vncUrl = '/vnc/' + sessionId + '/vnc.html?autoconnect=true&resize=scale'
+    + '&host=' + location.hostname + '&port=' + (location.port || (location.protocol === 'https:' ? '443' : '80'))
+    + '&path=vnc/' + sessionId + '/websockify';
+  const iframe = document.createElement('iframe');
+  iframe.src = vncUrl;
+  iframe.style.cssText = 'flex:1;border:none;background:#000;';
+  iframe.allow = 'clipboard-read; clipboard-write';
+  const status = document.createElement('div');
+  status.style.cssText = 'padding:6px 16px;color:#aaa;font-size:11px;background:#16213e;';
+  status.textContent = 'Waiting for authorization...';
+
+  dialog.appendChild(header);
+  dialog.appendChild(iframe);
+  dialog.appendChild(status);
+  overlay.appendChild(dialog);
+  document.body.appendChild(overlay);
+
+  function closeDialog(msg) {
+    clearInterval(pollInterval);
+    overlay.remove();
+    if (triggerBtn) {
+      triggerBtn.textContent = 'Login via server';
+      triggerBtn.disabled = false;
+      triggerBtn.style.display = '';
+    }
+    if (msg) addMsg('system', msg);
+  }
+
+  document.getElementById('vnc-dialog-close').onclick = () => closeDialog(null);
+  overlay.onclick = (e) => { if (e.target === overlay) closeDialog(null); };
+
+  // Poll for completion
+  const pollInterval = setInterval(async () => {
+    try {
+      const st = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'claude_code_server_login_status',
+          session_id: sessionId, service_id: serviceId })
+      }).then(r => r.json());
+      if (st.ok) { closeDialog(st.message || 'Claude Code login successful!'); }
+      else if (st.error) { closeDialog('Login error: ' + st.error); }
+    } catch (e) { /* ignore */ }
+  }, 3000);
+}
+
+async function _startRelayLogin(serviceId, relayId) {
+  addMsg('system', 'Starting Claude Code login via relay...');
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'claude_code_relay_login', service_id: serviceId, relay_id: relayId })
+    }).then(r => r.json());
+    if (resp.error) { addMsg('error', resp.error); }
+    else if (resp.ok) { addMsg('system', resp.message || 'Claude Code login successful!'); }
+  } catch (e) { addMsg('error', 'Relay login failed: ' + e.message); }
+}
+
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
   if (flow === 'claude_login_server') {
@@ -1127,44 +1235,8 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         return;
       }
 
-      // Step 2: show noVNC iframe (served via proxy through PawFlow)
-      const vncDiv = document.createElement('div');
-      vncDiv.style.cssText = 'margin-top:8px;';
-      const vncUrl = '/vnc/' + resp.session_id + '/vnc.html?autoconnect=true&resize=scale'
-        + '&host=' + location.hostname + '&port=' + (location.port || (location.protocol === 'https:' ? '443' : '80'))
-        + '&path=vnc/' + resp.session_id + '/websockify';
-      vncDiv.innerHTML = '<div style="color:#aaa;font-size:11px;margin-bottom:4px;">Authorize in the browser below:</div>'
-        + '<iframe id="vnc-frame-' + resp.session_id + '" src="' + vncUrl + '" '
-        + 'style="width:100%;height:500px;border:1px solid #333;border-radius:4px;background:#000;" '
-        + 'allow="clipboard-read; clipboard-write"></iframe>'
-        + '<div id="vnc-status-' + resp.session_id + '" style="color:#aaa;font-size:11px;margin-top:4px;">Waiting for authorization...</div>';
-      container.appendChild(vncDiv);
-      btn.style.display = 'none';
-
-      // Step 3: poll for completion
-      const statusEl = document.getElementById('vnc-status-' + resp.session_id);
-      const pollInterval = setInterval(async () => {
-        try {
-          const status = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-            body: JSON.stringify({ action: 'claude_code_server_login_status',
-              session_id: resp.session_id, service_id: serviceId })
-          }).then(r => r.json());
-
-          if (status.ok) {
-            clearInterval(pollInterval);
-            vncDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (status.message || 'Login successful!') + '</span>';
-            btn.textContent = 'Login via server';
-            btn.disabled = false;
-            btn.style.display = '';
-          } else if (status.error) {
-            clearInterval(pollInterval);
-            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(status.error) + '</span>';
-            btn.textContent = 'Login via server';
-            btn.disabled = false;
-            btn.style.display = '';
-          }
-        } catch (e) { /* ignore poll errors */ }
-      }, 3000);
+      // Open VNC in a centered dialog
+      _openVncLoginDialog(resp.session_id, serviceId, btn);
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else if (flow === 'claude_login_relay') {
     try {
@@ -1178,7 +1250,14 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         addMsg('system', 'No relay connected. Use "Set credentials" instead.');
         return;
       }
-      // Step 2: show relay selector + claude path input
+      // Single relay → skip selector, start directly
+      if (relays.length === 1) {
+        if (btn) { btn.disabled = true; btn.textContent = 'Waiting for authorization...'; }
+        await _startRelayLogin(serviceId, relays[0].relay_id);
+        if (btn) { btn.disabled = false; btn.textContent = 'Login via relay'; }
+        return;
+      }
+      // Multiple relays → show selector
       const container = btn ? btn.parentElement : null;
       if (!container) return;
       const div = document.createElement('div');

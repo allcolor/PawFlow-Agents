@@ -906,6 +906,17 @@ class AgentCoreMixin:
                     messages=messages, new_messages=new_messages,
                     all_msg_ids=all_assistant_msg_ids)
 
+            # Final drain: pick up any messages that arrived during the last turn
+            # (race condition: user sends while Claude finishes → queued but never drained)
+            _pre_drain = len(messages)
+            emitter.drain_pending(messages, _append, iteration)
+            if len(messages) > _pre_drain:
+                # New messages arrived during cleanup — persist them so the
+                # next agent turn picks them up (they'll be the first user msg)
+                logger.info("[agent:%s] %d message(s) arrived during cleanup — persisted for next turn",
+                            conversation_id[:8], len(messages) - _pre_drain)
+                _flush()
+
             # Unregister claude-code client BEFORE done (prevents stale preempt)
             if hasattr(self, '_active_claude_client') and conversation_id in getattr(self, '_active_claude_client', {}):
                 del self._active_claude_client[conversation_id]

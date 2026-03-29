@@ -96,10 +96,15 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     def _browser_to_docker():
         """Read from browser (rfile) → send to Docker (socket)."""
-        logger.info("VNC relay browser->docker: started")
+        logger.info("VNC relay browser->docker: started (rfile=%s, underlying=%s)",
+                    type(client_rfile).__name__,
+                    type(getattr(client_rfile, 'raw', None)).__name__)
         try:
+            # Try raw socket first via rfile's underlying SocketIO
+            raw_io = getattr(client_rfile, 'raw', None)
+            reader = raw_io if raw_io else client_rfile
             while not stop.is_set():
-                data = client_rfile.read1(65536)
+                data = reader.read(65536)
                 if not data:
                     logger.info("VNC relay browser->docker: EOF")
                     break

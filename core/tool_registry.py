@@ -70,6 +70,7 @@ from core.handlers import (  # noqa: F401
     TaskToolHandler,
     UpdatePlanHandler,
     UseSkillHandler,
+    VerifyPlanStepHandler,
     VerifyTaskHandler,
     VideoGenerationHandler,
     AudioGenerationHandler,
@@ -313,6 +314,7 @@ def create_default_registry() -> ToolRegistry:
     registry.register(AssignPlanHandler())
     registry.register(CancelPlanHandler())
     registry.register(DeletePlanHandler())
+    registry.register(VerifyPlanStepHandler())
     registry.register(NotifyUserHandler())
     registry.register(AskUserHandler())
     registry.register(CreateToolHandler())

@@ -1107,7 +1107,19 @@ function _renderServiceActions(actions, serviceId) {
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
-  if (flow === 'oauth_code') {
+  if (flow === 'redirect') {
+    // Server returns {url: "..."} — open in new tab
+    try {
+      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: serverAction, service_id: serviceId })
+      }).then(r => r.json());
+      if (resp.error) { addMsg('error', resp.error); return; }
+      if (resp.url) {
+        window.open(resp.url, '_blank');
+        addMsg('system', resp.message || 'Login opened in new tab.');
+      }
+    } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
+  } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions
       const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),

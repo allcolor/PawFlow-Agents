@@ -340,21 +340,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     # ── Claude Code OAuth login ──────────────────────────────────────
 
-    if action == "claude_code_login_url":
-        """Return instructions for Claude Code login.
-
-        The user runs `claude auth login` on their own machine, then
-        pastes the credentials JSON content.
-        """
+    if action == "claude_code_login_redirect":
+        """Return URL for Claude Code OAuth PKCE login."""
+        service_id = body.get("service_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
         flowfile.set_content(json.dumps({
-            "flow": "paste_credentials",
-            "message": (
-                "Run this on your machine:\n\n"
-                "  claude auth login\n\n"
-                "Then paste the content of:\n\n"
-                "  ~/.claude/.credentials.json\n\n"
-                "(macOS/Linux) or %USERPROFILE%\\.claude\\.credentials.json (Windows)"
-            ),
+            "url": f"/api/auth/claude-code/login?service_id={service_id}",
+            "message": "Login with your Claude subscription...",
         }).encode())
         return [flowfile]
 

@@ -328,8 +328,8 @@ class LLMConnectionService(BaseService):
                 "label": "Login with Claude subscription",
                 "icon": "\U0001f511",
                 "when": {"provider": ["claude-code"]},
-                "server_action": "claude_code_login_url",
-                "flow": "oauth_code",
+                "server_action": "claude_code_login_redirect",
+                "flow": "redirect",
             },
         ]
 

@@ -49,12 +49,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     # ── Process management ──────────────────────────────────────────
 
-    def send_user_message(self, text: str):
+    def send_user_message(self, text: str, attachments: list = None):
         """Send a user message to the running Claude Code subprocess (preempt).
 
         Uses stream-json input format to inject a new user message while
         Claude Code is working — enables the same preempt behavior as
         other LLM providers.
+
+        Args:
+            text: User message text.
+            attachments: Optional list of attachment dicts with base64 image data.
 
         Sets _preempt_pending so _stream_claude_code knows to NOT break
         at the next result event — it must wait for the preempt's result too.
@@ -64,9 +68,26 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             logger.warning("No running Claude Code process to send message to")
             return False
         try:
+            # Build content: text + optional images
+            if attachments:
+                content = [{"type": "text", "text": text}]
+                for att in attachments:
+                    if isinstance(att, dict) and att.get("data"):
+                        mime = att.get("mime_type", "image/png")
+                        content.append({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime,
+                                "data": att["data"],
+                            },
+                        })
+            else:
+                content = text
+
             msg = json.dumps({
                 "type": "user",
-                "message": {"role": "user", "content": text},
+                "message": {"role": "user", "content": content},
             })
             proc.stdin.write(msg + "\n")
             proc.stdin.flush()

@@ -239,7 +239,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         if _already_active:
             _active_client = getattr(self, '_active_claude_client', {}).get(conversation_id)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
-                if _active_client.send_user_message(_user_text):
+                _attachments = _body.get("attachments", [])
+                if _active_client.send_user_message(_user_text, attachments=_attachments):
                     logger.info(f"[agent:{conversation_id[:8]}] preempt via claude-code stdin")
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                                       "message_count": ConversationStore.instance().message_count(conversation_id)})

@@ -25,8 +25,8 @@ sleep 0.5
 # Start VNC server (no password, shared mode)
 x11vnc -display :99 -nopw -forever -shared -rfbport 5900 &
 
-# Start noVNC (WebSocket proxy VNC → port 6080)
-websockify --web /usr/share/novnc 6080 localhost:5900 &
+# Start noVNC (WebSocket proxy VNC → port 6080, no idle timeout)
+websockify --web /usr/share/novnc --timeout=0 6080 localhost:5900 &
 
 # Wait for services
 sleep 1

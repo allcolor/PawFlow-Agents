@@ -524,28 +524,21 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             logger.info("[vnc-login] HTTPListenerService found: %s (routes: %s)",
                         svc, svc.get_routes()[:3] if svc else "N/A")
             if svc:
-                owner = f"vnc_proxy_{session_id}"
-                _sid = session_id  # capture for closures
-
-                def _http_proxy(req, _s=_sid):
-                    req.path_params["session_id"] = _s
-                    vnc_http_proxy(req)
-
-                def _ws_proxy(sock, params, meta, _s=_sid):
-                    params["session_id"] = _s
-                    vnc_ws_proxy(sock, params, meta)
-
-                svc.register_route(
-                    "GET", f"/vnc/{session_id}/websockify",
-                    owner,
-                    callback=lambda req: None,
-                    ws_handler=_ws_proxy,
-                )
-                svc.register_route(
-                    "GET", f"/vnc/{session_id}/{{path+}}",
-                    owner,
-                    callback=_http_proxy,
-                )
+                # Register generic VNC routes (once, shared by all sessions)
+                _vnc_owner = "_vnc_proxy"
+                existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
+                if not existing:
+                    svc.register_route(
+                        "GET", "/vnc/{session_id}/websockify",
+                        _vnc_owner,
+                        callback=lambda req: None,
+                        ws_handler=vnc_ws_proxy,
+                    )
+                    svc.register_route(
+                        "GET", "/vnc/{session_id}/{path+}",
+                        _vnc_owner,
+                        callback=vnc_http_proxy,
+                    )
             else:
                 logger.warning("[vnc-login] HTTPListenerService NOT FOUND — VNC routes not registered")
         except Exception as e:
@@ -636,20 +629,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             pass
         unregister_session(session_id)
         # Cleanup VNC proxy routes
-        try:
-            try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                greg = GlobalServiceRegistry.get_instance()
-                for _sid, _sdef in greg.get_all_definitions().items():
-                    if getattr(_sdef, "service_type", "") == "httpListener":
-                        _svc = greg.get_live_instance(_sid)
-                        if _svc:
-                            _svc.unregister_routes(f"vnc_proxy_{session_id}")
-                            break
-            except Exception:
-                pass
-        except Exception:
-            pass
+        # Routes are shared (/vnc/{session_id}/...) — don't unregister
 
         if not access_token:
             flowfile.set_content(json.dumps({"error": "No accessToken in credentials"}).encode())

@@ -206,7 +206,13 @@ class RelayThread:
 
         if self.docker_image:
             # Docker mode: launch relay INSIDE container
-            # The container relay connects to the WS listener directly
+            # Start host helper (TCP server for host-level commands like claude_auth_login)
+            host_helper_port = find_free_port()
+            self._host_helper_thread = threading.Thread(
+                target=self._run_host_helper, args=(host_helper_port,),
+                daemon=True, name="pawflow-host-helper")
+            self._host_helper_thread.start()
+
             import subprocess as _sp
             import uuid as _uuid
             self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
@@ -221,6 +227,7 @@ class RelayThread:
                 "-e", "GIT_CONFIG_COUNT=1",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",
+                "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_port}",
                 self.docker_image,
                 "python3", "/opt/pawflow/pawflow_relay.py",
                 "--server", ws_url,
@@ -259,6 +266,76 @@ class RelayThread:
                         pass
                     self._docker_proc = None
             return
+
+    def _run_host_helper(self, port: int):
+        """TCP server on the host for commands that must run outside Docker.
+
+        The relay in Docker connects to host.docker.internal:{port} to
+        forward host-level commands (e.g. claude_auth_login).
+
+        Protocol: newline-delimited JSON.
+          → {"action": "claude_auth_login"}
+          ← {"type": "progress", "data": {"url": "https://..."}}
+          ← {"type": "result", "data": {"credentials": {...}}}
+        """
+        import socket as _sock
+
+        srv = _sock.socket(_sock.AF_INET, _sock.SOCK_STREAM)
+        srv.setsockopt(_sock.SOL_SOCKET, _sock.SO_REUSEADDR, 1)
+        srv.bind(("0.0.0.0", port))
+        srv.listen(1)
+        srv.settimeout(2)
+        sys.stderr.write(f"[Relay] Host helper listening on port {port}\n")
+
+        while not self._stop_event.is_set():
+            try:
+                conn, addr = srv.accept()
+            except _sock.timeout:
+                continue
+            except Exception:
+                break
+
+            try:
+                self._handle_host_helper_conn(conn)
+            except Exception as e:
+                sys.stderr.write(f"[Relay] Host helper error: {e}\n")
+            finally:
+                conn.close()
+
+        srv.close()
+
+    def _handle_host_helper_conn(self, conn):
+        """Handle a single host helper connection."""
+        # Read request (newline-delimited JSON)
+        buf = b""
+        while b"\n" not in buf:
+            chunk = conn.recv(4096)
+            if not chunk:
+                return
+            buf += chunk
+
+        req = json.loads(buf.split(b"\n")[0])
+        action = req.get("action", "")
+
+        if action == "claude_auth_login":
+            tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+            if tools_dir not in sys.path:
+                sys.path.insert(0, tools_dir)
+            from pawflow_relay import _claude_auth_login
+
+            def _send_progress(data):
+                try:
+                    msg = json.dumps({"type": "progress", "data": data}) + "\n"
+                    conn.sendall(msg.encode("utf-8"))
+                except Exception:
+                    pass
+
+            result = _claude_auth_login(req, send_progress=_send_progress)
+            resp = json.dumps({"type": "result", "data": result}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+        else:
+            resp = json.dumps({"type": "error", "error": f"Unknown action: {action}"}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
 
         # Direct mode: connect from this process
         # Filter [FSRelay] lines from stderr

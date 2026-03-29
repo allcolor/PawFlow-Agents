@@ -664,6 +664,70 @@ def _claude_auth_login(req, *, send_progress=None):
     return {"credentials": credentials}
 
 
+def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
+    """Forward a command to the host helper (CLI process outside Docker).
+
+    Connects via TCP, sends JSON request, reads progress + result.
+    Progress messages are forwarded to the server via WebSocket.
+    """
+    import socket as _sock
+
+    host, port_str = host_helper.rsplit(":", 1)
+    port = int(port_str)
+    request_id = msg.get("request_id", "")
+
+    try:
+        sock = _sock.create_connection((host, port), timeout=10)
+    except Exception as e:
+        return {"ok": False, "error": f"Cannot reach host helper at {host_helper}: {e}"}
+
+    try:
+        # Send request
+        req = json.dumps({"action": msg.get("action", "")}) + "\n"
+        sock.sendall(req.encode("utf-8"))
+
+        # Read responses (newline-delimited JSON)
+        buf = b""
+        result = None
+        sock.settimeout(300)  # auth can take a while
+
+        while True:
+            chunk = sock.recv(4096)
+            if not chunk:
+                break
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                resp = json.loads(line)
+                if resp.get("type") == "progress":
+                    # Forward progress to server via WebSocket
+                    if ws_sock:
+                        progress = json.dumps({
+                            "type": "progress",
+                            "request_id": request_id,
+                            "data": resp.get("data", {}),
+                        }).encode("utf-8")
+                        try:
+                            ws_send_fn(ws_sock, progress)
+                        except Exception:
+                            pass
+                elif resp.get("type") == "result":
+                    data = resp.get("data", {})
+                    if "error" in data:
+                        return {"ok": False, "error": data["error"]}
+                    return {"ok": True, "data": data}
+                elif resp.get("type") == "error":
+                    return {"ok": False, "error": resp.get("error", "Unknown error")}
+
+        if result:
+            return result
+        return {"ok": False, "error": "Host helper closed connection without result"}
+    except Exception as e:
+        return {"ok": False, "error": f"Host helper communication failed: {e}"}
+    finally:
+        sock.close()
+
+
 # ── Main ──────────────────────────────────────────────────────────
 
 def _make_handler_class(root_dir: str, secret: str, readonly: bool,
@@ -784,27 +848,34 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
-        # Host-level action: claude auth login (runs on host, not in Docker)
+        # Host-level action: claude auth login
+        # If in Docker → forward to host helper; if native → run directly
         if action == "claude_auth_login":
-            def _send_progress(data):
-                if ws_sock_ref[0]:
-                    progress = json.dumps({
-                        "type": "progress",
-                        "request_id": msg.get("request_id", ""),
-                        "data": data,
-                    }).encode("utf-8")
-                    try:
-                        _ws_frame_send(ws_sock_ref[0], progress)
-                    except Exception:
-                        pass
+            host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+            if host_helper:
+                # Forward to host helper (CLI process on the host machine)
+                return _forward_to_host_helper(host_helper, msg, ws_sock_ref[0], _ws_frame_send)
+            else:
+                # Native relay (no Docker) → run directly
+                def _send_progress(data):
+                    if ws_sock_ref[0]:
+                        progress = json.dumps({
+                            "type": "progress",
+                            "request_id": msg.get("request_id", ""),
+                            "data": data,
+                        }).encode("utf-8")
+                        try:
+                            _ws_frame_send(ws_sock_ref[0], progress)
+                        except Exception:
+                            pass
 
-            try:
-                result = _claude_auth_login(msg, send_progress=_send_progress)
-                if "error" in result:
-                    return {"ok": False, "error": result["error"]}
-                return {"ok": True, "data": result}
-            except Exception as e:
-                return {"ok": False, "error": str(e)}
+                try:
+                    result = _claude_auth_login(msg, send_progress=_send_progress)
+                    if "error" in result:
+                        return {"ok": False, "error": result["error"]}
+                    return {"ok": True, "data": result}
+                except Exception as e:
+                    return {"ok": False, "error": str(e)}
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)

@@ -556,12 +556,17 @@ class HTTPListenerService(BaseService):
         self._server_thread.start()
 
         # Register in GlobalServiceRegistry for discoverability
-        # (live instance only — no persistent definition to avoid
-        # auto-connect creating duplicate instances on restart)
+        svc_id = f"_http_listener_{self._port}"
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
-            svc_id = f"_http_listener_{self._port}"
+            if not greg.get_definition(svc_id):
+                # install with enabled=True — _connect_one will be called
+                # but __new__ returns this same singleton, so no duplicate
+                greg.install(svc_id, self.TYPE, self.config,
+                             description=f"HTTP listener on port {self._port}")
+            # Ensure we're the live instance (in case install skipped _connect_one
+            # because we're already in _live_instances from install's own connect)
             greg._live_instances[svc_id] = self
         except Exception as e:
             logger.debug("Failed to register in GlobalServiceRegistry: %s", e)

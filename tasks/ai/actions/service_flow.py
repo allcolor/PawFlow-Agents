@@ -525,18 +525,26 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         svc, svc.get_routes()[:3] if svc else "N/A")
             if svc:
                 owner = f"vnc_proxy_{session_id}"
-                # WS route for VNC frame relay
+                _sid = session_id  # capture for closures
+
+                def _http_proxy(req, _s=_sid):
+                    req.path_params["session_id"] = _s
+                    vnc_http_proxy(req)
+
+                def _ws_proxy(sock, params, meta, _s=_sid):
+                    params["session_id"] = _s
+                    vnc_ws_proxy(sock, params, meta)
+
                 svc.register_route(
                     "GET", f"/vnc/{session_id}/websockify",
                     owner,
                     callback=lambda req: None,
-                    ws_handler=vnc_ws_proxy,
+                    ws_handler=_ws_proxy,
                 )
-                # HTTP route for noVNC static files
                 svc.register_route(
                     "GET", f"/vnc/{session_id}/{{path+}}",
                     owner,
-                    callback=vnc_http_proxy,
+                    callback=_http_proxy,
                 )
             else:
                 logger.warning("[vnc-login] HTTPListenerService NOT FOUND — VNC routes not registered")

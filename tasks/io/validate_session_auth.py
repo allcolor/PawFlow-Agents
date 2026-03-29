@@ -154,10 +154,9 @@ class ValidateSessionAuthTask(BaseTask):
                             username: str = "") -> object:
         """Try to silently refresh the OAuth session using stored refresh tokens.
 
-        1. Use the provided username (from the expired session)
-        2. Find their OAuth provider via IdentityService
-        3. Use AuthGateway to refresh the access token
-        4. Create a new session
+        Uses OAuthTokenStore.get_access_token which auto-refreshes if expired.
+        If the OAuth token is still valid (or was refreshed), create a new
+        PawFlow session.
 
         Returns a new Session on success, or None on failure.
         """
@@ -165,20 +164,10 @@ class ValidateSessionAuthTask(BaseTask):
             if not username:
                 return None
 
-            # Find which provider this user is linked to
+            # Find which OAuth provider this user is linked to
             from core.identity_service import IdentityService
             links = IdentityService.instance().get_links(username)
             if not links:
-                return None
-
-            # Try refresh via AuthGateway for each linked provider
-            auth_svc = None
-            for svc in (getattr(self, '_services', {}) or {}).values():
-                if hasattr(svc, 'refresh_token'):
-                    auth_svc = svc
-                    break
-
-            if not auth_svc:
                 return None
 
             from core.oauth_token_store import OAuthTokenStore
@@ -186,34 +175,81 @@ class ValidateSessionAuthTask(BaseTask):
 
             for provider_name in links:
                 if provider_name in ("builtin",):
-                    continue  # builtin doesn't have refresh tokens
-                refresh_token = token_store.get_refresh_token(username, provider_name)
-                if not refresh_token:
                     continue
 
-                result = auth_svc.refresh_token(provider_name, refresh_token)
-                if result.success and result.access_token:
-                    # Save new tokens
-                    token_store.save_tokens(
-                        user_id=username, provider=provider_name,
-                        access_token=result.access_token,
-                        refresh_token=result.refresh_token or refresh_token,
-                        expires_in=int(result.token_expires_at - __import__('time').time())
-                            if result.token_expires_at else 3600,
-                    )
-                    # Create new session
-                    user = sm.get_user(username)
-                    if user:
-                        session = sm._create_session(user,
-                            ip_address=flowfile.get_attribute("http.remote.addr") or "")
-                        logger.info(f"Silent refresh: renewed session for {username} via {provider_name}")
-                        return session
+                # Ensure token entry has token_url/client_id for refresh
+                # (tokens saved before this fix may be missing these fields)
+                self._backfill_token_entry(token_store, username, provider_name)
+
+                # get_access_token auto-refreshes if expired
+                access_token = token_store.get_access_token(username, provider_name)
+                if not access_token:
+                    continue
+                # OAuth token is valid — create new PawFlow session
+                user = sm.get_user(username)
+                if user:
+                    session = sm._create_session(user,
+                        ip_address=flowfile.get_attribute("http.remote.addr") or "")
+                    logger.info(f"Silent refresh: renewed session for {username} via {provider_name}")
+                    return session
 
             return None
 
         except Exception as e:
             logger.debug(f"Silent refresh failed: {e}")
             return None
+
+    @staticmethod
+    def _backfill_token_entry(token_store, username: str, provider_name: str):
+        """Ensure stored tokens have token_url/client_id needed for refresh.
+
+        Older tokens may have been saved without these fields. Backfill
+        from the AuthGateway service config.
+        """
+        key = token_store._key(username, provider_name)
+        entry = token_store._tokens.get(key)
+        if entry is None:
+            data = token_store._load(username)
+            entry = data.get(provider_name)
+            if entry:
+                token_store._tokens[key] = entry
+        if not entry:
+            return
+        if entry.get("token_url") and entry.get("client_id"):
+            return  # already has the info
+
+        try:
+            from services.auth_gateway_service import AuthGatewayService
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            for sid, sdef in greg.get_all_definitions().items():
+                if getattr(sdef, "service_type", "") != "authGateway":
+                    continue
+                svc = greg.get_live_instance(sid)
+                if not svc:
+                    continue
+                provider = svc.get_provider(provider_name) if hasattr(svc, 'get_provider') else None
+                if not provider:
+                    continue
+                token_url = getattr(provider, '_token_url', '') or getattr(provider, 'token_url', '')
+                client_id = getattr(provider, '_client_id', '') or getattr(provider, 'client_id', '')
+                client_secret = getattr(provider, '_client_secret', '') or getattr(provider, 'client_secret', '')
+                if token_url and client_id:
+                    from core.secrets import get_secrets_manager
+                    sm = get_secrets_manager()
+                    entry["token_url"] = token_url
+                    entry["client_id"] = client_id
+                    if client_secret:
+                        entry["client_secret"] = sm.encrypt(client_secret)
+                    # Persist
+                    with token_store._file_lock:
+                        data = token_store._load(username)
+                        data[provider_name] = entry
+                        token_store._save(username, data)
+                    logger.info(f"Backfilled token_url/client_id for {username}/{provider_name}")
+                    return
+        except Exception as e:
+            logger.debug(f"Backfill failed for {username}/{provider_name}: {e}")
 
     def _auth_failed(self, flowfile: FlowFile, error: str) -> FlowFile:
         """Handle authentication failure."""

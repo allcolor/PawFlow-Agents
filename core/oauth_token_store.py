@@ -152,6 +152,7 @@ class OAuthTokenStore:
             req = urllib.request.Request(token_url, data=encoded, method="POST")
             req.add_header("Content-Type", "application/x-www-form-urlencoded")
             req.add_header("Accept", "application/json")
+            req.add_header("User-Agent", "PawFlow/1.0")
 
             import ssl
             ctx = ssl.create_default_context()
@@ -188,6 +189,25 @@ class OAuthTokenStore:
             self._save(user_id, data)
 
         logger.info(f"OAuth tokens revoked: user={user_id}, provider={provider}")
+
+    def get_refresh_token(self, user_id: str, provider: str) -> Optional[str]:
+        """Get the raw refresh token (decrypted). Does NOT auto-refresh."""
+        from core.secrets import get_secrets_manager
+        sm = get_secrets_manager()
+
+        key = self._key(user_id, provider)
+        entry = self._tokens.get(key)
+        if entry is None:
+            with self._file_lock:
+                data = self._load(user_id)
+            entry = data.get(provider)
+            if entry:
+                self._tokens[key] = entry
+
+        if entry is None:
+            return None
+        rt = entry.get("refresh_token", "")
+        return sm.decrypt(rt) if rt else None
 
     def has_tokens(self, user_id: str, provider: str) -> bool:
         """Check if tokens exist for a user/provider."""

@@ -130,15 +130,27 @@ const HELP_DATA = {
     usage: '/claude-login-server <service_name>',
     short: 'Login to Claude Code via server (noVNC)',
     detail: 'Opens a browser in a server Docker container for Claude OAuth login.\n\n'
-      + '  /claude-login-server claude_code_llm_service',
+      + '  /claude-login-server claude_code_llm_service\n'
+      + '  Shortcut: /cls',
   },
+  '/cls': { alias: '/claude-login-server' },
   '/claude-login-relay': {
     usage: '/claude-login-relay <service_name> [relay_name]',
     short: 'Login to Claude Code via relay',
     detail: 'Runs claude auth login on the relay machine.\n\n'
       + '  /claude-login-relay claude_code_llm_service\n'
-      + '  /claude-login-relay claude_code_llm_service my_relay',
+      + '  /claude-login-relay claude_code_llm_service my_relay\n'
+      + '  Shortcut: /clr',
   },
+  '/clr': { alias: '/claude-login-relay' },
+  '/claude-login-credentials': {
+    usage: '/claude-login-credentials <service_name> <credentials_json>',
+    short: 'Set Claude Code credentials from .credentials.json',
+    detail: 'Paste the content of ~/.claude/.credentials.json.\n\n'
+      + '  /claude-login-credentials claude_code_llm_service {"claudeAiOauth":...}\n'
+      + '  Shortcut: /clc',
+  },
+  '/clc': { alias: '/claude-login-credentials' },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
     short: 'Manage LLM and external services',
@@ -563,7 +575,11 @@ const _CMD_HANDLERS = {
   '/view':        (text, parts, cmd) => cmdView(text, parts),
   '/service':     (text, parts, cmd) => cmdService(text, parts),
   '/claude-login-server': (text, parts) => cmdClaudeLoginServer(parts),
+  '/cls':                 (text, parts) => cmdClaudeLoginServer(parts),
   '/claude-login-relay':  (text, parts) => cmdClaudeLoginRelay(parts),
+  '/clr':                 (text, parts) => cmdClaudeLoginRelay(parts),
+  '/claude-login-credentials': (text, parts, cmd) => cmdClaudeLoginCredentials(text, parts),
+  '/clc':                 (text, parts, cmd) => cmdClaudeLoginCredentials(text, parts),
   '/flow':        (text, parts, cmd) => cmdFlow(text, parts),
   '/prompt':      (text, parts, cmd) => cmdPrompt(text, parts),
   '/install':     (text, parts, cmd) => cmdInstall(),

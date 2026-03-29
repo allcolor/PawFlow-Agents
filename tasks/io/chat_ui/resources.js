@@ -1148,6 +1148,29 @@ async function cmdClaudeLoginRelay(parts) {
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
 
+async function cmdClaudeLoginCredentials(text, parts) {
+  const serviceId = parts[1];
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-credentials <service_name> <credentials_json>'); return; }
+  // Everything after the service name is the JSON
+  const jsonStart = text.indexOf(serviceId) + serviceId.length;
+  const credsJson = text.substring(jsonStart).trim();
+  if (!credsJson) { addMsg('error', 'Missing credentials JSON. Paste the content of .credentials.json'); return; }
+  try {
+    JSON.parse(credsJson); // validate
+  } catch (e) {
+    addMsg('error', 'Invalid JSON: ' + e.message);
+    return;
+  }
+  addMsg('system', 'Saving credentials...');
+  try {
+    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'claude_code_login_code', service_id: serviceId, credentials: credsJson })
+    }).then(r => r.json());
+    if (resp.ok) { addMsg('system', resp.message || 'Credentials saved!'); }
+    else { addMsg('error', resp.error || 'Failed to save credentials'); }
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+}
+
 function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   // Create overlay dialog 80%x80%
   const overlay = document.createElement('div');

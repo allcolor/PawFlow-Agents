@@ -613,33 +613,43 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
             return [flowfile]
 
-        # Check if auth is done
         import subprocess as _sp
         from core.server_relay_manager import _docker_cmd
         container = session["container"]
+        launch_time = session.get("launch_time", 0)
+
+        # Check timeout (2 min max)
+        if time.time() - launch_time > 120:
+            _sp.run(_docker_cmd() + ["rm", "-f", container],
+                    capture_output=True, timeout=10)
+            unregister_session(session_id)
+            flowfile.set_content(json.dumps({"error": "Login timed out (2 min)"}).encode())
+            return [flowfile]
+
+        # Check if .credentials.json was updated since launch
         try:
-            check = _sp.run(
-                _docker_cmd() + ["exec", container, "test", "-f", "/tmp/auth_done"],
-                capture_output=True, timeout=5)
-            if check.returncode != 0:
-                # Check timeout (2 min max)
-                if time.time() - session["launch_time"] > 120:
-                    # Cleanup
-                    _sp.run(_docker_cmd() + ["rm", "-f", container],
-                            capture_output=True, timeout=10)
-                    unregister_session(session_id)
-                    flowfile.set_content(json.dumps({"error": "Login timed out"}).encode())
-                    return [flowfile]
+            stat_result = _sp.run(
+                _docker_cmd() + ["exec", container, "stat", "-c", "%Y",
+                                  "/workspace/.credentials.json"],
+                capture_output=True, text=True, timeout=5)
+            if stat_result.returncode != 0:
+                # File doesn't exist yet
+                flowfile.set_content(json.dumps({"status": "pending"}).encode())
+                return [flowfile]
+            file_mtime = int(stat_result.stdout.strip())
+            if file_mtime < int(launch_time):
+                # File exists but not updated since launch
                 flowfile.set_content(json.dumps({"status": "pending"}).encode())
                 return [flowfile]
         except Exception:
             flowfile.set_content(json.dumps({"status": "pending"}).encode())
             return [flowfile]
 
-        # Auth done — read credentials
+        # Credentials updated — read them
         try:
             read_result = _sp.run(
-                _docker_cmd() + ["exec", container, "cat", "/workspace/.credentials.json"],
+                _docker_cmd() + ["exec", container, "cat",
+                                  "/workspace/.credentials.json"],
                 capture_output=True, text=True, timeout=10)
             credentials = json.loads(read_result.stdout)
         except Exception as e:

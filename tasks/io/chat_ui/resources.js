@@ -1207,6 +1207,11 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
       triggerBtn.style.display = '';
     }
     if (msg) addMsg('system', msg);
+    // Tell server to cleanup the Docker container
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'claude_code_server_login_cleanup',
+        session_id: sessionId })
+    }).catch(() => {});
   }
 
   document.getElementById('vnc-dialog-close').onclick = () => closeDialog(null);

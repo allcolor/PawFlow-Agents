@@ -586,6 +586,23 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "claude_code_server_login_cleanup":
+        """Cleanup a login container (user closed dialog or timeout)."""
+        session_id = body.get("session_id", "")
+        from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
+        session = _vnc_sessions.get(session_id)
+        if session:
+            import subprocess as _sp
+            from core.server_relay_manager import _docker_cmd
+            try:
+                _sp.run(_docker_cmd() + ["rm", "-f", session.get("container", "")],
+                        capture_output=True, timeout=10)
+            except Exception:
+                pass
+            unregister_session(session_id)
+        flowfile.set_content(json.dumps({"ok": True}).encode())
+        return [flowfile]
+
     if action == "claude_code_server_login_status":
         """Poll for login completion. Check if credentials file was updated."""
         session_id = body.get("session_id", "")
@@ -605,8 +622,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 _docker_cmd() + ["exec", container, "test", "-f", "/tmp/auth_done"],
                 capture_output=True, timeout=5)
             if check.returncode != 0:
-                # Check timeout (5 min max)
-                if time.time() - session["launch_time"] > 300:
+                # Check timeout (2 min max)
+                if time.time() - session["launch_time"] > 120:
                     # Cleanup
                     _sp.run(_docker_cmd() + ["rm", "-f", container],
                             capture_output=True, timeout=10)

@@ -614,6 +614,9 @@ def _claude_auth_login(req, *, send_progress=None):
 
     sys.stderr.write(f"[Relay] claude auth login: {claude_path}\n")
 
+    # Record launch time to detect credential updates
+    _launch_time = time.time()
+
     try:
         proc = subprocess.Popen(
             [claude_path, "auth", "login"],
@@ -657,6 +660,22 @@ def _claude_auth_login(req, *, send_progress=None):
 
     if not os.path.exists(creds_path):
         return {"error": f"Credentials file not found: {creds_path}"}
+
+    # Wait for credentials to be updated (file mtime must be after launch)
+    _max_wait = 180  # 3 minutes max
+    _waited = 0
+    while _waited < _max_wait:
+        try:
+            mtime = os.path.getmtime(creds_path)
+            if mtime >= _launch_time:
+                break
+        except Exception:
+            pass
+        time.sleep(1)
+        _waited += 1
+
+    if _waited >= _max_wait:
+        return {"error": "Timeout: credentials file was not updated after authorization"}
 
     try:
         with open(creds_path, "r", encoding="utf-8") as f:

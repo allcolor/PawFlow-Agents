@@ -1141,12 +1141,11 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         const statusEl = document.getElementById('svc-relay-status');
         const loginBtn = document.getElementById('svc-relay-login-btn');
         loginBtn.disabled = true;
-        loginBtn.textContent = 'Launching...';
-        statusEl.textContent = 'Starting claude auth login on relay...';
+        loginBtn.textContent = 'Waiting for authorization...';
+        statusEl.textContent = 'A browser window should open on the relay machine. Authorize there.';
 
         try {
-          // Step 1: start login → get auth URL
-          const startResp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
             body: JSON.stringify({
               action: 'claude_code_relay_login',
               service_id: serviceId,
@@ -1154,35 +1153,12 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
             })
           }).then(r => r.json());
 
-          if (startResp.error) {
-            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(startResp.error) + '</span>';
+          if (resp.error) {
+            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(resp.error) + '</span>';
             loginBtn.textContent = 'Start login';
             loginBtn.disabled = false;
-            return;
-          }
-
-          if (startResp.url) {
-            statusEl.innerHTML = 'Authorize in your browser: <a href="' + escapeHtml(startResp.url)
-              + '" target="_blank" style="color:#6c5ce7;">Click here</a>';
-            window.open(startResp.url, '_blank');
-          }
-
-          // Step 2: poll for result (user authorizes in browser)
-          loginBtn.textContent = 'Waiting for authorization...';
-          const pollResp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-            body: JSON.stringify({
-              action: 'claude_code_relay_login_poll',
-              login_id: startResp.login_id,
-              service_id: serviceId,
-            })
-          }).then(r => r.json());
-
-          if (pollResp.error) {
-            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(pollResp.error) + '</span>';
-            loginBtn.textContent = 'Start login';
-            loginBtn.disabled = false;
-          } else if (pollResp.ok) {
-            statusEl.innerHTML = '<span style="color:#2ecc71;">\u2714 ' + escapeHtml(pollResp.message) + '</span>';
+          } else if (resp.ok) {
+            statusEl.innerHTML = '<span style="color:#2ecc71;">\u2714 ' + escapeHtml(resp.message) + '</span>';
             loginBtn.textContent = 'Done';
           }
         } catch (e) {

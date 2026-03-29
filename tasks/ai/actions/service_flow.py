@@ -379,8 +379,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "claude_code_relay_login":
         """Launch claude auth login on a relay and retrieve credentials.
 
-        Two-phase: returns {url} when auth URL is found, then JS polls
-        claude_code_relay_login_poll for the final credentials.
+        Blocking: opens browser on client, waits for auth, returns credentials.
+        Claude Code opens the browser itself — no URL forwarding needed.
         """
         service_id = body.get("service_id", "")
         relay_id = body.get("relay_id", "")
@@ -403,92 +403,20 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
 
-        import uuid
-        login_id = uuid.uuid4().hex[:12]
-
-        _state = {"url": None, "result": None, "error": None}
-        _url_event = threading.Event()
-        _done_event = threading.Event()
-
-        def _on_progress(data):
-            url = data.get("url", "")
-            if url:
-                _state["url"] = url
-                _url_event.set()
-
-        # Store state for poll
-        if not hasattr(_handle_service_flow, '_claude_login_pending'):
-            _handle_service_flow._claude_login_pending = {}
-        _handle_service_flow._claude_login_pending[login_id] = {
-            "state": _state, "done_event": _done_event,
-            "service_id": service_id,
-        }
-
-        # Background: send command via relay service
-        def _bg_login():
-            try:
-                result = relay_svc._request_with_progress(
-                    "claude_auth_login",
-                    on_progress=_on_progress,
-                    timeout=300,
-                )
-                _state["result"] = result
-            except Exception as e:
-                _state["error"] = str(e)
-            finally:
-                _done_event.set()
-
-        t = threading.Thread(target=_bg_login, daemon=True)
-        t.start()
-
-        # Wait for URL (up to 30s)
-        _url_event.wait(timeout=30)
-
-        if _state["url"]:
-            flowfile.set_content(json.dumps({
-                "url": _state["url"],
-                "login_id": login_id,
-            }).encode())
-        elif _state["error"]:
-            flowfile.set_content(json.dumps({"error": _state["error"]}).encode())
-        else:
-            flowfile.set_content(json.dumps({"error": "Timeout waiting for auth URL from relay"}).encode())
-        return [flowfile]
-
-    if action == "claude_code_relay_login_poll":
-        """Poll for relay login result after user authorized."""
-        login_id = body.get("login_id", "")
-        service_id = body.get("service_id", "")
-        pending = getattr(_handle_service_flow, '_claude_login_pending', {})
-        entry = pending.get(login_id)
-        if not entry:
-            flowfile.set_content(json.dumps({"error": "Unknown login_id"}).encode())
+        # Blocking call — waits for user to authorize in browser (up to 5 min)
+        try:
+            result = relay_svc._request_with_progress(
+                "claude_auth_login", timeout=300)
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
 
-        done_event = entry["done_event"]
-        state = entry["state"]
-
-        # Wait up to 120s for auth to complete
-        done_event.wait(timeout=120)
-
-        if not done_event.is_set():
-            flowfile.set_content(json.dumps({"error": "Timeout waiting for authorization"}).encode())
-            return [flowfile]
-
-        # Cleanup
-        pending.pop(login_id, None)
-
-        if state["error"]:
-            flowfile.set_content(json.dumps({"error": state["error"]}).encode())
-            return [flowfile]
-
-        result = state["result"]
-        if not result or not result.get("ok"):
-            error = result.get("error", "Unknown error") if result else "No response"
+        if not result or (isinstance(result, dict) and "error" in result):
+            error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
             flowfile.set_content(json.dumps({"error": error}).encode())
             return [flowfile]
 
-        credentials = result.get("data", {}).get("credentials", {})
+        credentials = result.get("credentials", {}) if isinstance(result, dict) else {}
         if not credentials:
             flowfile.set_content(json.dumps({"error": "No credentials returned"}).encode())
             return [flowfile]

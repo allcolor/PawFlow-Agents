@@ -342,19 +342,36 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "claude_code_list_relays":
         """List connected relays for Claude Code login."""
-        from core.relay_manager import RelayConnectionManager
-        mgr = RelayConnectionManager.instance()
-        relays = mgr.list_for_user(user_id)
-        # Include all relays (Docker or not — login runs on host)
         relay_list = []
-        for r in relays:
-            info = r.get("info", {})
-            relay_list.append({
-                "relay_id": r.get("relay_id", ""),
-                "platform": info.get("platform", "unknown"),
-                "root": info.get("root", ""),
-                "actions": info.get("actions", []),
-            })
+        # User services (auto-installed when relay connects)
+        if user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                registry = UserServiceRegistry.get_instance()
+                for sid, sdef in registry.get_all_for_user(user_id).items():
+                    if not sdef.enabled:
+                        continue
+                    if sdef.service_type == "remoteExecutor":
+                        svc = registry.get_live_instance(user_id, sid)
+                        info = svc.get_relay_info() if svc and hasattr(svc, 'get_relay_info') else {}
+                        relay_list.append({
+                            "relay_id": sid,
+                            "platform": info.get("platform", "unknown"),
+                            "root": info.get("root", sdef.description or ""),
+                        })
+            except Exception as e:
+                logger.debug("Failed to list user relays: %s", e)
+        # Flow services (executor relays configured in the flow)
+        if hasattr(self, '_services'):
+            for sid, svc in self._services.items():
+                if getattr(svc, 'TYPE', '') == 'remoteExecutor':
+                    if not any(r["relay_id"] == sid for r in relay_list):
+                        info = svc.get_relay_info() if hasattr(svc, 'get_relay_info') else {}
+                        relay_list.append({
+                            "relay_id": sid,
+                            "platform": info.get("platform", "unknown"),
+                            "root": info.get("root", ""),
+                        })
         flowfile.set_content(json.dumps({"relays": relay_list}).encode())
         return [flowfile]
 

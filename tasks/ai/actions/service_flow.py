@@ -508,7 +508,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         # Register routes: HTTP (static files) + WS (VNC frames)
         try:
-            svc = self.get_service("http_listener") if hasattr(self, 'get_service') else None
+            from services.http_listener_service import HTTPListenerService
+            # Find the HTTP listener via GlobalServiceRegistry (any port)
+            svc = None
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                for _sid, _sdef in greg.get_all_definitions().items():
+                    if getattr(_sdef, "service_type", "") == "httpListener":
+                        svc = greg.get_live_instance(_sid)
+                        if svc:
+                            break
+            except Exception:
+                pass
             if svc:
                 owner = f"vnc_proxy_{session_id}"
                 # WS route for VNC frame relay
@@ -611,11 +623,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception:
             pass
         unregister_session(session_id)
-        # Cleanup WS route
+        # Cleanup VNC proxy routes
         try:
-            svc = self.get_service("http_listener") if hasattr(self, 'get_service') else None
-            if svc:
-                svc.unregister_routes(f"vnc_proxy_{session_id}")
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                for _sid, _sdef in greg.get_all_definitions().items():
+                    if getattr(_sdef, "service_type", "") == "httpListener":
+                        _svc = greg.get_live_instance(_sid)
+                        if _svc:
+                            _svc.unregister_routes(f"vnc_proxy_{session_id}")
+                            break
+            except Exception:
+                pass
         except Exception:
             pass
 

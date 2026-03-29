@@ -11,6 +11,7 @@ don't conflict.  When no route matches, 504/404 is returned directly.
 import json
 import logging
 import re
+import socket
 import ssl
 import threading
 import time
@@ -380,68 +381,83 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         self._route_registry = route_registry
         self._pending_requests: Dict[str, PendingRequest] = {}
         self._request_timeout = request_timeout
+        self._ssl_ctx: Optional[ssl.SSLContext] = None  # set by HTTPListenerService
+        self._sni_certs: Dict[str, ssl.SSLContext] = {}
         super().__init__(server_address, handler_class)
+
+    def get_request(self):
+        """Override to auto-detect TLS connections.
+
+        Peek first byte: 0x16 = TLS ClientHello → wrap with SSL.
+        Otherwise treat as plain HTTP. Allows both on same port.
+        """
+        client_socket, client_address = self.socket.accept()
+        if self._ssl_ctx:
+            try:
+                first_byte = client_socket.recv(1, socket.MSG_PEEK)
+                if first_byte == b'\x16':  # TLS ClientHello
+                    client_socket = self._ssl_ctx.wrap_socket(
+                        client_socket, server_side=True)
+            except (OSError, ssl.SSLError) as e:
+                logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
+        return client_socket, client_address
 
 
 # ---------------------------------------------------------------------------
 # HTTPListenerService — the shared service
 # ---------------------------------------------------------------------------
 
-# Singleton registry: port -> service instance
-_instances: Dict[int, "HTTPListenerService"] = {}
-_instances_lock = threading.Lock()
-
-
 class HTTPListenerService(BaseService):
-    """Shared HTTP listener service.
+    """Shared HTTP listener service — global, one per port.
 
     Multiple flows can share the same service (= same port).
     Each flow registers its routes; the service dispatches incoming
     requests to the right flow based on method + URL pattern.
 
-    Singleton per port: constructing with the same port returns the
-    existing instance (transparent to FlowParser).
+    Singleton per port via GlobalServiceRegistry. When a flow declares
+    an httpListener on port N, it looks up the global service first.
+    If found, it reuses it. If not, it creates and registers it.
+
+    Features:
+    - Auto-detect TLS: peek first byte, if 0x16 → SSL, else plain HTTP
+    - Multi-cert SNI: register_cert(hostname, certfile, keyfile)
+    - WebSocket upgrade support on any route with ws_handler
 
     Config:
         host: str = "0.0.0.0"
         port: int = 9090
         request_timeout: float = 30.0  (seconds before 504)
-        ssl_service_id: str = ""  (ID of SSLContextService for HTTPS)
-        ssl_certfile: str = ""  (path to PEM certificate, alternative to ssl_service_id)
-        ssl_keyfile: str = ""   (path to PEM private key)
+        ssl_certfile: str = ""  (path to default PEM certificate)
+        ssl_keyfile: str = ""   (path to default PEM private key)
         ssl_keyfile_password: str = "" (optional key password)
     """
 
     TYPE = "httpListener"
 
+    @classmethod
+    def get_for_port(cls, port: int) -> Optional["HTTPListenerService"]:
+        """Find the global HTTPListenerService for a port, if it exists."""
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            svc_id = f"_http_listener_{port}"
+            return greg.get_live_instance(svc_id)
+        except Exception:
+            return None
+
     def __new__(cls, config=None):
         if config is None:
             config = {}
         port = int(config.get("port", 9090))
-        with _instances_lock:
-            if port in _instances:
-                return _instances[port]
-        instance = super().__new__(cls)
-        return instance
-
-    @classmethod
-    def get_shared(cls, port: int, config: Optional[Dict[str, Any]] = None) -> "HTTPListenerService":
-        """Get or create a shared instance for the given port."""
-        with _instances_lock:
-            if port not in _instances:
-                _instances[port] = cls(config or {"port": port})
-            return _instances[port]
-
-    @classmethod
-    def remove_shared(cls, port: int):
-        """Remove a shared instance (called on last disconnect)."""
-        with _instances_lock:
-            _instances.pop(port, None)
+        # Reuse global instance if exists
+        existing = cls.get_for_port(port)
+        if existing is not None:
+            return existing
+        return super().__new__(cls)
 
     def __init__(self, config: Dict[str, Any]):
         if hasattr(self, '_port'):
-            # Already initialized — singleton returned by __new__
-            return
+            return  # already initialized (singleton)
         super().__init__(config)
         self._host = self.config.get("host", "0.0.0.0")
         self._port = int(self.config.get("port", 9090))
@@ -450,7 +466,6 @@ class HTTPListenerService(BaseService):
         self._ssl_certfile = self.config.get("ssl_certfile", "")
         self._ssl_keyfile = self.config.get("ssl_keyfile", "")
         self._ssl_keyfile_password = self.config.get("ssl_keyfile_password", "")
-        self._ssl_service_id = self.config.get("ssl_service_id", "")
 
         self._registry = RouteRegistry()
         self._server: Optional[_HTTPServerWithRegistry] = None
@@ -458,9 +473,9 @@ class HTTPListenerService(BaseService):
         self._ref_count = 0
         self._ref_lock = threading.Lock()
 
-        # Register in singleton map
-        with _instances_lock:
-            _instances[self._port] = self
+        # SNI multi-cert: hostname → SSLContext
+        self._sni_certs: Dict[str, ssl.SSLContext] = {}
+        self._default_ssl_ctx: Optional[ssl.SSLContext] = None
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -501,11 +516,19 @@ class HTTPListenerService(BaseService):
                 self._initialized = False
 
     def _create_connection(self):
-        """Start the HTTP server (only on first connect)."""
+        """Start the HTTP server (only on first connect).
+
+        Registers self in GlobalServiceRegistry as _http_listener_{port}.
+        Uses auto-detect TLS: if SSL is configured, accepts both plain
+        and TLS connections on the same port (peek first byte).
+        """
         with self._ref_lock:
             self._ref_count += 1
             if self._server is not None:
                 return self._server  # already running
+
+        # Build default SSL context if configured
+        self._default_ssl_ctx = self._build_ssl_context()
 
         self._server = _HTTPServerWithRegistry(
             (self._host, self._port),
@@ -514,13 +537,12 @@ class HTTPListenerService(BaseService):
             self._request_timeout,
         )
 
-        # Wrap socket with SSL if configured
-        ssl_ctx = self._build_ssl_context()
-        if ssl_ctx:
-            self._server.socket = ssl_ctx.wrap_socket(
-                self._server.socket, server_side=True,
-            )
-            proto = "HTTPS"
+        # Auto-detect TLS: don't wrap the server socket globally.
+        # Instead, wrap per-connection in get_request() (see _AutoTLSServer).
+        if self._default_ssl_ctx:
+            self._server._ssl_ctx = self._default_ssl_ctx
+            self._server._sni_certs = self._sni_certs
+            proto = "HTTP+HTTPS"
         else:
             proto = "HTTP"
 
@@ -530,33 +552,66 @@ class HTTPListenerService(BaseService):
             name=f"http-listener-{self._port}",
         )
         self._server_thread.start()
+
+        # Register in GlobalServiceRegistry
+        svc_id = f"_http_listener_{self._port}"
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            if not greg.get_service(svc_id):
+                greg.install(svc_id, self.TYPE, self.config,
+                             description=f"HTTP listener on port {self._port}")
+            greg._live_instances[svc_id] = self
+        except Exception as e:
+            logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
+
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
 
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
-        """Build SSL context from config or SSLContextService."""
-        # Direct cert/key config takes priority
-        if self._ssl_certfile:
-            ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-            ctx.load_cert_chain(
-                certfile=self._ssl_certfile,
-                keyfile=self._ssl_keyfile or None,
-                password=self._ssl_keyfile_password or None,
-            )
-            return ctx
+        """Build default SSL context from config."""
+        if not self._ssl_certfile:
+            return None
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(
+            certfile=self._ssl_certfile,
+            keyfile=self._ssl_keyfile or None,
+            password=self._ssl_keyfile_password or None,
+        )
 
-        # SSLContextService (shared service)
-        if self._ssl_service_id and hasattr(self, '_services'):
-            ssl_svc = self._services.get(self._ssl_service_id)
-            if ssl_svc and hasattr(ssl_svc, 'get_ssl_context'):
-                return ssl_svc.get_ssl_context()
+        # SNI callback for multi-cert support
+        def _sni_callback(ssl_socket, server_name, ssl_context):
+            if server_name and server_name in self._sni_certs:
+                ssl_socket.context = self._sni_certs[server_name]
+        ctx.sni_callback = _sni_callback
 
-        return None
+        return ctx
+
+    def register_cert(self, hostname: str, certfile: str, keyfile: str = "",
+                      password: str = ""):
+        """Register an SSL certificate for a specific hostname (SNI).
+
+        If no default SSL is configured, this also enables TLS on the port
+        using this cert as the default.
+        """
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile, keyfile or None, password or None)
+        self._sni_certs[hostname] = ctx
+
+        # If no default SSL yet, use this as default and enable TLS
+        if not self._default_ssl_ctx:
+            self._default_ssl_ctx = ctx
+            # Propagate to running server
+            if self._server:
+                self._server._ssl_ctx = ctx
+                self._server._sni_certs = self._sni_certs
+
+        logger.info("Registered SSL cert for hostname '%s' on port %d", hostname, self._port)
 
     @property
     def is_ssl(self) -> bool:
-        """Whether the listener is using SSL/TLS."""
-        return bool(self._ssl_certfile or self._ssl_service_id)
+        """Whether the listener has SSL configured (accepts both plain+TLS)."""
+        return self._default_ssl_ctx is not None
 
     def _close_connection(self):
         """Stop the HTTP server (only when ref count reaches 0)."""
@@ -566,7 +621,6 @@ class HTTPListenerService(BaseService):
                 return  # other flows still using it
 
         if self._server:
-            # Unblock any pending requests with 503
             for req_id, req in list(self._server._pending_requests.items()):
                 req.complete(503, {"Content-Type": "application/json"},
                              json.dumps({"error": "Service Unavailable"}).encode())
@@ -576,7 +630,15 @@ class HTTPListenerService(BaseService):
             self._server_thread.join(timeout=5)
             self._server_thread = None
 
-        self.__class__.remove_shared(self._port)
+        # Deregister from GlobalServiceRegistry
+        svc_id = f"_http_listener_{self._port}"
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            greg._live_instances.pop(svc_id, None)
+        except Exception:
+            pass
+
         logger.info(f"HTTPListenerService stopped on port {self._port}")
 
     # -- Route management --

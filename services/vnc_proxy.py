@@ -41,7 +41,8 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     # Connect to Docker noVNC websockify
     try:
-        backend_sock = socket.create_connection(("127.0.0.1", target_port), timeout=5)
+        backend_sock = socket.create_connection(("127.0.0.1", target_port))
+        # No timeout on the socket — VNC relay needs to stay open indefinitely
     except Exception as e:
         logger.warning("VNC proxy: cannot connect to Docker port %d: %s", target_port, e)
         _ws_close(client_sock, 4002, "Backend unavailable")

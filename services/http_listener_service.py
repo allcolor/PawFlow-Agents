@@ -342,14 +342,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
         )
         sock.sendall(response.encode("latin-1"))
 
-        # Drain any buffered bytes from rfile (HTTP request body remnants)
-        try:
-            if hasattr(self.rfile, 'peek'):
-                leftover = self.rfile.peek()
-                if leftover:
-                    self.rfile.read(len(leftover))  # consume from buffer
-        except Exception:
-            pass
+        # Duplicate the socket for the WS handler.
+        # rfile/wfile from BaseHTTPRequestHandler share the original fd
+        # and interfere with raw recv() (especially on Windows).
+        # dup() creates an independent fd that works cleanly.
+        sock = sock.dup()
+        # Prevent the handler from processing more HTTP requests
+        self.close_connection = True
         try:
             entry.ws_handler(sock, path_params, {
                 "path": path,

@@ -33,7 +33,10 @@ def _refresh_claude_token(refresh_token: str) -> dict:
 
     req = urllib.request.Request(
         _OAUTH_URL, data=payload,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "claude-code/1.0",
+        },
         method="POST",
     )
     try:

@@ -212,6 +212,7 @@ class LLMCliSharedMixin:
                 conn.request("POST", parsed.path or "/v1/oauth/token", body=body, headers={
                     "Content-Type": "application/json",
                     "Content-Length": str(len(body)),
+                    "User-Agent": "claude-code/1.0",
                 })
                 resp = conn.getresponse()
                 resp_body = resp.read().decode("utf-8")

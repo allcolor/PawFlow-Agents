@@ -153,21 +153,23 @@ const HELP_DATA = {
   '/clc': { alias: '/claude-login-credentials' },
   '/terminal': {
     usage: '/terminal [relay_name] | /terminal close',
-    short: 'Open an interactive terminal on a relay',
-    detail: 'Opens xterm.js connected to a PTY on the relay container.\n\n'
+    short: 'Open a terminal tab on a relay',
+    detail: 'Opens xterm.js in a new tab connected to a PTY on the relay.\n\n'
       + '  /terminal              \u2014 Open on first connected relay\n'
       + '  /terminal my_relay     \u2014 Open on a specific relay\n'
-      + '  /terminal close        \u2014 Close the terminal panel\n'
-      + '  Shortcut: /term',
+      + '  /terminal close        \u2014 Close the active terminal tab\n'
+      + '  Shortcut: /term\n\n'
+      + 'You can open multiple terminals (each gets its own tab).\n'
+      + 'Close a tab by clicking \u00d7 on the tab or /terminal close.',
   },
   '/term': { alias: '/terminal' },
   '/code': {
-    usage: '/code [relay_name] | /code close [relay_name]',
-    short: 'Start code-server (VS Code) on a relay',
-    detail: 'Starts code-server on the relay, pointing at its filesystem.\n\n'
+    usage: '/code [relay_name] | /code close',
+    short: 'Open VS Code (code-server) tab on a relay',
+    detail: 'Opens code-server in a tab. Only one VS Code instance at a time.\n\n'
       + '  /code                  \u2014 Start on first connected relay\n'
       + '  /code my_relay         \u2014 Start on a specific relay\n'
-      + '  /code close my_relay   \u2014 Stop code-server',
+      + '  /code close            \u2014 Close VS Code tab',
   },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',

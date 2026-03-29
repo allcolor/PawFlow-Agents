@@ -1,12 +1,10 @@
 """Code-Server HTTP/WS Proxy — bridges browser to relay's code-server.
 
 HTTP requests are proxied via the relay's `http_proxy` command action.
-WebSocket connections are tunneled through the relay's WS connection
-(multiplexed alongside filesystem commands and terminal traffic).
+WebSocket connections are tunneled through the relay's WS connection.
 
 Routes: /code/{path+}  where path starts with relay_id/...
-code-server is started with --base-path /code/{relay_id} so all
-generated URLs include the correct prefix.
+The proxy strips /code/{relay_id} and forwards to code-server at root.
 """
 
 import base64
@@ -19,19 +17,19 @@ import uuid
 logger = logging.getLogger(__name__)
 
 # —— Session registry ——
-# relay_id → {port, relay_service, base_path, cs_ws_sessions: {sid → {browser_sock, ...}}}
+# relay_id → {port, relay_service, cs_ws_sessions: {sid → {browser_sock, ...}}}
 _sessions: dict = {}
 _lock = threading.Lock()
 
 
-def register_code_server(relay_id: str, port: int, relay_service, base_path: str):
+def register_code_server(relay_id: str, port: int, relay_service, **kwargs):
     with _lock:
         _sessions[relay_id] = {
             "port": port,
             "relay_service": relay_service,
-            "base_path": base_path,
             "cs_ws_sessions": {},
         }
+    logger.info("Code-server registered: relay=%s port=%d", relay_id, port)
 
 
 def unregister_code_server(relay_id: str):
@@ -47,24 +45,20 @@ def unregister_code_server(relay_id: str):
                     pass
 
 
-def get_code_server(relay_id: str):
-    with _lock:
-        return _sessions.get(relay_id)
-
-
 # —— HTTP proxy callback ——
 
 def code_http_proxy(pending_req):
     """HTTP callback for /code/{path+}.
 
-    Extracts relay_id from the path, proxies to code-server via relay.
+    Proxies to code-server via relay's http_proxy action.
     """
     full_path = pending_req.path_params.get("path", "")
     relay_id = full_path.split("/", 1)[0]
-    original_path = pending_req.path
+    sub_path = full_path.split("/", 1)[1] if "/" in full_path else ""
+    proxied_path = "/" + sub_path
     query = pending_req.query_string
     if query:
-        original_path += "?" + query
+        proxied_path += "?" + query
 
     with _lock:
         sess = _sessions.get(relay_id)
@@ -91,7 +85,7 @@ def code_http_proxy(pending_req):
             "http_proxy",
             port=port,
             method=pending_req.method,
-            req_path=original_path,
+            req_path=proxied_path,
             req_headers=fwd_headers,
             req_body=base64.b64encode(pending_req.body).decode("ascii") if pending_req.body else "",
         )
@@ -104,7 +98,6 @@ def code_http_proxy(pending_req):
         resp_headers = result.get("headers", {})
         resp_body = base64.b64decode(result.get("body", "")) if result.get("body") else b""
 
-        # Remove hop-by-hop headers
         for k in list(resp_headers):
             if k.lower() in ("transfer-encoding", "connection", "keep-alive"):
                 del resp_headers[k]
@@ -125,10 +118,11 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     """
     full_path = path_params.get("path", "")
     relay_id = full_path.split("/", 1)[0]
-    original_path = meta.get("path", "/")
+    sub_path = full_path.split("/", 1)[1] if "/" in full_path else ""
+    proxied_path = "/" + sub_path
     query = meta.get("query", "")
     if query:
-        original_path += "?" + query
+        proxied_path += "?" + query
 
     with _lock:
         sess = _sessions.get(relay_id)
@@ -139,42 +133,52 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
     relay_service = sess["relay_service"]
     port = sess["port"]
 
-    # Open a WS connection on the relay to code-server
     ws_session_id = uuid.uuid4().hex[:12]
 
     fwd_headers = {}
     for k, v in meta.get("headers", {}).items():
         kl = k.lower()
         if kl in ("sec-websocket-key", "sec-websocket-accept",
+                  "sec-websocket-extensions",
                   "upgrade", "connection"):
             continue
         fwd_headers[k] = v
     fwd_headers["Host"] = f"127.0.0.1:{port}"
+    fwd_headers["Origin"] = f"http://127.0.0.1:{port}"
 
-    try:
-        result = relay_service._request(
-            "cs_ws_open",
-            session_id=ws_session_id,
-            port=port,
-            path=original_path,
-            headers=fwd_headers,
-        )
-        if not isinstance(result, dict) or not result.get("ok"):
-            err = result.get("error", "Unknown") if isinstance(result, dict) else str(result)
-            _ws_close(client_sock, 4002, f"Failed: {err}")
-            return
-    except Exception as e:
-        _ws_close(client_sock, 4002, f"Failed: {e}")
-        return
-
-    # Register browser socket
+    # Register browser socket BEFORE opening relay WS
     with _lock:
         if relay_id in _sessions:
             _sessions[relay_id]["cs_ws_sessions"][ws_session_id] = {
                 "browser_sock": client_sock,
             }
 
-    logger.info("Code WS proxy: relay=%s session=%s connected", relay_id, ws_session_id)
+    logger.debug("Code WS proxy: opening relay WS session=%s path=%s", ws_session_id, proxied_path)
+
+    try:
+        result = relay_service._request(
+            "cs_ws_open",
+            session_id=ws_session_id,
+            port=port,
+            ws_path=proxied_path,
+            headers=fwd_headers,
+        )
+        if not isinstance(result, dict) or not result.get("ok"):
+            err = result.get("error", "Unknown") if isinstance(result, dict) else str(result)
+            with _lock:
+                if relay_id in _sessions:
+                    _sessions[relay_id]["cs_ws_sessions"].pop(ws_session_id, None)
+            _ws_close(client_sock, 4002, f"Failed: {err}")
+            return
+    except Exception as e:
+        logger.warning("Code WS proxy: cs_ws_open failed: %s", e)
+        with _lock:
+            if relay_id in _sessions:
+                _sessions[relay_id]["cs_ws_sessions"].pop(ws_session_id, None)
+        _ws_close(client_sock, 4002, f"Failed: {e}")
+        return
+
+    logger.debug("Code WS proxy: relay=%s session=%s connected", relay_id, ws_session_id)
 
     try:
         while True:
@@ -192,8 +196,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
                 "opcode": opcode,
             })
     except Exception as e:
-        if "0 bytes" not in str(e) and "Connection" not in str(e):
-            logger.debug("Code WS proxy error: %s", e)
+        logger.debug("Code WS proxy read loop ended: %s (session=%s)", e, ws_session_id)
     finally:
         try:
             _send_command_to_relay(relay_service, {
@@ -210,7 +213,7 @@ def code_ws_proxy(client_sock, path_params: dict, meta: dict):
             client_sock.close()
         except Exception:
             pass
-        logger.info("Code WS proxy: session=%s disconnected", ws_session_id)
+        logger.debug("Code WS proxy: session=%s disconnected", ws_session_id)
 
 
 def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode: int = 1):
@@ -218,15 +221,17 @@ def dispatch_cs_ws_data(relay_id: str, ws_session_id: str, data_b64: str, opcode
     with _lock:
         sess = _sessions.get(relay_id)
     if not sess:
+        logger.debug("cs_ws_data: no session for relay %s", relay_id)
         return
     ws_sess = sess["cs_ws_sessions"].get(ws_session_id)
     if not ws_sess or not ws_sess.get("browser_sock"):
+        logger.debug("cs_ws_data: no browser sock for ws_session %s", ws_session_id)
         return
     try:
         payload = base64.b64decode(data_b64)
         _ws_send(ws_sess["browser_sock"], payload, opcode=opcode)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("cs_ws_data: send error: %s", e)
 
 
 def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
@@ -244,7 +249,7 @@ def dispatch_cs_ws_close(relay_id: str, ws_session_id: str):
 
 
 def _send_command_to_relay(relay_service, cmd: dict):
-    """Send a command to the relay via the command pipeline."""
+    """Send a command to the relay via the command pipeline (fire-and-forget)."""
     import asyncio
 
     with relay_service._relay_pool_lock:

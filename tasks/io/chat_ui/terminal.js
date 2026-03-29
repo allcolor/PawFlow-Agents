@@ -1,27 +1,22 @@
-// ── Terminal panel (xterm.js over WebSocket) ────────────────────
-// /terminal [relay_name] — open a terminal on a relay
-// /terminal close        — close current terminal
-// /code [relay_name]     — open code-server on a relay
+// ── Terminal + Code-server (xterm.js / iframe via tabs) ──
+// /terminal [relay_name] — open a new terminal tab
+// /terminal close       — close current terminal tab
+// /code [relay_name]    — open code-server tab
+// /code close           — close code-server tab
 
-let _terminalOverlay = null;
-let _terminalWs = null;
-let _terminalSessionId = null;
 let _xtermLoaded = false;
 
 /** Load xterm.js + fit addon from CDN (once). */
 function _loadXterm() {
   if (_xtermLoaded) return Promise.resolve();
   return new Promise((resolve, reject) => {
-    // CSS
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css';
     document.head.appendChild(link);
-    // JS
     const script = document.createElement('script');
     script.src = 'https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.min.js';
     script.onload = () => {
-      // Fit addon
       const fit = document.createElement('script');
       fit.src = 'https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.min.js';
       fit.onload = () => { _xtermLoaded = true; resolve(); };
@@ -33,31 +28,39 @@ function _loadXterm() {
   });
 }
 
-/** Open a terminal on the given relay. */
+/** Auto-detect the first connected relay. */
+async function _findRelay() {
+  const resp = await fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'service_list' }),
+  }).then(r => r.json());
+  const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
+  return relays.length ? relays[0].id : null;
+}
+
+/** /terminal command */
 async function cmdTerminal(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
 
   if (sub === 'close') {
-    _closeTerminalPanel();
-    addMsg('system', 'Terminal closed.');
+    // Close the currently active terminal tab
+    if (_activeTab && _activeTab.startsWith('term-')) {
+      closeTerminalTab(_activeTab);
+      addMsg('system', 'Terminal closed.');
+    } else {
+      addMsg('system', 'No active terminal to close.');
+    }
     return true;
   }
 
-  // Get relay name (first arg or default filesystem)
   let relayId = parts[1] || '';
   if (!relayId) {
-    // Try to find the first relay service
     try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'service_list' }),
-      }).then(r => r.json());
-      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
-      if (relays.length === 0) {
+      relayId = await _findRelay();
+      if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /terminal <relay_name>');
         return true;
       }
-      relayId = relays[0].id;
     } catch (e) {
       addMsg('system', 'Failed to list relays: ' + e.message);
       return true;
@@ -66,7 +69,6 @@ async function cmdTerminal(text, parts) {
 
   addMsg('system', 'Opening terminal on ' + relayId + '...');
 
-  // Ask server to open a PTY on the relay
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
@@ -79,24 +81,85 @@ async function cmdTerminal(text, parts) {
     }
 
     const sessionId = resp.session_id;
-
     await _loadXterm();
-    _openTerminalPanel(sessionId, relayId);
-    _terminalSessionId = sessionId;
+
+    // Create tab and init xterm inside it
+    const tabId = addTerminalTab(sessionId, relayId);
+    const panel = document.getElementById('tabContent_' + tabId);
+    const container = panel.querySelector('.xterm-container');
+    _initXterm(container, sessionId);
   } catch (e) {
     addMsg('system', 'Failed to open terminal: ' + e.message);
   }
   return true;
 }
 
-/** Open code-server on the given relay. */
-let _codeServerOverlay = null;
-let _codeServerRelayId = null;
+/** Initialize xterm.js inside a container element. */
+function _initXterm(container, sessionId) {
+  const term = new window.Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+    theme: { background: '#0f0f23', foreground: '#e0e0e0', cursor: '#e94560' },
+  });
+  const fitAddon = new window.FitAddon.FitAddon();
+  term.loadAddon(fitAddon);
+  term.open(container);
+  setTimeout(() => { fitAddon.fit(); term.focus(); }, 50);
 
+  // Store refs on the container for cleanup
+  container._xterm = term;
+  container._fitAddon = fitAddon;
+
+  // Resize observer
+  const ro = new ResizeObserver(() => {
+    try { fitAddon.fit(); } catch(e) {}
+  });
+  ro.observe(container);
+  container._resizeObserver = ro;
+
+  // Connect WS
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId);
+  container._ws = ws;
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: 'terminal_resize', cols: term.cols, rows: term.rows }));
+  };
+
+  ws.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'terminal_data') {
+        term.write(Uint8Array.from(atob(msg.data), c => c.charCodeAt(0)));
+      } else if (msg.type === 'terminal_exit') {
+        term.write('\r\n[Process exited]\r\n');
+      }
+    } catch (err) {}
+  };
+
+  ws.onclose = () => {
+    term.write('\r\n[Disconnected]\r\n');
+  };
+
+  term.onData((data) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'terminal_input', data: btoa(data) }));
+    }
+  });
+
+  term.onResize(({ cols, rows }) => {
+    if (ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'terminal_resize', cols, rows }));
+    }
+  });
+}
+
+/** /code command */
 async function cmdCode(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'close') {
-    _closeCodeServerPanel();
+    closeVSCodeTab();
     addMsg('system', 'Code server closed.');
     return true;
   }
@@ -104,16 +167,11 @@ async function cmdCode(text, parts) {
   let relayId = parts[1] || '';
   if (!relayId) {
     try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'service_list' }),
-      }).then(r => r.json());
-      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
-      if (relays.length === 0) {
+      relayId = await _findRelay();
+      if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /code <relay_name>');
         return true;
       }
-      relayId = relays[0].id;
     } catch (e) {
       addMsg('system', 'Failed to list relays: ' + e.message);
       return true;
@@ -132,225 +190,10 @@ async function cmdCode(text, parts) {
       return true;
     }
 
-    _openCodeServerPanel(relayId, resp.url || '/code/' + relayId + '/');
-    _codeServerRelayId = relayId;
+    addVSCodeTab(relayId, resp.url || '/code/' + relayId + '/');
     addMsg('system', 'code-server started. Loading editor...');
   } catch (e) {
     addMsg('system', 'Failed: ' + e.message);
   }
   return true;
-}
-
-function _openCodeServerPanel(relayId, url) {
-  _closeCodeServerPanel();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'code-server-overlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;'
-    + 'background:#1e1e1e;z-index:10000;display:flex;flex-direction:column;';
-
-  // Header bar
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;'
-    + 'padding:4px 12px;background:#007acc;flex-shrink:0;';
-  header.innerHTML = '<span style="color:#fff;font-size:12px;">VS Code \u2014 ' + escapeHtml(relayId) + '</span>'
-    + '<button id="code-close" style="background:none;border:none;color:#fff;font-size:16px;cursor:pointer;">\u00d7</button>';
-
-  // iframe
-  const iframe = document.createElement('iframe');
-  iframe.src = url;
-  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
-  iframe.allow = 'clipboard-read; clipboard-write';
-
-  overlay.appendChild(header);
-  overlay.appendChild(iframe);
-  document.body.appendChild(overlay);
-  _codeServerOverlay = overlay;
-
-  document.getElementById('code-close').onclick = () => _closeCodeServerPanel();
-
-  // ESC to close
-  overlay._escHandler = (e) => {
-    if (e.key === 'Escape' && e.ctrlKey) _closeCodeServerPanel();
-  };
-  document.addEventListener('keydown', overlay._escHandler);
-}
-
-function _closeCodeServerPanel() {
-  if (_codeServerOverlay) {
-    if (_codeServerOverlay._escHandler) {
-      document.removeEventListener('keydown', _codeServerOverlay._escHandler);
-    }
-    _codeServerOverlay.remove();
-    _codeServerOverlay = null;
-  }
-  if (_codeServerRelayId) {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'close_code_server', relay_id: _codeServerRelayId }),
-    }).catch(() => {});
-    _codeServerRelayId = null;
-  }
-}
-
-function _openTerminalPanel(sessionId, relayId) {
-  // Close existing
-  _closeTerminalPanel();
-
-  // Create overlay
-  const overlay = document.createElement('div');
-  overlay.id = 'terminal-overlay';
-  overlay.style.cssText = 'position:fixed;bottom:0;left:0;width:100%;height:45%;'
-    + 'background:#1a1a2e;z-index:9999;display:flex;flex-direction:column;'
-    + 'border-top:2px solid #e94560;transition:height 0.2s;';
-
-  // Header with drag handle
-  const header = document.createElement('div');
-  header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;'
-    + 'padding:4px 12px;background:#16213e;cursor:ns-resize;user-select:none;flex-shrink:0;';
-  header.innerHTML = '<span style="color:#aaa;font-size:12px;">Terminal \u2014 ' + escapeHtml(relayId) + '</span>'
-    + '<div>'
-    + '<button id="term-minimize" style="background:none;border:none;color:#aaa;font-size:14px;cursor:pointer;margin-right:8px;">\u2500</button>'
-    + '<button id="term-close" style="background:none;border:none;color:#e94560;font-size:16px;cursor:pointer;">\u00d7</button>'
-    + '</div>';
-
-  // Terminal container
-  const termDiv = document.createElement('div');
-  termDiv.id = 'terminal-container';
-  termDiv.style.cssText = 'flex:1;overflow:hidden;padding:4px;';
-
-  overlay.appendChild(header);
-  overlay.appendChild(termDiv);
-  document.body.appendChild(overlay);
-  _terminalOverlay = overlay;
-
-  // Resize drag
-  let dragging = false;
-  header.addEventListener('mousedown', (e) => {
-    if (e.target.tagName === 'BUTTON') return;
-    dragging = true;
-    e.preventDefault();
-  });
-  document.addEventListener('mousemove', (e) => {
-    if (!dragging) return;
-    const h = window.innerHeight - e.clientY;
-    overlay.style.height = Math.max(100, Math.min(h, window.innerHeight - 50)) + 'px';
-    if (_termFit) setTimeout(() => _termFit.fit(), 50);
-  });
-  document.addEventListener('mouseup', () => { dragging = false; });
-
-  // Buttons
-  document.getElementById('term-close').onclick = () => _closeTerminalPanel();
-  document.getElementById('term-minimize').onclick = () => {
-    if (overlay.style.height === '32px') {
-      overlay.style.height = '45%';
-      termDiv.style.display = '';
-      if (_termFit) setTimeout(() => _termFit.fit(), 100);
-    } else {
-      overlay.style.height = '32px';
-      termDiv.style.display = 'none';
-    }
-  };
-
-  // Init xterm.js
-  const term = new window.Terminal({
-    cursorBlink: true,
-    fontSize: 13,
-    fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    theme: {
-      background: '#0f0f23',
-      foreground: '#e0e0e0',
-      cursor: '#e94560',
-    },
-  });
-  const fitAddon = new window.FitAddon.FitAddon();
-  term.loadAddon(fitAddon);
-  term.open(termDiv);
-  setTimeout(() => { fitAddon.fit(); term.focus(); }, 50);
-  window._termFit = fitAddon;
-
-  // Resize observer
-  const ro = new ResizeObserver(() => {
-    try { fitAddon.fit(); } catch(e) {}
-  });
-  ro.observe(termDiv);
-
-  // Connect WS
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(proto + '//' + location.host + '/terminal/' + sessionId);
-  _terminalWs = ws;
-
-  ws.onopen = () => {
-    console.log('[terminal] WS connected');
-    ws.send(JSON.stringify({
-      type: 'terminal_resize',
-      cols: term.cols,
-      rows: term.rows,
-    }));
-  };
-
-  ws.onerror = (e) => {
-    console.error('[terminal] WS error:', e);
-  };
-
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (msg.type === 'terminal_data') {
-        const bytes = Uint8Array.from(atob(msg.data), c => c.charCodeAt(0));
-        term.write(bytes);
-      } else if (msg.type === 'terminal_exit') {
-        term.write('\r\n[Process exited]\r\n');
-      }
-    } catch (err) {
-      console.warn('[terminal] bad message:', err);
-    }
-  };
-
-  ws.onclose = (e) => {
-    console.log('[terminal] WS closed:', e.code, e.reason);
-    term.write('\r\n[Disconnected]\r\n');
-  };
-
-  // Input: user types → relay PTY
-  term.onData((data) => {
-    console.log('[terminal] onData:', data.length, 'bytes, ws state:', ws.readyState);
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'terminal_input',
-        data: btoa(data),
-      }));
-    }
-  });
-
-  // Resize: terminal size changes → relay PTY resize
-  term.onResize(({ cols, rows }) => {
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({
-        type: 'terminal_resize',
-        cols, rows,
-      }));
-    }
-  });
-}
-
-function _closeTerminalPanel() {
-  if (_terminalWs) {
-    try { _terminalWs.close(); } catch(e) {}
-    _terminalWs = null;
-  }
-  if (_terminalOverlay) {
-    _terminalOverlay.remove();
-    _terminalOverlay = null;
-  }
-  if (_terminalSessionId) {
-    // Tell server to close the PTY
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'close_terminal', session_id: _terminalSessionId,
-        relay_id: '' }), // relay_id retrieved server-side from session
-    }).catch(() => {});
-    _terminalSessionId = null;
-  }
-  window._termFit = null;
 }

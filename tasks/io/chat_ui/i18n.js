@@ -197,7 +197,6 @@ function t(key, vars) {
 document.getElementById('status').textContent = t('ready');
 document.getElementById('sendBtn').textContent = t('send');
 document.getElementById('logoutBtn').textContent = t('logout');
-document.getElementById('deleteConvBtn').title = t('deleteConv');
 document.getElementById('input').placeholder = t('placeholder');
 document.querySelector('.btn-attach').title = t('attachTitle');
 // folderBtn removed (browser filesystem feature deleted)

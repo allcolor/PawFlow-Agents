@@ -238,6 +238,9 @@ class WSListener:
                 service._relay_shells = _reg_info["shells"]
             if service and _reg_info:
                 service._relay_info = _reg_info
+            # Store relay IP for direct connections (code-server proxy, etc.)
+            if addr and service:
+                service._relay_addr = addr[0]
 
             # Confirm registration
             await self._ws_send(writer, json.dumps({
@@ -347,6 +350,8 @@ class WSListener:
                     except Exception:
                         pass
                 elif msg.get("type") == "cs_ws_data":
+                    logger.debug("[WS] cs_ws_data received: session=%s len=%d",
+                                msg.get("session_id", ""), len(msg.get("data", "")))
                     try:
                         from services.code_server_proxy import dispatch_cs_ws_data
                         dispatch_cs_ws_data(

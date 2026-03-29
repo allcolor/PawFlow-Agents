@@ -1000,16 +1000,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _cs_port = _s.getsockname()[1]
             _cs_args = [
                 "code-server",
-                "--bind-addr", f"127.0.0.1:{_cs_port}",
+                "--bind-addr", f"0.0.0.0:{_cs_port}",
                 "--auth", "none",
                 "--disable-telemetry",
             ]
-            if _base_path:
-                _cs_args.extend(["--base-path", _base_path])
             _cs_args.append(root_dir)
             try:
+                _cs_log = open("/tmp/code-server.log", "w")
                 _cs_proc = subprocess.Popen(
-                    _cs_args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    _cs_args, stdout=_cs_log, stderr=_cs_log)
                 _execute_command._code_server_proc = _cs_proc
                 _execute_command._code_server_port = _cs_port
                 sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port} base_path={_base_path}\n")
@@ -1025,7 +1024,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": "Exec not allowed"}
             _ws_sid = msg.get("session_id", "")
             _ws_port = msg.get("port", 0)
-            _ws_path = msg.get("path", "/")
+            _ws_path = msg.get("ws_path", "/")
             _ws_headers = msg.get("headers", {})
             if not _ws_sid or not _ws_port:
                 return {"ok": False, "error": "Missing session_id or port"}
@@ -1045,6 +1044,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     "sec-websocket-key", "sec-websocket-version"):
                         _hdr_lines.append(f"{_hk}: {_hv}")
                 _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
+                sys.stderr.write(f"[FSRelay] cs_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
                 _cs_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
                 _cs_sock.sendall(_handshake.encode())
                 _resp = b""
@@ -1053,15 +1053,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     if not _chunk:
                         raise ConnectionError("WS handshake failed")
                     _resp += _chunk
-                if b"101" not in _resp.split(b"\r\n")[0]:
+                _status_line = _resp.split(b"\r\n")[0]
+                if b"101" not in _status_line:
+                    sys.stderr.write(f"[FSRelay] cs_ws_open handshake rejected: {_resp[:500]}\n")
                     _cs_sock.close()
-                    return {"ok": False, "error": "WS handshake rejected"}
+                    return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
                 # Reader thread: code-server WS -> relay WS -> server -> browser
                 if not hasattr(_execute_command, '_cs_ws_sessions'):
                     _execute_command._cs_ws_sessions = {}
                 _execute_command._cs_ws_sessions[_ws_sid] = {"sock": _cs_sock}
 
                 def _cs_ws_reader(_sock, _sid):
+                    sys.stderr.write(f"[FSRelay] cs_ws_reader started for {_sid}\n")
                     try:
                         while True:
                             _data = b""
@@ -1117,6 +1120,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     break
                                 continue
                             # Forward to server
+                            sys.stderr.write(f"[FSRelay] cs_ws_data: sid={_sid} op={_op} len={len(_payload)}\n")
                             _fwd = json.dumps({
                                 "type": "cs_ws_data",
                                 "session_id": _sid,
@@ -1125,6 +1129,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             })
                             with _send_lock:
                                 _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
+                            sys.stderr.write(f"[FSRelay] cs_ws_data sent ok\n")
                     except Exception:
                         pass
                     finally:
@@ -1163,7 +1168,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": f"WS session not found: {_ws_sid}"}
             try:
                 _raw = base64.b64decode(_ws_data)
-                # Build WS frame (unmasked, server->server)
+                sys.stderr.write(f"[FSRelay] cs_ws_send: sid={_ws_sid} op={_ws_op} len={len(_raw)}\n")
+                # Build WS frame (masked, client->server)
                 _frame = bytes([0x80 | _ws_op])
                 if len(_raw) < 126:
                     _frame += bytes([0x80 | len(_raw)])  # masked (client->server)
@@ -1876,6 +1882,14 @@ def main():
             "--rm",
             "--name", _docker_container,
             "-v", f"{_translate_path(_to_host_path(root_dir))}:/workspace",
+        ]
+        # Dev mount: bind relay scripts from host so changes take effect without rebuild
+        _tools_dir = os.path.dirname(os.path.abspath(__file__))
+        for _relay_file in ["pawflow_relay.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
+            _src = os.path.join(_tools_dir, _relay_file)
+            if os.path.exists(_src):
+                docker_run_args.extend(["-v", f"{_translate_path(_to_host_path(_src))}:/opt/pawflow/{_relay_file}:ro"])
+        docker_run_args += [
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", "2",
             "--memory", "2g",

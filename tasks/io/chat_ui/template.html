@@ -325,6 +325,45 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .diff-output div{margin:0;padding:0 4px;border-radius:2px}
 pre code.hljs{background:transparent!important;padding:0!important}
 .msg pre{background:#161b22;border-radius:6px;padding:8px 12px;overflow-x:auto;font-size:12px;line-height:1.5;margin:4px 0}
+/* ── Tab bar ── */
+.tab-bar { width: 42px; background: #0b1120; border-right: 1px solid #0f3460;
+           display: flex; flex-direction: column; flex-shrink: 0; padding-top: 4px; overflow: hidden; }
+.tab-btn { width: 42px; height: 42px; display: flex; align-items: center; justify-content: center;
+           background: none; border: none; color: #6c6c8a; font-size: 16px; cursor: pointer;
+           position: relative; border-left: 2px solid transparent; }
+.tab-btn:hover { color: #c0c0d0; background: #111a30; }
+.tab-btn.active { color: #e94560; border-left-color: #e94560; background: #16213e; }
+.tab-btn .tab-close { display: none; position: absolute; top: 2px; right: 2px; width: 14px; height: 14px;
+                       font-size: 10px; line-height: 14px; text-align: center; border-radius: 50%;
+                       background: rgba(233,69,96,0.3); color: #e94560; cursor: pointer; }
+.tab-btn:hover .tab-close { display: block; }
+.tab-btn .tab-close:hover { background: #e94560; color: #fff; }
+.tab-btn[title]::after { content: attr(title); position: absolute; left: 48px; top: 50%; transform: translateY(-50%);
+                          background: #16213e; color: #c0c0d0; padding: 4px 10px; border-radius: 4px;
+                          font-size: 11px; white-space: nowrap; pointer-events: none;
+                          opacity: 0; transition: opacity 0.15s; z-index: 100;
+                          border: 1px solid #0f3460; box-shadow: 0 2px 8px rgba(0,0,0,0.4); }
+.tab-btn:hover[title]::after { opacity: 1; }
+.tab-spacer { flex: 1; }
+/* Tab content panels */
+.tab-content { display: none; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
+.tab-content.active { display: flex; }
+/* ── Action dropdown menu ── */
+.action-menu-wrap { position: relative; }
+.action-menu-btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
+                    padding: 6px 10px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }
+.action-menu-btn:hover { background: #e94560; color: white; }
+.action-menu { display: none; position: absolute; right: 0; top: 100%; margin-top: 4px;
+               background: #16213e; border: 1px solid #0f3460; border-radius: 8px;
+               min-width: 240px; box-shadow: 0 4px 16px rgba(0,0,0,0.5); z-index: 200; padding: 4px 0; }
+.action-menu.open { display: block; }
+.action-menu-item { display: flex; align-items: center; gap: 10px; padding: 8px 14px;
+                     cursor: pointer; color: #c0c0d0; font-size: 13px; }
+.action-menu-item:hover { background: #0f3460; color: #e0e0f0; }
+.action-menu-item .ami-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+.action-menu-item .ami-label { font-weight: 500; }
+.action-menu-item .ami-desc { font-size: 11px; color: #6c6c8a; }
+.action-menu-sep { border-top: 1px solid #0f3460; margin: 4px 0; }
 </style>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
@@ -360,6 +399,11 @@ if (typeof hljs !== 'undefined') {
     <div id="resourcesContent" style="margin-top:4px;font-size:12px;color:#8888aa;"></div>
   </div>
 </div>
+<!-- Tab bar -->
+<div class="tab-bar" id="tabBar">
+  <button class="tab-btn active" id="tabChat" data-tab="chat" title="Chat" onclick="switchTab('chat')">💬</button>
+  <div class="tab-spacer"></div>
+</div>
 <div class="main">
 <div class="header">
   <h1>PawFlow Agent</h1>
@@ -367,12 +411,6 @@ if (typeof hljs !== 'undefined') {
   <span class="active-agent-badge" id="activeAgentBadge" onclick="cmdAgentSelect('')" style="display:none" title="Click to switch back to assistant"></span>
   <div class="actions">
     <span class="user-info" id="userInfo"></span>
-    <button class="btn" id="plansBtn" onclick="togglePlansPanel()" style="display:none" title="Plans">&#x1F4CB;</button>
-    <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
-    <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
-    <button class="btn" id="explorerBtn" onclick="openExplorer()" title="File Explorer">&#128193;</button>
-    <button class="btn" id="terminalBtn" onclick="cmdTerminal('',[''])" title="Open terminal on relay" style="display:none;font-family:monospace;font-weight:bold">&gt;_</button>
-    <button class="btn" id="codeBtn" onclick="cmdCode('',[''])" title="Open VS Code on relay" style="display:none">&#x2699;</button>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default">&#x1F512; Default</option>
@@ -380,14 +418,63 @@ if (typeof hljs !== 'undefined') {
       <option value="read_only">&#x1F4D6; Read-only</option>
       <option value="auto">&#x26A1; Auto</option>
     </select>
-    <button class="btn" id="contextBtn" onclick="cmdShowContext()" style="display:none" title="View LLM context">&#x1F441;</button>
-    <button class="btn" id="memoryBtn" onclick="cmdShowMemories()" style="display:none" title="View agent memories">&#x1F9E0;</button>
-    <button class="btn" id="exportConvBtn" onclick="exportConversation()" style="display:none" title="Export conversation">&#x1F4E5;</button>
-    <button class="btn" id="refreshConvBtn" onclick="refreshCurrentConv()" style="display:none" title="Refresh conversation">&#x21BB;</button>
-    <button class="btn" id="deleteConvBtn" onclick="deleteCurrentConv()" style="display:none" title="Delete conversation">&#x1F5D1;</button>
+    <div class="action-menu-wrap" id="actionMenuWrap" style="display:none">
+      <button class="action-menu-btn" onclick="toggleActionMenu()" title="Actions">+</button>
+      <div class="action-menu" id="actionMenu">
+        <div class="action-menu-item" onclick="closeActionMenu();cmdTerminal('',[''])">
+          <span class="ami-icon" style="font-family:monospace;font-weight:bold">&gt;_</span>
+          <div><div class="ami-label">Terminal</div><div class="ami-desc">Open interactive terminal on relay</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdCode('',[''])">
+          <span class="ami-icon">&#x2699;</span>
+          <div><div class="ami-label">VS Code</div><div class="ami-desc">Open code-server editor on relay</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <div class="action-menu-item" onclick="closeActionMenu();openExplorer()">
+          <span class="ami-icon">&#128193;</span>
+          <div><div class="ami-label">File Explorer</div><div class="ami-desc">Browse relay filesystem</div></div>
+        </div>
+        <div class="action-menu-item" id="plansMenuItem" onclick="closeActionMenu();togglePlansPanel()">
+          <span class="ami-icon">&#x1F4CB;</span>
+          <div><div class="ami-label">Plans</div><div class="ami-desc">View active plans</div></div>
+        </div>
+        <div class="action-menu-item" id="schedsMenuItem" onclick="closeActionMenu();toggleSchedsPanel()">
+          <span class="ami-icon">&#x23F0;</span>
+          <div><div class="ami-label">Scheduled Tasks</div><div class="ami-desc">View scheduled checks</div></div>
+        </div>
+        <div class="action-menu-item" id="filesMenuItem" onclick="closeActionMenu();toggleFilesPanel()">
+          <span class="ami-icon">&#x1F4C4;</span>
+          <div><div class="ami-label">Files</div><div class="ami-desc">Conversation files</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowContext()">
+          <span class="ami-icon">&#x1F441;</span>
+          <div><div class="ami-label">Context</div><div class="ami-desc">View LLM context window</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdShowMemories()">
+          <span class="ami-icon">&#x1F9E0;</span>
+          <div><div class="ami-label">Memories</div><div class="ami-desc">View agent memories</div></div>
+        </div>
+        <div class="action-menu-sep"></div>
+        <div class="action-menu-item" onclick="closeActionMenu();exportConversation()">
+          <span class="ami-icon">&#x1F4E5;</span>
+          <div><div class="ami-label">Export</div><div class="ami-desc">Export conversation</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();refreshCurrentConv()">
+          <span class="ami-icon">&#x21BB;</span>
+          <div><div class="ami-label">Refresh</div><div class="ami-desc">Reload conversation</div></div>
+        </div>
+        <div class="action-menu-item" style="color:#e94560" onclick="closeActionMenu();deleteCurrentConv()">
+          <span class="ami-icon">&#x1F5D1;</span>
+          <div><div class="ami-label">Delete</div><div class="ami-desc">Delete this conversation</div></div>
+        </div>
+      </div>
+    </div>
     <button class="btn" id="logoutBtn" onclick="doLogout()" style="display:none">Logout</button>
   </div>
 </div>
+<!-- Chat tab content -->
+<div class="tab-content active" id="tabContentChat" data-tab="chat">
 <div class="files-panel" id="plansPanel" style="display:none">
   <div class="files-header"><strong>Plans</strong><button class="btn-close-panel" onclick="togglePlansPanel()">&times;</button></div>
   <div class="files-list" id="plansList"></div>
@@ -423,7 +510,8 @@ if (typeof hljs !== 'undefined') {
     <button id="stopBtn" onclick="cancelAgent()" style="display:none" title="Stop generation">&#9632;</button>
   </div>
 </div>
-</div>
+</div><!-- /tab-content chat -->
+</div><!-- /main -->
 <script>
 // Config injected by server
 const AGENT_PATH = '{{AGENT_PATH}}';

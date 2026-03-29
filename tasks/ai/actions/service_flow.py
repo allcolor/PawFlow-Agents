@@ -2,6 +2,8 @@
 
 import json
 import logging
+
+logger = logging.getLogger(__name__)
 import time
 import threading
 from typing import Dict, Any, List, Optional
@@ -1326,18 +1328,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            base_path = f"/code/{relay_id}"
-            result = svc._request("start_code_server", base_path=base_path)
+            logger.info("[open_code_server] Starting code-server on relay %s", relay_id)
+            result = svc._request("start_code_server")
+            logger.debug("[open_code_server] start_code_server result: %s", result)
             port = result.get("port") if isinstance(result, dict) else None
             if not port:
-                flowfile.set_content(json.dumps({"error": "Failed to get code-server port"}).encode())
+                flowfile.set_content(json.dumps({"error": "Failed to get code-server port", "detail": str(result)}).encode())
                 return [flowfile]
 
-            # Register HTTP/WS proxy routes
+            # Register HTTP/WS proxy routes (tunneled via relay)
             from services.code_server_proxy import (
                 register_code_server, code_http_proxy, code_ws_proxy,
             )
-            register_code_server(relay_id, port, svc, base_path)
+            register_code_server(relay_id, port, svc)
 
             _owner = "_code_server_proxy"
             http_svc = None
@@ -1348,8 +1351,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     http_svc = greg.get_live_instance(_sid)
                     if http_svc:
                         break
+            logger.debug("[open_code_server] http_svc=%s", http_svc)
             if http_svc:
                 existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
+                logger.debug("[open_code_server] existing code routes: %s", existing)
                 if not existing:
                     http_svc.register_route(
                         "GET", "/code/{path+}",

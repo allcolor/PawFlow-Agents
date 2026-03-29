@@ -166,15 +166,8 @@ function _doNewChat() {
   _expectingClear = false;
   addMsg('system', t('newConv'));
   document.getElementById('status').textContent = t('ready');
-  document.getElementById('deleteConvBtn').style.display = 'none';
-  document.getElementById('exportConvBtn').style.display = 'none';
-  document.getElementById('contextBtn').style.display = 'none';
-  document.getElementById('memoryBtn').style.display = '';
-  document.getElementById('filesBtn').style.display = 'none';
   document.getElementById('filesPanel').style.display = 'none';
-  document.getElementById('schedsBtn').style.display = 'none';
   document.getElementById('schedsPanel').style.display = 'none';
-  document.getElementById('plansBtn').style.display = 'none';
   document.getElementById('plansPanel').style.display = 'none';
   permissionMode = 'default';
   updatePermissionBadge();
@@ -266,17 +259,8 @@ async function _pickAgentsForNewConv() {
 
 function updateDeleteBtn() {
   const show = conversationId ? '' : 'none';
-  document.getElementById('deleteConvBtn').style.display = show;
-  document.getElementById('exportConvBtn').style.display = show;
-  document.getElementById('contextBtn').style.display = show;
-  document.getElementById('memoryBtn').style.display = '';
-  document.getElementById('refreshConvBtn').style.display = show;
-  document.getElementById('filesBtn').style.display = show;
-  document.getElementById('schedsBtn').style.display = show;
-  document.getElementById('plansBtn').style.display = show;
   document.getElementById('permissionMode').style.display = show;
-  document.getElementById('terminalBtn').style.display = show;
-  document.getElementById('codeBtn').style.display = show;
+  document.getElementById('actionMenuWrap').style.display = show;
 }
 // ── Reply-to state ──
 let _replyTo = null;  // {raw_index, role, agent, text_preview}

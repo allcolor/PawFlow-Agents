@@ -369,6 +369,9 @@ class _ConcatReader:
     def readable(self):
         return True
 
+    def flush(self):
+        pass
+
     def close(self):
         self._first.close()
         self._second.close()

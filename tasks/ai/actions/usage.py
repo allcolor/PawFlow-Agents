@@ -2,6 +2,7 @@
 
 import json
 import logging
+import threading
 import time
 from typing import Dict, Any, List, Optional
 
@@ -78,8 +79,16 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             for key, info in list(self._running_agents.items()):
                 if info.get("conversation_id") != conv_id:
                     continue
-                # Auto-cleanup stale entries (>10 min)
-                if now - info.get("started_at", now) > 600:
+                # Auto-cleanup: remove entries whose thread is dead,
+                # or that are older than 10 min (safety net)
+                _conv = info.get("conversation_id", "")
+                _thread_alive = any(
+                    t.is_alive() and (
+                        t.name == f"agent-stream-{_conv}"
+                        or t.name.startswith(f"interrupt-synth-{_conv[:8]}"))
+                    for t in threading.enumerate()) if _conv else False
+                _age = now - info.get("started_at", now)
+                if (not _thread_alive and _age > 5) or _age > 600:
                     self._running_agents.pop(key, None)
                     continue
                 active.append({

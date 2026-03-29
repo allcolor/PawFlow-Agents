@@ -841,6 +841,9 @@ function connectSSE(cid) {
       // We just reconnected (browser auto-retry or manual) — recover missed messages
       console.log('[SSE] recovering after reconnect...');
       _recoverConversation(cid);
+      // Force-sync active agents: SSE events (done/error_event) may have been
+      // lost during the disconnect, leaving ghost entries in activeInteractions.
+      syncActiveFromServer();
     }
   };
 }

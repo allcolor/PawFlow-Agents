@@ -326,7 +326,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     "conversation_id": conversation_id,
                 }
 
-            self._streaming_agent_loop(ctx, conversation_id, bus)
+            try:
+                self._streaming_agent_loop(ctx, conversation_id, bus)
+            except Exception:
+                # _streaming_agent_loop has its own try/finally that calls
+                # _decrement_active, but guard against edge cases (e.g.
+                # thread killed between _running_agents set and loop entry)
+                with self._running_agents_lock:
+                    self._running_agents.pop(_gen_key, None)
 
         thread = threading.Thread(
             target=_bg_streaming, daemon=True,

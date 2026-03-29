@@ -407,6 +407,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
 # HTTPListenerService — the shared service
 # ---------------------------------------------------------------------------
 
+# Singleton registry: port → service instance (in-process)
+_instances: Dict[int, "HTTPListenerService"] = {}
+_instances_lock = threading.Lock()
+
+
 class HTTPListenerService(BaseService):
     """Shared HTTP listener service — global, one per port.
 
@@ -414,9 +419,8 @@ class HTTPListenerService(BaseService):
     Each flow registers its routes; the service dispatches incoming
     requests to the right flow based on method + URL pattern.
 
-    Singleton per port via GlobalServiceRegistry. When a flow declares
-    an httpListener on port N, it looks up the global service first.
-    If found, it reuses it. If not, it creates and registers it.
+    Singleton per port via _instances dict. Also registered in
+    GlobalServiceRegistry for discoverability by code outside flows.
 
     Features:
     - Auto-detect TLS: peek first byte, if 0x16 → SSL, else plain HTTP
@@ -436,23 +440,17 @@ class HTTPListenerService(BaseService):
 
     @classmethod
     def get_for_port(cls, port: int) -> Optional["HTTPListenerService"]:
-        """Find the global HTTPListenerService for a port, if it exists."""
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            svc_id = f"_http_listener_{port}"
-            return greg.get_live_instance(svc_id)
-        except Exception:
-            return None
+        """Find the HTTPListenerService for a port."""
+        with _instances_lock:
+            return _instances.get(port)
 
     def __new__(cls, config=None):
         if config is None:
             config = {}
         port = int(config.get("port", 9090))
-        # Reuse global instance if exists
-        existing = cls.get_for_port(port)
-        if existing is not None:
-            return existing
+        with _instances_lock:
+            if port in _instances:
+                return _instances[port]
         return super().__new__(cls)
 
     def __init__(self, config: Dict[str, Any]):
@@ -476,6 +474,10 @@ class HTTPListenerService(BaseService):
         # SNI multi-cert: hostname → SSLContext
         self._sni_certs: Dict[str, ssl.SSLContext] = {}
         self._default_ssl_ctx: Optional[ssl.SSLContext] = None
+
+        # Register singleton
+        with _instances_lock:
+            _instances[self._port] = self
 
     def get_parameter_schema(self) -> Dict[str, Any]:
         return {
@@ -553,21 +555,16 @@ class HTTPListenerService(BaseService):
         )
         self._server_thread.start()
 
-        # Register in GlobalServiceRegistry (definition + live instance)
-        svc_id = f"_http_listener_{self._port}"
+        # Register in GlobalServiceRegistry for discoverability
+        # (live instance only — no persistent definition to avoid
+        # auto-connect creating duplicate instances on restart)
         try:
-            from gui.services.global_service_registry import GlobalServiceRegistry, GlobalServiceDef
+            from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
-            if not greg.get_definition(svc_id):
-                # Register definition without auto-connect (enabled=False)
-                # to avoid creating a second instance
-                greg.install(svc_id, self.TYPE, self.config,
-                             description=f"HTTP listener on port {self._port}",
-                             enabled=False)
-            # Set ourselves as the live instance directly
+            svc_id = f"_http_listener_{self._port}"
             greg._live_instances[svc_id] = self
         except Exception as e:
-            logger.warning("Failed to register in GlobalServiceRegistry: %s", e)
+            logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
 
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
@@ -634,12 +631,13 @@ class HTTPListenerService(BaseService):
             self._server_thread.join(timeout=5)
             self._server_thread = None
 
-        # Deregister from GlobalServiceRegistry
-        svc_id = f"_http_listener_{self._port}"
+        # Deregister
+        with _instances_lock:
+            _instances.pop(self._port, None)
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
-            greg._live_instances.pop(svc_id, None)
+            greg._live_instances.pop(f"_http_listener_{self._port}", None)
         except Exception:
             pass
 

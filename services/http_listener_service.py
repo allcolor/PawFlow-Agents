@@ -500,9 +500,8 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             proto = ws_protocol.split(",")[0].strip()
             response += f"Sec-WebSocket-Protocol: {proto}\r\n"
         response += "\r\n"
-        logger.info("[WS] handshake: key=%s accept=%s proto=%s path=%s",
-                    ws_key, accept, ws_protocol, path)
-        logger.info("[WS] response:\n%s", response.rstrip())
+        logger.info("[WS] handshake: key=%s accept=%s proto=%s path=%s headers=%s",
+                    ws_key, accept, ws_protocol, path, headers)
         sock.sendall(response.encode("latin-1"))
 
         # Hand off to WS handler — runs in this thread (from ThreadingMixIn)

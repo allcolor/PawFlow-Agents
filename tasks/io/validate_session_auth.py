@@ -123,6 +123,14 @@ class ValidateSessionAuthTask(BaseTask):
         import time as _time
         session.expires_at = _time.time() + sm._session_ttl
 
+        # Renew cookie max-age so the browser doesn't expire it
+        cookie_name = self.config.get("cookie_name", "pawflow_token")
+        cookie_max_age = int(self.config.get("cookie_max_age", 28800))
+        flowfile.set_attribute(
+            "http.response.header.Set-Cookie",
+            f"{cookie_name}={session.session_id}; Path=/; Max-Age={cookie_max_age}; "
+            f"HttpOnly; SameSite=Lax")
+
         # Auth OK
         flowfile.set_attribute("http.auth.valid", "true")
         flowfile.set_attribute("http.auth.principal", session.username)

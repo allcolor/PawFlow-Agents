@@ -521,6 +521,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             break
             except Exception:
                 pass
+            logger.info("[vnc-login] HTTPListenerService found: %s (routes: %s)",
+                        svc, svc.get_routes()[:3] if svc else "N/A")
             if svc:
                 owner = f"vnc_proxy_{session_id}"
                 # WS route for VNC frame relay
@@ -536,8 +538,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     owner,
                     callback=vnc_http_proxy,
                 )
+            else:
+                logger.warning("[vnc-login] HTTPListenerService NOT FOUND — VNC routes not registered")
         except Exception as e:
-            logger.warning("Failed to register VNC proxy routes: %s", e)
+            logger.warning("Failed to register VNC proxy routes: %s", e, exc_info=True)
 
         flowfile.set_content(json.dumps({
             "session_id": session_id,

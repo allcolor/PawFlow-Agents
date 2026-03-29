@@ -485,7 +485,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 "--name", container_name,
                 "-p", f"{free_port}:6080",
                 "-v", f"{volume_name}:/workspace",
-                "--user", "1000:1000",
                 image,
                 "bash", "/opt/pawflow/auth_login.sh",
             ]

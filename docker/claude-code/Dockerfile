@@ -1,8 +1,9 @@
 FROM node:22-slim
 
-# System deps for Claude Code + Python for MCP bridge
+# System deps for Claude Code + Python for MCP bridge + display for auth login
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip git ca-certificates curl \
+    xvfb x11vnc novnc websockify chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Claude Code CLI
@@ -28,5 +29,9 @@ ENV CLAUDE_CONFIG_DIR=/workspace
 
 # No interactive prompts
 ENV CI=true
+
+# Auth login entrypoint (used for server-side OAuth login)
+COPY auth_login.sh /opt/pawflow/auth_login.sh
+RUN chmod +x /opt/pawflow/auth_login.sh
 
 ENTRYPOINT ["claude"]

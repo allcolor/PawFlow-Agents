@@ -456,6 +456,179 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    # ── Claude Code login via server (noVNC) ───────────────────────
+
+    if action == "claude_code_server_login":
+        """Spawn a Docker container with Chromium + noVNC for Claude auth.
+
+        Returns {vnc_path, session_id} — webchat opens noVNC iframe.
+        """
+        service_id = body.get("service_id", "")
+        conversation_id = body.get("conversation_id", "")
+        if not service_id:
+            flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
+            return [flowfile]
+
+        import uuid as _uuid
+        import subprocess as _sp
+        from core.server_relay_manager import _docker_cmd, _find_free_port
+
+        session_id = _uuid.uuid4().hex[:12]
+        free_port = _find_free_port()
+        container_name = f"pawflow-claude-login-{session_id}"
+        volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
+        image = "pawflow-claude-code:latest"
+
+        try:
+            docker_cmd = _docker_cmd() + [
+                "run", "--rm", "--detach",
+                "--name", container_name,
+                "-p", f"{free_port}:6080",
+                "-v", f"{volume_name}:/workspace",
+                "--user", "1000:1000",
+                image,
+                "bash", "/opt/pawflow/auth_login.sh",
+            ]
+            result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+            if result.returncode != 0:
+                flowfile.set_content(json.dumps({
+                    "error": f"Failed to start login container: {result.stderr[:300]}"
+                }).encode())
+                return [flowfile]
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Docker error: {e}"}).encode())
+            return [flowfile]
+
+        # Register VNC proxy
+        from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+        register_session(session_id, free_port,
+                         container=container_name, service_id=service_id,
+                         user_id=user_id, volume=volume_name,
+                         launch_time=time.time())
+
+        # Register routes: HTTP (static files) + WS (VNC frames)
+        try:
+            svc = self.get_service("http_listener") if hasattr(self, 'get_service') else None
+            if svc:
+                owner = f"vnc_proxy_{session_id}"
+                # WS route for VNC frame relay
+                svc.register_route(
+                    "GET", f"/vnc/{session_id}/websockify",
+                    owner,
+                    callback=lambda req: None,
+                    ws_handler=vnc_ws_proxy,
+                )
+                # HTTP route for noVNC static files
+                svc.register_route(
+                    "GET", f"/vnc/{session_id}/{{path+}}",
+                    owner,
+                    callback=vnc_http_proxy,
+                )
+        except Exception as e:
+            logger.warning("Failed to register VNC proxy routes: %s", e)
+
+        flowfile.set_content(json.dumps({
+            "session_id": session_id,
+        }).encode())
+        return [flowfile]
+
+    if action == "claude_code_server_login_status":
+        """Poll for login completion. Check if credentials file was updated."""
+        session_id = body.get("session_id", "")
+        service_id = body.get("service_id", "")
+        from services.vnc_proxy import _sessions as _vnc_sessions, unregister_session
+        session = _vnc_sessions.get(session_id)
+        if not session:
+            flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
+            return [flowfile]
+
+        # Check if auth is done
+        import subprocess as _sp
+        from core.server_relay_manager import _docker_cmd
+        container = session["container"]
+        try:
+            check = _sp.run(
+                _docker_cmd() + ["exec", container, "test", "-f", "/tmp/auth_done"],
+                capture_output=True, timeout=5)
+            if check.returncode != 0:
+                # Check timeout (5 min max)
+                if time.time() - session["launch_time"] > 300:
+                    # Cleanup
+                    _sp.run(_docker_cmd() + ["rm", "-f", container],
+                            capture_output=True, timeout=10)
+                    unregister_session(session_id)
+                    flowfile.set_content(json.dumps({"error": "Login timed out"}).encode())
+                    return [flowfile]
+                flowfile.set_content(json.dumps({"status": "pending"}).encode())
+                return [flowfile]
+        except Exception:
+            flowfile.set_content(json.dumps({"status": "pending"}).encode())
+            return [flowfile]
+
+        # Auth done — read credentials
+        try:
+            read_result = _sp.run(
+                _docker_cmd() + ["exec", container, "cat", "/workspace/.credentials.json"],
+                capture_output=True, text=True, timeout=10)
+            credentials = json.loads(read_result.stdout)
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Failed to read credentials: {e}"}).encode())
+            # Cleanup
+            _sp.run(_docker_cmd() + ["rm", "-f", container],
+                    capture_output=True, timeout=10)
+            unregister_session(session_id)
+            return [flowfile]
+
+        # Save tokens to service config
+        oauth = credentials.get("claudeAiOauth", {})
+        access_token = oauth.get("accessToken", "")
+        refresh_token = oauth.get("refreshToken", "")
+        expires_at = oauth.get("expiresAt", 0)
+
+        if access_token:
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                sdef = greg.get_service(service_id)
+                if sdef:
+                    cfg = getattr(sdef, "config", {}) or {}
+                    cfg["claude_access_token"] = access_token
+                    cfg["claude_refresh_token"] = refresh_token
+                    cfg["claude_expires_at"] = int(expires_at)
+                    greg.update_service(service_id, config=cfg)
+                    live = greg.get_live_instance(service_id)
+                    if live and hasattr(live, '_client') and live._client:
+                        live._client.claude_access_token = access_token
+                        live._client.claude_refresh_token = refresh_token
+                        live._client.claude_expires_at = int(expires_at)
+            except Exception as e:
+                logger.warning("Failed to save credentials: %s", e)
+
+        # Cleanup container (volume stays)
+        try:
+            _sp.run(_docker_cmd() + ["rm", "-f", container],
+                    capture_output=True, timeout=10)
+        except Exception:
+            pass
+        unregister_session(session_id)
+        # Cleanup WS route
+        try:
+            svc = self.get_service("http_listener") if hasattr(self, 'get_service') else None
+            if svc:
+                svc.unregister_routes(f"vnc_proxy_{session_id}")
+        except Exception:
+            pass
+
+        if not access_token:
+            flowfile.set_content(json.dumps({"error": "No accessToken in credentials"}).encode())
+            return [flowfile]
+
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": "Claude Code credentials saved!",
+        }).encode())
+        return [flowfile]
+
     # ── Claude Code set credentials (paste) ──────────────────────────
 
     if action == "claude_code_login_url":

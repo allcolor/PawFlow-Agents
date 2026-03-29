@@ -332,6 +332,14 @@ class LLMConnectionService(BaseService):
                 "flow": "claude_login_relay",
             },
             {
+                "id": "claude_code_server_login",
+                "label": "Login via server",
+                "icon": "\U0001f310",
+                "when": {"provider": ["claude-code"]},
+                "server_action": "claude_code_server_login",
+                "flow": "claude_login_server",
+            },
+            {
                 "id": "claude_code_login",
                 "label": "Set credentials",
                 "icon": "\U0001f511",

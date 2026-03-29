@@ -48,6 +48,20 @@ class WSListener:
                 cls._instances[port] = inst
             return cls._instances[port]
 
+    # VNC proxy routes: session_id → localhost port
+    _vnc_proxies: Dict[str, int] = {}
+    _vnc_lock = threading.Lock()
+
+    @classmethod
+    def register_vnc_proxy(cls, session_id: str, port: int):
+        with cls._vnc_lock:
+            cls._vnc_proxies[session_id] = port
+
+    @classmethod
+    def unregister_vnc_proxy(cls, session_id: str):
+        with cls._vnc_lock:
+            cls._vnc_proxies.pop(session_id, None)
+
     def __init__(self, port: int):
         self._port = port
         self._routes: Dict[str, "RelayService"] = {}  # path → service

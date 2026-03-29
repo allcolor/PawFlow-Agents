@@ -166,7 +166,12 @@ class RouteRegistry:
             if ch == '{':
                 end = pattern.index('}', i)
                 param_name = pattern[i+1:end]
-                escaped += f"(?P<{param_name}>[^/]+)"
+                # {param+} matches one or more path segments (including /)
+                if param_name.endswith('+'):
+                    param_name = param_name[:-1]
+                    escaped += f"(?P<{param_name}>.+)"
+                else:
+                    escaped += f"(?P<{param_name}>[^/]+)"
                 i = end + 1
             elif ch in r'\.+*?[]()^$|':
                 escaped += '\\' + ch

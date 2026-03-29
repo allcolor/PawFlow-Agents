@@ -429,7 +429,7 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         For WS: runs handler in own thread on raw socket.
         For HTTP: wraps socket with pre-read data and delegates to normal path.
         """
-        # Read headers to determine HTTP vs WS
+        # Read headers to determine HTTP vs WS (64KB max to prevent abuse)
         try:
             data = b""
             while b"\r\n\r\n" not in data:
@@ -438,6 +438,9 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     request.close()
                     return
                 data += chunk
+                if len(data) > 65536:
+                    request.close()
+                    return
         except Exception:
             try:
                 request.close()

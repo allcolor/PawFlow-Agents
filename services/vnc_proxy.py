@@ -137,6 +137,29 @@ def unregister_session(session_id: str):
         _sessions.pop(session_id, None)
 
 
+def cleanup_user_login_sessions(user_id: str):
+    """Kill all login containers for a specific user."""
+    import subprocess
+    with _lock:
+        to_remove = [sid for sid, s in _sessions.items()
+                     if s.get("user_id") == user_id]
+    for sid in to_remove:
+        session = _sessions.get(sid)
+        if not session:
+            continue
+        container = session.get("container", "")
+        if container:
+            try:
+                from core.server_relay_manager import _docker_cmd
+                subprocess.run(_docker_cmd() + ["rm", "-f", container],
+                               capture_output=True, timeout=10)
+            except Exception:
+                pass
+        unregister_session(sid)
+    if to_remove:
+        logger.info("Cleaned up %d login container(s) for user %s", len(to_remove), user_id)
+
+
 def _get_vnc_port(session_id: str) -> int:
     with _lock:
         entry = _sessions.get(session_id)

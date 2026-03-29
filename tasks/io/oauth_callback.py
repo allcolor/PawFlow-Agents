@@ -91,20 +91,6 @@ class OAuthCallbackTask(BaseTask):
         if service is None:
             return [self._error_response(flowfile, 500, "OAuth service not configured")]
 
-        # Extract code and state early — needed for Claude PKCE check
-        code = flowfile.get_attribute("http.query.code") or ""
-        state = flowfile.get_attribute("http.query.state") or ""
-        if not code:
-            query = flowfile.get_attribute("http.query") or ""
-            params = dict(urllib.parse.parse_qsl(query))
-            code = params.get("code", "")
-            state = params.get("state", state)
-
-        # Claude Code OAuth PKCE — intercept before any other handler
-        from tasks.ai.actions.service_flow import _claude_pkce_states
-        if state and state in _claude_pkce_states and code:
-            return self._handle_claude_code_callback(flowfile, code, state)
-
         # PawFlow auth gateway: delegate to gateway for code exchange + provisioning
         if getattr(service, 'provider', '') == 'pawflow':
             return self._handle_pawflow_callback(flowfile, service)
@@ -361,105 +347,6 @@ class OAuthCallbackTask(BaseTask):
             flowfile.set_attribute("http.response.header.Location", redirect)
         flowfile.set_attribute("http.response.header.Set-Cookie",
                                f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
-        return [flowfile]
-
-    def _handle_claude_code_callback(self, flowfile, code: str, state: str):
-        """Handle Anthropic OAuth callback: exchange code for tokens, save to secrets."""
-        from tasks.ai.actions.service_flow import _claude_pkce_states
-
-        pkce = _claude_pkce_states.pop(state, None)
-        if not pkce:
-            return [self._error_response(flowfile, 400, "Invalid or expired state")]
-
-        service_id = pkce["service_id"]
-        code_verifier = pkce["code_verifier"]
-        redirect_uri = pkce["redirect_uri"]
-
-        _CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
-        _TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
-
-        # Exchange code for tokens
-        import urllib.request
-        import urllib.error
-        payload = urllib.parse.urlencode({
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": redirect_uri,
-            "client_id": _CLIENT_ID,
-            "code_verifier": code_verifier,
-        }).encode("utf-8")
-
-        req = urllib.request.Request(
-            _TOKEN_URL, data=payload,
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "claude-code/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace")[:300]
-            return [self._error_response(flowfile, 502, f"Token exchange failed ({e.code}): {body}")]
-
-        access_token = data.get("accessToken", "")
-        refresh_token = data.get("refreshToken", "")
-        expires_at = data.get("expiresAt", 0)
-
-        if not access_token:
-            return [self._error_response(flowfile, 502, f"No access token: {list(data.keys())}")]
-
-        # Save to secrets
-        from pathlib import Path
-        from core.secrets import get_secrets_manager
-        sm = get_secrets_manager()
-
-        secrets_path = Path("config/global_secrets.json")
-        secrets_path.parent.mkdir(parents=True, exist_ok=True)
-        existing = {}
-        if secrets_path.exists():
-            existing = json.loads(secrets_path.read_text(encoding="utf-8"))
-
-        prefix = service_id.replace("-", "_")
-        existing[f"{prefix}_access_token"] = sm.encrypt(access_token)
-        existing[f"{prefix}_refresh_token"] = sm.encrypt(refresh_token)
-        existing[f"{prefix}_expires_at"] = str(int(expires_at))
-        secrets_path.write_text(
-            json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-
-        # Update service config to reference secrets
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            sdef = greg.get_service(service_id)
-            if sdef:
-                cfg = getattr(sdef, "config", {}) or {}
-                cfg["claude_access_token"] = f"${{secrets.global.{prefix}_access_token}}"
-                cfg["claude_refresh_token"] = f"${{secrets.global.{prefix}_refresh_token}}"
-                cfg["claude_expires_at"] = f"${{secrets.global.{prefix}_expires_at}}"
-                greg.update_service(service_id, config=cfg)
-                # Update live instance
-                live = greg.get_live_instance(service_id)
-                if live and hasattr(live, '_client') and live._client:
-                    live._client.claude_access_token = access_token
-                    live._client.claude_refresh_token = refresh_token
-                    live._client.claude_expires_at = int(expires_at)
-        except Exception as e:
-            logger.warning("Failed to update service config: %s", e)
-
-        import time as _time
-        expires_h = (expires_at - _time.time() * 1000) / 3600000
-
-        # Redirect to chat with success message
-        redirect = self.config.get("success_redirect", "/chat")
-        flowfile.set_content(b"")
-        flowfile.set_attribute("http.response.status", "302")
-        flowfile.set_attribute("http.response.header.Location",
-                               f"{redirect}?msg=Claude+login+OK+(expires+in+{expires_h:.0f}h)")
-        logger.info("[claude-code] OAuth login OK for service '%s' (expires in %.1fh)",
-                    service_id, expires_h)
         return [flowfile]
 
     def _get_oauth_service(self, flowfile: FlowFile):

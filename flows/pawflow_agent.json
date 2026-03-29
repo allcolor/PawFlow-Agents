@@ -94,11 +94,6 @@
             "relationship": "GET:/auth/callback"
           },
           {
-            "method": "GET",
-            "pattern": "/callback",
-            "relationship": "GET:/callback"
-          },
-          {
             "method": "POST",
             "pattern": "/auth/logout",
             "relationship": "POST:/auth/logout"
@@ -282,11 +277,6 @@
       "from": "http_in",
       "to": "oauth_callback",
       "type": "GET:/auth/callback"
-    },
-    {
-      "from": "http_in",
-      "to": "oauth_callback",
-      "type": "GET:/callback"
     },
     {
       "from": "http_in",

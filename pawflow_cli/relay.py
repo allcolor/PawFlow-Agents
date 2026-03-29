@@ -227,7 +227,7 @@ class RelayThread:
                 "-e", "GIT_CONFIG_COUNT=1",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",
-                "-e", f"PAWFLOW_HOST_HELPER=host.docker.internal:{host_helper_port}",
+                "-e", f"PAWFLOW_HOST_HELPER={_get_host_ip()}:{host_helper_port}",
                 self.docker_image,
                 "python3", "/opt/pawflow/pawflow_relay.py",
                 "--server", ws_url,

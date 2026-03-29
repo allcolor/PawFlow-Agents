@@ -149,6 +149,9 @@ def vnc_http_proxy(pending_req):
     import urllib.error
 
     session_id = pending_req.path_params.get("session_id", "")
+    logger.info("[vnc-proxy] HTTP request: session=%s path=%s, known sessions: %s",
+                session_id, pending_req.path_params.get("path", ""),
+                list(_sessions.keys()))
     sub_path = pending_req.path_params.get("path", "")
 
     port = _get_vnc_port(session_id)

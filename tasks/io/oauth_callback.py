@@ -381,7 +381,7 @@ class OAuthCallbackTask(BaseTask):
         # Exchange code for tokens
         import urllib.request
         import urllib.error
-        payload = json.dumps({
+        payload = urllib.parse.urlencode({
             "grant_type": "authorization_code",
             "code": code,
             "redirect_uri": redirect_uri,
@@ -391,7 +391,10 @@ class OAuthCallbackTask(BaseTask):
 
         req = urllib.request.Request(
             _TOKEN_URL, data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "claude-code/1.0"},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "claude-code/1.0",
+            },
             method="POST",
         )
         try:

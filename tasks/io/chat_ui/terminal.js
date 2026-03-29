@@ -220,7 +220,7 @@ function _openTerminalPanel(sessionId, relayId) {
   const fitAddon = new window.FitAddon.FitAddon();
   term.loadAddon(fitAddon);
   term.open(termDiv);
-  setTimeout(() => fitAddon.fit(), 50);
+  setTimeout(() => { fitAddon.fit(); term.focus(); }, 50);
   window._termFit = fitAddon;
 
   // Resize observer
@@ -235,12 +235,16 @@ function _openTerminalPanel(sessionId, relayId) {
   _terminalWs = ws;
 
   ws.onopen = () => {
-    // Send initial size
+    console.log('[terminal] WS connected');
     ws.send(JSON.stringify({
       type: 'terminal_resize',
       cols: term.cols,
       rows: term.rows,
     }));
+  };
+
+  ws.onerror = (e) => {
+    console.error('[terminal] WS error:', e);
   };
 
   ws.onmessage = (e) => {
@@ -257,12 +261,14 @@ function _openTerminalPanel(sessionId, relayId) {
     }
   };
 
-  ws.onclose = () => {
+  ws.onclose = (e) => {
+    console.log('[terminal] WS closed:', e.code, e.reason);
     term.write('\r\n[Disconnected]\r\n');
   };
 
   // Input: user types → relay PTY
   term.onData((data) => {
+    console.log('[terminal] onData:', data.length, 'bytes, ws state:', ws.readyState);
     if (ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         type: 'terminal_input',

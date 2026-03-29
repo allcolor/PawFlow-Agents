@@ -8,7 +8,6 @@ Multiple flows can register routes on the same port as long as patterns
 don't conflict.  When no route matches, 504/404 is returned directly.
 """
 
-import asyncio
 import json
 import logging
 import re
@@ -200,10 +199,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
-        # WebSocket upgrade detection
-        if (self.headers.get("Upgrade", "").lower() == "websocket" and
-                "upgrade" in self.headers.get("Connection", "").lower()):
-            return self._handle_websocket_upgrade(path, query)
+        # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
+        # BEFORE reaching this handler — so no WS detection needed here.
 
         # Read body
         content_length = int(self.headers.get('Content-Length', 0))
@@ -294,74 +291,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
         elif req.response_body:
             self.wfile.write(req.response_body)
 
-    def _handle_websocket_upgrade(self, path: str, query: str):
-        """Handle a WebSocket upgrade request.
-
-        Matches the route, verifies it has a ws_handler, performs the
-        RFC 6455 handshake, then hands the raw socket to the handler.
-        The handler runs in the current thread (thread-per-connection).
-        """
-        import base64
-        import hashlib
-
-        registry: RouteRegistry = self.server._route_registry
-        result = registry.match("GET", path)
-
-        if result is None or not result[0].ws_handler:
-            self.send_response(400)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(json.dumps({
-                "error": "Bad Request",
-                "message": f"WebSocket not supported on {path}",
-            }).encode())
-            return
-
-        entry, path_params = result
-
-        # RFC 6455 handshake
-        ws_key = self.headers.get("Sec-WebSocket-Key", "")
-        if not ws_key:
-            self.send_response(400)
-            self.end_headers()
-            return
-
-        _WS_MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
-        accept = base64.b64encode(
-            hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
-        ).decode()
-
-        # Send 101 — must be HTTP/1.1 for WebSocket (BaseHTTPHandler defaults to 1.0)
-        self.protocol_version = "HTTP/1.1"
-        self.send_response(101, "Switching Protocols")
-        self.send_header("Upgrade", "websocket")
-        self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", accept)
-        ws_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
-        if ws_protocol:
-            self.send_header("Sec-WebSocket-Protocol",
-                             ws_protocol.split(",")[0].strip())
-        self.end_headers()
-        self.wfile.flush()  # CRITICAL: flush the 101 to the browser NOW
-
-        logger.info("[WS] 101 sent for %s", path)
-
-        # Block in the WS handler in this HTTP thread.
-        # Pass rfile/wfile for reading/writing (raw socket recv returns
-        # EOF on Windows due to rfile BufferedReader consuming the fd).
-        self.close_connection = True
-        try:
-            entry.ws_handler(self.request, path_params, {
-                "path": path,
-                "query": query,
-                "headers": dict(self.headers),
-                "remote_addr": self.client_address[0] if self.client_address else "",
-                "_rfile": self.rfile,
-                "_wfile": self.wfile,
-            })
-        except Exception as e:
-            logger.debug(f"WebSocket handler error: {e}")
-
     # Handle all HTTP methods
     do_GET = _handle
     do_POST = _handle
@@ -372,274 +301,157 @@ class _RequestHandler(BaseHTTPRequestHandler):
     do_OPTIONS = _handle
 
 
-class _AsyncHTTPServer:
-    """Asyncio-based HTTP+WS server.
+class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
+    """Threaded HTTPServer with HTTP + WebSocket support.
 
-    Handles both HTTP and WebSocket on the same port:
-    - HTTP: reads request, dispatches to route callback via thread pool
-    - WS: detects Upgrade header, does RFC 6455 handshake, passes
-      asyncio reader/writer to ws_handler
-
-    Auto-detects TLS (peek first byte for 0x16 ClientHello).
+    HTTP requests go through BaseHTTPRequestHandler as usual.
+    WebSocket upgrades are intercepted in process_request via peek,
+    handled directly on the raw socket (no BaseHTTPRequestHandler),
+    and the socket is NOT closed by shutdown_request.
     """
 
-    def __init__(self, host: str, port: int, route_registry: RouteRegistry,
-                 request_timeout: float, ssl_ctx=None):
-        self._host = host
-        self._port = port
+    daemon_threads = True
+    allow_reuse_address = True
+    allow_reuse_port = True
+
+    def __init__(self, server_address, handler_class, route_registry, request_timeout):
         self._route_registry = route_registry
-        self._request_timeout = request_timeout
-        self._ssl_ctx = ssl_ctx
         self._pending_requests: Dict[str, PendingRequest] = {}
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._server = None
-        self._thread: Optional[threading.Thread] = None
+        self._request_timeout = request_timeout
+        self._ssl_ctx: Optional[ssl.SSLContext] = None
+        self._sni_certs: Dict[str, ssl.SSLContext] = {}
+        self._ws_sockets: set = set()  # sockets handed to WS handlers
+        super().__init__(server_address, handler_class)
 
-    def start(self):
-        self._loop = asyncio.new_event_loop()
-        self._thread = threading.Thread(
-            target=self._run, daemon=True,
-            name=f"http-listener-{self._port}")
-        self._thread.start()
-        # Wait for server ready
-        for _ in range(50):
-            if self._server:
-                break
-            time.sleep(0.1)
+    def handle_error(self, request, client_address):
+        import sys
+        exc = sys.exc_info()[1]
+        if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
 
-    def _run(self):
-        asyncio.set_event_loop(self._loop)
-        self._loop.run_until_complete(self._serve())
+    def get_request(self):
+        client_socket, client_address = self.socket.accept()
+        if self._ssl_ctx:
+            try:
+                first_byte = client_socket.recv(1, socket.MSG_PEEK)
+                if first_byte == b'\x16':
+                    client_socket = self._ssl_ctx.wrap_socket(
+                        client_socket, server_side=True)
+            except (OSError, ssl.SSLError) as e:
+                logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
+        return client_socket, client_address
 
-    async def _serve(self):
-        self._server = await asyncio.start_server(
-            self._handle_connection, self._host, self._port,
-            reuse_address=True)
-        logger.info("Async HTTP+WS server started on %s:%d", self._host, self._port)
-        async with self._server:
-            await self._server.serve_forever()
+    def process_request(self, request, client_address):
+        """Intercept WebSocket upgrades before the HTTP handler.
 
-    def stop(self):
-        if self._server and self._loop:
-            self._loop.call_soon_threadsafe(self._server.close)
-        if self._thread:
-            self._thread.join(timeout=5)
+        For WS: read headers from raw socket, do handshake, run handler
+        in a thread. The socket is NOT passed to BaseHTTPRequestHandler.
 
-    async def _handle_connection(self, reader: asyncio.StreamReader,
-                                  writer: asyncio.StreamWriter):
-        """Handle a single TCP connection — HTTP or WS."""
+        For HTTP: delegate to ThreadingMixIn (normal path).
+        """
+        try:
+            peek = request.recv(4096, socket.MSG_PEEK)
+        except Exception:
+            peek = b""
+
+        if b"Upgrade: websocket" in peek or b"upgrade: websocket" in peek:
+            # WS — handle directly, NOT through BaseHTTPRequestHandler
+            self._ws_sockets.add(id(request))
+            t = threading.Thread(
+                target=self._handle_ws_connection,
+                args=(request, client_address),
+                daemon=True)
+            t.start()
+            return
+
+        # Normal HTTP
+        super().process_request(request, client_address)
+
+    def shutdown_request(self, request):
+        """Don't close sockets that were handed to WS handlers."""
+        if id(request) in self._ws_sockets:
+            self._ws_sockets.discard(id(request))
+            return  # WS handler will close it
+        super().shutdown_request(request)
+
+    def _handle_ws_connection(self, sock, client_address):
+        """Handle a WebSocket connection directly on the raw socket."""
         import base64, hashlib
-        addr = writer.get_extra_info("peername")
 
         try:
-            # Read HTTP request headers
-            request = b""
-            while b"\r\n\r\n" not in request:
-                chunk = await asyncio.wait_for(reader.read(4096), timeout=30)
+            # Read full HTTP headers
+            data = b""
+            while b"\r\n\r\n" not in data:
+                chunk = sock.recv(4096)
                 if not chunk:
+                    sock.close()
                     return
-                request += chunk
+                data += chunk
 
-            # Separate headers from any extra data
-            header_end = request.index(b"\r\n\r\n") + 4
-            extra = request[header_end:]
-            header_bytes = request[:header_end]
+            header_end = data.index(b"\r\n\r\n") + 4
+            header_text = data[:header_end].decode("latin-1", errors="replace")
 
-            # Parse first line
-            first_line = header_bytes.split(b"\r\n")[0].decode("latin-1", errors="replace")
-            parts = first_line.split()
-            method = parts[0] if len(parts) >= 1 else "GET"
-            full_path = parts[1] if len(parts) >= 2 else "/"
-            path = full_path.split("?")[0]
-            query = full_path.split("?", 1)[1] if "?" in full_path else ""
+            # Parse
+            lines = header_text.split("\r\n")
+            parts = lines[0].split()
+            path = parts[1].split("?")[0] if len(parts) >= 2 else "/"
+            query = parts[1].split("?", 1)[1] if len(parts) >= 2 and "?" in parts[1] else ""
 
-            # Parse headers
             headers = {}
-            for line in header_bytes.decode("latin-1", errors="replace").split("\r\n")[1:]:
+            for line in lines[1:]:
                 if ":" in line:
                     k, v = line.split(":", 1)
                     headers[k.strip()] = v.strip()
 
-            # Detect WebSocket upgrade
-            if (headers.get("Upgrade", "").lower() == "websocket" and
-                    "upgrade" in headers.get("Connection", "").lower()):
-                await self._handle_ws(reader, writer, path, query, headers, addr)
+            # Match route
+            result = self._route_registry.match("GET", path)
+            if result is None or not result[0].ws_handler:
+                sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                sock.close()
                 return
 
-            # HTTP request — handle in thread pool
-            await self._handle_http(reader, writer, method, path, query,
-                                     headers, header_bytes, extra, addr)
+            entry, path_params = result
 
-        except asyncio.TimeoutError:
-            pass
-        except (ConnectionError, OSError):
-            pass
+            # RFC 6455 handshake
+            ws_key = headers.get("Sec-WebSocket-Key", "")
+            if not ws_key:
+                sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+                sock.close()
+                return
+
+            _MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
+            accept = base64.b64encode(
+                hashlib.sha1(ws_key.encode() + _MAGIC).digest()
+            ).decode()
+
+            response = (
+                f"HTTP/1.1 101 Switching Protocols\r\n"
+                f"Upgrade: websocket\r\n"
+                f"Connection: Upgrade\r\n"
+                f"Sec-WebSocket-Accept: {accept}\r\n"
+            )
+            ws_protocol = headers.get("Sec-WebSocket-Protocol", "")
+            if ws_protocol:
+                response += f"Sec-WebSocket-Protocol: {ws_protocol.split(',')[0].strip()}\r\n"
+            response += "\r\n"
+            sock.sendall(response.encode("latin-1"))
+
+            # Run WS handler (blocking — in this thread)
+            entry.ws_handler(sock, path_params, {
+                "path": path,
+                "query": query,
+                "headers": headers,
+                "remote_addr": client_address[0] if client_address else "",
+            })
+
         except Exception as e:
-            logger.debug("Connection handler error: %s", e)
+            logger.debug("WS connection error: %s", e)
         finally:
             try:
-                writer.close()
-                await writer.wait_closed()
+                sock.close()
             except Exception:
                 pass
-
-    async def _handle_ws(self, reader, writer, path, query, headers, addr):
-        """Handle WebSocket upgrade on the asyncio stream."""
-        import base64, hashlib
-
-        result = self._route_registry.match("GET", path)
-        if result is None or not result[0].ws_handler:
-            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nWebSocket not supported")
-            await writer.drain()
-            return
-
-        entry, path_params = result
-
-        ws_key = headers.get("Sec-WebSocket-Key", "")
-        if not ws_key:
-            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
-            await writer.drain()
-            return
-
-        _MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
-        accept = base64.b64encode(
-            hashlib.sha1(ws_key.encode() + _MAGIC).digest()
-        ).decode()
-
-        response = (
-            f"HTTP/1.1 101 Switching Protocols\r\n"
-            f"Upgrade: websocket\r\n"
-            f"Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept}\r\n"
-        )
-        ws_protocol = headers.get("Sec-WebSocket-Protocol", "")
-        if ws_protocol:
-            response += f"Sec-WebSocket-Protocol: {ws_protocol.split(',')[0].strip()}\r\n"
-        response += "\r\n"
-        writer.write(response.encode("latin-1"))
-        await writer.drain()
-
-        logger.info("[WS] 101 sent for %s", path)
-
-        # Get the raw socket from the asyncio transport
-        transport = writer.transport
-        raw_sock = transport.get_extra_info("socket")
-        if raw_sock is None:
-            # Fallback: detach from asyncio and use transport directly
-            logger.warning("[WS] Cannot get raw socket from transport")
-            return
-
-        # Detach from asyncio — we'll use the raw socket directly
-        # (asyncio reader/writer no longer usable after this)
-        transport.pause_reading()
-
-        # The WS handler runs in a thread (blocking I/O on the raw socket)
-        def _ws_thread():
-            try:
-                entry.ws_handler(raw_sock, path_params, {
-                    "path": path,
-                    "query": query,
-                    "headers": headers,
-                    "remote_addr": addr[0] if addr else "",
-                })
-            except Exception as e:
-                logger.debug("WS handler error: %s", e)
-            finally:
-                try:
-                    raw_sock.close()
-                except Exception:
-                    pass
-
-        # Run in thread and wait
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, _ws_thread)
-
-    async def _handle_http(self, reader, writer, method, path, query,
-                            headers, header_bytes, extra, addr):
-        """Handle HTTP request — dispatch to route callback."""
-        result = self._route_registry.match(method.upper(), path)
-
-        if result is None:
-            resp = (
-                b"HTTP/1.1 404 Not Found\r\n"
-                b"Content-Type: application/json\r\n\r\n"
-                + json.dumps({"error": "Not Found",
-                              "message": f"No route matches {method} {path}"}).encode()
-            )
-            writer.write(resp)
-            await writer.drain()
-            return
-
-        entry, path_params = result
-
-        # Read body if Content-Length present
-        content_length = int(headers.get("Content-Length", 0))
-        body = extra[:content_length] if extra else b""
-        remaining = content_length - len(body)
-        if remaining > 0:
-            body += await asyncio.wait_for(reader.readexactly(remaining), timeout=30)
-
-        # Create pending request
-        req = PendingRequest(
-            request_id=uuid.uuid4().hex,
-            method=method,
-            path=path,
-            headers=headers,
-            body=body,
-            query_string=query,
-            path_params=path_params,
-            remote_addr=addr[0] if addr else "",
-        )
-        self._pending_requests[req.request_id] = req
-
-        # Dispatch (non-blocking callback)
-        try:
-            entry.callback(req)
-        except Exception as e:
-            logger.error("Route callback error: %s", e)
-            self._pending_requests.pop(req.request_id, None)
-            writer.write(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
-            await writer.drain()
-            return
-
-        # Wait for response (in thread to not block event loop)
-        loop = asyncio.get_event_loop()
-        responded = await loop.run_in_executor(
-            None, req.wait, self._request_timeout)
-
-        self._pending_requests.pop(req.request_id, None)
-
-        if not responded:
-            resp = (
-                b"HTTP/1.1 504 Gateway Timeout\r\n"
-                b"Content-Type: application/json\r\n\r\n"
-                + json.dumps({"error": "Gateway Timeout"}).encode()
-            )
-            writer.write(resp)
-            await writer.drain()
-            return
-
-        # Send response
-        status_line = f"HTTP/1.1 {req.response_status} OK\r\n"
-        header_lines = "".join(
-            f"{k}: {v}\r\n" for k, v in req.response_headers.items())
-        if "Content-Type" not in req.response_headers:
-            header_lines += "Content-Type: application/octet-stream\r\n"
-
-        writer.write(f"{status_line}{header_lines}\r\n".encode("latin-1"))
-
-        if req.response_stream is not None:
-            try:
-                for chunk in req.response_stream:
-                    if chunk:
-                        writer.write(chunk)
-                        await writer.drain()
-            except (ConnectionError, OSError):
-                pass
-        elif req.response_body:
-            writer.write(req.response_body)
-
-        await writer.drain()
 
 
 
@@ -769,13 +581,31 @@ class HTTPListenerService(BaseService):
             if self._server is not None:
                 return self._server  # already running
 
+        # Build default SSL context if configured
         self._default_ssl_ctx = self._build_ssl_context()
 
-        self._server = _AsyncHTTPServer(
-            self._host, self._port, self._registry,
-            self._request_timeout, ssl_ctx=self._default_ssl_ctx,
+        self._server = _HTTPServerWithRegistry(
+            (self._host, self._port),
+            _RequestHandler,
+            self._registry,
+            self._request_timeout,
         )
-        self._server.start()
+
+        # Auto-detect TLS: don't wrap the server socket globally.
+        # Instead, wrap per-connection in get_request() (see _AutoTLSServer).
+        if self._default_ssl_ctx:
+            self._server._ssl_ctx = self._default_ssl_ctx
+            self._server._sni_certs = self._sni_certs
+            proto = "HTTP+HTTPS"
+        else:
+            proto = "HTTP"
+
+        self._server_thread = threading.Thread(
+            target=self._server.serve_forever,
+            daemon=True,
+            name=f"http-listener-{self._port}",
+        )
+        self._server_thread.start()
 
         # Register in GlobalServiceRegistry for discoverability
         svc_id = f"_http_listener_{self._port}"
@@ -793,7 +623,6 @@ class HTTPListenerService(BaseService):
         except Exception as e:
             logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
 
-        proto = "HTTPS" if self._default_ssl_ctx else "HTTP"
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server
 
@@ -853,8 +682,11 @@ class HTTPListenerService(BaseService):
             for req_id, req in list(self._server._pending_requests.items()):
                 req.complete(503, {"Content-Type": "application/json"},
                              json.dumps({"error": "Service Unavailable"}).encode())
-            self._server.stop()
+            self._server.shutdown()
             self._server = None
+        if self._server_thread:
+            self._server_thread.join(timeout=5)
+            self._server_thread = None
 
         # Deregister
         with _instances_lock:

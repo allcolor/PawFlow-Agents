@@ -88,7 +88,6 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
 
-    # Bidirectional raw socket relay
     stop = threading.Event()
 
     def _relay(src, dst, name):

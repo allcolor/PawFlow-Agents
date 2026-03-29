@@ -101,15 +101,10 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             from core.conversation_event_bus import ConversationEventBus
             bus = ConversationEventBus.instance()
             bus.publish_event(conv_id, "plan_updated", {"plan": plan})
-            # If plan was created by an agent, notify them to continue
-            created_by = plan.get("created_by", "")
-            if created_by and created_by != "user" and created_by != user_id:
-                bus.publish_event(conv_id, "notification", {
-                    "message": f"Plan '{plan['title']}' ({plan_id}) has been approved. You may proceed with execution.",
-                    "target_agent": created_by,
-                })
         except Exception:
             pass
+        # Auto-start: schedule the first pending step's agent
+        _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -216,6 +211,9 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
         except Exception:
             pass
+        # Step chaining: if step is done/skipped, trigger next step
+        if status in ("done", "skipped") and plan["status"] != "completed":
+            _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -233,15 +231,11 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Plan '{plan_id}' not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        # Assign implies approval
-        if plan["status"] == "pending_approval":
-            plan["status"] = "approved"
         if plan["status"] == "cancelled":
             flowfile.set_content(json.dumps({"error": "Cannot assign a cancelled plan"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
 
-        plan["status"] = "in_progress"
         if agent not in plan.get("assigned_to", []):
             plan.setdefault("assigned_to", []).append(agent)
 
@@ -277,18 +271,99 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
         except Exception:
             pass
-        # Wake up the assigned agent to start working
-        try:
-            from core.poll_scheduler import PollScheduler
-            PollScheduler.instance().schedule_delay(
-                conv_id, 0,
-                key=f"{conv_id}::plan::{plan_id}",
-                reason=f"[plan:{plan_id}] assigned to {agent}",
-                user_id=user_id,
-            )
-        except Exception:
-            pass
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "pause_plan_step":
+        plan_id = body.get("plan_id", "")
+        step = int(body.get("step", 0))
+        paused = body.get("paused", True)  # True to pause, False to unpause
+        if not conv_id or not plan_id or not step:
+            flowfile.set_content(json.dumps({"error": "Missing required fields"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        plans = store.get_extra(conv_id, "plans", default={}, user_id=user_id) or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            flowfile.set_content(json.dumps({"error": f"Plan '{plan_id}' not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        for s in plan["steps"]:
+            if s["index"] == step:
+                s["paused"] = bool(paused)
+                break
+        plans[plan_id] = plan
+        store.set_extra(conv_id, "plans", plans, user_id=user_id)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
+        except Exception:
+            pass
+        # If unpausing and plan is in_progress, check if this step should now execute
+        if not paused and plan["status"] in ("in_progress", "approved"):
+            # Check if previous steps are all done/skipped
+            all_prev_done = all(
+                s["status"] in ("done", "skipped")
+                for s in plan["steps"] if s["index"] < step
+            )
+            if all_prev_done:
+                _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id)
+        flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
+        return [flowfile]
+
+    return None
+
+
+def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
+                            current_agent=""):
+    """Find the next pending step and schedule its assigned agent.
+
+    If the next step is paused, stop and wait for user to unpause.
+    If the next step is for the same agent as current_agent, return
+    'continue' so the agent can proceed without rescheduling.
+    """
+    next_step = None
+    for s in plan["steps"]:
+        if s["status"] == "pending":
+            next_step = s
+            break
+    if not next_step:
+        return None  # No more pending steps
+
+    # Check if step is paused
+    if next_step.get("paused"):
+        logger.info("Plan %s step %d is paused — waiting for user to unpause",
+                     plan_id, next_step["index"])
+        return None
+
+    # Resolve agent: step.assigned_to > plan.created_by
+    agent = next_step.get("assigned_to") or plan.get("created_by", "")
+    if not agent or agent == "user":
+        return None  # Can't schedule for user
+
+    # Mark plan as in_progress
+    if plan["status"] in ("approved",):
+        plan["status"] = "in_progress"
+        plans = store.get_extra(conv_id, "plans", default={}, user_id=user_id) or {}
+        plans[plan_id] = plan
+        store.set_extra(conv_id, "plans", plans, user_id=user_id)
+
+    # Same agent → return 'continue' so caller can keep going
+    if current_agent and agent == current_agent:
+        logger.info("Plan %s step %d continues with same agent '%s'",
+                     plan_id, next_step["index"], agent)
+        return "continue"
+
+    try:
+        from core.poll_scheduler import PollScheduler
+        PollScheduler.instance().schedule_delay(
+            conv_id, 0,
+            key=f"{conv_id}::plan::{plan_id}::step{next_step['index']}::{agent}",
+            reason=f"[plan_step:{plan_id}:{next_step['index']}] ({agent})",
+            user_id=user_id,
+        )
+        logger.info("Plan %s step %d scheduled for agent '%s'",
+                     plan_id, next_step["index"], agent)
+    except Exception as e:
+        logger.warning("Failed to schedule plan step: %s", e)
     return None

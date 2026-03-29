@@ -112,6 +112,10 @@ class AgentPollerMixin:
                 thought_entries.append(entry)
                 continue
 
+            if "::plan::" in entry_key:
+                thought_entries.append(entry)
+                continue
+
             # Generic scheduled recheck (user-requested via /schedule)
             logger.info(f"[poller] Scheduled recheck due for {cid[:8]}: {reason}")
             to_poll.add(cid)
@@ -398,6 +402,7 @@ class AgentPollerMixin:
         # Poll-specific flags
         _is_task = any("[agent_task:" in r for r in (scheduled_reasons or []))
         _is_task_verify = any("[task_verify:" in r for r in (scheduled_reasons or []))
+        _is_plan_step = any("[plan_step:" in r for r in (scheduled_reasons or []))
         is_random_thought = any(
             r.startswith("[random_thought]") for r in (scheduled_reasons or [])
         )
@@ -410,6 +415,7 @@ class AgentPollerMixin:
             conversation_id, scheduled_reasons or [],
             _active_agent or ctx.get("active_agent_name", ""),
             _is_task, _is_task_verify, is_random_thought,
+            _is_plan_step,
         )
         ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
         ctx["_base_message_count"] = len(ctx["messages"])
@@ -433,6 +439,9 @@ class AgentPollerMixin:
             tv_match = re.search(r'\[task_verify:(\w+)\].*by (\w+)', sr)
             if tv_match:
                 return tv_match.group(2)
+            plan_match = re.search(r'\[plan_step:\w+:\d+\]\s*\(([\w.-]+)\)', sr)
+            if plan_match:
+                return plan_match.group(1)
             sched_match = re.match(r'\[scheduled:(\w+)\]', sr)
             if sched_match:
                 return sched_match.group(1)
@@ -443,9 +452,14 @@ class AgentPollerMixin:
                             scheduled_reasons: List[str],
                             agent_name: str,
                             is_task: bool, is_task_verify: bool,
-                            is_random_thought: bool) -> str:
+                            is_random_thought: bool,
+                            is_plan_step: bool = False) -> str:
         """Build the check-in prompt for a poll-triggered agent run."""
         from core.conversation_store import ConversationStore as _CS3
+
+        if is_plan_step:
+            return self._build_plan_step_checkin(
+                conversation_id, scheduled_reasons, agent_name)
 
         if is_task:
             _all_tasks = _CS3.instance().get_extra(conversation_id, "agent_tasks") or {}
@@ -568,6 +582,64 @@ class AgentPollerMixin:
             "at a specific time or after a delay."
         )
 
+
+    def _build_plan_step_checkin(self, conversation_id: str,
+                                 scheduled_reasons: List[str],
+                                 agent_name: str) -> str:
+        """Build check-in prompt for a plan step execution."""
+        import re
+        from core.conversation_store import ConversationStore as _CS4
+
+        # Extract plan_id and step number from reason: [plan_step:p_xxx:N] (agent)
+        plan_id = ""
+        step_num = 0
+        for sr in scheduled_reasons:
+            m = re.search(r'\[plan_step:(p_\w+):(\d+)\]', sr)
+            if m:
+                plan_id = m.group(1)
+                step_num = int(m.group(2))
+                break
+
+        if not plan_id:
+            return "[System: Plan step scheduled but no plan_id found.]"
+
+        store = _CS4.instance()
+        plans = store.get_extra(conversation_id, "plans") or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            return f"[System: Plan {plan_id} not found.]"
+
+        step = None
+        for s in plan["steps"]:
+            if s["index"] == step_num:
+                step = s
+                break
+        if not step:
+            return f"[System: Step {step_num} not found in plan {plan_id}.]"
+
+        # Build context: show full plan with current step highlighted
+        total = len(plan["steps"])
+        steps_text = ""
+        for s in plan["steps"]:
+            marker = ">>" if s["index"] == step_num else "  "
+            icon = {"done": "\u2713", "skipped": "\u2014", "in_progress": "\u25d4",
+                    "error": "\u2717", "pending": "\u25cb"}.get(s["status"], "?")
+            steps_text += f"{marker} {icon} {s['index']}. {s['description']}"
+            if s.get("note"):
+                steps_text += f" [{s['note']}]"
+            steps_text += "\n"
+
+        return (
+            f"[System: Plan step execution — {plan['title']}]\n\n"
+            f"**Plan:** {plan_id} — {plan['title']}\n"
+            f"**Step {step_num}/{total}:** {step['description']}\n\n"
+            f"All steps:\n{steps_text}\n"
+            f"Execute step {step_num} now. When done, call:\n"
+            f"  update_plan(plan_id=\"{plan_id}\", updates=[{{\"step\": {step_num}, "
+            f"\"status\": \"done\", \"note\": \"what you did\"}}])\n\n"
+            f"If the step fails, set status to \"error\" with a note explaining why.\n"
+            f"Do NOT skip ahead to other steps. Do NOT respond with [NO_PENDING_WORK]."
+        )
 
     def _reschedule_active_tasks(self):
         """On poller startup, reschedule any active tasks that survived a restart."""

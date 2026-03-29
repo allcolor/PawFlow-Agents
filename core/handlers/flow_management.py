@@ -714,6 +714,7 @@ class CreatePlanHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
+        self._agent_name = "agent"
 
     @property
     def name(self) -> str:
@@ -754,6 +755,9 @@ class CreatePlanHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         import time
         title = arguments.get("title", "")
@@ -766,17 +770,20 @@ class CreatePlanHandler(ToolHandler):
             "id": plan_id,
             "title": title,
             "status": "pending_approval",
-            "created_by": "agent",
+            "created_by": self._agent_name,
             "created_at": time.time(),
             "assigned_to": [],
+            "verifier": "",
             "steps": [
                 {
                     "index": i + 1,
                     "description": s.get("description", ""),
                     "status": "pending",
+                    "paused": False,
                     "note": "",
                     "task_id": "",
                     "assigned_to": "",
+                    "verifier": "",
                 }
                 for i, s in enumerate(steps)
             ],
@@ -810,6 +817,7 @@ class UpdatePlanHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
+        self._agent_name = "agent"
 
     @property
     def name(self) -> str:
@@ -852,6 +860,9 @@ class UpdatePlanHandler(ToolHandler):
 
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         plan_id = arguments.get("plan_id", "")
@@ -907,6 +918,19 @@ class UpdatePlanHandler(ToolHandler):
                         self._conversation_id, "plan_updated", {"plan": plan})
                 except Exception:
                     pass
+            except Exception:
+                pass
+
+        # Step chaining: if any step was marked done/skipped, trigger next
+        _any_done = any(u.get("status") in ("done", "skipped") for u in updates)
+        if _any_done and plan["status"] != "completed" and self._conversation_id:
+            try:
+                from tasks.ai.actions.plans import _trigger_next_plan_step
+                from core.conversation_store import ConversationStore
+                store = ConversationStore.instance()
+                _trigger_next_plan_step(
+                    self._conversation_id, plan_id, plan, store, "",
+                    current_agent=self._agent_name)
             except Exception:
                 pass
 

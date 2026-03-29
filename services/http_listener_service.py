@@ -8,6 +8,7 @@ Multiple flows can register routes on the same port as long as patterns
 don't conflict.  When no route matches, 504/404 is returned directly.
 """
 
+import asyncio
 import json
 import logging
 import re
@@ -371,47 +372,274 @@ class _RequestHandler(BaseHTTPRequestHandler):
     do_OPTIONS = _handle
 
 
-class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
-    """Threaded HTTPServer subclass carrying a RouteRegistry and pending requests."""
+class _AsyncHTTPServer:
+    """Asyncio-based HTTP+WS server.
 
-    daemon_threads = True
+    Handles both HTTP and WebSocket on the same port:
+    - HTTP: reads request, dispatches to route callback via thread pool
+    - WS: detects Upgrade header, does RFC 6455 handshake, passes
+      asyncio reader/writer to ws_handler
 
-    allow_reuse_address = True
-    allow_reuse_port = True
+    Auto-detects TLS (peek first byte for 0x16 ClientHello).
+    """
 
-    def handle_error(self, request, client_address):
-        """Suppress noisy connection-reset errors (common on Windows)."""
-        import sys
-        exc = sys.exc_info()[1]
-        if isinstance(exc, (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
-            logger.debug(f"Connection closed by client {client_address}: {exc}")
-            return
-        super().handle_error(request, client_address)
-
-    def __init__(self, server_address, handler_class, route_registry, request_timeout):
+    def __init__(self, host: str, port: int, route_registry: RouteRegistry,
+                 request_timeout: float, ssl_ctx=None):
+        self._host = host
+        self._port = port
         self._route_registry = route_registry
-        self._pending_requests: Dict[str, PendingRequest] = {}
         self._request_timeout = request_timeout
-        self._ssl_ctx: Optional[ssl.SSLContext] = None  # set by HTTPListenerService
-        self._sni_certs: Dict[str, ssl.SSLContext] = {}
-        super().__init__(server_address, handler_class)
+        self._ssl_ctx = ssl_ctx
+        self._pending_requests: Dict[str, PendingRequest] = {}
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._server = None
+        self._thread: Optional[threading.Thread] = None
 
-    def get_request(self):
-        """Override to auto-detect TLS connections.
+    def start(self):
+        self._loop = asyncio.new_event_loop()
+        self._thread = threading.Thread(
+            target=self._run, daemon=True,
+            name=f"http-listener-{self._port}")
+        self._thread.start()
+        # Wait for server ready
+        for _ in range(50):
+            if self._server:
+                break
+            time.sleep(0.1)
 
-        Peek first byte: 0x16 = TLS ClientHello → wrap with SSL.
-        Otherwise treat as plain HTTP. Allows both on same port.
-        """
-        client_socket, client_address = self.socket.accept()
-        if self._ssl_ctx:
+    def _run(self):
+        asyncio.set_event_loop(self._loop)
+        self._loop.run_until_complete(self._serve())
+
+    async def _serve(self):
+        self._server = await asyncio.start_server(
+            self._handle_connection, self._host, self._port,
+            reuse_address=True)
+        logger.info("Async HTTP+WS server started on %s:%d", self._host, self._port)
+        async with self._server:
+            await self._server.serve_forever()
+
+    def stop(self):
+        if self._server and self._loop:
+            self._loop.call_soon_threadsafe(self._server.close)
+        if self._thread:
+            self._thread.join(timeout=5)
+
+    async def _handle_connection(self, reader: asyncio.StreamReader,
+                                  writer: asyncio.StreamWriter):
+        """Handle a single TCP connection — HTTP or WS."""
+        import base64, hashlib
+        addr = writer.get_extra_info("peername")
+
+        try:
+            # Read HTTP request headers
+            request = b""
+            while b"\r\n\r\n" not in request:
+                chunk = await asyncio.wait_for(reader.read(4096), timeout=30)
+                if not chunk:
+                    return
+                request += chunk
+
+            # Separate headers from any extra data
+            header_end = request.index(b"\r\n\r\n") + 4
+            extra = request[header_end:]
+            header_bytes = request[:header_end]
+
+            # Parse first line
+            first_line = header_bytes.split(b"\r\n")[0].decode("latin-1", errors="replace")
+            parts = first_line.split()
+            method = parts[0] if len(parts) >= 1 else "GET"
+            full_path = parts[1] if len(parts) >= 2 else "/"
+            path = full_path.split("?")[0]
+            query = full_path.split("?", 1)[1] if "?" in full_path else ""
+
+            # Parse headers
+            headers = {}
+            for line in header_bytes.decode("latin-1", errors="replace").split("\r\n")[1:]:
+                if ":" in line:
+                    k, v = line.split(":", 1)
+                    headers[k.strip()] = v.strip()
+
+            # Detect WebSocket upgrade
+            if (headers.get("Upgrade", "").lower() == "websocket" and
+                    "upgrade" in headers.get("Connection", "").lower()):
+                await self._handle_ws(reader, writer, path, query, headers, addr)
+                return
+
+            # HTTP request — handle in thread pool
+            await self._handle_http(reader, writer, method, path, query,
+                                     headers, header_bytes, extra, addr)
+
+        except asyncio.TimeoutError:
+            pass
+        except (ConnectionError, OSError):
+            pass
+        except Exception as e:
+            logger.debug("Connection handler error: %s", e)
+        finally:
             try:
-                first_byte = client_socket.recv(1, socket.MSG_PEEK)
-                if first_byte == b'\x16':  # TLS ClientHello
-                    client_socket = self._ssl_ctx.wrap_socket(
-                        client_socket, server_side=True)
-            except (OSError, ssl.SSLError) as e:
-                logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
-        return client_socket, client_address
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
+
+    async def _handle_ws(self, reader, writer, path, query, headers, addr):
+        """Handle WebSocket upgrade on the asyncio stream."""
+        import base64, hashlib
+
+        result = self._route_registry.match("GET", path)
+        if result is None or not result[0].ws_handler:
+            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\nWebSocket not supported")
+            await writer.drain()
+            return
+
+        entry, path_params = result
+
+        ws_key = headers.get("Sec-WebSocket-Key", "")
+        if not ws_key:
+            writer.write(b"HTTP/1.1 400 Bad Request\r\n\r\n")
+            await writer.drain()
+            return
+
+        _MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
+        accept = base64.b64encode(
+            hashlib.sha1(ws_key.encode() + _MAGIC).digest()
+        ).decode()
+
+        response = (
+            f"HTTP/1.1 101 Switching Protocols\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n"
+        )
+        ws_protocol = headers.get("Sec-WebSocket-Protocol", "")
+        if ws_protocol:
+            response += f"Sec-WebSocket-Protocol: {ws_protocol.split(',')[0].strip()}\r\n"
+        response += "\r\n"
+        writer.write(response.encode("latin-1"))
+        await writer.drain()
+
+        logger.info("[WS] 101 sent for %s", path)
+
+        # Get the raw socket from the asyncio transport
+        transport = writer.transport
+        raw_sock = transport.get_extra_info("socket")
+        if raw_sock is None:
+            # Fallback: detach from asyncio and use transport directly
+            logger.warning("[WS] Cannot get raw socket from transport")
+            return
+
+        # Detach from asyncio — we'll use the raw socket directly
+        # (asyncio reader/writer no longer usable after this)
+        transport.pause_reading()
+
+        # The WS handler runs in a thread (blocking I/O on the raw socket)
+        def _ws_thread():
+            try:
+                entry.ws_handler(raw_sock, path_params, {
+                    "path": path,
+                    "query": query,
+                    "headers": headers,
+                    "remote_addr": addr[0] if addr else "",
+                })
+            except Exception as e:
+                logger.debug("WS handler error: %s", e)
+            finally:
+                try:
+                    raw_sock.close()
+                except Exception:
+                    pass
+
+        # Run in thread and wait
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, _ws_thread)
+
+    async def _handle_http(self, reader, writer, method, path, query,
+                            headers, header_bytes, extra, addr):
+        """Handle HTTP request — dispatch to route callback."""
+        result = self._route_registry.match(method.upper(), path)
+
+        if result is None:
+            resp = (
+                b"HTTP/1.1 404 Not Found\r\n"
+                b"Content-Type: application/json\r\n\r\n"
+                + json.dumps({"error": "Not Found",
+                              "message": f"No route matches {method} {path}"}).encode()
+            )
+            writer.write(resp)
+            await writer.drain()
+            return
+
+        entry, path_params = result
+
+        # Read body if Content-Length present
+        content_length = int(headers.get("Content-Length", 0))
+        body = extra[:content_length] if extra else b""
+        remaining = content_length - len(body)
+        if remaining > 0:
+            body += await asyncio.wait_for(reader.readexactly(remaining), timeout=30)
+
+        # Create pending request
+        req = PendingRequest(
+            request_id=uuid.uuid4().hex,
+            method=method,
+            path=path,
+            headers=headers,
+            body=body,
+            query_string=query,
+            path_params=path_params,
+            remote_addr=addr[0] if addr else "",
+        )
+        self._pending_requests[req.request_id] = req
+
+        # Dispatch (non-blocking callback)
+        try:
+            entry.callback(req)
+        except Exception as e:
+            logger.error("Route callback error: %s", e)
+            self._pending_requests.pop(req.request_id, None)
+            writer.write(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+            await writer.drain()
+            return
+
+        # Wait for response (in thread to not block event loop)
+        loop = asyncio.get_event_loop()
+        responded = await loop.run_in_executor(
+            None, req.wait, self._request_timeout)
+
+        self._pending_requests.pop(req.request_id, None)
+
+        if not responded:
+            resp = (
+                b"HTTP/1.1 504 Gateway Timeout\r\n"
+                b"Content-Type: application/json\r\n\r\n"
+                + json.dumps({"error": "Gateway Timeout"}).encode()
+            )
+            writer.write(resp)
+            await writer.drain()
+            return
+
+        # Send response
+        status_line = f"HTTP/1.1 {req.response_status} OK\r\n"
+        header_lines = "".join(
+            f"{k}: {v}\r\n" for k, v in req.response_headers.items())
+        if "Content-Type" not in req.response_headers:
+            header_lines += "Content-Type: application/octet-stream\r\n"
+
+        writer.write(f"{status_line}{header_lines}\r\n".encode("latin-1"))
+
+        if req.response_stream is not None:
+            try:
+                for chunk in req.response_stream:
+                    if chunk:
+                        writer.write(chunk)
+                        await writer.drain()
+            except (ConnectionError, OSError):
+                pass
+        elif req.response_body:
+            writer.write(req.response_body)
+
+        await writer.drain()
 
 
 
@@ -541,31 +769,13 @@ class HTTPListenerService(BaseService):
             if self._server is not None:
                 return self._server  # already running
 
-        # Build default SSL context if configured
         self._default_ssl_ctx = self._build_ssl_context()
 
-        self._server = _HTTPServerWithRegistry(
-            (self._host, self._port),
-            _RequestHandler,
-            self._registry,
-            self._request_timeout,
+        self._server = _AsyncHTTPServer(
+            self._host, self._port, self._registry,
+            self._request_timeout, ssl_ctx=self._default_ssl_ctx,
         )
-
-        # Auto-detect TLS: don't wrap the server socket globally.
-        # Instead, wrap per-connection in get_request() (see _AutoTLSServer).
-        if self._default_ssl_ctx:
-            self._server._ssl_ctx = self._default_ssl_ctx
-            self._server._sni_certs = self._sni_certs
-            proto = "HTTP+HTTPS"
-        else:
-            proto = "HTTP"
-
-        self._server_thread = threading.Thread(
-            target=self._server.serve_forever,
-            daemon=True,
-            name=f"http-listener-{self._port}",
-        )
-        self._server_thread.start()
+        self._server.start()
 
         # Register in GlobalServiceRegistry for discoverability
         svc_id = f"_http_listener_{self._port}"
@@ -642,11 +852,8 @@ class HTTPListenerService(BaseService):
             for req_id, req in list(self._server._pending_requests.items()):
                 req.complete(503, {"Content-Type": "application/json"},
                              json.dumps({"error": "Service Unavailable"}).encode())
-            self._server.shutdown()
+            self._server.stop()
             self._server = None
-        if self._server_thread:
-            self._server_thread.join(timeout=5)
-            self._server_thread = None
 
         # Deregister
         with _instances_lock:

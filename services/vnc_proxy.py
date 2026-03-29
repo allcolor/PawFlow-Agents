@@ -88,50 +88,23 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
 
-    # Use rfile/wfile from HTTP handler for the browser side
-    client_rfile = meta.get("_rfile")
-    client_wfile = meta.get("_wfile")
-
+    # Bidirectional raw socket relay
     stop = threading.Event()
 
-    def _browser_to_docker():
-        """Read from browser (rfile) → send to Docker (socket)."""
-        logger.info("VNC relay browser->docker: started (rfile=%s, underlying=%s)",
-                    type(client_rfile).__name__,
-                    type(getattr(client_rfile, 'raw', None)).__name__)
+    def _relay(src, dst, name):
         try:
-            # Try raw socket first via rfile's underlying SocketIO
-            raw_io = getattr(client_rfile, 'raw', None)
-            reader = raw_io if raw_io else client_rfile
             while not stop.is_set():
-                data = reader.read(65536)
+                data = src.recv(65536)
                 if not data:
-                    logger.info("VNC relay browser->docker: EOF")
                     break
-                backend_sock.sendall(data)
-        except Exception as e:
-            logger.info("VNC relay browser->docker: %s: %s", type(e).__name__, e)
+                dst.sendall(data)
+        except Exception:
+            pass
         finally:
             stop.set()
 
-    def _docker_to_browser():
-        """Read from Docker (socket) → write to browser (wfile)."""
-        logger.info("VNC relay docker->browser: started")
-        try:
-            while not stop.is_set():
-                data = backend_sock.recv(65536)
-                if not data:
-                    logger.info("VNC relay docker->browser: EOF")
-                    break
-                client_wfile.write(data)
-                client_wfile.flush()
-        except Exception as e:
-            logger.info("VNC relay docker->browser: %s: %s", type(e).__name__, e)
-        finally:
-            stop.set()
-
-    t1 = threading.Thread(target=_browser_to_docker, daemon=True)
-    t2 = threading.Thread(target=_docker_to_browser, daemon=True)
+    t1 = threading.Thread(target=_relay, args=(client_sock, backend_sock, "browser->docker"), daemon=True)
+    t2 = threading.Thread(target=_relay, args=(backend_sock, client_sock, "docker->browser"), daemon=True)
     t1.start()
     t2.start()
 

@@ -93,15 +93,17 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
 
     def _relay(src, dst, name):
         """Relay raw bytes from src to dst until error or stop."""
+        logger.info("VNC relay %s: started", name)
         try:
             while not stop.is_set():
                 data = src.recv(65536)
                 if not data:
-                    logger.debug("VNC relay %s: EOF", name)
+                    logger.info("VNC relay %s: EOF (0 bytes)", name)
                     break
+                logger.debug("VNC relay %s: %d bytes", name, len(data))
                 dst.sendall(data)
-        except (ConnectionError, OSError) as e:
-            logger.debug("VNC relay %s: %s", name, e)
+        except Exception as e:
+            logger.info("VNC relay %s: error %s: %s", name, type(e).__name__, e)
         finally:
             stop.set()
 

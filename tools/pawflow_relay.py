@@ -920,6 +920,35 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             ok = _close_terminal(_sid)
             return {"ok": ok, "error": "" if ok else "Session not found"}
 
+        if action == "write_terminal":
+            _sid = msg.get("session_id", "")
+            _tsess = _terminal_sessions.get(_sid)
+            if not _tsess:
+                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
+            try:
+                _raw = base64.b64decode(msg.get("data", ""))
+                os.write(_tsess["master_fd"], _raw)
+                return {"ok": True}
+            except OSError as e:
+                return {"ok": False, "error": str(e)}
+
+        if action == "resize_terminal":
+            _sid = msg.get("session_id", "")
+            _tsess = _terminal_sessions.get(_sid)
+            if not _tsess:
+                return {"ok": False, "error": f"Terminal session not found: {_sid}"}
+            try:
+                import fcntl as _fcntl_rt
+                import termios as _termios_rt
+                import array as _array_rt
+                _c = msg.get("cols", 80)
+                _r = msg.get("rows", 24)
+                _ws = _array_rt.array("H", [_r, _c, 0, 0])
+                _fcntl_rt.ioctl(_tsess["master_fd"], _termios_rt.TIOCSWINSZ, _ws)
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
         if action == "list_terminals":
             return {"ok": True, "data": {
                 "sessions": [
@@ -1263,6 +1292,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _tid = msg.get("session_id", "")
                     _tsess = _terminal_sessions.get(_tid)
                     sys.stderr.write(f"[FSRelay] terminal_input: sid={_tid}, found={_tsess is not None}, sessions={list(_terminal_sessions.keys())}\n")
+                    # Debug: file log
+                    with open("/tmp/_term_debug.log", "a") as _dbg:
+                        _dbg.write(f"terminal_input: sid={_tid}, found={_tsess is not None}, sessions={list(_terminal_sessions.keys())}\n")
                     if _tsess:
                         try:
                             _raw = base64.b64decode(msg.get("data", ""))

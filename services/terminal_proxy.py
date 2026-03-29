@@ -120,15 +120,14 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
             msg_type = msg.get("type", "")
 
             if msg_type == "terminal_input":
-                logger.info("Terminal input: session=%s, %d bytes", session_id, len(msg.get("data", "")))
-                _send_to_relay(relay_service, {
-                    "type": "terminal_input",
+                _send_command_to_relay(relay_service, {
+                    "action": "write_terminal",
                     "session_id": session_id,
                     "data": msg.get("data", ""),
                 })
             elif msg_type == "terminal_resize":
-                _send_to_relay(relay_service, {
-                    "type": "terminal_resize",
+                _send_command_to_relay(relay_service, {
+                    "action": "resize_terminal",
                     "session_id": session_id,
                     "cols": msg.get("cols", 80),
                     "rows": msg.get("rows", 24),
@@ -147,15 +146,24 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         logger.info("Terminal proxy: session %s disconnected", session_id)
 
 
-def _send_to_relay(relay_service, msg: dict):
-    """Send a JSON message to the relay via its WS connection."""
+def _send_command_to_relay(relay_service, cmd: dict):
+    """Send a command to the relay via the proven command pipeline."""
     import asyncio
+    import uuid
 
     with relay_service._relay_pool_lock:
         pool = relay_service._relay_pool[:]
     if not pool:
         return
 
+    # Wrap as a "command" type message — this goes through the relay's
+    # _execute_command dispatch which is proven to work.
+    request_id = uuid.uuid4().hex[:8]
+    msg = {
+        "type": "command",
+        "request_id": request_id,
+        **cmd,
+    }
     payload = json.dumps(msg).encode("utf-8")
     conn = pool[0]
     writer, loop = conn["writer"], conn["loop"]
@@ -167,9 +175,8 @@ def _send_to_relay(relay_service, msg: dict):
 
     try:
         asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=5)
-        logger.info("Terminal relay send OK: %s", msg.get("type"))
     except Exception as e:
-        logger.warning("Terminal relay send error: %s", e, exc_info=True)
+        logger.warning("Terminal command send error: %s", e)
 
 
 # ── WS frame helpers ──

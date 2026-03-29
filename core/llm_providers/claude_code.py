@@ -470,9 +470,20 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             """Emit the accumulated turn via turn_callback."""
             nonlocal _turn_text_parts, _turn_tool_calls, _turn_thinking, content_parts
             text = "".join(_turn_text_parts).strip()
-            # Drop phantom tool calls: empty args + no result (never executed)
-            tc = [t for t in _turn_tool_calls
-                  if t.get("arguments") or t.get("id", "") in _tool_results]
+            # Drop phantom tool calls: empty inner args + no result (never executed)
+            # For MCP wrapped calls, check the inner arguments, not the wrapper
+            def _has_real_args(t):
+                if t.get("id", "") in _tool_results:
+                    return True  # has a result — keep regardless
+                args = t.get("arguments", {})
+                if not args:
+                    return False
+                # MCP wrapper: check inner arguments
+                if t.get("name") == "mcp__pawflow__use_tool" and isinstance(args, dict):
+                    inner = args.get("arguments", {})
+                    return bool(inner)
+                return True
+            tc = [t for t in _turn_tool_calls if _has_real_args(t)]
             _dropped = len(_turn_tool_calls) - len(tc)
             if _dropped:
                 logger.info("[claude-code] dropped %d phantom tool call(s) from turn", _dropped)
@@ -594,7 +605,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # Don't emit SSE for empty-arg tool calls — likely
                             # an incremental update that will be followed by the
                             # real one with actual arguments.
-                            if not _tc_args or _tc_args == {}:
+                            if not _tc_args or _tc_args == {} or _tc_args == "{}":
                                 logger.debug("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
                                              _tc_name, _block_id)
                                 continue

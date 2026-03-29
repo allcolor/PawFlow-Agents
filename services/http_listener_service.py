@@ -346,13 +346,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
             proto = ws_protocol.split(",")[0].strip()
             response += f"Sec-WebSocket-Protocol: {proto}\r\n"
         response += "\r\n"
-        sock.sendall(response.encode("latin-1"))
+        # Write response via wfile (not raw socket) to stay in sync with buffers
+        self.wfile.write(response.encode("latin-1"))
+        self.wfile.flush()
 
-        # Duplicate the socket for the WS handler.
-        # rfile/wfile from BaseHTTPRequestHandler share the original fd
-        # and interfere with raw recv() (especially on Windows).
-        # dup() creates an independent fd that works cleanly.
-        sock = sock.dup()
         # Prevent the handler from processing more HTTP requests
         self.close_connection = True
         try:
@@ -361,6 +358,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
                 "query": query,
                 "headers": dict(self.headers),
                 "remote_addr": self.client_address[0] if self.client_address else "",
+                # Pass rfile/wfile for proxy to use instead of raw socket
+                "_rfile": self.rfile,
+                "_wfile": self.wfile,
             })
         except Exception as e:
             logger.debug(f"WebSocket handler error: {e}")

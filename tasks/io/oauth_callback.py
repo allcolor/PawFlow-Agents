@@ -91,28 +91,26 @@ class OAuthCallbackTask(BaseTask):
         if service is None:
             return [self._error_response(flowfile, 500, "OAuth service not configured")]
 
-        # PawFlow auth gateway: delegate to gateway for code exchange + provisioning
-        if getattr(service, 'provider', '') == 'pawflow':
-            return self._handle_pawflow_callback(flowfile, service)
-
-        # Extract code and state from query parameters
+        # Extract code and state early — needed for Claude PKCE check
         code = flowfile.get_attribute("http.query.code") or ""
         state = flowfile.get_attribute("http.query.state") or ""
-
-        # Parse from query string if attributes not set individually
         if not code:
             query = flowfile.get_attribute("http.query") or ""
             params = dict(urllib.parse.parse_qsl(query))
             code = params.get("code", "")
             state = params.get("state", state)
 
+        # Claude Code OAuth PKCE — intercept before any other handler
+        from tasks.ai.actions.service_flow import _claude_pkce_states
+        if state and state in _claude_pkce_states and code:
+            return self._handle_claude_code_callback(flowfile, code, state)
+
+        # PawFlow auth gateway: delegate to gateway for code exchange + provisioning
+        if getattr(service, 'provider', '') == 'pawflow':
+            return self._handle_pawflow_callback(flowfile, service)
+
         if not code:
             return [self._error_response(flowfile, 400, "Missing authorization code")]
-
-        # Claude Code OAuth PKCE — intercept if state matches
-        from tasks.ai.actions.service_flow import _claude_pkce_states
-        if state and state in _claude_pkce_states:
-            return self._handle_claude_code_callback(flowfile, code, state)
 
         # Validate CSRF state
         state_meta = service.validate_state(state)

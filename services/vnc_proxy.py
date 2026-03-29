@@ -86,7 +86,10 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         # Forward leftover bytes from backend to client
         client_sock.sendall(_leftover)
 
-    logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
+    logger.info("VNC proxy: session %s connected (port %d), client_sock fd=%s type=%s",
+                session_id, target_port,
+                client_sock.fileno() if hasattr(client_sock, 'fileno') else '?',
+                type(client_sock).__name__)
 
     # Bidirectional raw socket relay
     stop = threading.Event()

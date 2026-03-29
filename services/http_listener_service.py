@@ -558,12 +558,12 @@ class HTTPListenerService(BaseService):
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
             greg = GlobalServiceRegistry.get_instance()
-            if not greg.get_service(svc_id):
+            if not greg.get_definition(svc_id):
                 greg.install(svc_id, self.TYPE, self.config,
                              description=f"HTTP listener on port {self._port}")
             greg._live_instances[svc_id] = self
         except Exception as e:
-            logger.debug("Failed to register in GlobalServiceRegistry: %s", e)
+            logger.warning("Failed to register in GlobalServiceRegistry: %s", e)
 
         logger.info(f"HTTPListenerService started on {proto} {self._host}:{self._port}")
         return self._server

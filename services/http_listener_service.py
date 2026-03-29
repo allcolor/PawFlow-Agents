@@ -330,34 +330,31 @@ class _RequestHandler(BaseHTTPRequestHandler):
             hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
         ).decode()
 
-        # Send 101 Switching Protocols — write directly to socket
-        # (avoid BaseHTTPRequestHandler buffering issues)
-        sock = self.request  # raw socket
-        # Echo back requested sub-protocol (e.g., noVNC needs "binary")
+        # Send 101 via standard HTTP handler
+        self.send_response(101, "Switching Protocols")
+        self.send_header("Upgrade", "websocket")
+        self.send_header("Connection", "Upgrade")
+        self.send_header("Sec-WebSocket-Accept", accept)
         ws_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
-        response = (
-            f"HTTP/1.1 101 Switching Protocols\r\n"
-            f"Upgrade: websocket\r\n"
-            f"Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept}\r\n"
-        )
         if ws_protocol:
-            # Echo first requested protocol
-            proto = ws_protocol.split(",")[0].strip()
-            response += f"Sec-WebSocket-Protocol: {proto}\r\n"
-        response += "\r\n"
-        # Write response via wfile (not raw socket) to stay in sync with buffers
-        self.wfile.write(response.encode("latin-1"))
-        self.wfile.flush()
+            self.send_header("Sec-WebSocket-Protocol",
+                             ws_protocol.split(",")[0].strip())
+        self.end_headers()
 
-        # Prevent the handler from processing more HTTP requests
+        logger.info("[WS] 101 sent for %s", path)
+
+        # Block in the WS handler in this HTTP thread.
+        # Pass rfile/wfile for reading/writing (raw socket recv returns
+        # EOF on Windows due to rfile BufferedReader consuming the fd).
         self.close_connection = True
         try:
-            entry.ws_handler(sock, path_params, {
+            entry.ws_handler(self.request, path_params, {
                 "path": path,
                 "query": query,
                 "headers": dict(self.headers),
                 "remote_addr": self.client_address[0] if self.client_address else "",
+                "_rfile": self.rfile,
+                "_wfile": self.wfile,
             })
         except Exception as e:
             logger.debug(f"WebSocket handler error: {e}")
@@ -414,123 +411,6 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
         return client_socket, client_address
 
-    def process_request(self, request, client_address):
-        """Override to intercept WebSocket upgrades BEFORE the HTTP handler.
-
-        Peek the headers to detect WS upgrade. If WS, handle on raw socket.
-        Otherwise, delegate to normal HTTP handler (bytes untouched by peek).
-        """
-        try:
-            peek = request.recv(4096, socket.MSG_PEEK)
-        except Exception:
-            peek = b""
-
-        if (b"Upgrade: websocket" in peek or b"upgrade: websocket" in peek):
-            # Consume the peeked headers
-            data = b""
-            while b"\r\n\r\n" not in data:
-                chunk = request.recv(4096)
-                if not chunk:
-                    request.close()
-                    return
-                data += chunk
-            self._handle_ws_direct(request, client_address, data)
-            return
-
-        # Normal HTTP
-        super().process_request(request, client_address)
-
-    def _handle_ws_direct(self, sock, client_address, data):
-        """Handle a WebSocket upgrade on the raw socket, bypassing HTTP handler.
-
-        Args:
-            sock: Raw TCP socket.
-            client_address: (host, port) tuple.
-            data: Already-read HTTP request bytes (headers + possibly extra).
-        """
-        import base64, hashlib
-
-        # Separate headers from any extra bytes (WS frames sent early)
-        _header_end = data.index(b"\r\n\r\n") + 4
-        _extra = data[_header_end:]
-        data = data[:_header_end]
-
-        # Parse request line and headers
-        header_part = data.decode("latin-1", errors="replace")
-        lines = header_part.split("\r\n")
-        if not lines:
-            sock.close()
-            return
-
-        request_line = lines[0]
-        parts = request_line.split()
-        method = parts[0] if len(parts) >= 1 else "GET"
-        path = parts[1].split("?")[0] if len(parts) >= 2 else "/"
-
-        headers = {}
-        for line in lines[1:]:
-            if ":" in line:
-                k, v = line.split(":", 1)
-                headers[k.strip().lower()] = v.strip()
-
-        # Match route
-        result = self._route_registry.match(method.upper(), path)
-        if result is None or not result[0].ws_handler:
-            resp = b"HTTP/1.1 400 Bad Request\r\n\r\nWebSocket not supported"
-            sock.sendall(resp)
-            sock.close()
-            return
-
-        entry, path_params = result
-
-        # RFC 6455 handshake
-        ws_key = headers.get("sec-websocket-key", "")
-        if not ws_key:
-            sock.sendall(b"HTTP/1.1 400 Bad Request\r\n\r\nMissing WS key")
-            sock.close()
-            return
-
-        _WS_MAGIC = b"258EAFA5-E914-47DA-95CA-5AB5ADF7254B"
-        accept = base64.b64encode(
-            hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
-        ).decode()
-
-        # Build response
-        response = (
-            f"HTTP/1.1 101 Switching Protocols\r\n"
-            f"Upgrade: websocket\r\n"
-            f"Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept}\r\n"
-        )
-        ws_protocol = headers.get("sec-websocket-protocol", "")
-        if ws_protocol:
-            proto = ws_protocol.split(",")[0].strip()
-            response += f"Sec-WebSocket-Protocol: {proto}\r\n"
-        response += "\r\n"
-        logger.info("[WS] raw headers:\n%s", data.decode("latin-1", errors="replace"))
-        logger.info("[WS] parsed key=%r accept=%s proto=%s path=%s",
-                    ws_key, accept, ws_protocol, path)
-        sock.sendall(response.encode("latin-1"))
-
-        # Hand off to WS handler — runs in this thread (from ThreadingMixIn)
-        def _run_handler():
-            try:
-                entry.ws_handler(sock, path_params, {
-                    "path": path,
-                    "headers": headers,
-                    "remote_addr": client_address[0] if client_address else "",
-                })
-            except Exception as e:
-                logger.debug("WebSocket handler error: %s", e)
-            finally:
-                try:
-                    sock.close()
-                except Exception:
-                    pass
-
-        # Run in a thread (like ThreadingMixIn does for HTTP)
-        t = threading.Thread(target=_run_handler, daemon=True)
-        t.start()
 
 
 # ---------------------------------------------------------------------------

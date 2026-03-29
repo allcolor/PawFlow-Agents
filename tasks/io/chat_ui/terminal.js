@@ -52,7 +52,7 @@ async function cmdTerminal(text, parts) {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: 'service_list' }),
       }).then(r => r.json());
-      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.connected);
+      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
       if (relays.length === 0) {
         addMsg('system', 'No connected relay found. Usage: /terminal <relay_name>');
         return true;
@@ -114,7 +114,7 @@ async function cmdCode(text, parts) {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: 'service_list' }),
       }).then(r => r.json());
-      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.connected);
+      const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
       if (relays.length === 0) {
         addMsg('system', 'No connected relay found. Usage: /code <relay_name>');
         return true;

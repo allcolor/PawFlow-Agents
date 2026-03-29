@@ -104,11 +104,36 @@ class ToolRelayService(BaseService):
 
     # Cancelled (conv_id, agent_name) tuples — tool calls return error immediately
     _cancelled: set = set()
+    # In-flight request_id → (conv_id, agent_name) for targeted cancellation
+    _inflight: Dict[str, tuple] = {}
+    _inflight_lock = threading.Lock()
 
     @classmethod
     def cancel_agent(cls, conversation_id: str, agent_name: str):
-        """Mark a (conv, agent) as cancelled — tool calls return error."""
+        """Cancel all in-flight tool calls for a (conv, agent) and reject new ones.
+
+        In-flight requests get their _executing Event set so they unblock,
+        and are added to the result cache as "interrupted".
+        """
         cls._cancelled.add((conversation_id, agent_name))
+        # Resolve all in-flight requests for this agent
+        with cls._inflight_lock:
+            to_cancel = [rid for rid, ca in cls._inflight.items()
+                         if ca == (conversation_id, agent_name)]
+        for rid in to_cancel:
+            with cls._cache_lock:
+                if rid in cls._executing:
+                    cls._result_cache[rid] = {
+                        "type": "result", "request_id": rid,
+                        "data": "[Interrupted by user — stop current work and respond to the new message]",
+                    }
+                    cls._executing[rid].set()
+                    cls._executing.pop(rid, None)
+            with cls._inflight_lock:
+                cls._inflight.pop(rid, None)
+        if to_cancel:
+            logger.info("[tool-relay] cancelled %d in-flight request(s) for %s/%s",
+                        len(to_cancel), conversation_id, agent_name)
 
     @classmethod
     def uncancel_agent(cls, conversation_id: str, agent_name: str):
@@ -402,15 +427,23 @@ class ToolRelayService(BaseService):
         evt = threading.Event()
         with self._cache_lock:
             self._executing[request_id] = evt
+        with self._inflight_lock:
+            self._inflight[request_id] = (conversation_id, agent_name)
 
         try:
             result = self._do_execute(request_id, tool_name, arguments,
                                        user_id, conversation_id, agent_name)
+            # If cancelled while executing, the cache already has the interrupt result
+            with self._cache_lock:
+                if request_id in self._result_cache:
+                    result = self._result_cache[request_id]
         finally:
             with self._cache_lock:
                 self._result_cache[request_id] = result
                 self._executing.pop(request_id, None)
                 evt.set()
+            with self._inflight_lock:
+                self._inflight.pop(request_id, None)
             # Cleanup old cache entries (keep last 100)
             with self._cache_lock:
                 if len(self._result_cache) > 100:

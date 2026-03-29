@@ -75,6 +75,9 @@ class AgentCoreMixin:
             if not hasattr(self, '_active_claude_client'):
                 self._active_claude_client = {}
             self._active_claude_client[conversation_id] = client
+            if not hasattr(self, '_active_agent_names'):
+                self._active_agent_names = {}
+            self._active_agent_names[conversation_id] = ctx.get("active_agent_name", "")
             # Clear cancelled state from previous run
             try:
                 from services.tool_relay_service import ToolRelayService

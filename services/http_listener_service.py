@@ -333,13 +333,19 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Send 101 Switching Protocols — write directly to socket
         # (avoid BaseHTTPRequestHandler buffering issues)
         sock = self.request  # raw socket
+        # Echo back requested sub-protocol (e.g., noVNC needs "binary")
+        ws_protocol = self.headers.get("Sec-WebSocket-Protocol", "")
         response = (
             f"HTTP/1.1 101 Switching Protocols\r\n"
             f"Upgrade: websocket\r\n"
             f"Connection: Upgrade\r\n"
             f"Sec-WebSocket-Accept: {accept}\r\n"
-            f"\r\n"
         )
+        if ws_protocol:
+            # Echo first requested protocol
+            proto = ws_protocol.split(",")[0].strip()
+            response += f"Sec-WebSocket-Protocol: {proto}\r\n"
+        response += "\r\n"
         sock.sendall(response.encode("latin-1"))
 
         # Duplicate the socket for the WS handler.

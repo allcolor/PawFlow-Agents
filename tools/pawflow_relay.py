@@ -577,20 +577,40 @@ _ACTIONS = {
 
 # ── Claude auth login (host action) ──────────────────────────────
 
+def _find_claude_binary():
+    """Find the claude binary in known installation locations."""
+    if sys.platform == "win32":
+        home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
+        candidates = [
+            os.path.join(home, ".local", "bin", "claude.exe"),
+            os.path.join(home, "AppData", "Roaming", "npm", "claude.cmd"),
+            os.path.join(home, "AppData", "Roaming", "npm", "claude"),
+            os.path.join(home, ".npm-global", "bin", "claude.cmd"),
+        ]
+    else:
+        home = os.path.expanduser("~")
+        candidates = [
+            os.path.join(home, ".local", "bin", "claude"),
+            os.path.join(home, ".npm-global", "bin", "claude"),
+            "/usr/local/bin/claude",
+            "/usr/bin/claude",
+        ]
+    # Check known paths first
+    for p in candidates:
+        if os.path.isfile(p):
+            return p
+    # Fallback: which
+    found = shutil.which("claude")
+    if found:
+        return found
+    return None
+
+
 def _claude_auth_login(req, *, send_progress=None):
     """Launch `claude auth login` on the HOST, intercept URL, return credentials."""
-    claude_path = req.get("claude_path", "").strip()
+    claude_path = _find_claude_binary()
     if not claude_path:
-        if sys.platform == "win32":
-            home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
-            candidate = os.path.join(home, ".local", "bin", "claude.exe")
-            claude_path = candidate if os.path.exists(candidate) else (shutil.which("claude") or "claude")
-        else:
-            claude_path = shutil.which("claude") or "claude"
-
-    # Security: no shell injection
-    if any(c in claude_path for c in ';|&`$(){}'):
-        return {"error": f"Invalid claude path: contains forbidden characters"}
+        return {"error": "Claude binary not found. Install Claude Code first: npm install -g @anthropic-ai/claude-code"}
 
     sys.stderr.write(f"[Relay] claude auth login: {claude_path}\n")
 

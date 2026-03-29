@@ -1130,10 +1130,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         selectHtml += '<option value="' + escapeHtml(r.relay_id) + '">' + escapeHtml(label) + '</option>';
       });
       selectHtml += '</select>';
-      const defaultPath = relays[0].platform === 'win32' ? '%HOME%\\.local\\bin\\claude.exe' : 'claude';
       div.innerHTML = selectHtml
-        + '<input id="svc-claude-path" type="text" placeholder="Claude path (default: ' + defaultPath + ')" '
-        + 'style="' + _svcInputStyle + 'margin-bottom:4px;font-size:11px;">'
         + '<button type="button" id="svc-relay-login-btn" style="background:#6c5ce7;color:white;border:none;'
         + 'padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">Start login</button>'
         + '<div id="svc-relay-status" style="color:#aaa;font-size:11px;margin-top:4px;"></div>';
@@ -1141,7 +1138,6 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
 
       document.getElementById('svc-relay-login-btn').addEventListener('click', async () => {
         const relayId = document.getElementById('svc-relay-select').value;
-        const claudePath = document.getElementById('svc-claude-path').value.trim();
         const statusEl = document.getElementById('svc-relay-status');
         const loginBtn = document.getElementById('svc-relay-login-btn');
         loginBtn.disabled = true;
@@ -1155,7 +1151,6 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
               action: 'claude_code_relay_login',
               service_id: serviceId,
               relay_id: relayId,
-              claude_path: claudePath,
             })
           }).then(r => r.json());
 

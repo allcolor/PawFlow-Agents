@@ -384,7 +384,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         """
         service_id = body.get("service_id", "")
         relay_id = body.get("relay_id", "")
-        claude_path = body.get("claude_path", "")
 
         if not service_id or not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
@@ -432,7 +431,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "claude_auth_login",
                     on_progress=_on_progress,
                     timeout=300,
-                    claude_path=claude_path,
                 )
                 _state["result"] = result
             except Exception as e:

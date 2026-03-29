@@ -533,6 +533,15 @@ class RelayService(BaseService):
                 holder["data"] = msg.get("data", {})
             evt.set()
 
+    def cancel_pending(self, request_id: str):
+        """Cancel a pending request — unblock the waiting thread with an error."""
+        with self._pending_lock:
+            entry = self._pending.pop(request_id, None)
+        if entry:
+            evt, holder = entry
+            holder["error"] = "[Interrupted by user]"
+            evt.set()
+
     def _dispatch_progress(self, msg: dict):
         """Forward progress messages to registered callback."""
         request_id = msg.get("request_id", "")

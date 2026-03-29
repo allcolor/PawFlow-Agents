@@ -116,21 +116,16 @@ class ToolRelayService(BaseService):
         and are added to the result cache as "interrupted".
         Does NOT reject future requests — only kills current in-flight ones.
         """
-        # Resolve all in-flight requests for this agent
+        # Set cancel_event on all in-flight requests for this agent
         with cls._inflight_lock:
-            to_cancel = [rid for rid, ca in cls._inflight.items()
-                         if ca == (conversation_id, agent_name)]
-        for rid in to_cancel:
-            with cls._cache_lock:
-                if rid in cls._executing:
-                    cls._result_cache[rid] = {
-                        "type": "result", "request_id": rid,
-                        "data": "[Interrupted by user — stop current work and respond to the new message]",
-                    }
-                    cls._executing[rid].set()
-                    cls._executing.pop(rid, None)
-            with cls._inflight_lock:
-                cls._inflight.pop(rid, None)
+            to_cancel = [(rid, info) for rid, info in cls._inflight.items()
+                         if isinstance(info, dict)
+                         and info.get("conv") == conversation_id
+                         and info.get("agent") == agent_name]
+        for rid, info in to_cancel:
+            cancel_evt = info.get("cancel")
+            if cancel_evt:
+                cancel_evt.set()
         if to_cancel:
             logger.info("[tool-relay] cancelled %d in-flight request(s) for %s/%s",
                         len(to_cancel), conversation_id, agent_name)
@@ -418,20 +413,56 @@ class ToolRelayService(BaseService):
             return {"type": "result", "request_id": request_id,
                     "data": "Error: in-flight request timed out"}
 
-        # Mark as executing
+        # Mark as executing — cancel_event can be set to abort immediately
         evt = threading.Event()
+        cancel_event = threading.Event()
         with self._cache_lock:
             self._executing[request_id] = evt
         with self._inflight_lock:
-            self._inflight[request_id] = (conversation_id, agent_name)
+            self._inflight[request_id] = {
+                "conv": conversation_id,
+                "agent": agent_name,
+                "cancel": cancel_event,
+            }
+
+        # Execute in a daemon thread so cancel can abandon it
+        _result_holder = [None]
+
+        def _exec():
+            try:
+                _result_holder[0] = self._do_execute(
+                    request_id, tool_name, arguments,
+                    user_id, conversation_id, agent_name)
+            except Exception as e:
+                _result_holder[0] = {"type": "result", "request_id": request_id,
+                                      "data": f"Error: {e}"}
+            finally:
+                evt.set()
+
+        exec_thread = threading.Thread(target=_exec, daemon=True)
+        exec_thread.start()
+
+        # Wait for completion OR cancellation
+        while not evt.is_set():
+            if cancel_event.wait(timeout=0.5):
+                # Cancelled — return interrupt result immediately
+                result = {"type": "result", "request_id": request_id,
+                          "data": "[Interrupted by user — stop current work and respond to the new message]"}
+                with self._cache_lock:
+                    self._result_cache[request_id] = result
+                    self._executing.pop(request_id, None)
+                with self._inflight_lock:
+                    self._inflight.pop(request_id, None)
+                return result
+
+        result = _result_holder[0]
+        # If cancelled while executing, check cache
+        with self._cache_lock:
+            if request_id in self._result_cache:
+                result = self._result_cache[request_id]
 
         try:
-            result = self._do_execute(request_id, tool_name, arguments,
-                                       user_id, conversation_id, agent_name)
-            # If cancelled while executing, the cache already has the interrupt result
-            with self._cache_lock:
-                if request_id in self._result_cache:
-                    result = self._result_cache[request_id]
+            pass
         finally:
             with self._cache_lock:
                 self._result_cache[request_id] = result

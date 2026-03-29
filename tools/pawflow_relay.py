@@ -899,6 +899,80 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 except Exception as e:
                     return {"ok": False, "error": str(e)}
 
+        # Terminal actions (handled here, not in fs_actions)
+        if action == "open_terminal":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            try:
+                _sid = _open_terminal(
+                    cols=msg.get("cols", 80),
+                    rows=msg.get("rows", 24),
+                    shell=msg.get("shell"),
+                )
+                return {"ok": True, "data": {"session_id": _sid}}
+            except Exception as e:
+                return {"ok": False, "error": f"Failed to open terminal: {e}"}
+
+        if action == "close_terminal":
+            _sid = msg.get("session_id", "")
+            if not _sid:
+                return {"ok": False, "error": "Missing session_id"}
+            ok = _close_terminal(_sid)
+            return {"ok": ok, "error": "" if ok else "Session not found"}
+
+        if action == "list_terminals":
+            return {"ok": True, "data": {
+                "sessions": [
+                    {"session_id": sid, "shell": s["shell"]}
+                    for sid, s in _terminal_sessions.items()
+                ]
+            }}
+
+        if action == "start_code_server":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
+                p = _execute_command._code_server_proc
+                if p.poll() is None:
+                    return {"ok": True, "data": {"port": _execute_command._code_server_port, "already_running": True}}
+            _cs_port = msg.get("port", 0)
+            if not _cs_port:
+                # Find a free port
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                    _s.bind(("", 0))
+                    _cs_port = _s.getsockname()[1]
+            try:
+                _cs_proc = subprocess.Popen([
+                    "code-server",
+                    "--bind-addr", f"127.0.0.1:{_cs_port}",
+                    "--auth", "none",
+                    "--disable-telemetry",
+                    root_dir,
+                ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                _execute_command._code_server_proc = _cs_proc
+                _execute_command._code_server_port = _cs_port
+                sys.stderr.write(f"[FSRelay] code-server started on port {_cs_port}\n")
+                return {"ok": True, "data": {"port": _cs_port, "pid": _cs_proc.pid}}
+            except FileNotFoundError:
+                return {"ok": False, "error": "code-server not installed"}
+            except Exception as e:
+                return {"ok": False, "error": f"Failed to start code-server: {e}"}
+
+        if action == "stop_code_server":
+            if hasattr(_execute_command, '_code_server_proc') and _execute_command._code_server_proc:
+                p = _execute_command._code_server_proc
+                if p.poll() is None:
+                    p.terminate()
+                    try:
+                        p.wait(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        p.kill()
+                _execute_command._code_server_proc = None
+                _execute_command._code_server_port = None
+                sys.stderr.write("[FSRelay] code-server stopped\n")
+                return {"ok": True}
+            return {"ok": True, "data": {"was_running": False}}
+
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)
         if not handler_func:
@@ -991,6 +1065,93 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
             _send_lock = _threading.Lock()
             _child_relays = {}  # relay_id → thread (child relay instances)
+            _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
+
+            def _open_terminal(cols=80, rows=24, shell=None):
+                import uuid as _uuid_term
+                import fcntl
+                import termios
+                import array
+
+                _sid = _uuid_term.uuid4().hex[:12]
+                _shell = shell or os.environ.get("SHELL", "/bin/bash")
+
+                pid, master_fd = os.forkpty()
+                if pid == 0:
+                    os.chdir(root_dir)
+                    env = os.environ.copy()
+                    env["TERM"] = "xterm-256color"
+                    env["COLUMNS"] = str(cols)
+                    env["LINES"] = str(rows)
+                    os.execvpe(_shell, [_shell], env)
+
+                # Set terminal size
+                try:
+                    winsize = array.array("H", [rows, cols, 0, 0])
+                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                except Exception:
+                    pass
+
+                # Reader thread: PTY fd → WS
+                def _pty_reader(_fd, _sid):
+                    try:
+                        while True:
+                            data = os.read(_fd, 4096)
+                            if not data:
+                                break
+                            frame = json.dumps({
+                                "type": "terminal_data",
+                                "session_id": _sid,
+                                "data": base64.b64encode(data).decode("ascii"),
+                            }).encode("utf-8")
+                            with _send_lock:
+                                _ws_frame_send(sock, frame)
+                    except OSError:
+                        pass
+                    finally:
+                        try:
+                            frame = json.dumps({
+                                "type": "terminal_exit",
+                                "session_id": _sid,
+                            }).encode("utf-8")
+                            with _send_lock:
+                                _ws_frame_send(sock, frame)
+                        except Exception:
+                            pass
+
+                reader = _threading.Thread(
+                    target=_pty_reader, args=(master_fd, _sid),
+                    daemon=True, name=f"pty-reader-{_sid}")
+                reader.start()
+
+                _terminal_sessions[_sid] = {
+                    "master_fd": master_fd,
+                    "pid": pid,
+                    "reader": reader,
+                    "shell": _shell,
+                }
+                sys.stderr.write(f"[FSRelay] Terminal opened: {_sid} (shell={_shell})\n")
+                return _sid
+
+            def _close_terminal(session_id):
+                sess = _terminal_sessions.pop(session_id, None)
+                if not sess:
+                    return False
+                try:
+                    os.close(sess["master_fd"])
+                except OSError:
+                    pass
+                try:
+                    os.kill(sess["pid"], 9)
+                    os.waitpid(sess["pid"], os.WNOHANG)
+                except (OSError, ChildProcessError):
+                    pass
+                sys.stderr.write(f"[FSRelay] Terminal closed: {session_id}\n")
+                return True
+
+            def _close_all_terminals():
+                for sid in list(_terminal_sessions):
+                    _close_terminal(sid)
 
             while True:
                 try:
@@ -1098,6 +1259,31 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     with _send_lock:
                         _ws_frame_send(sock, _resp)
 
+                elif msg.get("type") == "terminal_input":
+                    _tid = msg.get("session_id", "")
+                    _tsess = _terminal_sessions.get(_tid)
+                    if _tsess:
+                        try:
+                            _raw = base64.b64decode(msg.get("data", ""))
+                            os.write(_tsess["master_fd"], _raw)
+                        except OSError:
+                            pass
+
+                elif msg.get("type") == "terminal_resize":
+                    _tid = msg.get("session_id", "")
+                    _tsess = _terminal_sessions.get(_tid)
+                    if _tsess:
+                        try:
+                            import fcntl as _fcntl_r
+                            import termios as _termios_r
+                            import array as _array_r
+                            _c = msg.get("cols", 80)
+                            _r = msg.get("rows", 24)
+                            _ws = _array_r.array("H", [_r, _c, 0, 0])
+                            _fcntl_r.ioctl(_tsess["master_fd"], _termios_r.TIOCSWINSZ, _ws)
+                        except Exception:
+                            pass
+
                 elif msg.get("type") == "command":
                     request_id = msg.get("request_id", "")
                     sys.stderr.write(f"[FSRelay] Command: {msg.get('action', '?')}\n")
@@ -1134,6 +1320,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")
+            _close_all_terminals()
             try:
                 sock.close()
             except Exception:
@@ -1142,6 +1329,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         except Exception as e:
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
         finally:
+            _close_all_terminals()
             # Always close socket before reconnecting — prevents socket leak
             try:
                 sock.close()

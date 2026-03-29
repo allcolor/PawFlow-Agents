@@ -76,6 +76,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | \
     tar -C /opt -xJf - && ln -sf /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig
 
+# ── code-server (VS Code in browser) ──────────────────────────────
+RUN curl -fsSL https://code-server.dev/install.sh | sh
+
 # ── PawFlow relay + SDK (for containerized mode) ────────────────────
 COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
 COPY fs_actions.py /opt/pawflow/fs_actions.py

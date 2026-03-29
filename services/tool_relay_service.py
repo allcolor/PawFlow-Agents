@@ -110,12 +110,12 @@ class ToolRelayService(BaseService):
 
     @classmethod
     def cancel_agent(cls, conversation_id: str, agent_name: str):
-        """Cancel all in-flight tool calls for a (conv, agent) and reject new ones.
+        """Cancel all in-flight tool calls for a (conv, agent).
 
         In-flight requests get their _executing Event set so they unblock,
         and are added to the result cache as "interrupted".
+        Does NOT reject future requests — only kills current in-flight ones.
         """
-        cls._cancelled.add((conversation_id, agent_name))
         # Resolve all in-flight requests for this agent
         with cls._inflight_lock:
             to_cancel = [rid for rid, ca in cls._inflight.items()
@@ -146,11 +146,6 @@ class ToolRelayService(BaseService):
         """Handle a tool request from the MCP bridge."""
         method = msg.get("method", "")
         request_id = msg.get("request_id", "")
-
-        # Reject tool calls for cancelled (conv, agent)
-        if (conversation_id, agent_name) in self._cancelled:
-            return {"type": "error", "request_id": request_id,
-                    "error": "Request cancelled by user"}
 
         if method == "list_tools":
             return self._handle_list_tools(request_id, user_id, conversation_id)

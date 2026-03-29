@@ -1224,4 +1224,126 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    # ── Terminal / code-server on relay ──────────────────────────
+
+    if action == "open_terminal":
+        relay_id = body.get("relay_id", "")
+        cols = body.get("cols", 80)
+        rows = body.get("rows", 24)
+        shell = body.get("shell")  # None = relay default
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            svc = greg.get_live_instance(relay_id)
+            if not svc:
+                flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
+                return [flowfile]
+            result = svc._request("open_terminal", cols=cols, rows=rows,
+                                  **(dict(shell=shell) if shell else {}))
+            session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
+
+            # Register terminal session for WS proxy
+            from services.terminal_proxy import register_terminal, terminal_ws_handler
+            register_terminal(session_id, relay_id, relay_service=svc)
+
+            # Register WS route (once)
+            _owner = "_terminal_proxy"
+            http_svc = None
+            for _sid, _sdef in greg.get_all_definitions().items():
+                if getattr(_sdef, "service_type", "") == "httpListener":
+                    http_svc = greg.get_live_instance(_sid)
+                    if http_svc:
+                        break
+            if http_svc:
+                existing = [r for r in http_svc.get_routes() if r.get("owner") == _owner]
+                if not existing:
+                    http_svc.register_route(
+                        "GET", "/terminal/{session_id}",
+                        _owner,
+                        callback=lambda req: None,
+                        ws_handler=terminal_ws_handler,
+                    )
+
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "session_id": session_id,
+                "relay_id": relay_id,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "close_terminal":
+        session_id = body.get("session_id", "")
+        relay_id = body.get("relay_id", "")
+        if not session_id:
+            flowfile.set_content(json.dumps({"error": "Missing session_id"}).encode())
+            return [flowfile]
+        # Look up relay_id from terminal session if not provided
+        if not relay_id:
+            try:
+                from services.terminal_proxy import get_terminal
+                tsess = get_terminal(session_id)
+                if tsess:
+                    relay_id = tsess.get("relay_service_id", "")
+            except Exception:
+                pass
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            svc = greg.get_live_instance(relay_id)
+            if svc:
+                svc._request("close_terminal", session_id=session_id)
+            from services.terminal_proxy import unregister_terminal
+            unregister_terminal(session_id)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "open_code_server":
+        relay_id = body.get("relay_id", "")
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            svc = greg.get_live_instance(relay_id)
+            if not svc:
+                flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
+                return [flowfile]
+            result = svc._request("start_code_server")
+            port = result.get("port") if isinstance(result, dict) else None
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "port": port,
+                "relay_id": relay_id,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "close_code_server":
+        relay_id = body.get("relay_id", "")
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
+            svc = greg.get_live_instance(relay_id)
+            if svc:
+                svc._request("stop_code_server")
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     return None

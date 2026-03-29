@@ -151,6 +151,24 @@ const HELP_DATA = {
       + '  Shortcut: /clc',
   },
   '/clc': { alias: '/claude-login-credentials' },
+  '/terminal': {
+    usage: '/terminal [relay_name] | /terminal close',
+    short: 'Open an interactive terminal on a relay',
+    detail: 'Opens xterm.js connected to a PTY on the relay container.\n\n'
+      + '  /terminal              \u2014 Open on first connected relay\n'
+      + '  /terminal my_relay     \u2014 Open on a specific relay\n'
+      + '  /terminal close        \u2014 Close the terminal panel\n'
+      + '  Shortcut: /term',
+  },
+  '/term': { alias: '/terminal' },
+  '/code': {
+    usage: '/code [relay_name] | /code close [relay_name]',
+    short: 'Start code-server (VS Code) on a relay',
+    detail: 'Starts code-server on the relay, pointing at its filesystem.\n\n'
+      + '  /code                  \u2014 Start on first connected relay\n'
+      + '  /code my_relay         \u2014 Start on a specific relay\n'
+      + '  /code close my_relay   \u2014 Stop code-server',
+  },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
     short: 'Manage LLM and external services',
@@ -628,6 +646,11 @@ const _CMD_HANDLERS = {
   '/files':         (text, parts, cmd) => cmdFiles(),
   '/flows':         (text, parts, cmd) => cmdFlows(),
   '/tasks':         (text, parts, cmd) => cmdTasks(),
+
+  // Terminal / code-server (terminal.js)
+  '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),
+  '/term':          (text, parts, cmd) => cmdTerminal(text, parts),
+  '/code':          (text, parts, cmd) => cmdCode(text, parts),
 };
 
 async function handleSlashCommand(text) {

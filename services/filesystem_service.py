@@ -331,6 +331,21 @@ class WSListener:
                     service._dispatch_progress(msg)
                 elif msg.get("type") == "exec_output":
                     service._dispatch_exec_output(msg)
+                elif msg.get("type") == "terminal_data":
+                    try:
+                        from services.terminal_proxy import dispatch_terminal_data
+                        dispatch_terminal_data(
+                            msg.get("session_id", ""),
+                            msg.get("data", ""),
+                        )
+                    except Exception:
+                        pass
+                elif msg.get("type") == "terminal_exit":
+                    try:
+                        from services.terminal_proxy import dispatch_terminal_exit
+                        dispatch_terminal_exit(msg.get("session_id", ""))
+                    except Exception:
+                        pass
                 elif msg.get("type") == "ping":
                     await self._ws_send(writer, json.dumps({"type": "pong"}).encode())
 

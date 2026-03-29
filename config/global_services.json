@@ -140,9 +140,9 @@
       "claude_binary": "C:/Users/quent/.local/bin/claude.exe",
       "gemini_binary": "gemini",
       "tool_result_max_chars": 50000,
-      "claude_access_token": "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",
-      "claude_refresh_token": "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",
-      "claude_expires_at": 1774770907324,
+      "claude_access_token": "${claude_code_llm_service_access_token}",
+      "claude_refresh_token": "${claude_code_llm_service_refresh_token}",
+      "claude_expires_at": "${claude_code_llm_service_expires_at}",
       "containerize": true,
       "docker_image": "pawflow-claude-code:latest",
       "docker_cpu_limit": "2",
@@ -164,5 +164,17 @@
     "enabled": true,
     "description": "Auto-created tool relay for Claude Code MCP bridge",
     "created_at": 1774609858.9757109
+  },
+  "_http_listener_9090": {
+    "service_id": "_http_listener_9090",
+    "service_type": "httpListener",
+    "config": {
+      "host": "0.0.0.0",
+      "port": 9090,
+      "request_timeout": 60.0
+    },
+    "enabled": true,
+    "description": "HTTP listener on port 9090",
+    "created_at": 1774800580.1296906
   }
 }

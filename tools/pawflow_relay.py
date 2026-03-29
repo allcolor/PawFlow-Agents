@@ -1262,12 +1262,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 elif msg.get("type") == "terminal_input":
                     _tid = msg.get("session_id", "")
                     _tsess = _terminal_sessions.get(_tid)
+                    sys.stderr.write(f"[FSRelay] terminal_input: sid={_tid}, found={_tsess is not None}, sessions={list(_terminal_sessions.keys())}\n")
                     if _tsess:
                         try:
                             _raw = base64.b64decode(msg.get("data", ""))
+                            sys.stderr.write(f"[FSRelay] writing {len(_raw)} bytes to fd {_tsess['master_fd']}\n")
                             os.write(_tsess["master_fd"], _raw)
-                        except OSError:
-                            pass
+                        except OSError as _oe:
+                            sys.stderr.write(f"[FSRelay] terminal write error: {_oe}\n")
 
                 elif msg.get("type") == "terminal_resize":
                     _tid = msg.get("session_id", "")

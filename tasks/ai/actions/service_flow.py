@@ -365,7 +365,12 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Use the same /auth/callback path — oauthCallback detects Claude
         # login via the state token in _claude_pkce_states
         from core.expression import resolve_value as _rv
-        redirect_uri = _rv("${global.oauth_redirect_uri}") or "http://localhost:9090/auth/callback"
+        redirect_uri = _rv("${oauth_redirect_uri}")
+        if not redirect_uri or "${" in redirect_uri:
+            flowfile.set_content(json.dumps({
+                "error": "oauth_redirect_uri not configured in global parameters"
+            }).encode())
+            return [flowfile]
 
         _claude_pkce_states[state] = {
             "code_verifier": code_verifier,

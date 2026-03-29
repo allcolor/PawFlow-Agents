@@ -1,0 +1,101 @@
+{
+  "openai": {
+    "provider": "openai",
+    "base_url": "",
+    "api_key": "",
+    "default_model": "gpt-4o",
+    "description": "OpenAI API",
+    "requires_api_key": true,
+    "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "o1", "o1-mini", "o3-mini"]
+  },
+  "anthropic": {
+    "provider": "anthropic",
+    "base_url": "",
+    "api_key": "",
+    "default_model": "claude-sonnet-4-6",
+    "description": "Anthropic API",
+    "requires_api_key": true,
+    "models": ["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5-20251001"]
+  },
+  "ollama": {
+    "provider": "openai",
+    "base_url": "http://localhost:11434/v1",
+    "api_key": "ollama",
+    "default_model": "llama3.2",
+    "description": "Ollama \u2014 local LLM server",
+    "requires_api_key": false,
+    "models": ["llama3.2", "llama3.1", "qwen2.5", "qwen2.5-coder", "mistral", "codellama", "phi3", "deepseek-r1"]
+  },
+  "lm-studio": {
+    "provider": "openai",
+    "base_url": "http://localhost:1234/v1",
+    "api_key": "lm-studio",
+    "default_model": "local-model",
+    "description": "LM Studio \u2014 local model server",
+    "requires_api_key": false,
+    "models": []
+  },
+  "mistral": {
+    "provider": "openai",
+    "base_url": "https://api.mistral.ai/v1",
+    "api_key": "",
+    "default_model": "mistral-large-latest",
+    "description": "Mistral AI API",
+    "requires_api_key": true,
+    "models": ["mistral-large-latest", "mistral-small-latest", "codestral-latest", "open-mistral-nemo"]
+  },
+  "grok": {
+    "provider": "openai",
+    "base_url": "https://api.x.ai/v1",
+    "api_key": "",
+    "default_model": "grok-3",
+    "description": "xAI Grok API",
+    "requires_api_key": true,
+    "models": ["grok-3", "grok-3-mini", "grok-2", "grok-2-mini"]
+  },
+  "openrouter": {
+    "provider": "openai",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "",
+    "default_model": "anthropic/claude-sonnet-4-5",
+    "description": "OpenRouter \u2014 unified API for 300+ models",
+    "requires_api_key": true,
+    "models": ["anthropic/claude-sonnet-4-5", "openai/gpt-4o", "meta-llama/llama-3.3-70b-instruct", "google/gemini-2.0-flash-001", "deepseek/deepseek-r1"]
+  },
+  "deepseek": {
+    "provider": "openai",
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "",
+    "default_model": "deepseek-chat",
+    "description": "DeepSeek API",
+    "requires_api_key": true,
+    "models": ["deepseek-chat", "deepseek-reasoner"]
+  },
+  "gemini": {
+    "provider": "openai",
+    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "api_key": "",
+    "default_model": "gemini-2.0-flash",
+    "description": "Google Gemini API (OpenAI-compatible)",
+    "requires_api_key": true,
+    "models": ["gemini-2.5-pro", "gemini-2.0-flash", "gemini-1.5-pro"]
+  },
+  "claude-code": {
+    "provider": "claude-code",
+    "base_url": "",
+    "api_key": "",
+    "default_model": "",
+    "description": "Claude Code CLI (subprocess)",
+    "requires_api_key": false,
+    "models": []
+  },
+  "gemini-cli": {
+    "provider": "gemini-cli",
+    "base_url": "",
+    "api_key": "",
+    "default_model": "",
+    "description": "Gemini CLI (subprocess)",
+    "requires_api_key": false,
+    "models": []
+  }
+}

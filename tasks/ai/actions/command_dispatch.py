@@ -264,15 +264,20 @@ HELP: Dict[str, Dict[str, str]] = {
         ),
     },
     "/permission": {
-        "usage": "/permission [default | approve_edits | read_only | auto]",
-        "short": "Set tool permission mode",
+        "usage": "/permission [default | approve_edits | read_only | auto | tool <name> allow|deny|confirm|reset | tools]",
+        "short": "Set tool permission mode or per-tool permissions",
         "detail": (
             "Set how tool calls are authorized for this conversation:\n\n"
-            "  /permission              — Show current mode\n"
-            "  /permission default      — Normal approval gate\n"
-            "  /permission approve_edits — Same as default (explicit approval)\n"
-            "  /permission read_only    — Block all write operations\n"
-            "  /permission auto         — Auto-approve everything (no prompts)"
+            "  /permission                              — Show current mode\n"
+            "  /permission default                      — Normal approval gate\n"
+            "  /permission approve_edits                — Same as default (explicit approval)\n"
+            "  /permission read_only                    — Block all write operations\n"
+            "  /permission auto                         — Auto-approve everything (no prompts)\n"
+            "  /permission tool <name> allow            — Always allow this tool (no prompt)\n"
+            "  /permission tool <name> deny             — Always block this tool\n"
+            "  /permission tool <name> confirm          — Always ask for confirmation\n"
+            "  /permission tool <name> reset            — Remove per-tool override\n"
+            "  /permission tools                        — List per-tool overrides"
         ),
     },
     "/service": {
@@ -805,9 +810,24 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         return _parse_task_command(arg, base)
 
     if cmd == "/permission":
-        mode = arg.strip().lower() if arg.strip() else ""
-        if not mode:
+        parts = arg.strip().split() if arg.strip() else []
+        if not parts:
             return {"action": "get_permission_mode", **base}
+        subcmd = parts[0].lower()
+        if subcmd == "tools":
+            return {"action": "get_tool_permissions", **base}
+        if subcmd == "tool":
+            if len(parts) < 3:
+                return {"display": "Usage: /permission tool <name> allow|deny|confirm|reset"}
+            tool_name = parts[1]
+            perm = parts[2].lower()
+            if perm == "reset":
+                perm = ""
+            elif perm not in ("allow", "deny", "confirm"):
+                return {"display": f"Invalid permission: {perm}. Use allow|deny|confirm|reset"}
+            return {"action": "set_tool_permission", "tool_name": tool_name, "permission": perm, **base}
+        # Global mode
+        mode = subcmd
         if mode not in ("default", "approve_edits", "read_only", "auto"):
             return {"display": f"Invalid mode: {mode}. Valid: default, approve_edits, read_only, auto"}
         return {"action": "set_permission_mode", "mode": mode, **base}

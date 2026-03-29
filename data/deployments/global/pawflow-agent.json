@@ -2,77 +2,16 @@
   "instance_id": "pawflow-agent",
   "flow_id": "pawflow-agent",
   "flow_name": "PawFlow Agent",
-  "flow_path": "flows\\pawflow_agent.json",
+  "flow_path": "flows/pawflow_agent.json",
   "status": "running",
   "source": "gui",
-  "parameters": {
-    "llm_service": "${llm_default_service}",
-    "file_ttl": "0",
-    "conversation_ttl": "0",
-    "oauth_provider": "${oauth_provider}",
-    "oauth_client_id": "${oauth_client_id}",
-    "oauth_client_secret": "${oauth_client_secret}",
-    "oauth_redirect_uri": "${oauth_redirect_uri}",
-    "oauth_default_role": "${oauth_default_role}",
-    "image_service": "${image_default_service}",
-    "poll_interval": "30",
-    "poll_recheck_delay": "7200"
-  },
-  "created_at": 1773401348.7520242,
-  "last_started": 1773918960.9431849,
-  "last_stopped": 1773786189.075346,
+  "parameters": {},
+  "created_at": 1774604599.4518635,
   "max_workers": 4,
   "max_retries": 3,
   "service_overrides": {},
   "service_configs": {},
-  "layout": {
-    "http_in": {
-      "x": 12,
-      "y": 653.1
-    },
-    "validate_auth": {
-      "x": 472,
-      "y": 594.3
-    },
-    "oauth_login": {
-      "x": 932,
-      "y": 990
-    },
-    "oauth_callback": {
-      "x": 932,
-      "y": 1286
-    },
-    "oauth_logout": {
-      "x": 472,
-      "y": 1415
-    },
-    "agent": {
-      "x": 1392,
-      "y": 12
-    },
-    "agent_events": {
-      "x": 1852,
-      "y": 604
-    },
-    "chat_ui": {
-      "x": 1852,
-      "y": 308
-    },
-    "serve_file": {
-      "x": 1392,
-      "y": 733
-    },
-    "route_after_auth": {
-      "x": 932,
-      "y": 456
-    },
-    "format_response": {
-      "x": 1852,
-      "y": 12
-    },
-    "send_response": {
-      "x": 2312,
-      "y": 797
-    }
-  }
+  "layout": {},
+  "flow_version": 1,
+  "last_started": 1774606265.6881132
 }

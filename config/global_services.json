@@ -121,5 +121,48 @@
     "enabled": true,
     "description": "",
     "created_at": 1774340516.3666816
+  },
+  "claude_code_llm_service": {
+    "service_id": "claude_code_llm_service",
+    "service_type": "llmConnection",
+    "config": {
+      "provider": "claude-code",
+      "api_key": "",
+      "base_url": "",
+      "default_model": "claude-opus-4-6",
+      "fallback_model": "",
+      "timeout": 60,
+      "max_retries": 2,
+      "max_context_size": 200000,
+      "max_concurrent": 0,
+      "cost_per_1m_input": "0",
+      "cost_per_1m_output": "0",
+      "claude_binary": "C:/Users/quent/.local/bin/claude.exe",
+      "gemini_binary": "gemini",
+      "tool_result_max_chars": 50000,
+      "claude_access_token": "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",
+      "claude_refresh_token": "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",
+      "claude_expires_at": 1774770907324,
+      "containerize": true,
+      "docker_image": "pawflow-claude-code:latest",
+      "docker_cpu_limit": "2",
+      "docker_memory_limit": "2g"
+    },
+    "enabled": true,
+    "description": "",
+    "created_at": 1774609763.2870564
+  },
+  "_tool_relay": {
+    "service_id": "_tool_relay",
+    "service_type": "toolRelay",
+    "config": {
+      "port": 57866,
+      "path": "/ws/tools",
+      "token": "810db360e4fb4dc29412608d0286aeed",
+      "_service_id": "_tool_relay"
+    },
+    "enabled": true,
+    "description": "Auto-created tool relay for Claude Code MCP bridge",
+    "created_at": 1774609858.9757109
   }
 }

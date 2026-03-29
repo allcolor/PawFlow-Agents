@@ -298,6 +298,11 @@ class AgentCoreMixin:
                     emitter.on_iteration_start(
                         iteration, current_round, ctx["max_iterations"],
                         max_rounds, tools_called, poll_silent)
+                    # Update running agent metadata for list_active poll
+                    self._update_running_agent(
+                        ctx.get("_gen_key", conversation_id),
+                        iteration=iteration, status="thinking",
+                        round=current_round, max_rounds=max_rounds)
 
                     # Claude-code: skip per-iteration compaction.
                     # If no active session, offload old messages to FileStore
@@ -758,6 +763,13 @@ class AgentCoreMixin:
                     emitter.on_tool_calls(
                         response.tool_calls, response.content or "",
                         response.thinking or "", poll_silent)
+                    # Update running agent with tool info
+                    _tool_names = [tc.name for tc in response.tool_calls]
+                    self._update_running_agent(
+                        ctx.get("_gen_key", conversation_id),
+                        last_tool=_tool_names[-1] if _tool_names else "",
+                        status=_tool_names[-1] if _tool_names else "thinking",
+                        total_tools=len(tools_called) + len(_tool_names))
 
                     results = self._execute_tool_calls(
                         response.tool_calls, registry, _consecutive_tool,
@@ -765,7 +777,8 @@ class AgentCoreMixin:
                         agent_name=ctx.get("active_agent_name") or "",
                         agent_svc=ctx.get("active_llm_service", ""),
                         conversation_id=conversation_id, user_id=user_id,
-                        is_claude_code=_is_claude_code)
+                        is_claude_code=_is_claude_code,
+                        cancel_check=emitter.check_cancelled)
 
                     for tc, result_text in results:
                         tools_called.append(tc.name)

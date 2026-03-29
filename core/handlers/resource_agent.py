@@ -104,6 +104,36 @@ class ManageResourceHandler(ToolHandler):
                 if not name:
                     return "Error: 'name' is required for create"
                 scope = data.pop("scope", "user") if isinstance(data, dict) else "user"
+                # Profile shortcut for agents: resolve llm_service from profile
+                if rtype == "agent" and isinstance(data, dict):
+                    profile_name = data.pop("profile", "")
+                    if profile_name:
+                        from core.llm_profiles import apply_profile, get_profile_info
+                        try:
+                            profile_config = apply_profile(
+                                profile_name,
+                                overrides={"default_model": data.pop("model", "") or ""},
+                            )
+                            # Install a service named after the profile if not yet installed
+                            svc_id = f"_profile_{profile_name}"
+                            try:
+                                from core.resource_store import ResourceStore as _RS
+                                from gui.services.user_service_registry import UserServiceRegistry as _USR
+                                _reg = _USR.get_instance()
+                                if not _reg.get_definition(user_id, svc_id):
+                                    _reg.install(
+                                        user_id=user_id,
+                                        service_id=svc_id,
+                                        service_type="llmConnection",
+                                        config=profile_config,
+                                        description=get_profile_info(profile_name).get("description", ""),
+                                    )
+                            except Exception as _se:
+                                pass
+                            if not data.get("llm_service"):
+                                data["llm_service"] = svc_id
+                        except ValueError as _pe:
+                            return f"Error: {_pe}"
                 if rtype in ("agent", "skill") and self._agent_name:
                     data["_created_by"] = self._agent_name
                 if rtype == "agent" and not data.get("llm_service") and self._llm_service:

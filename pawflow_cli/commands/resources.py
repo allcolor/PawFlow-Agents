@@ -166,6 +166,29 @@ def handle_resources_commands(app, cmd, arg, text):
                     return True
                 app.api.send_action("service_uninstall", service_id=parts[1])
                 app.renderer.print_system(f"Service '{parts[1]}' removed")
+            elif subcmd == "profiles":
+                data = app.api.get("/v1/services/user/llm-profiles")
+                profiles = data.get("profiles", [])
+                for p in profiles:
+                    req_key = " [api_key required]" if p.get("requires_api_key") else ""
+                    models = ", ".join(p.get("models", [])[:4])
+                    if models:
+                        models = f" — {models}"
+                    app.renderer.print(f"  {p['name']} ({p.get('provider', '?')}){req_key}{models}")
+                    if p.get("description"):
+                        app.renderer.print(f"    {p['description']}")
+                if not profiles:
+                    app.renderer.print_system("No profiles.")
+            elif subcmd == "add":
+                if len(parts) < 2:
+                    app.renderer.print_error("Usage: /service add <profile> [name] [key=val ...]")
+                    return True
+                profile = parts[1]
+                rest = parts[2].split(None, 1) if len(parts) > 2 else []
+                name = rest[0] if rest else profile
+                config_str = rest[1] if len(rest) > 1 else ""
+                app.api.send_action("service_install", profile=profile, service_name=name, config_str=config_str)
+                app.renderer.print_system(f"Service '{name}' installed from profile '{profile}'")
             elif subcmd in ("enable", "disable"):
                 if len(parts) < 2:
                     app.renderer.print_error(f"Usage: /service {subcmd} <name>")

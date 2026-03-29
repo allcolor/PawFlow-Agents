@@ -121,6 +121,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             svc_name = body.get("service_name", "")
             config_str = body.get("config_str", "")
             scope = body.get("scope", "user")
+            profile_name = body.get("profile", "")
+            # Profile shortcut: resolve provider/base_url/model from profile
+            if profile_name:
+                from core.llm_profiles import apply_profile
+                try:
+                    profile_config = apply_profile(profile_name)
+                    svc_type = svc_type or "llmConnection"
+                    svc_name = svc_name or profile_name
+                except ValueError as pe:
+                    flowfile.set_content(json.dumps({"error": str(pe)}).encode())
+                    return [flowfile]
+            else:
+                profile_config = {}
             if not svc_type or not svc_name:
                 flowfile.set_content(json.dumps({
                     "error": "Usage: /service install <type> <name> [key=val,...]",
@@ -138,6 +151,11 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if "=" in pair:
                         k, v = pair.split("=", 1)
                         config[k.strip()] = v.strip()
+            # Merge: profile_config is base, explicit config wins
+            if profile_config:
+                merged = dict(profile_config)
+                merged.update(config)
+                config = merged
             description = body.get("description", "")
             if scope == "global":
                 from gui.services.global_service_registry import GlobalServiceRegistry

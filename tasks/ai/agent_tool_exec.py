@@ -33,7 +33,8 @@ class AgentToolExecMixin:
                             max_consecutive: int, *, parallel: bool = True,
                             agent_name: str = "", agent_svc: str = "",
                             conversation_id: str = "", user_id: str = "",
-                            is_claude_code: bool = False):
+                            is_claude_code: bool = False,
+                            cancel_check: callable = None):
         """Execute tool calls with consecutive-call limiting + approval gate.
 
         Returns list of (tool_call, result_text) in original order.
@@ -185,12 +186,26 @@ class AgentToolExecMixin:
         results_map = {}
         pending = set(futures.keys())
 
+        _cancelled = False
         while pending:
             done, pending = wait(pending, timeout=1.0, return_when='FIRST_COMPLETED')
             for f in done:
                 tc = futures[f]
                 tc_result, result_text = f.result()
                 results_map[tc.id] = (tc_result, result_text)
+            # Check cancel/interrupt/new user message — preempt immediately
+            if cancel_check and not _cancelled:
+                try:
+                    cancel_check()
+                except Exception:
+                    _cancelled = True
+                    # Cancel all remaining futures
+                    for f in list(pending):
+                        f.cancel()
+                        tc = futures[f]
+                        results_map[tc.id] = (tc, "[Cancelled — agent was interrupted]")
+                    pending.clear()
+                    break
             # Check if any pending tools were backgrounded by user
             for f in list(pending):
                 tc = futures[f]

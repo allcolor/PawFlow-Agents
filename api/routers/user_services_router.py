@@ -27,6 +27,27 @@ class ServiceUpdateRequest(BaseModel):
     enabled: Optional[bool] = None
 
 
+@router.get("/llm-profiles")
+def list_llm_profiles():
+    """List available LLM profiles (provider presets)."""
+    from core.llm_profiles import load_profiles
+    profiles = load_profiles()
+    return {
+        "profiles": [
+            {
+                "name": name,
+                "provider": p.get("provider", ""),
+                "base_url": p.get("base_url", ""),
+                "default_model": p.get("default_model", ""),
+                "description": p.get("description", ""),
+                "requires_api_key": p.get("requires_api_key", True),
+                "models": p.get("models", []),
+            }
+            for name, p in profiles.items()
+        ]
+    }
+
+
 @router.get("")
 def list_user_services(session=Depends(get_current_session)):
     """List all services for the authenticated user."""

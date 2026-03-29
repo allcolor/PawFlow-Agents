@@ -107,9 +107,11 @@ class AgentLoopTask(
         # Interrupt signal — asks agent to conclude gracefully instead of cancelling
         self._conv_interrupt: Dict[str, bool] = {}
         self._interrupt_lock = threading.Lock()
-        # Active interactions tracker — gen_key → metadata dict
-        self._active_interactions: Dict[str, Dict] = {}
-        self._interactions_lock = threading.Lock()
+        # Running agents — state-based tracker (stack on loop entry, pop on exit)
+        # Key: gen_key (conv_id or conv_id:agent), Value: metadata dict
+        # This is the SINGLE source of truth for "is an agent running?"
+        self._running_agents: Dict[str, Dict] = {}
+        self._running_agents_lock = threading.Lock()
         # Context operation locks — prevents FlowFile processing during context mutations
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
@@ -558,16 +560,16 @@ class AgentLoopTask(
         from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "idle")
         # Remove from interaction tracker (including thought entries)
-        with self._interactions_lock:
-            for k in list(self._active_interactions):
+        with self._running_agents_lock:
+            for k in list(self._running_agents):
                 if _is_named:
                     if k == f"{conversation_id}:{agent_name}" or \
                        k == f"{conversation_id}::thought::{agent_name.lower()}":
-                        self._active_interactions.pop(k, None)
+                        self._running_agents.pop(k, None)
                 else:
                     if k == conversation_id or k.startswith(conversation_id + ":") or \
                        k.startswith(conversation_id + "::"):
-                        self._active_interactions.pop(k, None)
+                        self._running_agents.pop(k, None)
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
@@ -581,10 +583,10 @@ class AgentLoopTask(
         No-op if no agent is actively running.
         """
         # Check if anything is actually running for this conversation
-        with self._interactions_lock:
+        with self._running_agents_lock:
             _any_active = any(
                 v.get("conversation_id") == conversation_id
-                for v in self._active_interactions.values()
+                for v in self._running_agents.values()
             )
         if not _any_active:
             logger.info(f"[agent:{conversation_id[:8]}] interrupt ignored — no active agent")
@@ -620,12 +622,8 @@ class AgentLoopTask(
         # Cancel the current run — publish cancelled event so UI stops
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
 
-        # Clear active interactions for this conversation (prevents ghost agents)
-        with self._interactions_lock:
-            _stale = [k for k, v in self._active_interactions.items()
-                      if v.get("conversation_id") == conversation_id]
-            for k in _stale:
-                self._active_interactions.pop(k, None)
+        # Note: do NOT clear _running_agents here — the agent loop's finally
+        # block handles that. The agent is still running (doing synthesis).
 
         # Spawn parallel synthesis thread
         from core.conversation_event_bus import ConversationEventBus
@@ -636,6 +634,14 @@ class AgentLoopTask(
         })
 
         def _synthesis():
+            _synth_gen_key = f"{conversation_id}:__synth__"
+            with self._running_agents_lock:
+                self._running_agents[_synth_gen_key] = {
+                    "agent_name": agent_name or "assistant",
+                    "conversation_id": conversation_id,
+                    "started_at": time.time(),
+                    "status": "synthesizing",
+                }
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
@@ -766,7 +772,8 @@ class AgentLoopTask(
                 except Exception:
                     pass
             finally:
-                pass  # cooldown handles dedup
+                with self._running_agents_lock:
+                    self._running_agents.pop(_synth_gen_key, None)
 
         t = threading.Thread(target=_synthesis, daemon=True,
                              name=f"interrupt-synth-{conversation_id[:8]}")

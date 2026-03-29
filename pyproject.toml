@@ -71,8 +71,11 @@ gcs = ["google-cloud-storage>=2.10.0"]
 azure = ["azure-storage-blob>=12.17.0"]
 postgres = ["psycopg2-binary>=2.9.0"]
 mysql = ["pymysql>=1.1.0"]
+sdk = [
+    "httpx>=0.25.0",
+]
 all = [
-    "pyfi2[sftp,s3,kafka,mqtt,avro,parquet,gcs,azure,postgres,mysql]",
+    "pyfi2[sftp,s3,kafka,mqtt,avro,parquet,gcs,azure,postgres,mysql,sdk]",
 ]
 
 [project.scripts]
@@ -109,5 +112,5 @@ warn_unused_configs = true
 ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
-include = ["core*", "engine*", "tasks*", "services*", "api*", "gui*"]
+include = ["core*", "engine*", "tasks*", "services*", "api*", "gui*", "pawflow_sdk*"]
 exclude = ["tests*"]

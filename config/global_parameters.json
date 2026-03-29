@@ -14,5 +14,7 @@
   "claude_llm_service": "claude_llm_service",
   "qwen_llm_service": "qwen_llm_service",
   "qwen_llm_base_url": "http://127.0.0.1:8080",
-  "qwen_llm_model": "qwen3.5"
+  "qwen_llm_model": "qwen3.5",
+  "claude_code_llm_service": "claude_code_llm_service",
+  "summarizer_service": "claude_code_llm_service"
 }

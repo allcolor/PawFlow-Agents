@@ -966,4 +966,40 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"permission_mode": mode}).encode())
         return [flowfile]
 
+    if action == "set_tool_permission":
+        conv_id = body.get("conversation_id", "")
+        tool_name = body.get("tool_name", "")
+        permission = body.get("permission", "")  # allow | deny | confirm | "" (reset)
+        if not conv_id or not tool_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or tool_name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        if permission not in ("allow", "deny", "confirm", ""):
+            flowfile.set_content(json.dumps({"error": f"Invalid permission: '{permission}' (use allow|deny|confirm or empty to reset)"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        perms = store.get_extra(conv_id, "tool_permissions") or {}
+        if permission:
+            perms[tool_name] = permission
+        else:
+            perms.pop(tool_name, None)
+        store.set_extra(conv_id, "tool_permissions", perms)
+        flowfile.set_content(json.dumps({"status": "ok", "tool_name": tool_name,
+                                         "permission": permission or "(reset)"}).encode())
+        return [flowfile]
+
+    if action == "get_tool_permissions":
+        conv_id = body.get("conversation_id", "")
+        perms = store.get_extra(conv_id, "tool_permissions") or {} if conv_id else {}
+        if perms:
+            lines = ["## Per-tool permissions\n"]
+            for tname, tp in sorted(perms.items()):
+                icon = {"allow": "\u2705", "deny": "\u274c", "confirm": "\u2753"}.get(tp, "?")
+                lines.append(f"  {icon} `{tname}` — {tp}")
+            msg = "\n".join(lines)
+        else:
+            msg = "No per-tool permission overrides (using global mode)."
+        flowfile.set_content(json.dumps({"tool_permissions": perms, "message": msg}).encode())
+        return [flowfile]
+
     return None

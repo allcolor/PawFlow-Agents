@@ -314,10 +314,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             ctx["_generation"] = gen
             ctx["_gen_key"] = _gen_key
 
-            with self._interactions_lock:
+            with self._running_agents_lock:
                 _msg_preview = (_user_text or "")[:80]
                 _resolved_agent = _target or ctx.get("active_agent_name", "")
-                self._active_interactions[_gen_key] = {
+                self._running_agents[_gen_key] = {
                     "agent_name": _resolved_agent,
                     "name": _resolved_agent,
                     "started_at": time.time(),

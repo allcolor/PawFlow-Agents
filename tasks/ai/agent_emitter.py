@@ -369,20 +369,26 @@ class StreamEmitter(AgentEmitter):
             except Exception as _e:
                 logger.debug(f"Queue drain failed: {_e}")
 
-        # Source 2: internal "already active" queue
+        # Source 2: internal "already active" queue (FlowFiles queued while agent was busy)
         _queued_key = f"_queued_msgs:{self.conversation_id}"
         if hasattr(self.agent, '_pending_user_msgs') and _queued_key in self.agent._pending_user_msgs:
             _queued = self.agent._pending_user_msgs.pop(_queued_key, [])
-            for _qctx in _queued:
-                _qmsgs = _qctx.get("messages", [])
-                for _qm in reversed(_qmsgs):
-                    if _qm.role == "user":
-                        _text = _qm.content if isinstance(_qm.content, str) else str(_qm.content)
-                        append_fn(LLMMessage(
-                            role="user", content=_text,
-                            source={"type": "user", "name": _qctx.get("user_id", "")},
-                        ))
-                        break
+            for _qff in _queued:
+                # _qff is a FlowFile — extract user text from its content
+                try:
+                    _raw = _qff.get_content().decode("utf-8") if hasattr(_qff, "get_content") else str(_qff)
+                    _parsed = json.loads(_raw) if _raw.strip().startswith("{") else {}
+                    _text = _parsed.get("message", "") or _parsed.get("text", "") or _raw
+                    _uid = (_qff.get_attribute("http.auth.principal")
+                            if hasattr(_qff, "get_attribute") else "") or self._user_id
+                except Exception:
+                    _text = str(_qff)
+                    _uid = self._user_id
+                if _text:
+                    append_fn(LLMMessage(
+                        role="user", content=_text,
+                        source={"type": "user", "name": _uid},
+                    ))
 
         # Source 3: conversation store (cross-channel messages)
         if self._use_conv_store and self.conversation_id and iteration > 1:

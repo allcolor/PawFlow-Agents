@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PawFlow — AI Agent + ETL Orchestration Platform</title>
+  <link rel="icon" href="assets/logo.png" type="image/png">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="#" class="nav-brand">
+      <img src="assets/logo.png" alt="PawFlow" class="nav-logo">
+      <span>PawFlow</span>
+    </a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#channels">Channels</a>
+      <a href="#get-started">Get Started</a>
+      <a href="https://github.com/pawflow/pawflow" class="btn btn-outline" target="_blank">GitHub</a>
+      <a href="/docs" class="btn btn-primary">Documentation</a>
+    </div>
+    <button class="nav-toggle" onclick="document.querySelector('.nav-links').classList.toggle('open')">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</nav>
+
+<!-- Hero -->
+<section class="hero">
+  <div class="hero-bg">
+    <img src="assets/hero-banner.png" alt="" class="hero-bg-img">
+    <div class="hero-overlay"></div>
+  </div>
+  <div class="hero-content">
+    <div class="hero-badge">Open Source · MIT License</div>
+    <h1>AI Agents Meet<br><span class="gradient-text">Deterministic Pipelines</span></h1>
+    <p class="hero-sub">
+      PawFlow is the first platform where AI agents <em>design</em> workflows and a
+      deterministic ETL engine <em>executes</em> them. Reliably. Every time.
+    </p>
+    <div class="hero-actions">
+      <a href="#get-started" class="btn btn-primary btn-lg">Get Started</a>
+      <a href="#architecture" class="btn btn-outline btn-lg">How It Works</a>
+    </div>
+    <div class="hero-stats">
+      <div class="stat"><span class="stat-num">152</span><span class="stat-label">Task Types</span></div>
+      <div class="stat"><span class="stat-num">5+</span><span class="stat-label">Channels</span></div>
+      <div class="stat"><span class="stat-num">30+</span><span class="stat-label">LLM Providers</span></div>
+      <div class="stat"><span class="stat-num">∞</span><span class="stat-label">Custom Flows</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- Problem / Solution -->
+<section class="section section-dark">
+  <div class="container">
+    <div class="two-col">
+      <div class="col">
+        <h2 class="section-label">The Problem</h2>
+        <h3>AI agents are creative.<br>But creativity ≠ reliability.</h3>
+        <p>Every existing platform puts the LLM in the execution loop. That means your 7 AM email digest might not send because the agent "decided" it wasn't relevant. Your cron job might hallucinate. Your pipeline might behave differently every run.</p>
+      </div>
+      <div class="col">
+        <h2 class="section-label">The Solution</h2>
+        <h3>Agents design.<br>ETL executes.</h3>
+        <p>PawFlow separates <strong>conception</strong> from <strong>execution</strong>. The AI agent has its creative moment when it generates the flow. Once deployed, the flow runs as deterministic, structured JSON — no LLM in the loop. Same input, same output, every time.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Features -->
+<section id="features" class="section">
+  <div class="container">
+    <h2 class="section-title">Everything You Need</h2>
+    <p class="section-desc">A complete platform for AI-powered automation — not just another LLM wrapper.</p>
+
+    <div class="features-grid">
+      <div class="feature-card feature-card-wide">
+        <img src="assets/feature-agent-flows.png" alt="Agent-Generated Flows">
+        <div class="feature-body">
+          <h3>Agent-Generated Flows</h3>
+          <p>Describe what you need in natural language. The AI agent generates a complete, deployable pipeline — cron triggers, data fetching, LLM processing, email delivery. All as structured JSON, ready to run forever.</p>
+        </div>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">⚡</div>
+        <h3>152 Task Types</h3>
+        <p>From Kafka to S3, MQTT to SQL, CSV to Parquet — a full ETL toolkit. Plus HTTP listeners, webhooks, rate control, deduplication, and merge/split/routing.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🤖</div>
+        <h3>Multi-Agent Orchestration</h3>
+        <p>Spawn agents, assign tasks, verify results. Agents can collaborate, delegate, and escalate — each with its own LLM, tools, and permissions.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🔒</div>
+        <h3>Fine-Grained Permissions</h3>
+        <p>Per-tool allow/deny/confirm controls. Encrypted secrets. OAuth2 built-in. Checkpoints with /rewind. You control what agents can do.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🧠</div>
+        <h3>Persistent Memory</h3>
+        <p>Agents remember across sessions with semantic search. Not just keyword matching — actual meaning-based recall that improves over time.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">🎨</div>
+        <h3>Media Generation</h3>
+        <p>Generate images, video, and audio directly from agent conversations. Built-in support for multiple providers — no external tools needed.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon">📋</div>
+        <h3>Plans & Tasks</h3>
+        <p>Structured plans with approval gates. Assignable tasks with verification. Agents don't just talk — they execute and report.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Architecture -->
+<section id="architecture" class="section section-dark">
+  <div class="container">
+    <h2 class="section-title">The Architecture Difference</h2>
+    <p class="section-desc">Why PawFlow is fundamentally different from every other AI platform.</p>
+
+    <div class="arch-comparison">
+      <div class="arch-card arch-others">
+        <h3>Other Platforms</h3>
+        <div class="arch-flow">
+          <div class="arch-step">Cron Trigger</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step arch-llm">🤖 LLM Agent</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step arch-llm">🤖 LLM Decides</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step">Maybe Sends Email</div>
+        </div>
+        <p class="arch-verdict">❌ Non-deterministic. The agent is in the execution loop. It might decide not to send. It might hallucinate. Different result every run.</p>
+      </div>
+
+      <div class="arch-card arch-pawflow">
+        <h3>PawFlow</h3>
+        <div class="arch-flow">
+          <div class="arch-step arch-llm">🤖 Agent Designs Flow</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step arch-etl">📋 JSON Pipeline</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step arch-etl">⚙️ ETL Executes</div>
+          <div class="arch-arrow">→</div>
+          <div class="arch-step arch-etl">✅ Always Sends</div>
+        </div>
+        <p class="arch-verdict">✅ Deterministic. The agent designed it once. The ETL runs it forever. Same input → same output.</p>
+      </div>
+    </div>
+
+    <div class="arch-detail">
+      <img src="assets/feature-architecture.png" alt="Architecture" class="arch-img">
+      <div class="arch-text">
+        <h3>A Controlled Spectrum</h3>
+        <p>You choose <em>exactly</em> how much AI you want at each step:</p>
+        <ul>
+          <li><strong>Fully automatic</strong> — zero agent at execution. Pure ETL.</li>
+          <li><strong>Semi-autonomous</strong> — agent consulted on specific decisions via <code>inferLLM</code> tasks.</li>
+          <li><strong>Supervised</strong> — human in the loop via <code>publishMessage</code> + <code>readConversation</code>.</li>
+        </ul>
+        <p>And the ETL can call agents, publish to conversations, and even participate in them. It's not a wall between two worlds — it's a bridge you control.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Channels -->
+<section id="channels" class="section">
+  <div class="container">
+    <h2 class="section-title">Talk to Your Agents Anywhere</h2>
+    <p class="section-desc">Connect via the channels your team already uses.</p>
+
+    <div class="channels-row">
+      <img src="assets/feature-channels.png" alt="Multi-channel" class="channels-img">
+    </div>
+
+    <div class="channels-grid">
+      <div class="channel"><span class="channel-icon">💬</span> WhatsApp</div>
+      <div class="channel"><span class="channel-icon">✈️</span> Telegram</div>
+      <div class="channel"><span class="channel-icon">🎮</span> Discord</div>
+      <div class="channel"><span class="channel-icon">💼</span> Slack</div>
+      <div class="channel"><span class="channel-icon">🌐</span> Web UI</div>
+      <div class="channel"><span class="channel-icon">⌨️</span> CLI</div>
+      <div class="channel"><span class="channel-icon">🧩</span> VS Code</div>
+      <div class="channel"><span class="channel-icon">🐍</span> Python SDK</div>
+    </div>
+  </div>
+</section>
+
+<!-- Code Example -->
+<section class="section section-dark">
+  <div class="container">
+    <h2 class="section-title">See It In Action</h2>
+    <p class="section-desc">A real flow generated by an agent — daily crypto digest with LLM analysis, sent via OAuth2 email.</p>
+
+    <div class="code-block">
+      <div class="code-header">
+        <span class="code-dot red"></span>
+        <span class="code-dot yellow"></span>
+        <span class="code-dot green"></span>
+        <span class="code-title">daily-crypto-email-oauth2.json</span>
+      </div>
+      <pre><code>{
+  <span class="k">"id"</span>: <span class="s">"daily-crypto-email-oauth2"</span>,
+  <span class="k">"tasks"</span>: {
+    <span class="k">"trigger"</span>:           { <span class="k">"type"</span>: <span class="s">"cronTrigger"</span>, <span class="k">"parameters"</span>: { <span class="k">"schedule"</span>: <span class="s">"0 7 * * *"</span> } },
+    <span class="k">"fetch_crypto"</span>:       { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Fetch CoinGecko API</span> },
+    <span class="k">"prepare_llm_input"</span>:  { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Format prompt</span> },
+    <span class="k">"generate_summary"</span>:   { <span class="k">"type"</span>: <span class="s">"inferLLM"</span>,       <span class="c">// AI analysis</span> },
+    <span class="k">"merge_parts"</span>:        { <span class="k">"type"</span>: <span class="s">"mergeContent"</span>    <span class="c">// Combine data + summary</span> },
+    <span class="k">"compose_email"</span>:      { <span class="k">"type"</span>: <span class="s">"executeScript"</span>,  <span class="c">// Build email body</span> },
+    <span class="k">"send_email"</span>:         { <span class="k">"type"</span>: <span class="s">"sendEmail"</span>, <span class="k">"parameters"</span>: { <span class="k">"auth_type"</span>: <span class="s">"oauth2"</span> } }
+  },
+  <span class="k">"relations"</span>: [
+    { <span class="k">"from"</span>: <span class="s">"trigger"</span>, <span class="k">"to"</span>: <span class="s">"fetch_crypto"</span> },
+    { <span class="k">"from"</span>: <span class="s">"fetch_crypto"</span>, <span class="k">"to"</span>: <span class="s">"prepare_llm_input"</span> },
+    { <span class="k">"from"</span>: <span class="s">"prepare_llm_input"</span>, <span class="k">"to"</span>: <span class="s">"generate_summary"</span> },
+    { <span class="k">"from"</span>: <span class="s">"generate_summary"</span>, <span class="k">"to"</span>: <span class="s">"merge_parts"</span> },
+    { <span class="k">"from"</span>: <span class="s">"merge_parts"</span>, <span class="k">"to"</span>: <span class="s">"compose_email"</span> },
+    { <span class="k">"from"</span>: <span class="s">"compose_email"</span>, <span class="k">"to"</span>: <span class="s">"send_email"</span> }
+  ]
+}</code></pre>
+    </div>
+    <p class="code-caption">An agent generated this flow from: <em>"Send me a daily crypto digest email at 7 AM with AI analysis."</em><br>It runs every day. Deterministically. The agent is no longer in the loop.</p>
+  </div>
+</section>
+
+<!-- LLM Providers -->
+<section class="section">
+  <div class="container">
+    <h2 class="section-title">Bring Your Own Model</h2>
+    <p class="section-desc">PawFlow works with any LLM provider — cloud or local. Switch models per-agent, per-conversation.</p>
+    <div class="providers-grid">
+      <div class="provider">OpenAI</div>
+      <div class="provider">Anthropic</div>
+      <div class="provider">Google Gemini</div>
+      <div class="provider">xAI Grok</div>
+      <div class="provider">DeepSeek</div>
+      <div class="provider">Mistral</div>
+      <div class="provider">Ollama</div>
+      <div class="provider">vLLM</div>
+      <div class="provider">Any OpenAI-compatible</div>
+    </div>
+  </div>
+</section>
+
+<!-- Get Started -->
+<section id="get-started" class="section section-dark">
+  <div class="container">
+    <h2 class="section-title">Get Started in Minutes</h2>
+    <div class="install-steps">
+      <div class="install-step">
+        <div class="step-num">1</div>
+        <h3>Clone & Install</h3>
+        <div class="code-inline">git clone https://github.com/pawflow/pawflow<br>cd pawflow && pip install -e .</div>
+      </div>
+      <div class="install-step">
+        <div class="step-num">2</div>
+        <h3>Configure</h3>
+        <div class="code-inline">cp config/example.env .env<br># Add your LLM API key</div>
+      </div>
+      <div class="install-step">
+        <div class="step-num">3</div>
+        <h3>Launch</h3>
+        <div class="code-inline">pawflow start<br># Open http://localhost:9090/chat</div>
+      </div>
+    </div>
+    <div class="cta-row">
+      <a href="/docs" class="btn btn-primary btn-lg">Read the Docs</a>
+      <a href="https://github.com/pawflow/pawflow" class="btn btn-outline btn-lg" target="_blank">View on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<!-- Footer -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-inner">
+      <div class="footer-brand">
+        <img src="assets/logo.png" alt="PawFlow" class="footer-logo">
+        <span>PawFlow</span>
+      </div>
+      <div class="footer-links">
+        <a href="/docs">Documentation</a>
+        <a href="https://github.com/pawflow/pawflow">GitHub</a>
+        <a href="#features">Features</a>
+        <a href="#architecture">Architecture</a>
+      </div>
+      <div class="footer-copy">
+        MIT License · Built with ❤️ by <a href="https://github.com/qanciaux">Quentin Anciaux</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script>
+// Smooth scroll
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const el = document.querySelector(a.getAttribute('href'));
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  });
+});
+
+// Nav background on scroll
+window.addEventListener('scroll', () => {
+  document.querySelector('.nav').classList.toggle('scrolled', window.scrollY > 50);
+});
+
+// Animate on scroll
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.1 });
+document.querySelectorAll('.feature-card, .arch-card, .install-step, .stat').forEach(el => observer.observe(el));
+</script>
+
+</body>
+</html>

@@ -31,7 +31,7 @@
     "max_depth": 1,
     "timeout": 120,
     "description": "Claude AI assistant by Anthropic, via Claude Code CLI. Uses the claude_code LLM service.",
-    "llm_service": "${claude_llm_service}",
+    "llm_service": "${claude_code_llm_service}",
     "prompt": "You are Claude, a helpful, harmless, and honest AI assistant made by Anthropic. You are thoughtful, nuanced, and thorough in your responses. You think step by step when needed, acknowledge uncertainty, and provide balanced perspectives. You are direct but kind.",
     "name": "claude",
     "created_at": 1710400000.0,

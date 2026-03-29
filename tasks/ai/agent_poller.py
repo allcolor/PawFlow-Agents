@@ -183,8 +183,8 @@ class AgentPollerMixin:
 
                 # Register in active interactions
                 _poll_agent = ctx.get("active_agent_name", "") or ""
-                with self._interactions_lock:
-                    self._active_interactions[conversation_id] = {
+                with self._running_agents_lock:
+                    self._running_agents[conversation_id] = {
                         "agent_name": _poll_agent,
                         "message_preview": ", ".join(reasons)[:80] if reasons else "poll",
                         "started_at": time.time(),
@@ -313,8 +313,8 @@ class AgentPollerMixin:
                 ctx["_thought_key"] = entry_key
 
                 # Register in active interactions so list_active reports it
-                with self._interactions_lock:
-                    self._active_interactions[_thought_gen_key] = {
+                with self._running_agents_lock:
+                    self._running_agents[_thought_gen_key] = {
                         "agent_name": _thought_agent,
                         "message_preview": reason[:80],
                         "started_at": time.time(),

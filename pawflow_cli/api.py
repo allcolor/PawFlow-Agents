@@ -58,6 +58,21 @@ class AgentAPIClient:
             body["reply_to"] = reply_to
         return self._post("/api/agent", body)
 
+    def get(self, path: str) -> dict:
+        """HTTP GET, return parsed JSON response."""
+        conn = self._get_conn()
+        try:
+            conn.request("GET", f"/api{path}", headers=self._headers())
+            resp = conn.getresponse()
+            data = resp.read().decode("utf-8")
+            if resp.status == 401:
+                raise PermissionError("Session expired — re-authenticate")
+            if resp.status >= 400:
+                raise Exception(f"API error {resp.status}: {data[:500]}")
+            return json.loads(data) if data else {}
+        finally:
+            conn.close()
+
     def _post(self, path: str, body: dict) -> dict:
         """HTTP POST with JSON body, return parsed response."""
         conn = self._get_conn()

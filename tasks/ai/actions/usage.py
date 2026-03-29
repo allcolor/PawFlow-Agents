@@ -74,20 +74,23 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             return [flowfile]
         now = time.time()
         active = []
-        with self._interactions_lock:
-            for key, info in list(self._active_interactions.items()):
+        with self._running_agents_lock:
+            for key, info in list(self._running_agents.items()):
                 if info.get("conversation_id") != conv_id:
                     continue
                 # Auto-cleanup stale entries (>10 min)
                 if now - info.get("started_at", now) > 600:
-                    self._active_interactions.pop(key, None)
+                    self._running_agents.pop(key, None)
                     continue
                 active.append({
                     "agent_name": info.get("agent_name", ""),
                     "message_preview": info.get("message_preview", ""),
                     "duration_s": round(now - info.get("started_at", now), 1),
                     "iteration": info.get("iteration", 0),
+                    "round": info.get("round", 0),
+                    "max_rounds": info.get("max_rounds", 0),
                     "last_tool": info.get("last_tool", ""),
+                    "total_tools": info.get("total_tools", 0),
                     "status": info.get("status", "thinking"),
                 })
         flowfile.set_content(json.dumps({"active": active}).encode())

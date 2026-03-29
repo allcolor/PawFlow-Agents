@@ -476,12 +476,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 if t.get("id", "") in _tool_results:
                     return True  # has a result — keep regardless
                 args = t.get("arguments", {})
-                if not args:
+                if not args or args == {}:
                     return False
                 # MCP wrapper: check inner arguments
                 if t.get("name") == "mcp__pawflow__use_tool" and isinstance(args, dict):
                     inner = args.get("arguments", {})
-                    return bool(inner)
+                    if not inner or inner == {}:
+                        return False
                 return True
             tc = [t for t in _turn_tool_calls if _has_real_args(t)]
             _dropped = len(_turn_tool_calls) - len(tc)

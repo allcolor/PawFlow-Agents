@@ -398,10 +398,15 @@ def main():
                         tool_args = json.loads(tool_args)
                     except (json.JSONDecodeError, TypeError):
                         break
-                result = client.request("execute_tool",
-                                        tool_name=tool_name,
-                                        arguments=tool_args)
-                result = str(result) if result else "(no output)"
+                # Skip phantom calls: empty args → return empty (not an error)
+                if tool_name and (not tool_args or tool_args == {}):
+                    _log(f"SKIP empty {tool_name}()")
+                    result = ""
+                else:
+                    result = client.request("execute_tool",
+                                            tool_name=tool_name,
+                                            arguments=tool_args)
+                    result = str(result) if result else "(no output)"
             else:
                 result = f"Error: unknown tool '{name}'"
 

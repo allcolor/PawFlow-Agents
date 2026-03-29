@@ -374,15 +374,19 @@ class StreamEmitter(AgentEmitter):
         if hasattr(self.agent, '_pending_user_msgs') and _queued_key in self.agent._pending_user_msgs:
             _queued = self.agent._pending_user_msgs.pop(_queued_key, [])
             for _qff in _queued:
-                # _qff is a FlowFile — extract user text from its content
+                # _qff is a FlowFile — extract user text
                 try:
-                    _raw = _qff.get_content().decode("utf-8") if hasattr(_qff, "get_content") else str(_qff)
-                    _parsed = json.loads(_raw) if _raw.strip().startswith("{") else {}
-                    _text = _parsed.get("message", "") or _parsed.get("text", "") or _raw
+                    # Prefer the preserved attribute (set before ack overwrites content)
+                    _text = (_qff.get_attribute("_queued_user_text")
+                             if hasattr(_qff, "get_attribute") else "") or ""
+                    if not _text:
+                        _raw = _qff.get_content().decode("utf-8") if hasattr(_qff, "get_content") else str(_qff)
+                        _parsed = json.loads(_raw) if _raw.strip().startswith("{") else {}
+                        _text = _parsed.get("message", "") or _parsed.get("text", "") or ""
                     _uid = (_qff.get_attribute("http.auth.principal")
                             if hasattr(_qff, "get_attribute") else "") or self._user_id
                 except Exception:
-                    _text = str(_qff)
+                    _text = ""
                     _uid = self._user_id
                 if _text:
                     append_fn(LLMMessage(

@@ -249,6 +249,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     return [flowfile]
 
             logger.info(f"[agent:{conversation_id[:8]}] already active — queueing")
+            # Preserve the original user message before overwriting with ack
+            flowfile.set_attribute("_queued_user_text", _user_text)
             _queued_key = f"_queued_msgs:{conversation_id}"
             if not hasattr(self, '_pending_user_msgs'):
                 self._pending_user_msgs = {}

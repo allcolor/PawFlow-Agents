@@ -121,7 +121,7 @@ class ToolRelayService(BaseService):
             to_cancel = [(rid, info) for rid, info in cls._inflight.items()
                          if isinstance(info, dict)
                          and info.get("conv") == conversation_id
-                         and info.get("agent") == agent_name]
+                         and (not agent_name or info.get("agent") == agent_name)]
         for rid, info in to_cancel:
             cancel_evt = info.get("cancel")
             if cancel_evt:

@@ -330,7 +330,8 @@ class _RequestHandler(BaseHTTPRequestHandler):
             hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
         ).decode()
 
-        # Send 101 via standard HTTP handler
+        # Send 101 — must be HTTP/1.1 for WebSocket (BaseHTTPHandler defaults to 1.0)
+        self.protocol_version = "HTTP/1.1"
         self.send_response(101, "Switching Protocols")
         self.send_header("Upgrade", "websocket")
         self.send_header("Connection", "Upgrade")

@@ -1210,6 +1210,47 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
 
+        if action == "script_hash":
+            # Return hash of current relay scripts for version check
+            _script_dir = os.path.dirname(os.path.abspath(__file__))
+            _h = hashlib.sha256()
+            for _sf in ["pawflow_relay.py", "fs_actions.py", "fs_exec.py", "fs_screen.py", "fs_mcp.py"]:
+                _sp = os.path.join(_script_dir, _sf)
+                if os.path.exists(_sp):
+                    with open(_sp, "rb") as _f:
+                        _h.update(_f.read())
+            return {"ok": True, "data": {"hash": _h.hexdigest()[:16]}}
+
+        if action == "update_scripts":
+            # Receive updated relay scripts from server, write to script dir, hot-reload
+            _scripts = msg.get("scripts", {})
+            _new_hash = msg.get("script_hash", "")
+            if not _scripts:
+                return {"ok": False, "error": "No scripts provided"}
+            _script_dir = os.path.dirname(os.path.abspath(__file__))
+            _updated = []
+            for _fname, _content_b64 in _scripts.items():
+                if _fname not in ("pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+                                  "fs_screen.py", "fs_mcp.py"):
+                    continue  # Only accept known relay files
+                _dst = os.path.join(_script_dir, _fname)
+                _data = base64.b64decode(_content_b64)
+                with open(_dst, "wb") as _f:
+                    _f.write(_data)
+                _updated.append(_fname)
+            # Hot-reload importable modules (not pawflow_relay.py itself)
+            import importlib
+            for _mod_name in ["fs_actions", "fs_exec", "fs_screen", "fs_mcp"]:
+                if f"{_mod_name}.py" in _updated and _mod_name in sys.modules:
+                    try:
+                        importlib.reload(sys.modules[_mod_name])
+                    except Exception as _e:
+                        sys.stderr.write(f"[FSRelay] Failed to reload {_mod_name}: {_e}\n")
+            _needs_restart = "pawflow_relay.py" in _updated
+            sys.stderr.write(f"[FSRelay] Scripts updated: {_updated} hash={_new_hash}"
+                             f"{' (restart needed)' if _needs_restart else ''}\n")
+            return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}
+
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)
         if not handler_func:

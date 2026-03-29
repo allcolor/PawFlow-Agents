@@ -31,6 +31,56 @@ from core.base_service import BaseService
 
 logger = logging.getLogger(__name__)
 
+# Relay script files to sync (relative to tools/ directory)
+_RELAY_SCRIPT_FILES = [
+    "pawflow_relay.py", "fs_actions.py", "fs_exec.py",
+    "fs_screen.py", "fs_mcp.py",
+]
+
+
+def _get_relay_scripts_bundle():
+    """Read relay scripts from tools/ and return {filename: content_b64, hash: combined_hash}."""
+    tools_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools")
+    scripts = {}
+    h = hashlib.sha256()
+    for fname in _RELAY_SCRIPT_FILES:
+        fpath = os.path.join(tools_dir, fname)
+        if os.path.exists(fpath):
+            with open(fpath, "rb") as f:
+                data = f.read()
+            scripts[fname] = base64.b64encode(data).decode("ascii")
+            h.update(data)
+    return {"scripts": scripts, "hash": h.hexdigest()[:16]}
+
+
+def _sync_relay_scripts(service, reg_info):
+    """Push relay scripts to a connected relay if its version differs."""
+    if not reg_info.get("containerized"):
+        return  # Only sync to containerized relays
+    bundle = _get_relay_scripts_bundle()
+    if not bundle["scripts"]:
+        return
+    # Ask relay for its current script hash
+    try:
+        remote = service._request("script_hash")
+        if isinstance(remote, dict) and remote.get("hash") == bundle["hash"]:
+            logger.debug("Relay scripts up to date (hash=%s)", bundle["hash"])
+            return
+    except Exception:
+        pass  # Relay doesn't support script_hash yet, push anyway
+    # Push scripts
+    try:
+        result = service._request("update_scripts",
+                                   scripts=bundle["scripts"],
+                                   script_hash=bundle["hash"])
+        if isinstance(result, dict) and result.get("ok"):
+            logger.info("Relay scripts synced (hash=%s, %d files)",
+                         bundle["hash"], len(bundle["scripts"]))
+        else:
+            logger.warning("Relay script sync rejected: %s", result)
+    except Exception as e:
+        logger.warning("Relay script sync failed: %s", e)
+
 
 # ── Shared WS Listener (singleton per port) ──────────────────────
 
@@ -293,10 +343,10 @@ class WSListener:
             # Filesystem relay
             service._set_relay(reader, writer, self._loop)
 
-            # Auto-fetch project context in background
+            # Auto-fetch project context + sync relay scripts in background
             try:
                 import threading as _th
-                def _fetch_ctx():
+                def _fetch_ctx_and_sync():
                     try:
                         ctx = service._request("project_context", ".")
                         service._project_context = ctx
@@ -304,7 +354,12 @@ class WSListener:
                                      relay_id, ctx.get("project_types", []))
                     except Exception as e:
                         logger.debug("Failed to load project context: %s", e)
-                _th.Thread(target=_fetch_ctx, daemon=True).start()
+                    # Sync relay scripts if containerized
+                    try:
+                        _sync_relay_scripts(service, _reg_info)
+                    except Exception as e:
+                        logger.debug("Relay script sync failed: %s", e)
+                _th.Thread(target=_fetch_ctx_and_sync, daemon=True).start()
             except Exception:
                 pass
 

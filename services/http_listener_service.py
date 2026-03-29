@@ -330,16 +330,26 @@ class _RequestHandler(BaseHTTPRequestHandler):
             hashlib.sha1(ws_key.encode() + _WS_MAGIC).digest()
         ).decode()
 
-        # Send 101 Switching Protocols
-        self.send_response(101, "Switching Protocols")
-        self.send_header("Upgrade", "websocket")
-        self.send_header("Connection", "Upgrade")
-        self.send_header("Sec-WebSocket-Accept", accept)
-        self.end_headers()
-
-        # Hand off the raw socket to the WebSocket handler
-        # The handler blocks in the current thread until done
+        # Send 101 Switching Protocols — write directly to socket
+        # (avoid BaseHTTPRequestHandler buffering issues)
         sock = self.request  # raw socket
+        response = (
+            f"HTTP/1.1 101 Switching Protocols\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Accept: {accept}\r\n"
+            f"\r\n"
+        )
+        sock.sendall(response.encode("latin-1"))
+
+        # Drain any buffered bytes from rfile (HTTP request body remnants)
+        try:
+            if hasattr(self.rfile, 'peek'):
+                leftover = self.rfile.peek()
+                if leftover:
+                    self.rfile.read(len(leftover))  # consume from buffer
+        except Exception:
+            pass
         try:
             entry.ws_handler(sock, path_params, {
                 "path": path,

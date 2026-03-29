@@ -79,6 +79,13 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         backend_sock.close()
         return
 
+    # Check if there are leftover bytes after the handshake response
+    _header_end = resp.index(b"\r\n\r\n") + 4
+    _leftover = resp[_header_end:]
+    if _leftover:
+        # Forward leftover bytes from backend to client
+        client_sock.sendall(_leftover)
+
     logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
 
     # Bidirectional relay — 2 threads

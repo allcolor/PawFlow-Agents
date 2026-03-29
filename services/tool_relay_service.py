@@ -182,6 +182,27 @@ class ToolRelayService(BaseService):
                     except Exception:
                         pass
 
+        # Configure media service resolvers (image/video/audio generation)
+        from core.handlers.media import ImageGenerationHandler, ImageModelInfoHandler
+        from core.handlers.media import VideoGenerationHandler, AudioGenerationHandler
+        file_base_url = self.config.get("file_base_url", "") or ""
+        for h in registry.list_tools():
+            if isinstance(h, (ImageGenerationHandler, ImageModelInfoHandler)):
+                if file_base_url and hasattr(h, 'set_base_url'):
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "image"))
+            elif isinstance(h, VideoGenerationHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "video"))
+            elif isinstance(h, AudioGenerationHandler):
+                if file_base_url:
+                    h.set_base_url(file_base_url)
+                h.set_service_resolver(
+                    self._make_media_resolver(user_id, conversation_id, "audio"))
+
         # Populate available services on all BaseFsHandler instances
         from core.handlers._fs_base import BaseFsHandler, _FS_TYPES
         _fs_handlers = [h for h in registry.list_tools() if isinstance(h, BaseFsHandler)]
@@ -220,6 +241,79 @@ class ToolRelayService(BaseService):
                 logger.error("Failed to enumerate filesystem services: %s", e)
 
         return registry
+
+    @staticmethod
+    def _make_media_resolver(user_id: str, conversation_id: str, media_type: str):
+        """Build a resolver closure for image/video/audio services."""
+        def resolver():
+            type_map = {
+                "image": ("base_image_generation", "BaseImageGenerationService"),
+                "video": ("base_video_generation", "BaseVideoGenerationService"),
+                "audio": ("base_audio_generation", "BaseAudioGenerationService"),
+            }
+            mod_name, cls_name = type_map[media_type]
+            import importlib
+            mod = importlib.import_module(f"services.{mod_name}")
+            base_class = getattr(mod, cls_name)
+
+            # Discover valid service types
+            try:
+                from tasks import _register_all_services
+                _register_all_services()
+            except Exception:
+                pass
+            from core import ServiceFactory
+            valid_types = set()
+            for stype, sclass in ServiceFactory._services.items():
+                try:
+                    if issubclass(sclass, base_class):
+                        valid_types.add(stype)
+                except TypeError:
+                    pass
+
+            # Find deployed services
+            available = []
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                for sid, sdef in greg.get_all_definitions().items():
+                    if not getattr(sdef, "enabled", True):
+                        continue
+                    if (getattr(sdef, "service_type", "") or "") in valid_types:
+                        available.append(sid)
+            except Exception:
+                pass
+            if user_id:
+                try:
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    ureg = UserServiceRegistry.get_instance()
+                    for sid, sdef in ureg.get_all_for_user(user_id).items():
+                        if sid not in available and getattr(sdef, "enabled", True):
+                            if (getattr(sdef, "service_type", "") or "") in valid_types:
+                                available.append(sid)
+                except Exception:
+                    pass
+
+            if not available:
+                return None, f"No {media_type} generation service deployed"
+            # Resolve the first one (or single one)
+            sid = available[0]
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                svc = UserServiceRegistry.get_instance().get_live_instance(user_id, sid)
+                if svc and hasattr(svc, 'generate'):
+                    return svc, None
+            except Exception:
+                pass
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                svc = GlobalServiceRegistry.get_instance().get_live_instance(sid)
+                if svc and hasattr(svc, 'generate'):
+                    return svc, None
+            except Exception:
+                pass
+            return None, f"{media_type.title()} service '{sid}' failed to connect"
+        return resolver
 
     @staticmethod
     def _find_filesystem_service(user_id: str = ""):

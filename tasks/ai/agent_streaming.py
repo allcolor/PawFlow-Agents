@@ -356,7 +356,11 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         except Exception as e:
             logger.error(f"[agent:{conversation_id[:8]}] streaming loop crashed: {e}", exc_info=True)
             try:
-                bus.publish_event(conversation_id, "error_event", {"message": f"Agent loop crashed: {e}"})
+                _crash_agent = ctx.get("active_agent_name", "") or ""
+                bus.publish_event(conversation_id, "error_event", {
+                    "message": f"Agent loop crashed: {e}",
+                    "agent_name": _crash_agent,
+                })
             except Exception:
                 pass
         finally:
@@ -454,7 +458,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
             # Auto-reschedule random thoughts
             _was_cancelled = not self._is_current_generation(gen_key, my_generation)
-            if ctx.get("is_random_thought") and not _was_cancelled:
+            if ctx.get("is_random_thought") and not _was_cancelled and not _had_error:
                 try:
                     from core.poll_scheduler import PollScheduler as _PS
                     import random as _rng
@@ -483,7 +487,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     logger.warning(f"[agent] Failed to reschedule thought: {e}")
 
             # Auto-reschedule active tasks
-            if not _was_cancelled:
+            if not _was_cancelled and not _had_error:
                 try:
                     _store = ConversationStore.instance()
                     from core.poll_scheduler import PollScheduler as _PS2

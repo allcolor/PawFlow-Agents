@@ -180,6 +180,7 @@ class StreamEmitter(AgentEmitter):
     def on_error(self, error: Exception) -> None:
         self.bus.publish_event(self.conversation_id, "error_event", {
             "message": str(error),
+            "agent_name": self._agent_name or "",
             "conversation_id": self.conversation_id,
         })
 

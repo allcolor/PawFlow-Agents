@@ -341,6 +341,7 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_header("Sec-WebSocket-Protocol",
                              ws_protocol.split(",")[0].strip())
         self.end_headers()
+        self.wfile.flush()  # CRITICAL: flush the 101 to the browser NOW
 
         logger.info("[WS] 101 sent for %s", path)
 

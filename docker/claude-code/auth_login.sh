@@ -33,12 +33,25 @@ sleep 1
 
 echo "[auth-login] Display and noVNC ready on port 6080"
 
-# Launch claude auth login (opens Chromium on the virtual display)
-# CHROME_FLAGS needed for Chromium in Docker (no sandbox, etc.)
-export CHROME_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
-export CHROMIUM_FLAGS="$CHROME_FLAGS"
+# Configure Chromium as default browser for claude auth login
+export BROWSER="chromium --no-sandbox --disable-gpu --disable-dev-shm-usage"
 
-claude auth login || true
+# Launch claude auth login in background, capture output to find URL
+claude auth login 2>&1 | tee /tmp/claude_auth_output.txt &
+CLAUDE_PID=$!
+
+# Wait for the URL to appear, then open Chromium if claude didn't
+sleep 3
+AUTH_URL=$(grep -oP 'https://claude\S+' /tmp/claude_auth_output.txt | head -1)
+if [ -n "$AUTH_URL" ]; then
+    echo "[auth-login] Opening Chromium with auth URL"
+    chromium --no-sandbox --disable-gpu --disable-dev-shm-usage \
+        --disable-software-rasterizer --window-size=1280,800 \
+        "$AUTH_URL" &
+fi
+
+# Wait for claude auth login to complete
+wait $CLAUDE_PID 2>/dev/null || true
 
 echo "[auth-login] claude auth login completed"
 

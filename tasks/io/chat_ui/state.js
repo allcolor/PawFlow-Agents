@@ -275,6 +275,8 @@ function updateDeleteBtn() {
   document.getElementById('schedsBtn').style.display = show;
   document.getElementById('plansBtn').style.display = show;
   document.getElementById('permissionMode').style.display = show;
+  document.getElementById('terminalBtn').style.display = show;
+  document.getElementById('codeBtn').style.display = show;
 }
 // ── Reply-to state ──
 let _replyTo = null;  // {raw_index, role, agent, text_preview}

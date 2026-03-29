@@ -371,8 +371,8 @@ if (typeof hljs !== 'undefined') {
     <button class="btn" id="schedsBtn" onclick="toggleSchedsPanel()" style="display:none" title="Scheduled tasks">&#x23F0;</button>
     <button class="btn" id="filesBtn" onclick="toggleFilesPanel()" style="display:none" title="Conversation files">&#x1F4C4;</button>
     <button class="btn" id="explorerBtn" onclick="openExplorer()" title="File Explorer">&#128193;</button>
-    <button class="btn" id="terminalBtn" onclick="cmdTerminal('',[''])" title="Open terminal on relay" style="font-family:monospace;font-weight:bold">&gt;_</button>
-    <button class="btn" id="codeBtn" onclick="cmdCode('',[''])" title="Open VS Code on relay">&#x2699;</button>
+    <button class="btn" id="terminalBtn" onclick="cmdTerminal('',[''])" title="Open terminal on relay" style="display:none;font-family:monospace;font-weight:bold">&gt;_</button>
+    <button class="btn" id="codeBtn" onclick="cmdCode('',[''])" title="Open VS Code on relay" style="display:none">&#x2699;</button>
     <select id="permissionMode" onchange="setPermissionMode(this.value)" title="Tool permission mode"
             style="background:#0f3460;color:#e0e0e0;border:1px solid #e94560;border-radius:6px;padding:4px 8px;font-size:12px;cursor:pointer;display:none">
       <option value="default">&#x1F512; Default</option>

@@ -499,6 +499,15 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Docker error: {e}"}).encode())
             return [flowfile]
 
+        # Wait for noVNC to be ready (poll the port)
+        import urllib.request, urllib.error
+        for _attempt in range(15):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                break
+            except Exception:
+                time.sleep(1)
+
         # Register VNC proxy
         from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
         register_session(session_id, free_port,

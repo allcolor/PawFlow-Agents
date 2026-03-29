@@ -575,6 +575,75 @@ _ACTIONS = {
 }
 
 
+# ── Claude auth login (host action) ──────────────────────────────
+
+def _claude_auth_login(req, *, send_progress=None):
+    """Launch `claude auth login` on the HOST, intercept URL, return credentials."""
+    claude_path = req.get("claude_path", "").strip()
+    if not claude_path:
+        if sys.platform == "win32":
+            home = os.environ.get("USERPROFILE", os.environ.get("HOME", ""))
+            candidate = os.path.join(home, ".local", "bin", "claude.exe")
+            claude_path = candidate if os.path.exists(candidate) else (shutil.which("claude") or "claude")
+        else:
+            claude_path = shutil.which("claude") or "claude"
+
+    # Security: no shell injection
+    if any(c in claude_path for c in ';|&`$(){}'):
+        return {"error": f"Invalid claude path: contains forbidden characters"}
+
+    sys.stderr.write(f"[Relay] claude auth login: {claude_path}\n")
+
+    try:
+        proc = subprocess.Popen(
+            [claude_path, "auth", "login", "--no-browser"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True,
+        )
+    except FileNotFoundError:
+        return {"error": f"Claude binary not found: {claude_path}"}
+    except Exception as e:
+        return {"error": f"Failed to start claude: {e}"}
+
+    url_pattern = re.compile(r'https://claude\.ai/oauth/authorize\S+')
+    url_found = None
+
+    for line in proc.stdout:
+        line = line.rstrip()
+        sys.stderr.write(f"[Relay] claude> {line}\n")
+        m = url_pattern.search(line)
+        if m and not url_found:
+            url_found = m.group(0)
+            sys.stderr.write(f"[Relay] Auth URL found\n")
+            if send_progress:
+                send_progress({"url": url_found})
+
+    proc.wait()
+    sys.stderr.write(f"[Relay] claude auth login exited: {proc.returncode}\n")
+
+    if proc.returncode != 0 and not url_found:
+        return {"error": f"claude auth login failed (exit {proc.returncode})"}
+
+    # Read credentials
+    if sys.platform == "win32":
+        creds_path = os.path.join(
+            os.environ.get("USERPROFILE", os.environ.get("HOME", "")),
+            ".claude", ".credentials.json")
+    else:
+        creds_path = os.path.expanduser("~/.claude/.credentials.json")
+
+    if not os.path.exists(creds_path):
+        return {"error": f"Credentials file not found: {creds_path}"}
+
+    try:
+        with open(creds_path, "r", encoding="utf-8") as f:
+            credentials = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read credentials: {e}"}
+
+    return {"credentials": credentials}
+
+
 # ── Main ──────────────────────────────────────────────────────────
 
 def _make_handler_class(root_dir: str, secret: str, readonly: bool,
@@ -695,10 +764,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
-        # Host-level actions (not sandboxed, not filesystem)
+        # Host-level action: claude auth login (runs on host, not in Docker)
         if action == "claude_auth_login":
-            from pawflow_executor_relay import _action_claude_auth_login
-
             def _send_progress(data):
                 if ws_sock_ref[0]:
                     progress = json.dumps({
@@ -712,9 +779,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         pass
 
             try:
-                result = _action_claude_auth_login(
-                    mock, root_dir, msg, None,
-                    send_progress=_send_progress)
+                result = _claude_auth_login(msg, send_progress=_send_progress)
                 if "error" in result:
                     return {"ok": False, "error": result["error"]}
                 return {"ok": True, "data": result}

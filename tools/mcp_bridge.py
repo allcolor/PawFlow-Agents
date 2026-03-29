@@ -323,6 +323,23 @@ def main():
     _log(f"MCP bridge ready: {len(mcp_tools)} tools, "
          f"relay={'connected' if client else 'unavailable'}")
 
+    # Cache: tool_name → set of required param names
+    _required_cache = {}
+
+    def _has_required_args(tool_name):
+        """Check if a tool has required parameters (cached)."""
+        if tool_name in _required_cache:
+            return bool(_required_cache[tool_name])
+        try:
+            schema = client.request("get_tool_schema", tool_name=tool_name)
+            if isinstance(schema, str):
+                schema = json.loads(schema)
+            required = set(schema.get("parameters", {}).get("required", [])) if isinstance(schema, dict) else set()
+            _required_cache[tool_name] = required
+            return bool(required)
+        except Exception:
+            return False  # unknown tool — don't skip
+
     # MCP stdio loop
     for line in sys.stdin:
         line = line.strip()
@@ -398,9 +415,9 @@ def main():
                         tool_args = json.loads(tool_args)
                     except (json.JSONDecodeError, TypeError):
                         break
-                # Skip phantom calls: empty args → return empty (not an error)
-                if tool_name and (not tool_args or tool_args == {}):
-                    _log(f"SKIP empty {tool_name}()")
+                # Skip phantom calls: tool has required args but called with none
+                if tool_name and (not tool_args or tool_args == {}) and _has_required_args(tool_name):
+                    _log(f"SKIP phantom {tool_name}()")
                     result = ""
                 else:
                     result = client.request("execute_tool",

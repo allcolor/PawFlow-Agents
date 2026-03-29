@@ -61,9 +61,6 @@ def _register_all_services():
     import services.grok_video_service        # noqa: F401
     import services.sora_video_service        # noqa: F401
 
-    # Executor service
-    import services.remote_executor_service   # noqa: F401
-
     # Relay & filesystem services
     import services.filesystem_service         # noqa: F401  — relay service (WS)
     import services.tool_relay_service         # noqa: F401  — MCP bridge tool relay

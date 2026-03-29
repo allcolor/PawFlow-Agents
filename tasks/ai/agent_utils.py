@@ -765,42 +765,32 @@ class AgentUtilsMixin:
 
 
     def _list_available_services(self, user_id: str, service_type: str) -> list:
-        """Plan D: list all available services of a type for the user."""
+        """List all available services of a type for the user."""
+        _types = {
+            "filesystem": ("relay", "googleDrive", "oneDrive"),
+            "relay": ("relay",),
+        }
+        match_types = _types.get(service_type, (service_type,))
+
         result = []
         # Flow services
         services = getattr(self, '_services', {})
         for sid, svc in services.items():
-            svc_type = getattr(svc, 'TYPE', '')
-            if service_type == "remoteExecutor" and svc_type == "remoteExecutor":
-                info = svc.get_relay_info() if hasattr(svc, 'get_relay_info') else {}
-                result.append({"id": sid, "type": svc_type, "root": info.get("root", "?")})
-            elif service_type == "filesystem" and svc_type in (
-                "relay", "googleDrive", "oneDrive",
-            ):
-                result.append({"id": sid, "type": svc_type, "root": "?"})
+            if getattr(svc, 'TYPE', '') in match_types:
+                result.append({"id": sid, "type": getattr(svc, 'TYPE', ''), "root": "?"})
         # User services
         if user_id:
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
                 registry = UserServiceRegistry.get_instance()
-                all_defs = registry.get_all_for_user(user_id)
-                for sid, sdef in all_defs.items():
-                    if not sdef.enabled:
+                for sid, sdef in registry.get_all_for_user(user_id).items():
+                    if not sdef.enabled or sdef.service_type not in match_types:
                         continue
-                    if service_type == "remoteExecutor" and sdef.service_type == "remoteExecutor":
-                        if not any(s["id"] == sid for s in result):
-                            result.append({
-                                "id": sid, "type": sdef.service_type,
-                                "root": sdef.description or "?",
-                            })
-                    elif service_type == "filesystem" and sdef.service_type in (
-                        "relay", "googleDrive", "oneDrive",
-                    ):
-                        if not any(s["id"] == sid for s in result):
-                            result.append({
-                                "id": sid, "type": sdef.service_type,
-                                "root": sdef.description or "?",
-                            })
+                    if not any(s["id"] == sid for s in result):
+                        result.append({
+                            "id": sid, "type": sdef.service_type,
+                            "root": sdef.description or "?",
+                        })
             except Exception:
                 pass
         return result
@@ -844,58 +834,29 @@ class AgentUtilsMixin:
                                 return svc
             except Exception:
                 pass
-        # Plan B: check RelayConnectionManager for WS relays
-        if user_id:
-            try:
-                from core.relay_manager import RelayConnectionManager
-                mgr = RelayConnectionManager.instance()
-                conn = mgr.get(user_id, relay_type="filesystem")
-                if conn:
-                    from gui.services.user_service_registry import UserServiceRegistry
-                    registry = UserServiceRegistry.get_instance()
-                    svc = registry.get_live_instance(user_id, conn.relay_id)
-                    if svc:
-                        return svc
-            except Exception:
-                pass
         return None
 
 
     def _find_executor_service(self, user_id: str = ""):
-        """Find the first available remote executor service.
+        """Find the first available executor service (relay with exec support).
 
-        Search order: flow services → UserServiceRegistry (Plan B cross-channel).
+        Search order: flow services → UserServiceRegistry.
         """
         services = getattr(self, '_services', {})
         for svc in services.values():
             svc_type = getattr(svc, 'TYPE', '')
-            if svc_type == "remoteExecutor":
+            if svc_type == "relay" and getattr(svc, 'is_connected', lambda: False)():
                 return svc
-        # Plan B: fallback to user-installed services
         if user_id:
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
                 registry = UserServiceRegistry.get_instance()
-                compatible = registry.get_compatible("remoteExecutor", user_id)
+                compatible = registry.get_compatible("relay", user_id)
                 for sdef in compatible:
                     if sdef.enabled:
                         svc = registry.get_live_instance(user_id, sdef.service_id)
-                        if svc:
+                        if svc and getattr(svc, 'is_connected', lambda: False)():
                             return svc
-            except Exception:
-                pass
-        # Plan B: check RelayConnectionManager for WS relays
-        if user_id:
-            try:
-                from core.relay_manager import RelayConnectionManager
-                mgr = RelayConnectionManager.instance()
-                conn = mgr.get(user_id, relay_type="executor")
-                if conn:
-                    from gui.services.user_service_registry import UserServiceRegistry
-                    registry = UserServiceRegistry.get_instance()
-                    svc = registry.get_live_instance(user_id, conn.relay_id)
-                    if svc:
-                        return svc
             except Exception:
                 pass
         return None

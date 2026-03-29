@@ -341,19 +341,31 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     # ── Claude Code login via relay ──────────────────────────────────
 
     if action == "claude_code_list_relays":
-        """List connected relays for Claude Code login."""
+        """List connected relay services for Claude Code login."""
         relay_list = []
-        # User services (auto-installed when relay connects)
+        # Flow services
+        if hasattr(self, '_services'):
+            for sid, svc in self._services.items():
+                if getattr(svc, 'TYPE', '') == 'relay' and getattr(svc, 'is_connected', lambda: False)():
+                    info = getattr(svc, '_relay_info', {}) or {}
+                    relay_list.append({
+                        "relay_id": sid,
+                        "platform": info.get("platform", "unknown"),
+                        "root": info.get("root", ""),
+                    })
+        # User services
         if user_id:
             try:
                 from gui.services.user_service_registry import UserServiceRegistry
                 registry = UserServiceRegistry.get_instance()
                 for sid, sdef in registry.get_all_for_user(user_id).items():
-                    if not sdef.enabled:
+                    if not sdef.enabled or sdef.service_type != "relay":
                         continue
-                    if sdef.service_type == "remoteExecutor":
-                        svc = registry.get_live_instance(user_id, sid)
-                        info = svc.get_relay_info() if svc and hasattr(svc, 'get_relay_info') else {}
+                    if any(r["relay_id"] == sid for r in relay_list):
+                        continue
+                    svc = registry.get_live_instance(user_id, sid)
+                    if svc and getattr(svc, 'is_connected', lambda: False)():
+                        info = getattr(svc, '_relay_info', {}) or {}
                         relay_list.append({
                             "relay_id": sid,
                             "platform": info.get("platform", "unknown"),
@@ -361,29 +373,14 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         })
             except Exception as e:
                 logger.debug("Failed to list user relays: %s", e)
-        # Flow services (executor relays configured in the flow)
-        if hasattr(self, '_services'):
-            for sid, svc in self._services.items():
-                if getattr(svc, 'TYPE', '') == 'remoteExecutor':
-                    if not any(r["relay_id"] == sid for r in relay_list):
-                        info = svc.get_relay_info() if hasattr(svc, 'get_relay_info') else {}
-                        relay_list.append({
-                            "relay_id": sid,
-                            "platform": info.get("platform", "unknown"),
-                            "root": info.get("root", ""),
-                        })
         flowfile.set_content(json.dumps({"relays": relay_list}).encode())
         return [flowfile]
 
     if action == "claude_code_relay_login":
         """Launch claude auth login on a relay and retrieve credentials.
 
-        This is a long-running action (user must authorize in browser).
-        The relay sends a 'progress' with the auth URL, then 'result'
-        with credentials after auth completes.
-
-        Returns {url: "..."} when the URL is available, then the JS
-        polls claude_code_relay_login_poll for the final result.
+        Two-phase: returns {url} when auth URL is found, then JS polls
+        claude_code_relay_login_poll for the final credentials.
         """
         service_id = body.get("service_id", "")
         relay_id = body.get("relay_id", "")
@@ -393,17 +390,23 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
             return [flowfile]
 
-        from core.relay_manager import RelayConnectionManager
-        mgr = RelayConnectionManager.instance()
-        conn = mgr.get(user_id, relay_id)
-        if not conn:
-            flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not connected"}).encode())
+        # Find the relay service
+        relay_svc = None
+        if hasattr(self, '_services'):
+            relay_svc = self._services.get(relay_id)
+        if not relay_svc and user_id:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                relay_svc = UserServiceRegistry.get_instance().get_live_instance(user_id, relay_id)
+            except Exception:
+                pass
+        if not relay_svc:
+            flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
 
         import uuid
-        request_id = uuid.uuid4().hex[:12]
+        login_id = uuid.uuid4().hex[:12]
 
-        # Progress captures auth URL; result stored for poll
         _state = {"url": None, "result": None, "error": None}
         _url_event = threading.Event()
         _done_event = threading.Event()
@@ -414,41 +417,39 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 _state["url"] = url
                 _url_event.set()
 
-        # Store state for poll action
+        # Store state for poll
         if not hasattr(_handle_service_flow, '_claude_login_pending'):
             _handle_service_flow._claude_login_pending = {}
-        _handle_service_flow._claude_login_pending[request_id] = {
+        _handle_service_flow._claude_login_pending[login_id] = {
             "state": _state, "done_event": _done_event,
             "service_id": service_id,
         }
 
-        mgr.register_progress_callback(request_id, _on_progress)
-
-        # Start the relay command in a background thread
+        # Background: send command via relay service
         def _bg_login():
             try:
-                result = mgr.send_command_sync(
-                    user_id, relay_id, request_id,
-                    {"action": "claude_auth_login", "claude_path": claude_path},
+                result = relay_svc._request_with_progress(
+                    "claude_auth_login",
+                    on_progress=_on_progress,
                     timeout=300,
+                    claude_path=claude_path,
                 )
                 _state["result"] = result
             except Exception as e:
                 _state["error"] = str(e)
             finally:
-                mgr.unregister_progress_callback(request_id)
                 _done_event.set()
 
         t = threading.Thread(target=_bg_login, daemon=True)
         t.start()
 
-        # Wait for URL (up to 30s — claude should print it quickly)
+        # Wait for URL (up to 30s)
         _url_event.wait(timeout=30)
 
         if _state["url"]:
             flowfile.set_content(json.dumps({
                 "url": _state["url"],
-                "login_id": request_id,
+                "login_id": login_id,
             }).encode())
         elif _state["error"]:
             flowfile.set_content(json.dumps({"error": _state["error"]}).encode())

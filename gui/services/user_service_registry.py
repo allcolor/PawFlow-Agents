@@ -56,7 +56,6 @@ class UserServiceRegistry:
     # Plan C: service types that support heartbeat (have a ping() method)
     _HEARTBEAT_TYPES = frozenset({
         "relay",
-        "remoteExecutor",
     })
 
     def __init__(self):

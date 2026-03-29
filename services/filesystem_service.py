@@ -314,10 +314,7 @@ class WSListener:
                     service._resolve_pending(msg)
                 elif msg.get("type") == "progress":
                     # Intermediate progress from long-running commands
-                    from core.relay_manager import RelayConnectionManager
-                    RelayConnectionManager.instance().dispatch_progress(
-                        user_id, relay_id, msg.get("request_id", ""),
-                        msg.get("data", {}))
+                    service._dispatch_progress(msg)
                 elif msg.get("type") == "exec_output":
                     service._dispatch_exec_output(msg)
                 elif msg.get("type") == "ping":
@@ -507,6 +504,20 @@ class RelayService(BaseService):
                 holder["data"] = msg.get("data", {})
             evt.set()
 
+    def _dispatch_progress(self, msg: dict):
+        """Forward progress messages to registered callback."""
+        request_id = msg.get("request_id", "")
+        with self._pending_lock:
+            entry = self._pending.get(request_id)
+        if entry:
+            _, holder = entry
+            cb = holder.get("_on_progress")
+            if cb:
+                try:
+                    cb(msg.get("data", {}))
+                except Exception:
+                    pass
+
     def _dispatch_exec_output(self, msg: dict):
         """Forward streaming exec_output to the registered callback (if any)."""
         request_id = msg.get("request_id", "")
@@ -584,6 +595,74 @@ class RelayService(BaseService):
 
         data = holder.get("data")
         # Check for relay-level errors
+        if isinstance(data, dict) and data.get("ok") is False:
+            raise Exception(data.get("error", "Relay error"))
+        return data
+
+    def _request_with_progress(self, action: str, on_progress=None,
+                               timeout=None, **kwargs) -> Any:
+        """Like _request but supports progress callbacks.
+
+        Progress messages arriving before the final result are dispatched
+        to on_progress(data_dict) via _dispatch_progress.
+        """
+        with self._relay_pool_lock:
+            pool = self._relay_pool[:]
+        if not pool:
+            raise Exception(f"Relay not connected to '{self._service_id}'.")
+
+        request_id = uuid.uuid4().hex[:12]
+        evt = threading.Event()
+        holder: Dict[str, Any] = {}
+        if on_progress:
+            holder["_on_progress"] = on_progress
+
+        with self._pending_lock:
+            self._pending[request_id] = (evt, holder)
+
+        payload = json.dumps({
+            "type": "command",
+            "request_id": request_id,
+            "action": action,
+            **kwargs,
+        }).encode("utf-8")
+
+        last_err = None
+        for attempt in range(len(pool)):
+            idx = (self._relay_idx + attempt) % len(pool)
+            conn = pool[idx]
+            writer, loop = conn["writer"], conn["loop"]
+
+            async def _send(w=writer):
+                listener = self._connection
+                if listener:
+                    await listener._ws_send(w, payload)
+
+            try:
+                asyncio.run_coroutine_threadsafe(_send(), loop).result(timeout=10)
+                self._relay_idx = idx + 1
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                continue
+
+        if last_err:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            raise Exception(f"Failed to send to relay: {last_err}")
+
+        evt.wait(timeout=timeout)
+
+        with self._pending_lock:
+            self._pending.pop(request_id, None)
+
+        if not evt.is_set():
+            raise Exception("Timeout waiting for relay response")
+        if "error" in holder:
+            raise Exception(holder["error"])
+
+        data = holder.get("data")
         if isinstance(data, dict) and data.get("ok") is False:
             raise Exception(data.get("error", "Relay error"))
         return data

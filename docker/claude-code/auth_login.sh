@@ -8,6 +8,13 @@
 
 set -e
 
+# Skip Claude Code first-run interactive setup
+# (theme selection, etc.) by pre-creating config
+mkdir -p "$HOME/.claude"
+cat > "$HOME/.claude/settings.json" 2>/dev/null <<'SETTINGS' || true
+{"theme": "dark", "hasCompletedOnboarding": true}
+SETTINGS
+
 # Start virtual display
 Xvfb :99 -screen 0 1280x800x24 -ac &
 export DISPLAY=:99

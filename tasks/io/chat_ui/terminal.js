@@ -79,10 +79,10 @@ async function cmdTerminal(text, parts) {
     }
 
     const sessionId = resp.session_id;
-    _terminalSessionId = sessionId;
 
     await _loadXterm();
     _openTerminalPanel(sessionId, relayId);
+    _terminalSessionId = sessionId;
   } catch (e) {
     addMsg('system', 'Failed to open terminal: ' + e.message);
   }

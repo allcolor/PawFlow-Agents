@@ -439,7 +439,8 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         """Handle a WebSocket upgrade on the raw socket, bypassing HTTP handler."""
         import base64, hashlib
 
-        # Read the full HTTP request
+        # Read the full HTTP request headers — consume from peek data
+        # (process_request already peek'd the data, now consume it)
         data = b""
         while b"\r\n\r\n" not in data:
             chunk = sock.recv(4096)
@@ -447,6 +448,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 sock.close()
                 return
             data += chunk
+        # If we read past the headers, the extra bytes are WS frame data.
+        # Push them back by saving and forwarding later.
+        _header_end = data.index(b"\r\n\r\n") + 4
+        _extra = data[_header_end:]
+        data = data[:_header_end]
 
         # Parse request line and headers
         header_part = data.split(b"\r\n\r\n")[0].decode("latin-1", errors="replace")
@@ -500,8 +506,9 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             proto = ws_protocol.split(",")[0].strip()
             response += f"Sec-WebSocket-Protocol: {proto}\r\n"
         response += "\r\n"
-        logger.info("[WS] handshake: key=%s accept=%s proto=%s path=%s headers=%s",
-                    ws_key, accept, ws_protocol, path, headers)
+        logger.info("[WS] raw headers:\n%s", data.decode("latin-1", errors="replace"))
+        logger.info("[WS] parsed key=%r accept=%s proto=%s path=%s",
+                    ws_key, accept, ws_protocol, path)
         sock.sendall(response.encode("latin-1"))
 
         # Hand off to WS handler — runs in this thread (from ThreadingMixIn)

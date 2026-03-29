@@ -280,6 +280,11 @@
     },
     {
       "from": "http_in",
+      "to": "oauth_callback",
+      "type": "GET:/callback"
+    },
+    {
+      "from": "http_in",
       "to": "oauth_logout",
       "type": "POST:/auth/logout"
     },

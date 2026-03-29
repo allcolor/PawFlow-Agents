@@ -364,13 +364,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         from tasks.ai.actions.service_flow import _claude_pkce_states
         # Use the same /auth/callback path — oauthCallback detects Claude
         # login via the state token in _claude_pkce_states
+        # Anthropic only accepts http://localhost:{port}/callback
+        # Use our server port with the /callback path
         from core.expression import resolve_value as _rv
-        redirect_uri = _rv("${oauth_redirect_uri}")
-        if not redirect_uri or "${" in redirect_uri:
+        _base = _rv("${oauth_redirect_uri}")
+        if not _base or "${" in _base:
             flowfile.set_content(json.dumps({
                 "error": "oauth_redirect_uri not configured in global parameters"
             }).encode())
             return [flowfile]
+        # Extract host:port from oauth_redirect_uri, use /callback path
+        import urllib.parse as _up
+        _parsed = _up.urlparse(_base)
+        redirect_uri = f"{_parsed.scheme}://{_parsed.netloc}/callback"
 
         _claude_pkce_states[state] = {
             "code_verifier": code_verifier,

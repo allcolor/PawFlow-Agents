@@ -695,6 +695,32 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if abs_path is None:
             return {"ok": False, "error": f"Path traversal blocked: {rel_path}"}
 
+        # Host-level actions (not sandboxed, not filesystem)
+        if action == "claude_auth_login":
+            from pawflow_executor_relay import _action_claude_auth_login
+
+            def _send_progress(data):
+                if ws_sock_ref[0]:
+                    progress = json.dumps({
+                        "type": "progress",
+                        "request_id": msg.get("request_id", ""),
+                        "data": data,
+                    }).encode("utf-8")
+                    try:
+                        _ws_frame_send(ws_sock_ref[0], progress)
+                    except Exception:
+                        pass
+
+            try:
+                result = _action_claude_auth_login(
+                    mock, root_dir, msg, None,
+                    send_progress=_send_progress)
+                if "error" in result:
+                    return {"ok": False, "error": result["error"]}
+                return {"ok": True, "data": result}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)
         if not handler_func:
@@ -781,6 +807,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             reconnect_delay = 1
             _KEEPALIVE_INTERVAL = 60
             sock.settimeout(_KEEPALIVE_INTERVAL)
+            ws_sock_ref = [sock]  # mutable ref for _execute_command closures
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")

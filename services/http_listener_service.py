@@ -372,24 +372,6 @@ class _RequestHandler(BaseHTTPRequestHandler):
     do_OPTIONS = _handle
 
 
-class _PrefixedSocket:
-    """Wraps a socket with pre-read data that gets returned first on recv()."""
-
-    def __init__(self, sock, prefix: bytes):
-        self._sock = sock
-        self._prefix = prefix
-
-    def recv(self, bufsize, flags=0):
-        if self._prefix:
-            data = self._prefix[:bufsize]
-            self._prefix = self._prefix[bufsize:]
-            return data
-        return self._sock.recv(bufsize, flags)
-
-    def __getattr__(self, name):
-        return getattr(self._sock, name)
-
-
 class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     """Threaded HTTPServer subclass carrying a RouteRegistry and pending requests."""
 
@@ -435,12 +417,16 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
     def process_request(self, request, client_address):
         """Override to intercept WebSocket upgrades BEFORE the HTTP handler.
 
-        Read the first line + enough headers to detect Upgrade: websocket.
-        If WS, handle directly on the raw socket. Otherwise, put the bytes
-        back and delegate to the HTTP handler.
+        Peek the headers to detect WS upgrade. If WS, handle on raw socket.
+        Otherwise, delegate to normal HTTP handler (bytes untouched by peek).
         """
-        # Read headers to detect WS upgrade
         try:
+            peek = request.recv(4096, socket.MSG_PEEK)
+        except Exception:
+            peek = b""
+
+        if (b"Upgrade: websocket" in peek or b"upgrade: websocket" in peek):
+            # Consume the peeked headers
             data = b""
             while b"\r\n\r\n" not in data:
                 chunk = request.recv(4096)
@@ -448,17 +434,10 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     request.close()
                     return
                 data += chunk
-        except Exception:
-            request.close()
-            return
-
-        if (b"Upgrade: websocket" in data or b"upgrade: websocket" in data):
             self._handle_ws_direct(request, client_address, data)
             return
 
-        # Not WS — need to push data back for HTTP handler.
-        # Wrap socket with a prefixed reader.
-        request = _PrefixedSocket(request, data)
+        # Normal HTTP
         super().process_request(request, client_address)
 
     def _handle_ws_direct(self, sock, client_address, data):

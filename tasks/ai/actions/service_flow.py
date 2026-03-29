@@ -489,10 +489,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 image,
                 "/opt/pawflow/auth_login.sh",
             ]
-            logger.info("[vnc-login] docker run: %s", " ".join(docker_cmd))
             result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
-            logger.info("[vnc-login] docker run exit=%d stdout=%s stderr=%s",
-                        result.returncode, result.stdout[:200], result.stderr[:200])
             if result.returncode != 0:
                 flowfile.set_content(json.dumps({
                     "error": f"Failed to start login container: {result.stderr[:300]}"
@@ -533,8 +530,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                             break
             except Exception:
                 pass
-            logger.info("[vnc-login] HTTPListenerService found: %s (routes: %s)",
-                        svc, svc.get_routes()[:3] if svc else "N/A")
             if svc:
                 # Register generic VNC routes (once, shared by all sessions)
                 _vnc_owner = "_vnc_proxy"

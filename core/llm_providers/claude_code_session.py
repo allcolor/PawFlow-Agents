@@ -15,33 +15,45 @@ logger = logging.getLogger(__name__)
 
 def _persist_tokens_to_service(access_token: str, refresh_token: str,
                                expires_at, service_id: str = ""):
-    """Save tokens back to the service config."""
-    try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        greg = GlobalServiceRegistry.get_instance()
+    """Save recovered tokens to secrets (encrypted).
 
+    After a Claude Code run, the CLI may have refreshed the OAuth token.
+    We read the updated token from .credentials.json and persist it
+    to the global secrets store (encrypted).
+    """
+    from pathlib import Path
+    from core.secrets import get_secrets_manager
+
+    try:
+        # Find the service_id if not provided
         sid = service_id
-        cfg = {}
-        if sid:
-            sdef = greg.get_service(sid)
-            if sdef:
-                cfg = getattr(sdef, "config", {}) or {}
-        if not cfg:
+        if not sid:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            greg = GlobalServiceRegistry.get_instance()
             for _sid, sdef in greg.get_all_definitions().items():
                 if getattr(sdef, "service_type", "") == "llmConnection":
                     _cfg = getattr(sdef, "config", {}) or {}
                     if _cfg.get("provider") == "claude-code":
-                        sid, cfg = _sid, _cfg
+                        sid = _sid
                         break
-
         if not sid:
             return
 
-        cfg["claude_access_token"] = access_token
-        cfg["claude_refresh_token"] = refresh_token
-        cfg["claude_expires_at"] = int(expires_at)
-        greg.update_service(sid, config=cfg)
-        logger.info("[claude-code] tokens persisted to service '%s'", sid)
+        sm = get_secrets_manager()
+        prefix = sid.replace("-", "_")
+
+        secrets_path = Path("config/global_secrets.json")
+        secrets_path.parent.mkdir(parents=True, exist_ok=True)
+        existing = {}
+        if secrets_path.exists():
+            existing = json.loads(secrets_path.read_text(encoding="utf-8"))
+        existing[f"{prefix}_access_token"] = sm.encrypt(access_token)
+        existing[f"{prefix}_refresh_token"] = sm.encrypt(refresh_token)
+        existing[f"{prefix}_expires_at"] = str(int(expires_at))
+        secrets_path.write_text(
+            json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+        logger.info("[claude-code] tokens persisted to secrets for '%s'", sid)
     except Exception as e:
         logger.warning("[claude-code] failed to persist tokens: %s", e)
 

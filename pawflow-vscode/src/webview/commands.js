@@ -86,6 +86,11 @@ var COMMANDS = {
   '/login':       { handler: 'showLoginMsg' },
   '/quit':        { handler: 'showQuitMsg' },
   '/exit':        { handler: 'showQuitMsg' },
+
+  // Claude login — /clr and /clc go to server via fallback
+  // /cls blocked (server login only available from webchat)
+  '/claude-login-server':      { handler: 'blockedServerLogin' },
+  '/cls':                      { handler: 'blockedServerLogin' },
 };
 
 // Client-side handler functions
@@ -126,6 +131,7 @@ function connectParser(parts, text) {
 }
 function showLoginMsg() { addMsg('system', 'Use the PawFlow: Login command from the command palette (Ctrl+Shift+P).'); }
 function showQuitMsg() { addMsg('system', '/quit is not applicable in VSCode.'); }
+function blockedServerLogin() { addMsg('error', 'Server login (/cls) is only available from the webchat. Use /clr (relay) or /clc (credentials) instead.'); }
 
 // Parsers for complex commands
 function restartParser(parts, text) {

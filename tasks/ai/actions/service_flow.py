@@ -16,6 +16,53 @@ logger = logging.getLogger(__name__)
 _oauth_pending: Dict[str, Dict[str, str]] = {}
 
 
+def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
+    """Store Claude Code tokens in global secrets (encrypted) and update
+    the service config to reference them via ${expression}.
+
+    Also updates the live client instance in memory.
+    """
+    from pathlib import Path
+    from core.secrets import get_secrets_manager
+
+    sm = get_secrets_manager()
+    prefix = service_id.replace("-", "_")
+
+    # Write to global secrets (encrypted)
+    secrets_path = Path("config/global_secrets.json")
+    secrets_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = {}
+    if secrets_path.exists():
+        existing = json.loads(secrets_path.read_text(encoding="utf-8"))
+    existing[f"{prefix}_access_token"] = sm.encrypt(access_token)
+    existing[f"{prefix}_refresh_token"] = sm.encrypt(refresh_token)
+    existing[f"{prefix}_expires_at"] = str(int(expires_at))
+    secrets_path.write_text(
+        json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    # Update service config to use ${expression} references
+    try:
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        greg = GlobalServiceRegistry.get_instance()
+        sdef = greg.get_definition(service_id)
+        if sdef:
+            sdef.config["claude_access_token"] = f"${{{prefix}_access_token}}"
+            sdef.config["claude_refresh_token"] = f"${{{prefix}_refresh_token}}"
+            sdef.config["claude_expires_at"] = f"${{{prefix}_expires_at}}"
+            greg._save_to_disk()
+
+        # Update live client instance
+        live = greg.get_live_instance(service_id)
+        if live and hasattr(live, '_client') and live._client:
+            live._client.claude_access_token = access_token
+            live._client.claude_refresh_token = refresh_token
+            live._client.claude_expires_at = int(expires_at)
+    except Exception as e:
+        logger.warning("Failed to update service config for '%s': %s", service_id, e)
+
+    logger.info("Claude Code tokens stored (encrypted) for '%s'", service_id)
+
+
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
     """Handle service flow actions. Returns [flowfile] or None."""
 
@@ -431,24 +478,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "No accessToken in credentials"}).encode())
             return [flowfile]
 
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            sdef = greg.get_service(service_id)
-            if sdef:
-                cfg = getattr(sdef, "config", {}) or {}
-                cfg["claude_access_token"] = access_token
-                cfg["claude_refresh_token"] = refresh_token
-                cfg["claude_expires_at"] = int(expires_at)
-                greg.update_service(service_id, config=cfg)
-                # Update live instance
-                live = greg.get_live_instance(service_id)
-                if live and hasattr(live, '_client') and live._client:
-                    live._client.claude_access_token = access_token
-                    live._client.claude_refresh_token = refresh_token
-                    live._client.claude_expires_at = int(expires_at)
-        except Exception as e:
-            logger.warning("Failed to save credentials: %s", e)
+        _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
 
         flowfile.set_content(json.dumps({
             "ok": True,
@@ -611,20 +641,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
         if access_token:
             try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                greg = GlobalServiceRegistry.get_instance()
-                sdef = greg.get_service(service_id)
-                if sdef:
-                    cfg = getattr(sdef, "config", {}) or {}
-                    cfg["claude_access_token"] = access_token
-                    cfg["claude_refresh_token"] = refresh_token
-                    cfg["claude_expires_at"] = int(expires_at)
-                    greg.update_service(service_id, config=cfg)
-                    live = greg.get_live_instance(service_id)
-                    if live and hasattr(live, '_client') and live._client:
-                        live._client.claude_access_token = access_token
-                        live._client.claude_refresh_token = refresh_token
-                        live._client.claude_expires_at = int(expires_at)
+                _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
             except Exception as e:
                 logger.warning("Failed to save credentials: %s", e)
 
@@ -712,12 +729,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         "error": f"Service '{service_id}' is not a claude-code provider"
                     }).encode())
                     return [flowfile]
-                sdef.config["claude_access_token"] = access_token
-                sdef.config["claude_refresh_token"] = refresh_token
-                sdef.config["claude_expires_at"] = expires_at
-                greg._save_to_disk()
+                _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
                 _stored = True
-                logger.info("Claude Code credentials stored for global service '%s'", service_id)
 
             if not _stored:
                 # Try user services
@@ -732,12 +745,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                                 "error": f"Service '{service_id}' is not a claude-code provider"
                             }).encode())
                             return [flowfile]
-                        usdef.config["claude_access_token"] = access_token
-                        usdef.config["claude_refresh_token"] = refresh_token
-                        usdef.config["claude_expires_at"] = expires_at
-                        ureg._save_to_disk(user_id)
+                        _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
                         _stored = True
-                        logger.info("Claude Code credentials stored for user service '%s'", service_id)
                 except Exception:
                     pass
 

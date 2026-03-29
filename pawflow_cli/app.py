@@ -46,6 +46,7 @@ _COMMANDS = [
     "/vidservice", "/imgservice", "/share", "/install", "/uninstall",
     "/rebuild-full", "/rebuild_clean", "/setname", "/autoconv",
     "/bg", "/cancel",
+    "/claude-login-relay", "/clr", "/claude-login-credentials", "/clc",
 ]
 _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else None
 
@@ -558,6 +559,11 @@ class PawCode:
         parts = text.split(None, 1)
         cmd = parts[0].lower()
         arg = parts[1] if len(parts) > 1 else ""
+
+        # Blocked commands (not available in CLI/relay context)
+        if cmd in ("/cls", "/claude-login-server"):
+            self.renderer.print_error("Server login is only available from the webchat.")
+            return
 
         # Client-only commands (UI-specific, never sent to server)
         if cmd == "/clear":

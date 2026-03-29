@@ -70,7 +70,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         try:
             # Build content: text + optional images
             if attachments:
-                content = [{"type": "text", "text": text}]
+                content = []
+                if text:
+                    content.append({"type": "text", "text": text})
                 for att in attachments:
                     if isinstance(att, dict) and att.get("data"):
                         mime = att.get("mime_type", "image/png")

@@ -146,7 +146,14 @@ async function syncActiveFromServer() {
       body: JSON.stringify({ action: 'list_active', conversation_id: conversationId }),
       credentials: 'same-origin',
     });
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      // Server unreachable or auth expired — clear active to avoid ghosts
+      for (const key of Object.keys(activeInteractions)) {
+        delete activeInteractions[key];
+      }
+      updateActivePanel();
+      return;
+    }
     const data = await resp.json();
     const serverActive = data.active || [];
     const serverKeys = new Set(serverActive.map(a => agentKey(a.agent_name)));

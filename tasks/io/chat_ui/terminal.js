@@ -230,14 +230,106 @@ async function cmdCode(text, parts) {
   }
   return true;
 }
-      addMsg('system', '\u26a0 ' + resp.error);
+
+/** /port-forward command */
+async function cmdPortForward(text, parts) {
+  const sub = (parts[1] || '').toLowerCase();
+
+  if (sub === 'list' || !sub) {
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'port_forward_list' }),
+      }).then(r => r.json());
+      const fwds = resp.forwards || [];
+      if (!fwds.length) {
+        addMsg('system', 'No active port forwards.');
+      } else {
+        const lines = fwds.map(f => f.relay_id + ':' + f.int_port + (f.int_port !== f.ext_port ? ' (ext ' + f.ext_port + ')' : '') + ' \u2192 ' + f.url);
+        addMsg('system', 'Active forwards:\n' + lines.join('\n'));
+      }
+    } catch (e) {
+      addMsg('system', 'Failed: ' + e.message);
+    }
+    return true;
+  }
+
+  if (sub === 'add') {
+    let relayId = parts[2] || '';
+    let port = parts[3] || '';
+    const extPort = parts[4] || '';
+    if (!relayId || !port) {
+      // Show dialog
+      try {
+        const relays = await _getRelays();
+        if (!relays.length) {
+          addMsg('system', 'No connected relay found.');
+          return true;
+        }
+        relayId = relayId || await _pickRelay(relays);
+        if (!relayId) return true;
+        if (!port) {
+          port = prompt('Port to forward from ' + relayId + ':');
+          if (!port) return true;
+        }
+      } catch (e) {
+        addMsg('system', 'Failed: ' + e.message);
+        return true;
+      }
+    }
+    try {
+      const resp = await fetch(API, {
+        body: JSON.stringify({ action: 'port_forward_add', relay_id: relayId,
+          port: parseInt(port),
+          ext_port: extPort ? parseInt(extPort) : undefined }),
+        body: JSON.stringify({ action: 'port_forward_add', relay_id: relayId, port: parseInt(port) }),
+      }).then(r => r.json());
+      if (resp.error) {
+        addMsg('system', '\u26a0 ' + resp.error);
+      } else {
+        addMsg('system', 'Port forward added: ' + relayId + ':' + port + ' \u2192 ' + resp.url);
+      }
+    } catch (e) {
+      addMsg('system', 'Failed: ' + e.message);
+    }
+    return true;
+  }
+
+  if (sub === 'remove' || sub === 'rm') {
+    const relayId = parts[2] || '';
+    const port = parts[3] || '';
+    if (!relayId || !port) {
+      addMsg('system', 'Usage: /port-forward remove <relay_id> <ext_port>');
       return true;
     }
-
-    addVSCodeTab(relayId, resp.url || '/code/' + relayId + '/');
-    addMsg('system', 'code-server started. Loading editor...');
-  } catch (e) {
-    addMsg('system', 'Failed: ' + e.message);
+    try {
+      const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'port_forward_remove', relay_id: relayId, port: parseInt(port) }),
+      }).then(r => r.json());
+        body: JSON.stringify({ action: 'port_forward_remove', relay_id: relayId, ext_port: parseInt(port) }),
+        addMsg('system', '\u26a0 ' + resp.error);
+      } else {
+        addMsg('system', resp.removed ? 'Port forward removed.' : 'No such forward.');
+      }
+        addMsg('system', 'Port forward removed.');
+      addMsg('system', 'Failed: ' + e.message);
+    }
+    return true;
   }
+
+  if (sub === 'open') {
+    const relayId = parts[2] || '';
+    const port = parts[3] || '';
+    if (!relayId || !port) {
+      addMsg('system', 'Usage: /port-forward open <relay_id> <port>');
+      return true;
+    }
+    const url = '/fwd/' + relayId + '/' + port + '/';
+    addBrowserTab(relayId + ':' + port, url);
+    return true;
+  }
+
+  addMsg('system', 'Usage: /port-forward <add|remove|list|open> [relay_id] [port] [ext_port]');
   return true;
 }

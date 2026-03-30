@@ -171,6 +171,17 @@ const HELP_DATA = {
       + '  /code my_relay         \u2014 Start on a specific relay\n'
       + '  /code close            \u2014 Close VS Code tab',
   },
+  '/port-forward': {
+    usage: '/port-forward <add|remove|list|open> [relay_id] [port]',
+    short: 'Forward a port from a relay to the web server',
+    detail: 'Forward a relay\'s local port through PawFlow.\n\n'
+      + '  /port-forward add [relay] [port]   \u2014 Add a forward rule\n'
+      + '  /port-forward remove <relay> <port> \u2014 Remove a forward rule\n'
+      + '  /port-forward list                  \u2014 List active forwards\n'
+      + '  /port-forward open <relay> <port>   \u2014 Open in a browser tab\n'
+      + '  Shortcut: /fwd',
+  },
+  '/fwd': { alias: '/port-forward' },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
     short: 'Manage LLM and external services',
@@ -504,7 +515,7 @@ const HELP_DATA = {
   '/batch': {
     usage: '/batch <instruction> [--files <glob>]',
     short: 'Parallel changes across multiple files',
-    detail: '/batch "add JSDoc to all functions" --files src/**/*.js\n/batch "convert to async/await" --files *.ts\nThe agent will split files into groups and use spawn_agents to process them in parallel.',
+    detail: '/batch "add JSDoc to all functions" --files src/**/*.js\n/batch "convert to async/await" --files *.ts\nThe agent will split files into groups and use delegate to process them in parallel.',
   },
   '/debug': {
     usage: '/debug [description]',
@@ -656,6 +667,8 @@ const _CMD_HANDLERS = {
   '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),
   '/term':          (text, parts, cmd) => cmdTerminal(text, parts),
   '/code':          (text, parts, cmd) => cmdCode(text, parts),
+  '/port-forward':  (text, parts, cmd) => cmdPortForward(text, parts),
+  '/fwd':           (text, parts, cmd) => cmdPortForward(text, parts),
 };
 
 /**

@@ -1,0 +1,318 @@
+"""Private Gateway \u2014 pre-authentication access gate.
+
+When enabled, every HTTP request must first pass a secret challenge
+before reaching the login page. Secrets are stored as global secrets
+with the prefix ``privategateway.`` (e.g. ${privategateway.mykey}).
+
+IP-based rate-limiting and banning:
+- Exponential cooldown on failed attempts (1s, 3s, 10s, 30s).
+- After 5 consecutive failures the IP is banned for 24 h.
+- All requests from banned IPs are rejected immediately.
+
+The "passed" state is tracked via an HMAC-signed cookie
+that survives logout/login cycles.
+
+Toggle: global parameter ``private_gateway_enabled`` ("true" / "false").
+"""
+
+import hashlib
+import hmac
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Dict
+
+logger = logging.getLogger(__name__)
+
+_COOKIE_NAME = "_pf_gw"
+_COOKIE_MAX_AGE = 30 * 86400  # 30 days
+
+
+def _signing_key() -> bytes:
+    from core.secrets import get_secrets_manager
+    sm = get_secrets_manager()
+    return hmac.new(sm._key, b"private-gateway-cookie", hashlib.sha256).digest()
+
+
+def _make_cookie_value(ip: str) -> str:
+    ts = str(int(time.time()))
+    payload = f"{ts}:{ip}"
+    sig = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+    return f"{ts}.{sig}"
+
+
+def _verify_cookie(value: str, ip: str) -> bool:
+    try:
+        ts_str, sig = value.split(".", 1)
+        ts = int(ts_str)
+        if time.time() - ts > _COOKIE_MAX_AGE:
+            return False
+        payload = f"{ts_str}:{ip}"
+        expected = hmac.new(_signing_key(), payload.encode(), hashlib.sha256).hexdigest()[:32]
+        return hmac.compare_digest(sig, expected)
+    except Exception:
+        return False
+
+
+_ip_state: Dict[str, dict] = {}
+_lock = threading.Lock()
+_COOLDOWNS = [0, 1, 3, 10, 30]
+_MAX_FAILURES = 5
+_BAN_DURATION = 24 * 3600
+
+
+def _get_ip_state(ip: str) -> dict:
+    with _lock:
+        if ip not in _ip_state:
+            _ip_state[ip] = {"failures": 0, "last_attempt": 0.0, "banned_until": 0.0}
+        return _ip_state[ip]
+
+
+def is_banned(ip: str) -> bool:
+    with _lock:
+        st = _ip_state.get(ip)
+        if not st:
+            return False
+        if st["banned_until"] > time.time():
+            return True
+        if st["banned_until"] > 0:
+            st["failures"] = 0
+            st["banned_until"] = 0.0
+        return False
+
+
+def get_cooldown_remaining(ip: str) -> float:
+    st = _get_ip_state(ip)
+    if st["failures"] <= 0:
+        return 0.0
+    idx = min(st["failures"], len(_COOLDOWNS)) - 1
+    cooldown = _COOLDOWNS[idx]
+    remaining = (st["last_attempt"] + cooldown) - time.time()
+    return max(0.0, remaining)
+
+
+def record_failure(ip: str):
+    with _lock:
+        st = _ip_state.setdefault(ip, {"failures": 0, "last_attempt": 0.0, "banned_until": 0.0})
+        st["failures"] += 1
+        st["last_attempt"] = time.time()
+        if st["failures"] >= _MAX_FAILURES:
+            st["banned_until"] = time.time() + _BAN_DURATION
+            logger.warning("Private gateway: banned IP %s for 24h after %d failures",
+                           ip, st["failures"])
+
+
+def record_success(ip: str):
+    with _lock:
+        _ip_state.pop(ip, None)
+
+
+def list_bans() -> list:
+    now = time.time()
+    with _lock:
+        return [
+            {"ip": ip, "banned_until": st["banned_until"],
+             "failures": st["failures"]}
+            for ip, st in _ip_state.items()
+            if st["banned_until"] > now
+        ]
+
+
+def unban_ip(ip: str) -> bool:
+    with _lock:
+        st = _ip_state.pop(ip, None)
+        return st is not None and st.get("banned_until", 0) > time.time()
+
+
+def _load_gateway_secrets() -> Dict[str, str]:
+    from core.config_store import ConfigStore
+    secrets_file = Path("config/global_secrets.json")
+    all_secrets = ConfigStore.load_secrets(secrets_file)
+    return {k: str(v) for k, v in all_secrets.items() if k.startswith("privategateway.")}
+
+
+def verify_secret(submitted: str) -> bool:
+    gw_secrets = _load_gateway_secrets()
+    if not gw_secrets:
+        logger.warning("Private gateway enabled but no privategateway.* secrets found")
+        return False
+    for _name, value in gw_secrets.items():
+        if hmac.compare_digest(submitted.strip(), value.strip()):
+            return True
+    return False
+
+
+def is_enabled() -> bool:
+    try:
+        from core.expression import _load_global_parameters
+        params = _load_global_parameters()
+        val = str(params.get("private_gateway_enabled", "false")).strip().lower()
+        return val in ("true", "1", "yes")
+    except Exception:
+        return False
+
+
+_CHALLENGE_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #ccc;
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100vh;
+  }
+  .box {
+    background: #141414; border: 1px solid #222; border-radius: 8px;
+    padding: 2rem; width: 360px;
+  }
+  input[type=text] {
+    width: 100%%; padding: .6rem .8rem; font-size: .95rem;
+    background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
+    color: #eee; margin-bottom: 1rem; outline: none;
+  }
+  input[type=text]:focus { border-color: #555; }
+  button {
+    width: 100%%; padding: .6rem; font-size: .95rem;
+    background: #2563eb; color: #fff; border: none; border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover { background: #1d4ed8; }
+  button:disabled { background: #333; cursor: not-allowed; color: #666; }
+  .err { color: #ef4444; font-size: .85rem; margin-bottom: .8rem; min-height: 1.2em; }
+  .cd { color: #888; font-size: .85rem; text-align: center; margin-top: .8rem; }
+</style>
+</head>
+<body>
+<div class="box">
+  <form method="POST" action="/_gateway" id="f">
+    <input type="text" name="secret" id="s" placeholder="Access key" autocomplete="off" autofocus>
+    <div class="err" id="e">%(error)s</div>
+    <button type="submit" id="b">Enter</button>
+  </form>
+  <div class="cd" id="cd"></div>
+</div>
+<script>
+(function(){
+  var cd = %(cooldown)d, b = document.getElementById('b'),
+      cdEl = document.getElementById('cd');
+  function tick() {
+    if (cd <= 0) { b.disabled = false; cdEl.textContent = ''; return; }
+    b.disabled = true;
+    cdEl.textContent = 'Wait ' + Math.ceil(cd) + 's';
+    cd--;
+    setTimeout(tick, 1000);
+  }
+  tick();
+})();
+</script>
+</body>
+</html>"""
+
+
+def render_challenge(error="", cooldown=0):
+    html = _CHALLENGE_HTML % {"error": error, "cooldown": max(0, int(cooldown))}
+    return html.encode("utf-8")
+
+
+_EXEMPT_PATHS = frozenset(["/health", "/favicon.ico"])
+
+
+def check_request(handler) -> bool:
+    """Check an incoming HTTP request against the private gateway.
+
+    Called from _RequestHandler._handle() BEFORE route matching.
+    Returns True if the request was handled (blocked/challenged).
+    Returns False if the request should proceed normally.
+    """
+    if not is_enabled():
+        return False
+
+    ip = handler.client_address[0] if handler.client_address else "0.0.0.0"
+    path = handler.path.split('?', 1)[0]
+
+    if path in _EXEMPT_PATHS:
+        return False
+
+    if is_banned(ip):
+        handler.send_response(403)
+        handler.send_header("Content-Type", "text/plain")
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        handler.wfile.write(b"Forbidden")
+        return True
+
+    cookie_header = handler.headers.get("Cookie", "")
+    for part in cookie_header.split(";"):
+        part = part.strip()
+        if part.startswith(_COOKIE_NAME + "="):
+            cookie_val = part[len(_COOKIE_NAME) + 1:]
+            if _verify_cookie(cookie_val, ip):
+                return False
+
+    if handler.command == "POST" and path == "/_gateway":
+        content_length = int(handler.headers.get('Content-Length', 0))
+        body = handler.rfile.read(content_length) if content_length > 0 else b""
+        return _handle_submit(handler, ip, body)
+
+    cooldown = get_cooldown_remaining(ip)
+    page = render_challenge(cooldown=cooldown)
+    handler.send_response(200)
+    handler.send_header("Content-Type", "text/html; charset=utf-8")
+    handler.send_header("Content-Length", str(len(page)))
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    handler.wfile.write(page)
+    return True
+
+
+def _handle_submit(handler, ip, body):
+    from urllib.parse import parse_qs
+    params = parse_qs(body.decode("utf-8", errors="replace"))
+    submitted = params.get("secret", [""])[0]
+
+    cooldown = get_cooldown_remaining(ip)
+    if cooldown > 0:
+        record_failure(ip)
+        page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip))
+        handler.send_response(429)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(page)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(page)
+        return True
+
+    if not submitted or not verify_secret(submitted):
+        record_failure(ip)
+        if is_banned(ip):
+            handler.send_response(403)
+            handler.send_header("Content-Type", "text/plain")
+            handler.send_header("Connection", "close")
+            handler.end_headers()
+            handler.wfile.write(b"Forbidden")
+            return True
+        cooldown = get_cooldown_remaining(ip)
+        page = render_challenge(error="Invalid key.", cooldown=cooldown)
+        handler.send_response(200)
+        handler.send_header("Content-Type", "text/html; charset=utf-8")
+        handler.send_header("Content-Length", str(len(page)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.end_headers()
+        handler.wfile.write(page)
+        return True
+
+    record_success(ip)
+    cookie_val = _make_cookie_value(ip)
+    cookie = f"{_COOKIE_NAME}={cookie_val}; Path=/; Max-Age={_COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax"
+    handler.send_response(302)
+    handler.send_header("Location", "/")
+    handler.send_header("Set-Cookie", cookie)
+    handler.send_header("Cache-Control", "no-store")
+    handler.end_headers()
+    return True

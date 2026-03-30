@@ -195,6 +195,11 @@ class _RequestHandler(BaseHTTPRequestHandler):
         logger.debug(f"HTTP: {format % args}")
 
     def _handle(self):
+        # Private gateway — must pass before anything else
+        from services.private_gateway import check_request as _gw_check
+        if _gw_check(self):
+            return
+
         method = self.command
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
@@ -447,6 +452,15 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             except Exception:
                 pass
             return
+
+        # Private gateway — reject banned IPs before any processing
+        try:
+            from services.private_gateway import is_banned, is_enabled
+            if is_enabled() and client_address and is_banned(client_address[0]):
+                request.close()
+                return
+        except Exception:
+            pass
 
         if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
             # WS — handle directly, NOT through BaseHTTPRequestHandler

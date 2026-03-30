@@ -153,6 +153,54 @@ function closeVSCodeTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
+/** Add a browser tab (iframe pointing to a URL). One per label. */
+function addBrowserTab(label, iframeSrc) {
+  const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');
+  // If already exists, just switch to it
+  if (document.getElementById('tabContent_' + tabId)) {
+    switchTab(tabId);
+    return tabId;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn';
+  btn.dataset.tab = tabId;
+  btn.title = label;
+  btn.onclick = (e) => {
+    if (e.target.classList.contains('tab-close')) return;
+    switchTab(tabId);
+  };
+  btn.innerHTML = '<span style="font-size:13px">\ud83c\udf10</span>'
+    + '<span class="tab-close" onclick="closeBrowserTab(\'' + tabId + '\')">&times;</span>';
+
+  const spacer = document.querySelector('.tab-spacer');
+  spacer.parentNode.insertBefore(btn, spacer);
+
+  const panel = document.createElement('div');
+  panel.className = 'tab-content';
+  panel.id = 'tabContent_' + tabId;
+  panel.dataset.tab = tabId;
+
+  const iframe = document.createElement('iframe');
+  iframe.src = iframeSrc;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
+  iframe.allow = 'clipboard-read; clipboard-write';
+  panel.appendChild(iframe);
+
+  document.querySelector('.main').appendChild(panel);
+  switchTab(tabId);
+  return tabId;
+}
+
+/** Close a browser tab. */
+function closeBrowserTab(tabId) {
+  const panel = document.getElementById('tabContent_' + tabId);
+  if (panel) panel.remove();
+  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
+  if (btn) btn.remove();
+  if (_activeTab === tabId) switchTab('chat');
+}
+
 /** Toggle the action dropdown menu. */
 function toggleActionMenu() {
   const menu = document.getElementById('actionMenu');

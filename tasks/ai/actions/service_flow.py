@@ -1484,4 +1484,108 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    # ── Port forwarding ─────────────────────────────────────────────
+
+    if action == "port_forward_add":
+        relay_id = body.get("relay_id", "")
+        int_port = body.get("port", 0) or body.get("int_port", 0)
+        ext_port = body.get("ext_port", 0) or int_port
+        if not relay_id or not int_port:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id or port"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            int_port = int(int_port)
+            ext_port = int(ext_port)
+            svc = _find_relay_svc(relay_id)
+            if not svc:
+                flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
+                return [flowfile]
+
+            from services.port_forward_proxy import add_forward, fwd_http_proxy, fwd_root_redirect, _ROUTE_OWNER
+            first = add_forward(relay_id, int_port, svc, ext_port=ext_port)
+
+            # Register generic routes once (shared by all forwards)
+            if first:
+                http_svc = _find_http_listener()
+                if http_svc:
+                    for method in ("GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
+                        http_svc.register_route(method, "/fwd/{relay_id}/{ext_port}/{path+}",
+                                                _ROUTE_OWNER, callback=fwd_http_proxy)
+                    http_svc.register_route("GET", "/fwd/{relay_id}/{ext_port}",
+                                            _ROUTE_OWNER, callback=fwd_root_redirect)
+
+            _url = f"/fwd/{relay_id}/{ext_port}/"
+            flowfile.set_content(json.dumps({
+                "ok": True, "relay_id": relay_id,
+                "int_port": int_port, "ext_port": ext_port, "url": _url,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "port_forward_remove":
+        relay_id = body.get("relay_id", "")
+        ext_port = body.get("ext_port", 0) or body.get("port", 0)
+        if not relay_id or not ext_port:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id or port"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            ext_port = int(ext_port)
+            from services.port_forward_proxy import remove_forward, _ROUTE_OWNER
+            last = remove_forward(relay_id, ext_port)
+            if last:
+                http_svc = _find_http_listener()
+                if http_svc:
+                    http_svc.unregister_routes(_ROUTE_OWNER)
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "port_forward_list":
+        from services.port_forward_proxy import list_forwards
+        flowfile.set_content(json.dumps({"forwards": list_forwards()}).encode())
+        return [flowfile]
+
+    # ── Private gateway admin ────────────────────────────────────────
+
+    if action == "private_gateway_list_bans":
+        from services.private_gateway import list_bans
+        flowfile.set_content(json.dumps({"bans": list_bans()}).encode())
+        return [flowfile]
+
+    if action == "private_gateway_unban":
+        ip = body.get("ip", "")
+        if not ip:
+            flowfile.set_content(json.dumps({"error": "Missing ip"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from services.private_gateway import unban_ip
+        was_banned = unban_ip(ip)
+        flowfile.set_content(json.dumps({"ok": True, "was_banned": was_banned}).encode())
+        return [flowfile]
+
+    if action == "private_gateway_status":
+        from services.private_gateway import is_enabled, list_bans
+        flowfile.set_content(json.dumps({
+            "enabled": is_enabled(),
+            "banned_count": len(list_bans()),
+        }).encode())
+        return [flowfile]
+
     return None
+
+
+def _find_http_listener():
+    """Find the live HTTPListenerService instance."""
+    from gui.services.global_service_registry import GlobalServiceRegistry
+    greg = GlobalServiceRegistry.get_instance()
+    for _sid, _sdef in greg.get_all_definitions().items():
+        if getattr(_sdef, "service_type", "") == "httpListener":
+            svc = greg.get_live_instance(_sid)
+            if svc:
+                return svc
+    return None
+

@@ -186,12 +186,14 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return store.load_agent_context(conv_id, agent_name)
         return store.load_context(conv_id, user_id=user_id)
 
-    def _ctx_save(conv_id, data, agent_name=""):
+    def _ctx_save(conv_id, data, agent_name="", skip_merge=False):
         """Save context for an agent (or shared if no agent)."""
         if agent_name and agent_name != "ALL":
-            store.save_agent_context(conv_id, agent_name, data)
+            store.save_agent_context(conv_id, agent_name, data,
+                                      skip_merge=skip_merge)
         else:
-            store.save_context(conv_id, data)
+            store.save_agent_context(conv_id, "", data,
+                                      skip_merge=skip_merge)
         store.invalidate_claude_sessions(conv_id)
 
     def _resolve_agent_max_tokens(agent_name):
@@ -684,7 +686,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         context_data[index]["content"] = new_content
         if new_role:
             context_data[index]["role"] = new_role
-        _ctx_save(conv_id, context_data)
+        _ctx_save(conv_id, context_data, skip_merge=True)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -772,7 +774,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 for idx in sorted(indices, reverse=True):
                     if 0 <= idx < len(context_data):
                         context_data.pop(idx)
-                _ctx_save(conv_id, context_data)
+                _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
                 store.invalidate_claude_sessions(conv_id)
             finally:
                 writer.resume_after_context_op()
@@ -821,7 +823,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         context_data.pop(index)
-        _ctx_save(conv_id, context_data)
+        _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -844,7 +846,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-        _ctx_save(conv_id, new_context)
+        _ctx_save(conv_id, new_context, _ctx_agent, skip_merge=True)
         deserialized = self._deserialize_messages(new_context)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -872,7 +874,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             context_data.insert(index, msg)
         else:
             context_data.append(msg)
-        _ctx_save(conv_id, context_data)
+        _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({

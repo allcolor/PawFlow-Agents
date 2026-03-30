@@ -176,6 +176,7 @@ class ConversationStore:
         """
         # Separate operations by type
         replacements: Dict[str, List[dict]] = {}  # agent -> new data
+        skip_merge_agents: set = set()  # agents whose replace should NOT merge
         deletes: set = set()  # agents to delete
         appends: List[dict] = []  # lines to append at end
         full_rewrite = None
@@ -186,6 +187,8 @@ class ConversationStore:
                 full_rewrite = op.get("lines", [])
             elif op_type == "ctx_replace":
                 replacements[op["agent"]] = op["data"]
+                if op.get("skip_merge"):
+                    skip_merge_agents.add(op["agent"])
             elif op_type == "ctx_delete":
                 deletes.add(op["agent"])
             elif op_type == "append":
@@ -272,8 +275,11 @@ class ConversationStore:
 
                 # Now handle replacements with merge
                 for agent, new_data in replacements.items():
-                    final_data = self._merge_ctx_replace(
-                        agent, new_data, transcript_index)
+                    if agent in skip_merge_agents:
+                        final_data = list(new_data)
+                    else:
+                        final_data = self._merge_ctx_replace(
+                            agent, new_data, transcript_index)
                     # Check if final == shared → delete instead of replace
                     final_ids = [m.get("msg_id", "") for m in final_data]
                     if shared_ctx_ids and final_ids == shared_ctx_ids:
@@ -549,13 +555,14 @@ class ConversationStore:
         return self._read(cid, _scan)
 
     def save_agent_context(self, cid: str, agent_name: str,
-                           context_messages: List[Dict]) -> bool:
+                           context_messages: List[Dict],
+                           skip_merge: bool = False) -> bool:
         if not self.exists(cid):
             return False
         # NEVER put display_only messages in contexts
         clean = [m for m in context_messages if not m.get("display_only")]
         self._commit(cid, [{"op": "ctx_replace", "agent": agent_name or "",
-                            "data": clean}])
+                            "data": clean, "skip_merge": skip_merge}])
         return True
 
     def append_to_agent_context(self, cid: str, agent_name: str,

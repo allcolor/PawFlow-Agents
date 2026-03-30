@@ -673,7 +673,7 @@ class StoreSecretHandler(ToolHandler):
             secrets = ConfigStore.load_secrets(secrets_path)
             secrets[key] = ConfigValue(value=value)
             ConfigStore.save_secrets(secrets_path, secrets)
-            return f"Secret '{key}' stored securely. Reference it in flows as ${{secrets.user.{key}}}"
+            return f"Secret '{key}' stored securely. Reference it as ${{{key}}}"
         except Exception as e:
             return f"Error storing secret: {e}"
 
@@ -723,7 +723,7 @@ class ListSecretsHandler(ToolHandler):
         for k in sorted(secrets.keys()):
             cv = secrets[k]
             suffix = f" (large: {cv.size / 1024:.0f}KB)" if cv.is_large else ""
-            lines.append(f"- {k}{suffix}  →  ${{secrets.user.{k}}}")
+            lines.append(f"- {k}{suffix}  →  ${{{k}}}")
         return "\n".join(lines)
 
 

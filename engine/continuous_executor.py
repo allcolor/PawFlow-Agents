@@ -197,8 +197,8 @@ class ContinuousFlowExecutor:
         resolve expressions in their config dicts using the flow's
         parameter context before they are connected.
 
-        Cascading: if ${flow.parameters.x} resolves to "${secrets.global.y}",
-        a second pass resolves the inner expression too.
+        Cascading: if ${x} resolves to "${y}", a second pass resolves
+        the inner expression too.
         """
         from core.expression import resolve_expression
         params = self._parameter_context._params if self._parameter_context else {}

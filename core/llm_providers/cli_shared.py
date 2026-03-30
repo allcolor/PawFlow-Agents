@@ -249,8 +249,8 @@ class LLMCliSharedMixin:
     def _persist_refreshed_tokens(self) -> None:
         """Persist refreshed tokens back to secrets/params/config.
 
-        Detects ${secrets.global.*} and ${global.*} expressions in the
-        service config and updates the underlying store accordingly.
+        Detects expression references in the service config and updates
+        the underlying store. Legacy: supports old ${secrets.global.*} notation.
         Best-effort -- if it fails, tokens are still valid in memory.
         """
         try:

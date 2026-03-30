@@ -40,7 +40,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         secrets[key] = encrypted
         secrets_path.write_text(json.dumps(secrets, ensure_ascii=False, indent=2), encoding="utf-8")
         flowfile.set_content(json.dumps({
-            "result": f"Secret '{key}' stored. Use ${{secrets.user.{key}}} in flows.",
+            "result": f"Secret '{key}' stored. Use ${{{key}}} in expressions.",
             "key": key,
         }).encode())
         return [flowfile]
@@ -87,7 +87,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             return [flowfile]
         lines = [f"Secrets ({len(secrets)}):"]
         for k in sorted(secrets.keys()):
-            lines.append(f"- {k} â†’ ${{secrets.user.{k}}}")
+            lines.append(f"- {k} → ${{{k}}}")
         flowfile.set_content(json.dumps({"result": "\n".join(lines)}).encode())
         return [flowfile]
 

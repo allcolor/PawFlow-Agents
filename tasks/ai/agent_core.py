@@ -306,6 +306,8 @@ class AgentCoreMixin:
                     emitter.check_cancelled()
                     emitter.drain_pending(messages, _append, iteration)
                     iteration += 1
+                    ctx["_iteration"] = iteration
+                    ctx["_round"] = current_round
 
                     poll_silent = ctx.get("is_poll", False) and iteration == 1
                     # Heartbeat covers the ENTIRE iteration (LLM + tools)
@@ -786,6 +788,7 @@ class AgentCoreMixin:
 
                     for tc, result_text in results:
                         tools_called.append(tc.name)
+                        ctx["_last_tool"] = tc.name
                         emitter.check_cancelled()  # check after each tool
                         if tc.name == "schedule_continuation":
                             continuation_plan = tc.arguments.get("plan", "Continue")

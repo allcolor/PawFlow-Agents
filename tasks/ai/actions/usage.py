@@ -82,6 +82,10 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             if ctx:
                 active.append({
                     "agent_name": ctx.get("active_agent_name", ""),
+                    "iteration": ctx.get("_iteration", 0),
+                    "round": ctx.get("_round", 0),
+                    "max_rounds": ctx.get("max_rounds", 0),
+                    "last_tool": ctx.get("_last_tool", ""),
                 })
         flowfile.set_content(json.dumps({"active": active}).encode())
         return [flowfile]

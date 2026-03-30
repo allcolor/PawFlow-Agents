@@ -151,11 +151,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         # Will be overridden below if a persona is selected (after conversation_id is known)
         _base_system_prompt = system_prompt
-        temperature = float(self.config.get("temperature", 0.7))
+        # Agent config → service config → defaults (service overrides agent)
+        _svc_cfg = getattr(resolved_svc, 'config', {}) or {}
+        temperature = float(_svc_cfg.get("temperature") or self.config.get("temperature", 0.7))
         max_tokens = int(self.config.get("max_context_size", 0))
-        max_iterations = int(self.config.get("max_iterations", 200))
-        max_consecutive_tool_calls = int(self.config.get("max_consecutive_tool_calls", 100))
-        _resilience_style = self.config.get("resilience_style", "balanced")
+        max_iterations = int(_svc_cfg.get("max_iterations") or self.config.get("max_iterations", 1000))
+        max_consecutive_tool_calls = int(_svc_cfg.get("max_consecutive_tool_calls") or self.config.get("max_consecutive_tool_calls", 100))
+        _resilience_style = _svc_cfg.get("resilience_style") or self.config.get("resilience_style", "balanced")
         if _resilience_style == "cautious":
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)
         elif _resilience_style == "aggressive":

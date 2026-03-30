@@ -234,6 +234,23 @@ class LLMConnectionService(BaseService):
                 "type": "integer", "default": 0,
                 "description": "Context window in tokens (0 = model default)",
             },
+            "max_iterations": {
+                "type": "integer", "default": 0,
+                "description": "Max tool call iterations per turn (0 = default 1000)",
+            },
+            "temperature": {
+                "type": "float", "default": 0,
+                "description": "Sampling temperature (0 = default 0.7)",
+            },
+            "max_consecutive_tool_calls": {
+                "type": "integer", "default": 0,
+                "description": "Max consecutive calls to the same tool (0 = default 100)",
+            },
+            "resilience_style": {
+                "type": "select", "default": "",
+                "options": ["", "cautious", "balanced", "aggressive"],
+                "description": "Tool call resilience (empty = default balanced)",
+            },
             "max_concurrent": {
                 "type": "integer", "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",

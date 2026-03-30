@@ -73,34 +73,32 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        now = time.time()
+
+        # An agent is active IFF it has a live thread processing for this conversation.
+        # No separate tracking dict — the thread IS the source of truth.
         active = []
-        with self._running_agents_lock:
-            for key, info in list(self._running_agents.items()):
-                if info.get("conversation_id") != conv_id:
-                    continue
-                # Auto-cleanup: remove entries whose thread is dead,
-                # or that are older than 10 min (safety net)
-                _conv = info.get("conversation_id", "")
-                _thread_alive = any(
-                    t.is_alive() and (
-                        t.name == f"agent-stream-{_conv}"
-                        or t.name.startswith(f"interrupt-synth-{_conv[:8]}"))
-                    for t in threading.enumerate()) if _conv else False
-                _age = now - info.get("started_at", now)
-                if (not _thread_alive and _age > 5) or _age > 600:
-                    self._running_agents.pop(key, None)
-                    continue
+        now = time.time()
+        for t in threading.enumerate():
+            if not t.is_alive():
+                continue
+            if t.name == f"agent-stream-{conv_id}":
+                # Find the agent name from _running_agents metadata (if available)
+                _info = {}
+                with self._running_agents_lock:
+                    for k, v in self._running_agents.items():
+                        if v.get("conversation_id") == conv_id:
+                            _info = v
+                            break
                 active.append({
-                    "agent_name": info.get("agent_name", ""),
-                    "message_preview": info.get("message_preview", ""),
-                    "duration_s": round(now - info.get("started_at", now), 1),
-                    "iteration": info.get("iteration", 0),
-                    "round": info.get("round", 0),
-                    "max_rounds": info.get("max_rounds", 0),
-                    "last_tool": info.get("last_tool", ""),
-                    "total_tools": info.get("total_tools", 0),
-                    "status": info.get("status", "thinking"),
+                    "agent_name": _info.get("agent_name", ""),
+                    "message_preview": _info.get("message_preview", ""),
+                    "duration_s": round(now - _info.get("started_at", now), 1),
+                    "iteration": _info.get("iteration", 0),
+                    "round": _info.get("round", 0),
+                    "max_rounds": _info.get("max_rounds", 0),
+                    "last_tool": _info.get("last_tool", ""),
+                    "total_tools": _info.get("total_tools", 0),
+                    "status": _info.get("status", "thinking"),
                 })
         flowfile.set_content(json.dumps({"active": active}).encode())
         return [flowfile]

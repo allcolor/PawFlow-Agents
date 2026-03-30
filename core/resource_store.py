@@ -61,7 +61,7 @@ _DEFAULTS = {
         "transport": "http",    # "http" or "stdio"
         "via": "",              # "relay" or "direct" (default: stdio→relay, http→direct)
         "relay_service": "",    # Which relay/filesystem service to use (expression-resolved)
-                                # e.g. "fs_myproject", "${user.default_relay}", empty=auto-detect
+                                # e.g. "fs_myproject", "${default_relay}", empty=auto-detect
         "command": "",          # stdio transport: command to run
         "args": [],             # stdio transport: command arguments
         "env": {},              # stdio/http: extra environment variables

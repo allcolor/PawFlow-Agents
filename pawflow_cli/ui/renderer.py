@@ -291,18 +291,15 @@ class TerminalRenderer:
 
     def start_thinking(self, agent: str):
         self._thinking[agent] = ""
-        # Only update bottom status bar — no print in chat
-        self._set_status(f"▶ {agent}  ✶ {_random_verb()}...")
+        # Status bar is driven by active-agents poller (single source of truth).
+        # No _set_status here — the poller will pick up this agent.
 
     def thinking_token(self, agent: str, text: str):
         self._thinking[agent] = self._thinking.get(agent, "") + text
-        # Cycle verb every ~100 chars for "animation" effect
-        if len(self._thinking[agent]) % 100 < len(text):
-            self._set_status(f"▶ {agent}  ✶ {_random_verb()}...")
+        # Status bar driven by active-agents poller — no _set_status here.
 
     def end_thinking(self, agent: str):
         text = self._thinking.pop(agent, "")
-        self._set_status("")
         if text.strip():
             from rich.markup import escape
             lines = text.strip().split("\n")
@@ -328,7 +325,7 @@ class TerminalRenderer:
 
     def print_tool_call(self, tool: str, arguments: dict, agent: str = "",
                         service: str = ""):
-        self._set_status(f"▶ {agent or ''}  {tool}...")
+        # Status bar driven by active-agents poller — no _set_status here.
 
         # Special rendering for edit — inline diff preview
         if tool == "edit" and arguments.get("path"):
@@ -526,7 +523,8 @@ class TerminalRenderer:
 
     def print_done(self, agent: str, tokens_in: int, tokens_out: int,
                    duration_ms: int, model: str = ""):
-        self._set_status("")  # clear status bar
+        # Status bar is driven by active-agents poller (single source of truth).
+        # Don't clear here — poller will detect agent is no longer active.
         if self.console:
             info = f"[dim]  {tokens_in:,}↑ {tokens_out:,}↓"
             if duration_ms:
@@ -543,8 +541,8 @@ class TerminalRenderer:
 
     def print_iteration(self, agent: str, iteration: int, round_n: int,
                         max_rounds: int, tools: int):
-        # Only status bar — no chat print
-        self._set_status(f"▶ {agent}  ✶ {_random_verb()}...  iter {iteration} · round {round_n}/{max_rounds} · {tools} tools")
+        # Status bar driven by active-agents poller — no _set_status here.
+        pass
 
     def print_ask_user(self, question: str, options: list):
         if self.console:
@@ -641,6 +639,20 @@ class TerminalRenderer:
             else:
                 print(f"\n── {badge}{svc_info} ──")
                 print(display)
+
+        elif mtype == "error":
+            if self.console:
+                from rich.markup import escape
+                self.console.print()  # spacing
+                self.console.print(Panel(
+                    f"[bold red]{escape(content)}[/bold red]",
+                    title="[bold red]Error[/bold red]",
+                    title_align="left",
+                    border_style="red",
+                    padding=(0, 2),
+                ))
+            else:
+                print(f"\n[ERROR] {content}")
 
         elif mtype == "tool_call":
             if self.console:

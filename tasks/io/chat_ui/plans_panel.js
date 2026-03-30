@@ -77,6 +77,7 @@ async function loadPlans() {
         const color = _planStepColor(step.status);
         const textDecor = step.status === 'skipped' ? 'line-through' : 'none';
         const assignee = step.assigned_to ? ' [' + step.assigned_to + ']' : '';
+        const verifier = (step.verifier || plan.verifier) ? ' \uD83D\uDD0D' + (step.verifier || plan.verifier) : '';
         const canAssign = step.status === 'pending' || step.status === 'in_progress' || step.status === 'error';
         stepDiv.style.cssText += 'justify-content:space-between;';
         const stepLeft = document.createElement('div');
@@ -84,6 +85,7 @@ async function loadPlans() {
         stepLeft.innerHTML = '<span style="color:' + color + ';font-size:13px;flex-shrink:0;">' + icon + '</span>' +
           '<span style="color:' + color + ';text-decoration:' + textDecor + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + step.index + '. ' + escapeHtml(step.description) + '</span>' +
           (assignee ? '<span style="color:#6c5ce7;font-size:9px;flex-shrink:0;">' + escapeHtml(assignee) + '</span>' : '') +
+          (verifier ? '<span style="color:#e0a040;font-size:9px;flex-shrink:0;">' + escapeHtml(verifier) + '</span>' : '') +
           (step.note ? '<span style="color:#555;font-size:10px;margin-left:4px;font-style:italic;flex-shrink:0;">' + escapeHtml(step.note) + '</span>' : '');
         stepDiv.appendChild(stepLeft);
         if (canAssign && planStatus !== 'cancelled' && planStatus !== 'completed') {
@@ -130,11 +132,11 @@ function _planStatusColor(status) {
 }
 
 function _planStepIcon(status) {
-  return {'pending': '\u25cb', 'in_progress': '\u25d4', 'done': '\u2713', 'skipped': '\u2013', 'error': '\u2717'}[status] || '\u25cb';
+  return {'pending': '\u25cb', 'in_progress': '\u25d4', 'done': '\u2713', 'skipped': '\u2013', 'error': '\u2717', 'pending_verification': '\u2690'}[status] || '\u25cb';
 }
 
 function _planStepColor(status) {
-  return {'pending': '#808090', 'in_progress': '#6c5ce7', 'done': '#4ecdc4', 'skipped': '#555', 'error': '#e94560'}[status] || '#808090';
+  return {'pending': '#808090', 'in_progress': '#6c5ce7', 'done': '#4ecdc4', 'skipped': '#555', 'error': '#e94560', 'pending_verification': '#e0a040'}[status] || '#808090';
 }
 
 // ── Plan context menu ──────────────────────────────────────────
@@ -152,9 +154,13 @@ function showPlanMenu(e, planId, planStatus) {
   }
   if (planStatus !== 'cancelled' && planStatus !== 'completed') {
     items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignPlanDialog(\'' + planId + '\');closePlanMenu();">&#x1F464; Assign to...</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',0);closePlanMenu();">&#x1F50D; Set verifier...</div>';
   }
   if (planStatus !== 'cancelled' && planStatus !== 'completed') {
     items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'cancel_plan\',\'' + planId + '\');closePlanMenu();">&#x23F9; Cancel</div>';
+  }
+  if (planStatus !== 'pending_approval') {
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();planAction(\'reset_plan\',\'' + planId + '\');closePlanMenu();">&#x1F504; Reset</div>';
   }
   items += '<div class="ctx-menu-item danger" onclick="event.stopPropagation();planAction(\'delete_plan\',\'' + planId + '\');closePlanMenu();">&#x1F5D1; Delete</div>';
   menu.innerHTML = items;
@@ -189,6 +195,11 @@ function showPlanStepMenu(e, planId, stepIndex, currentStatus) {
   }
   if (currentStatus === 'pending' || currentStatus === 'in_progress' || currentStatus === 'error') {
     items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showAssignStepDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F464; Assign to...</div>';
+  }
+  items += '<div class="ctx-menu-item" onclick="event.stopPropagation();showSetVerifierDialog(\'' + planId + '\',' + stepIndex + ');closePlanMenu();">&#x1F50D; Set verifier...</div>';
+  if (currentStatus === 'pending_verification') {
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',true);closePlanMenu();">&#x2705; Approve step</div>';
+    items += '<div class="ctx-menu-item" onclick="event.stopPropagation();verifyPlanStep(\'' + planId + '\',' + stepIndex + ',false);closePlanMenu();">&#x274C; Reject step</div>';
   }
   menu.innerHTML = items;
   setTimeout(() => document.addEventListener('click', closePlanMenu, {once: true}), 0);
@@ -391,5 +402,88 @@ async function submitCreatePlan() {
     }
   } catch (e) {
     addMsg('error', 'Create plan failed: ' + e.message);
+  }
+}
+
+async function showSetVerifierDialog(planId, stepIndex) {
+  let agents = [];
+  try {
+    agents = await _fetchConvAgents();
+  } catch (e) { addMsg('error', 'Failed to list agents'); return; }
+
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;z-index:9999;';
+  overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+
+  const label = stepIndex > 0 ? 'Step ' + stepIndex : 'Plan';
+  let btns = '<button onclick="setPlanVerifier(\'' + escapeHtml(planId) + '\',' + stepIndex + ',\'\');this.closest(\'[data-overlay]\').remove();" '
+    + 'style="display:block;width:100%;text-align:left;padding:8px 12px;margin:2px 0;background:#2d1f1f;color:#e08080;border:1px solid #533;border-radius:4px;cursor:pointer;font-size:13px;">'
+    + '\u274C Remove verifier</button>';
+  btns += agents.map(function(a) {
+    return '<button onclick="setPlanVerifier(\'' + escapeHtml(planId) + '\',' + stepIndex + ',\'' + escapeHtml(a) + '\');this.closest(\'[data-overlay]\').remove();" '
+      + 'style="display:block;width:100%;text-align:left;padding:8px 12px;margin:2px 0;background:#1e1e3f;color:#e0e0e0;border:1px solid #333;border-radius:4px;cursor:pointer;font-size:13px;">'
+      + '\uD83D\uDD0D ' + escapeHtml(a) + '</button>';
+  }).join('');
+
+  const panel = document.createElement('div');
+  panel.setAttribute('data-overlay', '1');
+  panel.style.cssText = 'background:#16213e;border-radius:8px;padding:20px;width:360px;max-height:80vh;overflow-y:auto;border:1px solid #333;';
+  panel.innerHTML = '<h3 style="margin:0 0 12px 0;color:#e0e0e0;font-size:14px;">Set Verifier (' + label + ')</h3>'
+    + '<div style="color:#a0a0c0;font-size:12px;margin-bottom:8px;">Select verifier agent:</div>'
+    + btns
+    + '<button onclick="this.closest(\'[data-overlay]\').remove();" '
+    + 'style="margin-top:12px;padding:6px 16px;background:#333;color:#ccc;border:none;border-radius:4px;cursor:pointer;font-size:12px;">Cancel</button>';
+  overlay.appendChild(panel);
+  document.body.appendChild(overlay);
+}
+
+async function setPlanVerifier(planId, stepIndex, verifier) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'set_plan_verifier',
+        conversation_id: conversationId,
+        plan_id: planId,
+        step: stepIndex,
+        verifier: verifier,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      addMsg('system', '\u274C ' + data.error);
+    } else {
+      const label = stepIndex > 0 ? 'step ' + stepIndex : 'plan';
+      addMsg('system', verifier ? '\uD83D\uDD0D Verifier set to ' + verifier + ' for ' + label : '\u274C Verifier removed for ' + label);
+      await loadPlans();
+    }
+  } catch (e) {
+    addMsg('error', 'Set verifier failed: ' + e.message);
+  }
+}
+
+async function verifyPlanStep(planId, stepIndex, approved) {
+  const reason = approved ? '' : prompt('Reason for rejection:') || '';
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'verify_plan_step',
+        conversation_id: conversationId,
+        plan_id: planId,
+        step: stepIndex,
+        approved: approved,
+        reason: reason,
+      }),
+    });
+    const data = await resp.json();
+    if (data.error) {
+      addMsg('system', '\u274C ' + data.error);
+    } else {
+      addMsg('system', approved ? '\u2705 Step ' + stepIndex + ' approved' : '\u274C Step ' + stepIndex + ' rejected');
+      await loadPlans();
+    }
+  } catch (e) {
+    addMsg('error', 'Verify failed: ' + e.message);
   }
 }

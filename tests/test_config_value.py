@@ -303,7 +303,7 @@ class TestExpressionWithConfigValue:
             "core.expression._GLOBAL_PARAMS_FILE", params_file
         )
         from core.expression import resolve_expression
-        result = resolve_expression("${global.env}")
+        result = resolve_expression("${env}")
         assert result == "prod"
 
     def test_large_param_not_interpolated(self, tmp_path, monkeypatch):
@@ -316,8 +316,8 @@ class TestExpressionWithConfigValue:
             "core.expression._GLOBAL_PARAMS_FILE", params_file
         )
         from core.expression import resolve_expression
-        result = resolve_expression("${global.big}")
-        assert result == "${global.big}"  # Left unresolved
+        result = resolve_expression("${big}")
+        assert result == "${big}"  # Left unresolved
 
 
 # ---- ParameterContext with get_raw ----

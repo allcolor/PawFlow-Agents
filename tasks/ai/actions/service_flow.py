@@ -2,8 +2,6 @@
 
 import json
 import logging
-
-logger = logging.getLogger(__name__)
 import time
 import threading
 from typing import Dict, Any, List, Optional
@@ -13,6 +11,17 @@ from core.llm_client import LLMMessage, LLMClient
 from core.tool_registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
+
+
+def _publish_command_result(conversation_id: str, result: dict):
+    """Publish a command result via SSE (background thread → frontend)."""
+    from core.conversation_event_bus import ConversationEventBus
+    bus = ConversationEventBus.instance()
+    if "error" in result:
+        bus.publish_event(conversation_id, "command_result", {"error": result["error"]})
+    else:
+        bus.publish_event(conversation_id, "command_result",
+                          {"result": json.dumps(result, ensure_ascii=False)})
 
 # Pending OAuth flows (in-memory, keyed by service_id)
 _oauth_pending: Dict[str, Dict[str, str]] = {}
@@ -53,12 +62,6 @@ def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
             sdef.config["claude_expires_at"] = f"${{{prefix}_expires_at}}"
             greg._save_to_disk()
 
-        # Update live client instance
-        live = greg.get_live_instance(service_id)
-        if live and hasattr(live, '_client') and live._client:
-            live._client.claude_access_token = access_token
-            live._client.claude_refresh_token = refresh_token
-            live._client.claude_expires_at = int(expires_at)
     except Exception as e:
         logger.warning("Failed to update service config for '%s': %s", service_id, e)
 
@@ -426,13 +429,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "claude_code_relay_login":
-        """Launch claude auth login on a relay and retrieve credentials.
-
-        Blocking: opens browser on client, waits for auth, returns credentials.
-        Claude Code opens the browser itself — no URL forwarding needed.
-        """
+        """Launch claude auth login on a relay — async, result via SSE."""
         service_id = body.get("service_id", "")
         relay_id = body.get("relay_id", "")
+        conversation_id = body.get("conversation_id", "")
 
         if not service_id or not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id or relay_id"}).encode())
@@ -452,39 +452,44 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Relay service '{relay_id}' not found"}).encode())
             return [flowfile]
 
-        # Blocking call — waits for user to authorize in browser (up to 5 min)
-        try:
-            result = relay_svc._request_with_progress(
-                "claude_auth_login", timeout=300)
-        except Exception as e:
-            flowfile.set_content(json.dumps({"error": str(e)}).encode())
-            return [flowfile]
+        def _bg_relay_login():
+            try:
+                logger.info("[relay-login] Starting auth via relay %s", relay_id)
+                result = relay_svc._request_with_progress(
+                    "claude_auth_login", timeout=300)
+            except Exception as e:
+                logger.error("[relay-login] Failed: %s", e)
+                _publish_command_result(conversation_id, {"error": str(e)})
+                return
 
-        if not result or (isinstance(result, dict) and "error" in result):
-            error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
-            flowfile.set_content(json.dumps({"error": error}).encode())
-            return [flowfile]
+            if not result or (isinstance(result, dict) and "error" in result):
+                error = result.get("error", "Unknown error") if isinstance(result, dict) else str(result)
+                _publish_command_result(conversation_id, {"error": error})
+                return
 
-        credentials = result.get("credentials", {}) if isinstance(result, dict) else {}
-        if not credentials:
-            flowfile.set_content(json.dumps({"error": "No credentials returned"}).encode())
-            return [flowfile]
+            credentials = result.get("credentials", {}) if isinstance(result, dict) else {}
+            if not credentials:
+                _publish_command_result(conversation_id, {"error": "No credentials returned"})
+                return
 
-        # Extract tokens and save to service config
-        oauth = credentials.get("claudeAiOauth", {})
-        access_token = oauth.get("accessToken", "")
-        refresh_token = oauth.get("refreshToken", "")
-        expires_at = oauth.get("expiresAt", 0)
+            oauth = credentials.get("claudeAiOauth", {})
+            access_token = oauth.get("accessToken", "")
+            refresh_token = oauth.get("refreshToken", "")
+            expires_at = oauth.get("expiresAt", 0)
 
-        if not access_token:
-            flowfile.set_content(json.dumps({"error": "No accessToken in credentials"}).encode())
-            return [flowfile]
+            if not access_token:
+                _publish_command_result(conversation_id, {"error": "No accessToken in credentials"})
+                return
 
-        _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+            _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
+            logger.info("[relay-login] Credentials saved for %s", service_id)
+            _publish_command_result(conversation_id, {
+                "ok": True, "message": "Claude Code credentials saved!"})
+
+        threading.Thread(target=_bg_relay_login, daemon=True, name=f"relay-login-{relay_id}").start()
 
         flowfile.set_content(json.dumps({
-            "ok": True,
-            "message": "Claude Code credentials saved!",
+            "ok": True, "message": "Login started — authorize in the browser that opens on the relay."
         }).encode())
         return [flowfile]
 
@@ -493,7 +498,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
     if action == "claude_code_server_login":
         """Spawn a Docker container with Chromium + noVNC for Claude auth.
 
-        Returns {vnc_path, session_id} — webchat opens noVNC iframe.
+        Returns {session_id} immediately — Docker setup runs in background.
+        Frontend polls claude_code_server_login_status for readiness.
         """
         service_id = body.get("service_id", "")
         conversation_id = body.get("conversation_id", "")
@@ -501,90 +507,111 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
 
-        import uuid as _uuid
-        import subprocess as _sp
-        from core.server_relay_manager import _docker_cmd, _find_free_port
-
-        session_id = _uuid.uuid4().hex[:12]
-        free_port = _find_free_port()
-        container_name = f"pawflow-claude-login-{session_id}"
-        volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
-        image = "pawflow-claude-code:latest"
-
         try:
-            docker_cmd = _docker_cmd() + [
-                "run", "--rm", "--detach",
-                "--name", container_name,
-                "-p", f"{free_port}:6080",
-                "-v", f"{volume_name}:/workspace",
-                "--entrypoint", "bash",
-                image,
-                "/opt/pawflow/auth_login.sh",
-            ]
-            result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode != 0:
-                flowfile.set_content(json.dumps({
-                    "error": f"Failed to start login container: {result.stderr[:300]}"
-                }).encode())
-                return [flowfile]
+            import uuid as _uuid
+            from core.server_relay_manager import _find_free_port
+
+            session_id = _uuid.uuid4().hex[:12]
+            free_port = _find_free_port()
+            container_name = f"pawflow-claude-login-{session_id}"
+            volume_name = f"pawflow_ws_{conversation_id}" if conversation_id else f"pawflow_login_{session_id}"
+            image = "pawflow-claude-code:latest"
+
+            logger.info("[vnc-login] Creating session %s (port %d)", session_id, free_port)
+
+            # Pre-register session so status endpoint works immediately
+            from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
+            register_session(session_id, free_port,
+                             container=container_name, service_id=service_id,
+                             user_id=user_id, volume=volume_name,
+                             launch_time=time.time(), ready=False)
         except Exception as e:
-            flowfile.set_content(json.dumps({"error": f"Docker error: {e}"}).encode())
+            logger.error("[vnc-login] Setup failed: %s", e, exc_info=True)
+            flowfile.set_content(json.dumps({"error": f"Login setup failed: {e}"}).encode())
             return [flowfile]
 
-        # Wait for noVNC to be ready (poll the port)
-        import urllib.request, urllib.error
-        for _attempt in range(15):
+        def _bg_setup():
+            import subprocess as _sp
+            from core.server_relay_manager import _docker_cmd
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
-                break
-            except Exception:
-                time.sleep(1)
+                docker_cmd = _docker_cmd() + [
+                    "run", "--rm", "--detach",
+                    "--name", container_name,
+                    "-p", f"{free_port}:6080",
+                    "-v", f"{volume_name}:/workspace",
+                    "--entrypoint", "bash",
+                    image,
+                    "/opt/pawflow/auth_login.sh",
+                ]
+                logger.info("[vnc-login] Starting container %s on port %d", container_name, free_port)
+                result = _sp.run(docker_cmd, capture_output=True, text=True, timeout=30)
+                if result.returncode != 0:
+                    logger.error("[vnc-login] Docker failed: %s", result.stderr[:300])
+                    from services.vnc_proxy import update_session_error
+                    update_session_error(session_id, f"Docker failed: {result.stderr[:200]}")
+                    _publish_command_result(_conv_id, {"error": f"Docker failed: {result.stderr[:200]}"})
+                    return
+            except Exception as e:
+                logger.error("[vnc-login] Docker error: %s", e)
+                from services.vnc_proxy import update_session_error
+                update_session_error(session_id, str(e))
+                _publish_command_result(_conv_id, {"error": f"Login failed: {e}"})
+                return
 
-        # Register VNC proxy
-        from services.vnc_proxy import register_session, vnc_ws_proxy, vnc_http_proxy
-        register_session(session_id, free_port,
-                         container=container_name, service_id=service_id,
-                         user_id=user_id, volume=volume_name,
-                         launch_time=time.time())
+            # Wait for noVNC to be ready
+            import urllib.request
+            for _attempt in range(15):
+                try:
+                    urllib.request.urlopen(f"http://127.0.0.1:{free_port}/", timeout=2)
+                    logger.info("[vnc-login] noVNC ready on port %d", free_port)
+                    break
+                except Exception:
+                    time.sleep(1)
 
-        # Register routes: HTTP (static files) + WS (VNC frames)
-        try:
-            from services.http_listener_service import HTTPListenerService
-            # Find the HTTP listener via GlobalServiceRegistry
-            svc = None
+            # Register VNC proxy routes (once, shared by all sessions)
             try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                greg = GlobalServiceRegistry.get_instance()
-                for _sid, _sdef in greg.get_all_definitions().items():
-                    if getattr(_sdef, "service_type", "") == "httpListener":
-                        svc = greg.get_live_instance(_sid)
-                        if svc:
-                            break
-            except Exception:
-                pass
-            if svc:
-                # Register generic VNC routes (once, shared by all sessions)
-                _vnc_owner = "_vnc_proxy"
-                existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
-                if not existing:
-                    svc.register_route(
-                        "GET", "/vnc/{session_id}/websockify",
-                        _vnc_owner,
-                        callback=lambda req: None,
-                        ws_handler=vnc_ws_proxy,
-                    )
-                    svc.register_route(
-                        "GET", "/vnc/{session_id}/{path+}",
-                        _vnc_owner,
-                        callback=vnc_http_proxy,
-                    )
-            else:
-                logger.warning("[vnc-login] HTTPListenerService NOT FOUND — VNC routes not registered")
-        except Exception as e:
-            logger.warning("Failed to register VNC proxy routes: %s", e, exc_info=True)
+                svc = None
+                try:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    greg = GlobalServiceRegistry.get_instance()
+                    for _sid, _sdef in greg.get_all_definitions().items():
+                        if getattr(_sdef, "service_type", "") == "httpListener":
+                            svc = greg.get_live_instance(_sid)
+                            if svc:
+                                break
+                except Exception:
+                    pass
+                if svc:
+                    _vnc_owner = "_vnc_proxy"
+                    existing = [r for r in svc.get_routes() if r.get("owner") == _vnc_owner]
+                    if not existing:
+                        svc.register_route("GET", "/vnc/{session_id}/websockify",
+                                           _vnc_owner, callback=lambda req: None,
+                                           ws_handler=vnc_ws_proxy)
+                        svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                                           _vnc_owner, callback=vnc_http_proxy)
+                else:
+                    logger.warning("[vnc-login] HTTPListenerService NOT FOUND")
+            except Exception as e:
+                logger.warning("[vnc-login] Route registration failed: %s", e)
+
+            # Mark session as ready and notify frontend to open dialog
+            from services.vnc_proxy import update_session_ready
+            update_session_ready(session_id)
+            logger.info("[vnc-login] Session %s ready — notifying frontend", session_id)
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conversation_id, "vnc_login_ready", {
+                    "session_id": session_id,
+                    "service_id": service_id,
+                })
+
+        _conv_id = conversation_id
+        import threading
+        threading.Thread(target=_bg_setup, daemon=True, name=f"vnc-login-{session_id}").start()
 
         flowfile.set_content(json.dumps({
-            "session_id": session_id,
+            "ok": True, "message": "Starting login container...",
         }).encode())
         return [flowfile]
 
@@ -613,6 +640,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         session = _vnc_sessions.get(session_id)
         if not session:
             flowfile.set_content(json.dumps({"error": "Unknown session"}).encode())
+            return [flowfile]
+
+        # Background setup error
+        if session.get("error"):
+            unregister_session(session_id)
+            flowfile.set_content(json.dumps({"error": session["error"]}).encode())
+            return [flowfile]
+
+        # Container still starting
+        if not session.get("ready"):
+            flowfile.set_content(json.dumps({"status": "starting"}).encode())
             return [flowfile]
 
         import subprocess as _sp
@@ -866,13 +904,22 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             asyncio.run_coroutine_threadsafe(_send_spawn(), _loop).result(timeout=5)
 
-            # Wait for the child relay to connect (it registers as a new service)
-            time.sleep(3)
+            conv_id = body.get("conversation_id", "")
+            _crid = child_relay_id
 
+            def _bg_wait_relay():
+                time.sleep(3)
+                logger.info("[relay-connect] Relay spawned: %s → %s", _crid, path)
+                if conv_id:
+                    _publish_command_result(conv_id, {
+                        "ok": True,
+                        "message": f"Relay spawned: {_crid} → {path}",
+                        "service_id": _crid,
+                    })
+
+            threading.Thread(target=_bg_wait_relay, daemon=True).start()
             flowfile.set_content(json.dumps({
-                "ok": True,
-                "message": f"Relay spawned: {child_relay_id} → {path}",
-                "service_id": child_relay_id,
+                "ok": True, "message": f"Spawning relay {child_relay_id}..."
             }).encode())
         except Exception as e:
             logger.error("relay_connect failed: %s", e, exc_info=True)
@@ -1145,19 +1192,25 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         try:
             from core.server_relay_manager import ServerRelayManager
             meta = ServerRelayManager.get_instance().spawn(conv_id, user_id)
-            # Give the relay container 3s to connect back
-            import time as _time
-            _time.sleep(3)
+
+            def _bg_wait_workspace():
+                time.sleep(3)
+                logger.info("[workspace] Server workspace ready: %s", meta["relay_id"])
+                _publish_command_result(conv_id, {
+                    "ok": True,
+                    "relay_id": meta["relay_id"],
+                    "ws_url": meta["ws_url"],
+                    "volume": meta["volume"],
+                    "message": (
+                        f"Server workspace ready. "
+                        f"Use filesystem service '{meta['relay_id']}' to access your files."
+                    ),
+                })
+
+            threading.Thread(target=_bg_wait_workspace, daemon=True).start()
             flowfile.set_content(json.dumps({
-                "ok": True,
-                "relay_id": meta["relay_id"],
-                "ws_url": meta["ws_url"],
-                "volume": meta["volume"],
-                "message": (
-                    f"Server workspace ready. "
-                    f"Use filesystem service '{meta['relay_id']}' to access your files."
-                ),
-            }, ensure_ascii=False).encode())
+                "ok": True, "message": "Starting server workspace..."
+            }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
@@ -1388,15 +1441,24 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         callback=code_http_proxy,
                     )
 
-            # Wait a bit for code-server to start
-            import time as _time
-            _time.sleep(2)
+            conv_id = body.get("conversation_id", "")
+            _rl = relay_id
+            _pt = port
 
+            def _bg_wait_code():
+                time.sleep(2)
+                logger.info("[code-server] Ready on relay %s port %s", _rl, _pt)
+                if conv_id:
+                    _publish_command_result(conv_id, {
+                        "ok": True, "port": _pt, "relay_id": _rl,
+                        "url": f"/code/{_rl}/",
+                        "message": f"Code server ready at /code/{_rl}/",
+                    })
+
+            threading.Thread(target=_bg_wait_code, daemon=True).start()
             flowfile.set_content(json.dumps({
-                "ok": True,
-                "port": port,
-                "relay_id": relay_id,
-                "url": f"/code/{relay_id}/",
+                "ok": True, "message": "Starting code server...",
+                "port": port, "relay_id": relay_id, "url": f"/code/{relay_id}/",
             }).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

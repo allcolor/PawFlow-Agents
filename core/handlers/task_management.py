@@ -142,30 +142,21 @@ class AssignTaskHandler(ToolHandler):
 
         Resolution order:
         1. Escaped \\${...} → preserved as literal ${...}
-        2. ${secrets.*} → NEVER resolved (kept as-is to prevent leaks)
-        3. Custom variables from 'variables' dict: ${key} → value
-        4. Standard expressions: ${global.*}, ${env.*}
+        2. Custom variables from 'variables' dict: ${key} → value
+        3. Unified cascade: secrets → params → env
         """
-        import re
         # Step 1: protect escaped \${...} with placeholder
         _esc = "\x00ESC\x00"
         text = text.replace("\\${", _esc)
-        # Step 2: protect ${secrets.*} — NEVER substitute secrets into task text
-        _sec = "\x00SEC\x00"
-        _secrets_found = re.findall(r'\$\{secrets\.[^}]+\}', text)
-        for s in _secrets_found:
-            text = text.replace(s, _sec + s + _sec)
-        # Step 3: replace custom variables ${key}
+        # Step 2: replace custom variables ${key}
         if variables:
             for key, val in variables.items():
                 text = text.replace(f"${{{key}}}", str(val))
-        # Step 4: resolve remaining ${global.*}, ${env.*} (NOT secrets)
+        # Step 3: resolve remaining ${key} via unified cascade
         if "${" in text:
             from core.expression import resolve_expression
             text = resolve_expression(text, owner=user_id)
-        # Step 5: restore protected secrets and escaped expressions
-        for s in _secrets_found:
-            text = text.replace(_sec + s + _sec, s)
+        # Step 4: restore escaped expressions
         text = text.replace(_esc, "${")
         return text
 

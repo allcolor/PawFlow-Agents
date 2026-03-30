@@ -274,6 +274,76 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "verify_plan_step":
+        plan_id = body.get("plan_id", "")
+        step = int(body.get("step", 0))
+        approved = body.get("approved", False)
+        reason = body.get("reason", "")
+        if not conv_id or not plan_id or not step:
+            flowfile.set_content(json.dumps({"error": "Missing required fields"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        plans = store.get_extra(conv_id, "plans", default={}, user_id=user_id) or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            flowfile.set_content(json.dumps({"error": f"Plan '{plan_id}' not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        target_step = None
+        for s in plan["steps"]:
+            if s["index"] == step:
+                target_step = s
+                break
+        if not target_step:
+            flowfile.set_content(json.dumps({"error": f"Step {step} not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        if target_step["status"] != "pending_verification":
+            flowfile.set_content(json.dumps({"error": f"Step is '{target_step['status']}', not pending_verification"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        executor = target_step.get("assigned_to") or plan.get("created_by", "")
+        if approved:
+            target_step["status"] = "done"
+            target_step["verified_by"] = user_id or "user"
+            if reason:
+                target_step["note"] = (target_step.get("note", "") + f" [verified: {reason}]").strip()
+            statuses = [s["status"] for s in plan["steps"]]
+            if all(s in ("done", "skipped") for s in statuses):
+                plan["status"] = "completed"
+        else:
+            target_step["status"] = "pending"
+            target_step["rejected_by"] = user_id or "user"
+            if reason:
+                target_step["note"] = (target_step.get("note", "") + f" [rejected: {reason}]").strip()
+        plans[plan_id] = plan
+        store.set_extra(conv_id, "plans", plans, user_id=user_id)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
+        except Exception:
+            pass
+        if approved and plan["status"] != "completed":
+            _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id)
+        elif not approved and executor and executor != "user":
+            try:
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().schedule_delay(
+                    conv_id, 0,
+                    key=f"{conv_id}::plan::{plan_id}::step{step}::{executor}",
+                    reason=f"[plan_step:{plan_id}:{step}] ({executor})",
+                    user_id=user_id,
+                )
+                try:
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    AgentLoopTask.wake_poller()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+        flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
+        return [flowfile]
+
     if action == "pause_plan_step":
         plan_id = body.get("plan_id", "")
         step = int(body.get("step", 0))
@@ -311,6 +381,70 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "set_plan_verifier":
+        plan_id = body.get("plan_id", "")
+        verifier = body.get("verifier", "")  # empty string = remove verifier
+        step = int(body.get("step", 0))  # 0 = plan-level, >0 = specific step
+        if not conv_id or not plan_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or plan_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        plans = store.get_extra(conv_id, "plans", default={}, user_id=user_id) or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            flowfile.set_content(json.dumps({"error": f"Plan '{plan_id}' not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        if step > 0:
+            for s in plan["steps"]:
+                if s["index"] == step:
+                    s["verifier"] = verifier
+                    break
+        else:
+            plan["verifier"] = verifier
+        plans[plan_id] = plan
+        store.set_extra(conv_id, "plans", plans, user_id=user_id)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
+        except Exception:
+            pass
+        flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
+        return [flowfile]
+
+    if action == "reset_plan":
+        plan_id = body.get("plan_id", "")
+        if not conv_id or not plan_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or plan_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        plans = store.get_extra(conv_id, "plans", default={}, user_id=user_id) or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            flowfile.set_content(json.dumps({"error": f"Plan '{plan_id}' not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Only allow reset if no step is in_progress
+        if any(s["status"] == "in_progress" for s in plan["steps"]):
+            flowfile.set_content(json.dumps({"error": "Cannot reset: a step is in progress"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        plan["status"] = "pending_approval"
+        for s in plan["steps"]:
+            s["status"] = "pending"
+            s["note"] = ""
+            s.pop("verified_by", None)
+            s.pop("rejected_by", None)
+        plans[plan_id] = plan
+        store.set_extra(conv_id, "plans", plans, user_id=user_id)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(conv_id, "plan_updated", {"plan": plan})
+        except Exception:
+            pass
+        flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
+        return [flowfile]
+
     return None
 
 
@@ -341,6 +475,20 @@ def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
     if not agent or agent == "user":
         return None  # Can't schedule for user
 
+    # Validate agent exists in ResourceStore — never schedule a phantom agent
+    try:
+        from core.resource_store import ResourceStore
+        _adef = ResourceStore.instance().get_any("agent", agent, user_id)
+        if not _adef:
+            logger.error("Plan %s step %d: agent '%s' not found in ResourceStore. "
+                         "Cannot schedule — refusing to fallback on default LLM.",
+                         plan_id, next_step["index"], agent)
+            return None
+    except Exception as e:
+        logger.error("Plan %s step %d: failed to validate agent '%s': %s",
+                     plan_id, next_step["index"], agent, e)
+        return None
+
     # Mark plan as in_progress
     if plan["status"] in ("approved",):
         plan["status"] = "in_progress"
@@ -364,6 +512,12 @@ def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
         )
         logger.info("Plan %s step %d scheduled for agent '%s'",
                      plan_id, next_step["index"], agent)
+        # Wake poller immediately
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            AgentLoopTask.wake_poller()
+        except Exception:
+            pass
     except Exception as e:
         logger.warning("Failed to schedule plan step: %s", e)
     return None

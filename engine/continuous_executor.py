@@ -157,7 +157,7 @@ class ContinuousFlowExecutor:
             if flow.source_dir and hasattr(task, 'set_flow_source_dir'):
                 task.set_flow_source_dir(flow.source_dir)
 
-        # Resolve ${flow.parameters.*} in service configs before connecting
+        # Resolve ${*} in service configs before connecting
         self._resolve_service_configs(flow)
 
         # Initialize services

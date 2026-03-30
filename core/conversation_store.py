@@ -614,13 +614,26 @@ class ConversationStore:
         def _scan(lines):
             # Stream: collect only msg_ids/indices, then re-read page
             msgs = []
+            patches = {}  # msg_id → patch dict
             for line in lines:
+                if line.get("t") == "msg_patch":
+                    mid = line.get("msg_id", "")
+                    if mid:
+                        patches[mid] = {k: v for k, v in line.items()
+                                        if k not in ("t", "msg_id")}
+                    continue
                 if line.get("t") != "msg" or line.get("private"):
                     continue
                 msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
                 if "ts" in line:
                     msg["timestamp"] = line["ts"]
                 msgs.append(msg)
+            # Apply patches
+            if patches:
+                for msg in msgs:
+                    mid = msg.get("msg_id", "")
+                    if mid and mid in patches:
+                        msg.update(patches[mid])
             total = len(msgs)
             end = total - offset
             start = max(0, end - limit)
@@ -629,6 +642,14 @@ class ConversationStore:
             return {"messages": msgs[start:end], "total_count": total,
                     "offset": offset, "limit": limit, "has_more": start > 0}
         return self._read(cid, _scan)
+
+    def patch_message(self, cid: str, msg_id: str, **fields) -> None:
+        """Patch attributes on an existing message (appends a msg_patch record)."""
+        if not msg_id or not fields:
+            return
+        self._commit(cid, [{"op": "append", "lines": [
+            {"t": "msg_patch", "msg_id": msg_id, **fields}
+        ]}])
 
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)

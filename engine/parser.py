@@ -65,7 +65,7 @@ class FlowParser:
         for task_id, task_config in config.get('tasks', {}).items():
             task_type = task_config.get('type')
             task_parameters = task_config.get('parameters', {})
-            # Resolve ${secrets.*}, ${env.*}, ${flow.parameters.*} at parse time
+            # Resolve ${key} expressions at parse time (cascade: secrets → params → env)
             task_parameters = cls._resolve_config(task_parameters, flow_parameters)
 
             # Inject service config when a task references a service by ID

@@ -8,9 +8,11 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class XTwitterAuthProvider(OAuthBaseProvider):
     """X.com (formerly Twitter) OAuth2 provider with PKCE."""
 
+    DEFAULT_SCOPE = "users.read tweet.read offline.access"
+
     def __init__(self, config: Dict[str, Any]):
+        config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
-        self._scope = config.get("scope", "users.read tweet.read offline.access")
         self._authorize_url = "https://twitter.com/i/oauth2/authorize"
         self._token_url = "https://api.twitter.com/2/oauth2/token"
         self._userinfo_url = "https://api.twitter.com/2/users/me"
@@ -51,8 +53,8 @@ class XTwitterAuthProvider(OAuthBaseProvider):
         import urllib.parse
         parsed = urllib.parse.urlparse(self._token_url)
         body = urllib.parse.urlencode({
-            "client_id": self._client_id,
-            "client_secret": self._client_secret,
+            "client_id": self.config.get("client_id", ""),
+            "client_secret": self.config.get("client_secret", ""),
             "code": code,
             "redirect_uri": redirect_uri,
             "grant_type": "authorization_code",

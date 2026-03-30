@@ -8,9 +8,11 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class GitHubAuthProvider(OAuthBaseProvider):
     """GitHub OAuth2 provider."""
 
+    DEFAULT_SCOPE = "read:user user:email"
+
     def __init__(self, config: Dict[str, Any]):
+        config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
-        self._scope = config.get("scope", "read:user user:email")
         self._authorize_url = "https://github.com/login/oauth/authorize"
         self._token_url = "https://github.com/login/oauth/access_token"
         self._userinfo_url = "https://api.github.com/user"

@@ -226,6 +226,8 @@ function addMsg(role, text, extra) {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {
     el.innerHTML = renderSubAgentTrace(text, extra);
+  } else if (role === 'error') {
+    el.innerHTML = badge + renderMarkdown(text);
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
     el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);

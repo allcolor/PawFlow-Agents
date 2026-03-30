@@ -8,13 +8,30 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class MicrosoftAuthProvider(OAuthBaseProvider):
     """Microsoft / Azure AD OAuth2 provider."""
 
+    DEFAULT_SCOPE = "openid email profile"
+
     def __init__(self, config: Dict[str, Any]):
+        config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
-        tenant = config.get("tenant", "common")
-        self._scope = config.get("scope", "openid email profile")
-        self._authorize_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
-        self._token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
         self._userinfo_url = "https://graph.microsoft.com/v1.0/me"
+
+    @property
+    def _authorize_url(self) -> str:
+        tenant = self.config.get("tenant", "common")
+        return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize"
+
+    @_authorize_url.setter
+    def _authorize_url(self, value):
+        pass  # ignored — built dynamically from config
+
+    @property
+    def _token_url(self) -> str:
+        tenant = self.config.get("tenant", "common")
+        return f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+
+    @_token_url.setter
+    def _token_url(self, value):
+        pass  # ignored — built dynamically from config
 
     @property
     def name(self) -> str:

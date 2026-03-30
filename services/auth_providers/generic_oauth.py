@@ -50,35 +50,51 @@ class GenericOAuthProvider(OAuthBaseProvider):
     """Fully configurable OAuth2 provider. Supports presets for Keycloak, Okta, Auth0, GitLab."""
 
     def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        # Apply preset if specified
+        # Apply preset defaults into config (config values take precedence)
         preset_name = config.get("preset", "")
         preset = _PRESETS.get(preset_name, {})
-
-        self._name = config.get("name", preset_name or "oauth")
-        self._display = config.get("display_name", preset.get("display_name", "Sign in with OAuth"))
-        self._icon = config.get("icon", preset.get("icon", "🔐"))
-        self._scope = config.get("scope", preset.get("scope", "openid email profile"))
-        self._authorize_url = config.get("authorize_url", preset.get("authorize_url", ""))
-        self._token_url = config.get("token_url", preset.get("token_url", ""))
-        self._userinfo_url = config.get("userinfo_url", preset.get("userinfo_url", ""))
-        # Field mapping: which userinfo fields to use
-        self._field_user_id = config.get("field_user_id", "sub")
-        self._field_email = config.get("field_email", "email")
-        self._field_name = config.get("field_name", "name")
-        self._field_username = config.get("field_username", "preferred_username")
+        for key in ("display_name", "icon", "scope", "authorize_url", "token_url", "userinfo_url"):
+            if key not in config and key in preset:
+                config[key] = preset[key]
+        config.setdefault("name", preset_name or "oauth")
+        config.setdefault("scope", "openid email profile")
+        super().__init__(config)
 
     @property
     def name(self) -> str:
-        return self._name
+        return self.config.get("name", "oauth")
 
     @property
     def display_name(self) -> str:
-        return self._display
+        return self.config.get("display_name", "Sign in with OAuth")
 
     @property
     def icon(self) -> str:
-        return self._icon
+        return self.config.get("icon", "\U0001F510")
+
+    @property
+    def _authorize_url(self) -> str:
+        return self.config.get("authorize_url", "")
+
+    @_authorize_url.setter
+    def _authorize_url(self, value):
+        pass  # ignored — built dynamically from config
+
+    @property
+    def _token_url(self) -> str:
+        return self.config.get("token_url", "")
+
+    @_token_url.setter
+    def _token_url(self, value):
+        pass  # ignored — built dynamically from config
+
+    @property
+    def _userinfo_url(self) -> str:
+        return self.config.get("userinfo_url", "")
+
+    @_userinfo_url.setter
+    def _userinfo_url(self, value):
+        pass  # ignored — built dynamically from config
 
     def get_config_schema(self) -> Dict[str, Any]:
         return {
@@ -112,22 +128,28 @@ class GenericOAuthProvider(OAuthBaseProvider):
 
     def _build_result(self, userinfo: dict, access_token: str,
                        refresh_token: str, expires_at: float) -> AuthResult:
-        uid = str(userinfo.get(self._field_user_id, ""))
-        email = str(userinfo.get(self._field_email, ""))
-        name = str(userinfo.get(self._field_name, ""))
-        username = str(userinfo.get(self._field_username, ""))
+        field_user_id = self.config.get("field_user_id", "sub")
+        field_email = self.config.get("field_email", "email")
+        field_name = self.config.get("field_name", "name")
+        field_username = self.config.get("field_username", "preferred_username")
+        provider_name = self.name
+
+        uid = str(userinfo.get(field_user_id, ""))
+        email = str(userinfo.get(field_email, ""))
+        display = str(userinfo.get(field_name, ""))
+        username = str(userinfo.get(field_username, ""))
         if not username:
             username = email.split("@")[0] if email else uid
 
         return AuthResult(
             success=True,
-            user_id=f"{self._name}:{uid}",
+            user_id=f"{provider_name}:{uid}",
             username=username,
             email=email,
-            display_name=name,
-            provider=self._name,
+            display_name=display,
+            provider=provider_name,
             access_token=access_token,
             refresh_token=refresh_token,
             token_expires_at=expires_at,
-            claims={**userinfo, "provider": self._name},
+            claims={**userinfo, "provider": provider_name},
         )

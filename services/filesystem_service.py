@@ -272,7 +272,7 @@ class WSListener:
 
             # Validate token
             relay_token = reg.get("token", "")
-            if not relay_token or relay_token != service._token:
+            if not relay_token or relay_token != service.config.get("token", ""):
                 await self._ws_send(writer, json.dumps(
                     {"type": "error", "message": "Token mismatch"}
                 ).encode())
@@ -494,9 +494,6 @@ class RelayService(BaseService):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._port = int(config.get("port", 9091))
-        self._path = config.get("path", "/ws/relay")
-        self._token = config.get("token", "")
-        self._mode = config.get("mode", "readwrite")
         self._service_id = config.get("_service_id", "")
 
         self._project_context: Optional[Dict] = None  # auto-fetched on relay connect
@@ -557,12 +554,13 @@ class RelayService(BaseService):
 
     def connect(self):
         """Register route on the shared listener."""
+        path = self.config.get("path", "/ws/relay")
         listener = WSListener.get_or_create(self._port)
-        listener.register_route(self._path, self)
+        listener.register_route(path, self)
         self._connection = listener
         self._initialized = True
         logger.info("RelayService '%s' listening on port %d path %s",
-                     self._service_id, self._port, self._path)
+                     self._service_id, self._port, path)
 
     def is_connected(self) -> bool:
         """A relay service is connected when a relay client is in the pool."""
@@ -571,7 +569,7 @@ class RelayService(BaseService):
 
     def disconnect(self):
         if self._connection:
-            self._connection.unregister_route(self._path)
+            self._connection.unregister_route(self.config.get("path", "/ws/relay"))
             self._connection = None
 
     def set_user_id(self, user_id: str):
@@ -661,7 +659,7 @@ class RelayService(BaseService):
             raise Exception(
                 f"Relay not connected to '{self._service_id}'. "
                 f"Start: python tools/pawflow_relay.py "
-                f"--server ws://<host>:{self._port}{self._path} "
+                f"--server ws://<host>:{self._port}{self.config.get('path', '/ws/relay')} "
                 f"--relay-id {self._service_id} --token <token> --dir <path>"
             )
 

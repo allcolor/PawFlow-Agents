@@ -76,7 +76,7 @@ def _substitute_expressions(template: str, resolver_fn) -> str:
     """Replace ${...} expressions, supporting nested ${...} in arguments.
 
     Unlike re.sub with [^}]+, this properly handles balanced braces:
-    ${global.x:then(${global.y})} → finds the outer ${...} correctly.
+    ${x:then(${y})} → finds the outer ${...} correctly.
     """
     result = []
     i = 0
@@ -134,15 +134,16 @@ class LazyResolveDict(dict):
         return val
 
 
-def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = None,
-                       parameters: Optional[Dict[str, Any]] = None,
+def resolve_expression(template: str, parameters: Optional[Dict[str, Any]] = None,
                        owner: Optional[str] = None,
                        conversation_id: Optional[str] = None,
                        _depth: int = 0) -> str:
     """Resolve all ${...} expressions in a template string.
 
-    Resolution: secrets (conv→user→global) → params (flow→conv→user→global→env)
-    → legacy vars → FlowFile attributes.
+    Cascade: secrets (conv→user→global) → params (flow attrs→flow params→conv→user→global→env).
+
+    FlowFile attributes are merged into parameters by callers
+    ({**flow_params, **flowfile_attrs} — attrs win over flow params).
 
     Examples:
         ${api_key}                     → cascade through all scopes
@@ -151,16 +152,6 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         ${key:!important(env)}         → force specific scope
 
     Recursive up to 10 levels.
-
-    Args:
-        template: String with ${...} expressions
-        attributes: FlowFile attributes
-        parameters: Flow parameters
-        owner: Username for user-level resolution
-        conversation_id: Conversation ID for conv-level resolution
-
-    Returns:
-        Chaîne avec expressions résolues
     """
     if '${' not in template:
         return template
@@ -168,7 +159,6 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         logger.warning("Expression recursion depth exceeded (>10)")
         return template
 
-    attrs = attributes or {}
     params = parameters or {}
     # Lazy-load secrets and variables only if needed
     secrets = None
@@ -345,15 +335,14 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     def _parse_important(expr):
         """Parse :!important(scope) suffix. Returns (clean_expr, exact_scope_or_None).
 
-        New syntax: ${key:!important(global)}, ${key:!important(user)}, etc.
-        Legacy syntax: ${global.key:!important} (scope from prefix)
+        Syntax: ${key:!important(scope)} — forces resolution from a single scope.
 
         Examples:
             "api_key"                        → ("api_key", None)
             "api_key:!important(global)"     → ("api_key", "global")
             "api_key:!important(user)"       → ("api_key", "user")
             "api_key:!important(conv)"       → ("api_key", "conv")
-            "global.mavar:!important"        → ("global.mavar", "global")  # legacy
+            "api_key:!important(env)"        → ("api_key", "env")
         """
         # Syntax: ${key:!important(scope)}
         m = re.match(r'^(.+):!important\((\w+)\)$', expr)
@@ -374,6 +363,9 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
     def replacer_core(expr):
         nonlocal secrets, variables
 
+        # Parse :!important(scope) BEFORE pipeline (it's not a pipeline op)
+        expr, exact_scope = _parse_important(expr)
+
         # Parse pipeline operations (e.g. "key:upper:equals("X"):then("Y")")
         from core.expression_pipeline import parse_pipeline, evaluate_pipeline
         scope_key, operations = parse_pipeline(expr)
@@ -390,9 +382,6 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
             if operations:
                 return evaluate_pipeline(str(val), operations, resolve_fn=_resolve_single)
             return val
-
-        # Parse :!important modifier
-        expr, exact_scope = _parse_important(expr)
 
         key = expr
 
@@ -420,20 +409,16 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
         if key in variables:
             return _return_val(variables[key])
 
-        # 4. FlowFile attributes (for flow expressions like ${http.method})
-        if expr in attrs:
-            val = attrs[expr]
-            return _return_val(val)
-        # Also try stripped key in attrs
-        if key != expr and key in attrs:
-            return _return_val(attrs[key])
-
         # Not found — try pipeline operations with empty (e.g. ${x:default("fallback")})
         if operations:
             result_val = evaluate_pipeline("", operations, resolve_fn=_resolve_single)
             if result_val:
                 return result_val
 
+        # Preserve :!important(scope) in unresolved output to prevent
+        # recursive resolution from ignoring the scope constraint
+        if exact_scope:
+            return "${" + scope_key + ":!important(" + exact_scope + ")}"
         return "${" + scope_key + "}"
 
     # Custom substitution that handles nested ${...} in arguments
@@ -441,7 +426,7 @@ def resolve_expression(template: str, attributes: Optional[Dict[str, str]] = Non
 
     # Recursive resolution: if result still has ${...}, resolve again
     if '${' in result and result != template:
-        result = resolve_expression(result, attributes, parameters, owner,
+        result = resolve_expression(result, parameters, owner,
                                     conversation_id=conversation_id,
                                     _depth=_depth + 1)
 
@@ -456,9 +441,9 @@ def resolve_value(value, owner: Optional[str] = None,
     Use this at the point of USE, never at storage time.
 
     Examples:
-        resolve_value("${secrets.api_key}", owner="bob")
-        resolve_value({"url": "${user.mcp_url}", "args": ["--key", "${secrets.key}"]}, owner="bob")
-        resolve_value(["${global.x}", "literal"], owner="bob")
+        resolve_value("${api_key}", owner="bob")
+        resolve_value({"url": "${mcp_url}", "args": ["--key", "${key}"]}, owner="bob")
+        resolve_value(["${x}", "literal"], owner="bob")
     """
     if isinstance(value, str):
         if "${" not in value:

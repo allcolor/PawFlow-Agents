@@ -7,7 +7,7 @@ Flow pattern:
     someTask → publishMessage
 
 Config:
-    conversation_id: "${flow.parameters._conversation_id}"
+    conversation_id: "${_conversation_id}"
     agent_name: Source agent name for the message badge (default: "flow")
     role: Message role — "assistant" or "system" (default: "assistant")
 """
@@ -36,7 +36,7 @@ class PublishMessageTask(BaseTask):
         return {
             "conversation_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._conversation_id}",
+                "default": "${_conversation_id}",
                 "description": "Target conversation ID",
             },
             "agent_name": {

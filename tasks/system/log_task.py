@@ -73,7 +73,7 @@ class LogTask(BaseTask):
         attrs.setdefault('uuid', flowfile.process_id[:8])
         attrs.setdefault('process.id', flowfile.process_id[:8])
 
-        formatted = resolve_expression(message, attributes=attrs)
+        formatted = resolve_expression(message, parameters=attrs)
 
         if self.include_attributes:
             formatted += f"\nAttributes: {flowfile.get_attributes()}"

@@ -76,9 +76,6 @@ class AuthGatewayService(BaseService):
             ttl=int(config.get("rate_limit_ttl", 3600)),
             base_delay=float(config.get("rate_limit_base_delay", 30)),
         )
-        self._rules: List[Dict[str, str]] = config.get("auto_provision", {}).get("rules", [])
-        self._default_action = config.get("auto_provision", {}).get("default_action", "deny")
-        self._session_ttl = int(config.get("session_ttl", 86400))
         # CSRF state tokens: {state: {expires, provider, metadata}}
         self._states: Dict[str, Dict] = {}
         self._lock = threading.Lock()
@@ -267,8 +264,12 @@ class AuthGatewayService(BaseService):
             return auth_result
 
         # New user — evaluate provisioning rules
+        auto_provision = self.config.get("auto_provision", {})
+        rules = auto_provision.get("rules", []) if isinstance(auto_provision, dict) else []
+        default_action = auto_provision.get("default_action", "deny") if isinstance(auto_provision, dict) else "deny"
+
         role_str = None
-        for rule in self._rules:
+        for rule in rules:
             expr = rule.get("match", "")
             if evaluate_rule(expr, claims):
                 role_str = rule.get("role", "viewer")
@@ -277,16 +278,16 @@ class AuthGatewayService(BaseService):
 
         if role_str is None:
             # No rule matched — apply default action
-            if self._default_action == "deny":
+            if default_action == "deny":
                 logger.warning(f"[auth_gateway] Access denied for {auth_result.email} "
                                f"(no matching rule, default=deny)")
                 if ip:
                     self._rate_limiter.record_failure(ip)
                 return AuthResult(success=False,
                                   error="Access denied — no matching provisioning rule")
-            elif self._default_action.startswith("create"):
+            elif default_action.startswith("create"):
                 # "create" or "create_viewer" etc.
-                role_str = self._default_action.replace("create_", "") or "viewer"
+                role_str = default_action.replace("create_", "") or "viewer"
                 if role_str == "create":
                     role_str = ""  # no role = no permissions
 

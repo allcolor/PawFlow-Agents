@@ -242,13 +242,13 @@ class SendEmailTask(BaseTask):
         return access_token
 
     def _resolve_secret(self, value: str) -> str:
-        """Resolve a value that may be a ${flow.parameters.X} expression."""
+        """Resolve a value that may be a ${key} expression."""
         if not value:
             return value
         return self.resolve_value(value)
 
     def _resolve(self, flowfile: FlowFile, value: str) -> str:
-        """Resolve ${attribute} and ${flow.parameters.X} expressions."""
+        """Resolve ${key} expressions via unified cascade."""
         if not value or '${' not in value:
             return value
         return self.resolve_value(value, flowfile=flowfile)

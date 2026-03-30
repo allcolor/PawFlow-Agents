@@ -8,9 +8,11 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class FacebookAuthProvider(OAuthBaseProvider):
     """Facebook (Meta) OAuth2 provider. Works for Facebook and Instagram Login."""
 
+    DEFAULT_SCOPE = "email public_profile"
+
     def __init__(self, config: Dict[str, Any]):
+        config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
-        self._scope = config.get("scope", "email public_profile")
         self._authorize_url = "https://www.facebook.com/v19.0/dialog/oauth"
         self._token_url = "https://graph.facebook.com/v19.0/oauth/access_token"
         self._userinfo_url = "https://graph.facebook.com/me?fields=id,name,email,picture"

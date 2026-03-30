@@ -8,9 +8,11 @@ from services.auth_providers.oauth_base import OAuthBaseProvider
 class AmazonAuthProvider(OAuthBaseProvider):
     """Login with Amazon OAuth2 provider."""
 
+    DEFAULT_SCOPE = "profile"
+
     def __init__(self, config: Dict[str, Any]):
+        config.setdefault("scope", self.DEFAULT_SCOPE)
         super().__init__(config)
-        self._scope = config.get("scope", "profile")
         self._authorize_url = "https://www.amazon.com/ap/oa"
         self._token_url = "https://api.amazon.com/auth/o2/token"
         self._userinfo_url = "https://api.amazon.com/user/profile"

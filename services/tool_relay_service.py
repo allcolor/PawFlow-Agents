@@ -45,8 +45,6 @@ class ToolRelayService(BaseService):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._port = int(config.get("port", 9091))
-        self._path = config.get("path", "/ws/tools")
-        self._token = config.get("token", "")
         self._service_id = config.get("_service_id", "")
         self._connection = None  # WSListener ref
 
@@ -67,15 +65,16 @@ class ToolRelayService(BaseService):
     def connect(self):
         """Register route on the shared WS listener (same port as filesystem)."""
         from services.filesystem_service import WSListener
+        path = self.config.get("path", "/ws/tools")
         listener = WSListener.get_or_create(self._port)
-        listener.register_route(self._path, self)
+        listener.register_route(path, self)
         self._connection = listener
         logger.info("ToolRelayService '%s' listening on port %d path %s",
-                     self._service_id, self._port, self._path)
+                     self._service_id, self._port, path)
 
     def disconnect(self):
         if self._connection:
-            self._connection.unregister_route(self._path)
+            self._connection.unregister_route(self.config.get("path", "/ws/tools"))
             self._connection = None
 
     # ── WebSocket message handling ──
@@ -161,7 +160,8 @@ class ToolRelayService(BaseService):
             return {"type": "error", "request_id": request_id,
                     "error": f"Unknown method: {method}"}
 
-    def _get_registry(self, user_id: str = "", conversation_id: str = ""):
+    def _get_registry(self, user_id: str = "", conversation_id: str = "",
+                       agent_name: str = ""):
         """Get a configured tool registry for this request context.
 
         CRITICAL: injects the live filesystem service instance (the one
@@ -181,6 +181,8 @@ class ToolRelayService(BaseService):
                 h.set_user_id(user_id)
             if hasattr(h, 'set_conversation_id') and conversation_id:
                 h.set_conversation_id(conversation_id)
+            if hasattr(h, 'set_agent_name') and agent_name:
+                h.set_agent_name(agent_name)
             if hasattr(h, '_user_id'):
                 h._user_id = user_id
             if hasattr(h, '_conversation_id'):
@@ -481,7 +483,7 @@ class ToolRelayService(BaseService):
 
     def _do_execute(self, request_id, tool_name, arguments,
                     user_id, conversation_id, agent_name):
-        registry = self._get_registry(user_id, conversation_id)
+        registry = self._get_registry(user_id, conversation_id, agent_name)
 
         # Tool Approval Gate
         try:

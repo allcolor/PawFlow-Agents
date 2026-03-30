@@ -174,7 +174,7 @@ class TestParameterContext:
     def test_with_mapping(self):
         parent = ParameterContext({"env": "prod", "key": "abc"})
         child = parent.with_mapping({
-            "sub_env": "${flow.parameters.env}",
+            "sub_env": "${env}",
             "mode": "fast",
         })
         assert child.get("sub_env") == "prod"
@@ -182,5 +182,5 @@ class TestParameterContext:
 
     def test_resolve_expression(self):
         ctx = ParameterContext({"name": "world"})
-        result = ctx.resolve("Hello ${flow.parameters.name}!")
+        result = ctx.resolve("Hello ${name}!")
         assert result == "Hello world!"

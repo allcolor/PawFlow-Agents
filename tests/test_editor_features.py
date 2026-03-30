@@ -24,22 +24,22 @@ class TestResolveExpression:
         assert resolve_expression("") == ""
 
     def test_attribute_resolution(self):
-        result = resolve_expression("file: ${filename}", attributes={"filename": "data.csv"})
+        result = resolve_expression("file: ${filename}", parameters={"filename": "data.csv"})
         assert result == "file: data.csv"
 
     def test_multiple_attributes(self):
-        attrs = {"name": "test", "ext": "csv"}
-        result = resolve_expression("${name}.${ext}", attributes=attrs)
+        params = {"name": "test", "ext": "csv"}
+        result = resolve_expression("${name}.${ext}", parameters=params)
         assert result == "test.csv"
 
     def test_flow_parameter_resolution(self):
         params = {"threshold": "0.5"}
-        result = resolve_expression("val=${flow.parameters.threshold}", parameters=params)
+        result = resolve_expression("val=${threshold}", parameters=params)
         assert result == "val=0.5"
 
     def test_env_variable_resolution(self):
         with patch.dict("os.environ", {"MY_VAR": "hello"}):
-            result = resolve_expression("${env.MY_VAR}")
+            result = resolve_expression("${MY_VAR:!important(env)}")
             assert result == "hello"
 
     def test_unresolved_expression(self):
@@ -47,33 +47,28 @@ class TestResolveExpression:
         assert result == "${unknown_var}"
 
     def test_unresolved_flow_param(self):
-        result = resolve_expression("${flow.parameters.missing}", parameters={})
-        assert result == "${flow.parameters.missing}"
+        result = resolve_expression("${missing}", parameters={})
+        assert result == "${missing}"
 
     def test_unresolved_env(self):
-        result = resolve_expression("${env.DEFINITELY_NOT_SET_12345}")
-        assert result == "${env.DEFINITELY_NOT_SET_12345}"
+        result = resolve_expression("${DEFINITELY_NOT_SET_12345:!important(env)}")
+        assert result == "${DEFINITELY_NOT_SET_12345:!important(env)}"
 
     def test_mixed_resolution(self):
-        attrs = {"id": "42"}
-        params = {"mode": "fast"}
+        # FlowFile attrs win over flow params (more specific)
+        merged = {"id": "42", "mode": "fast"}
         result = resolve_expression(
-            "id=${id} mode=${flow.parameters.mode}",
-            attributes=attrs,
-            parameters=params,
+            "id=${id} mode=${mode}",
+            parameters=merged,
         )
         assert result == "id=42 mode=fast"
 
-    def test_none_attributes(self):
-        result = resolve_expression("${x}", attributes=None)
+    def test_none_parameters(self):
+        result = resolve_expression("${x}", parameters=None)
         assert result == "${x}"
 
-    def test_none_parameters(self):
-        result = resolve_expression("${flow.parameters.x}", parameters=None)
-        assert result == "${flow.parameters.x}"
-
     def test_numeric_parameter_value(self):
-        result = resolve_expression("${flow.parameters.count}", parameters={"count": 42})
+        result = resolve_expression("${count}", parameters={"count": 42})
         assert result == "42"
 
     def test_no_dollar_brace(self):

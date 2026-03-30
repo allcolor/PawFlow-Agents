@@ -61,13 +61,13 @@ class TestParameterContext:
 
     def test_resolve_simple(self):
         ctx = ParameterContext({"env": "production"})
-        assert ctx.resolve("${flow.parameters.env}") == "production"
-        assert ctx.resolve("prefix-${flow.parameters.env}-suffix") == "prefix-production-suffix"
+        assert ctx.resolve("${env}") == "production"
+        assert ctx.resolve("prefix-${env}-suffix") == "prefix-production-suffix"
 
     def test_resolve_missing(self):
         ctx = ParameterContext({})
         # Unresolved expression stays as-is
-        assert ctx.resolve("${flow.parameters.unknown}") == "${flow.parameters.unknown}"
+        assert ctx.resolve("${unknown}") == "${unknown}"
 
     def test_resolve_no_expression(self):
         ctx = ParameterContext({"x": "1"})
@@ -83,12 +83,12 @@ class TestParameterContext:
         ctx = ParameterContext({"env": "prod", "port": "9000"})
         config = {
             "host": "localhost",
-            "port": "${flow.parameters.port}",
-            "label": "server-${flow.parameters.env}",
+            "port": "${port}",
+            "label": "server-${env}",
             "nested": {
-                "key": "${flow.parameters.env}"
+                "key": "${env}"
             },
-            "list_val": ["${flow.parameters.env}", "static"],
+            "list_val": ["${env}", "static"],
             "number": 42,
         }
         resolved = ctx.resolve_config(config)
@@ -102,9 +102,9 @@ class TestParameterContext:
     def test_with_mapping(self):
         parent = ParameterContext({"env": "prod", "api_key": "abc123"})
         mapping = {
-            "sub_env": "${flow.parameters.env}",
+            "sub_env": "${env}",
             "mode": "fast",
-            "secret": "${flow.parameters.api_key}",
+            "secret": "${api_key}",
         }
         child = parent.with_mapping(mapping)
         assert child.get("sub_env") == "prod"
@@ -115,9 +115,9 @@ class TestParameterContext:
 
     def test_with_mapping_unresolved(self):
         parent = ParameterContext({"env": "prod"})
-        mapping = {"key": "${flow.parameters.missing}"}
+        mapping = {"key": "${missing}"}
         child = parent.with_mapping(mapping)
-        assert child.get("key") == "${flow.parameters.missing}"
+        assert child.get("key") == "${missing}"
 
     def test_equality(self):
         a = ParameterContext({"x": "1"})
@@ -151,10 +151,10 @@ class TestBaseTaskParameterContext:
         assert task.parameter_context is None
 
     def test_set_parameter_context_resolves_config(self):
-        """After injecting ParameterContext, config values with ${flow.parameters.X} are resolved."""
-        task = TaskFactory.get("log")({"message": "env=${flow.parameters.env}"})
+        """After injecting ParameterContext, config values with ${X} are resolved."""
+        task = TaskFactory.get("log")({"message": "env=${env}"})
         # Before injection: unresolved
-        assert "${flow.parameters.env}" in task.config.get("message", "")
+        assert "${env}" in task.config.get("message", "")
 
         ctx = ParameterContext({"env": "production"})
         task.set_parameter_context(ctx)
@@ -167,7 +167,7 @@ class TestBaseTaskParameterContext:
         ctx = ParameterContext({"env": "staging"})
         task.set_parameter_context(ctx)
 
-        result = task.resolve_value("${flow.parameters.env}")
+        result = task.resolve_value("${env}")
         assert result == "staging"
 
     def test_resolve_value_with_flowfile_attrs(self):
@@ -176,14 +176,14 @@ class TestBaseTaskParameterContext:
         task.set_parameter_context(ctx)
 
         ff = FlowFile(content=b"data", attributes={"filename": "test.csv"})
-        result = task.resolve_value("${filename} in ${flow.parameters.env}", flowfile=ff)
+        result = task.resolve_value("${filename} in ${env}", flowfile=ff)
         assert result == "test.csv in prod"
 
     def test_resolve_value_no_context(self):
         task = TaskFactory.get("log")({"message": "test"})
         # No parameter context set
-        result = task.resolve_value("${flow.parameters.env}")
-        assert result == "${flow.parameters.env}"  # stays unresolved
+        result = task.resolve_value("${env}")
+        assert result == "${env}"  # stays unresolved
 
     def test_resolve_value_plain_string(self):
         task = TaskFactory.get("log")({"message": "test"})
@@ -217,7 +217,7 @@ class TestFlowExecutorParameters:
         """Flow parameters should be injected into task config."""
         flow = self._make_flow(
             flow_params={"env": "production"},
-            task_config={"message": "Running in ${flow.parameters.env}"},
+            task_config={"message": "Running in ${env}"},
         )
         ff = FlowFile(content=b"test")
         result = ContinuousFlowExecutor.run_batch(flow, input_flowfiles=[ff], max_workers=1)
@@ -231,7 +231,7 @@ class TestFlowExecutorParameters:
         """Parameters passed to execute_flow should override flow defaults."""
         flow = self._make_flow(
             flow_params={"env": "dev"},
-            task_config={"message": "env=${flow.parameters.env}"},
+            task_config={"message": "env=${env}"},
         )
         ff = FlowFile(content=b"test")
         result = ContinuousFlowExecutor.run_batch(
@@ -249,7 +249,7 @@ class TestFlowExecutorParameters:
         """A pre-built ParameterContext should be used as-is."""
         flow = self._make_flow(
             flow_params={"env": "dev"},
-            task_config={"message": "env=${flow.parameters.env}"},
+            task_config={"message": "env=${env}"},
         )
         ff = FlowFile(content=b"test")
         result = ContinuousFlowExecutor.run_batch(
@@ -280,8 +280,8 @@ class TestFlowExecutorParameters:
             "name": "Multi",
             "parameters": {"prefix": "PRE"},
             "tasks": {
-                "t1": {"type": "log", "parameters": {"message": "${flow.parameters.prefix}-1"}},
-                "t2": {"type": "log", "parameters": {"message": "${flow.parameters.prefix}-2"}},
+                "t1": {"type": "log", "parameters": {"message": "${prefix}-1"}},
+                "t2": {"type": "log", "parameters": {"message": "${prefix}-2"}},
             },
             "relations": [{"from": "t1", "to": "t2"}],
         }
@@ -293,12 +293,12 @@ class TestFlowExecutorParameters:
         assert flow.tasks["t2"].config["message"] == "PRE-2"
 
     def test_mixed_expression_types(self):
-        """${flow.parameters.X} and ${env.Y} should both resolve."""
+        """${X} and ${Y:!important(env)} should both resolve."""
         os.environ["_PAWFLOW_TEST_VAR"] = "env_value"
         try:
             flow = self._make_flow(
                 flow_params={"key": "param_value"},
-                task_config={"message": "${flow.parameters.key}-${env._PAWFLOW_TEST_VAR}"},
+                task_config={"message": "${key}-${_PAWFLOW_TEST_VAR:!important(env)}"},
             )
             result = ContinuousFlowExecutor.run_batch(flow, input_flowfiles=[FlowFile(content=b"")], max_workers=1)
             assert result.success
@@ -322,7 +322,7 @@ class TestContinuousExecutorParameters:
             "name": "Continuous Test",
             "parameters": {"mode": "fast"},
             "tasks": {
-                "t1": {"type": "log", "parameters": {"message": "${flow.parameters.mode}"}},
+                "t1": {"type": "log", "parameters": {"message": "${mode}"}},
             },
             "relations": [],
         }
@@ -341,7 +341,7 @@ class TestContinuousExecutorParameters:
             "name": "Override Test",
             "parameters": {"mode": "slow"},
             "tasks": {
-                "t1": {"type": "log", "parameters": {"message": "${flow.parameters.mode}"}},
+                "t1": {"type": "log", "parameters": {"message": "${mode}"}},
             },
             "relations": [],
         }
@@ -360,7 +360,7 @@ class TestContinuousExecutorParameters:
 
 class _TestSubflowParameterPropagation_REMOVED:
 
-    def _write_subflow(self, tmpdir, params=None, task_msg="sub: ${flow.parameters.env}"):
+    def _write_subflow(self, tmpdir, params=None, task_msg="sub: ${env}"):
         """Write a subflow JSON file and return its path."""
         subflow = {
             "id": "subflow",
@@ -404,7 +404,7 @@ class _TestSubflowParameterPropagation_REMOVED:
         subflow_path = self._write_subflow(
             str(tmp_path),
             params={"sub_env": "default"},
-            task_msg="sub: ${flow.parameters.sub_env}",
+            task_msg="sub: ${sub_env}",
         )
 
         flow_config = {
@@ -417,7 +417,7 @@ class _TestSubflowParameterPropagation_REMOVED:
                     "parameters": {
                         "flow_path": subflow_path,
                         "parameter_mapping": {
-                            "sub_env": "${flow.parameters.env}",
+                            "sub_env": "${env}",
                         },
                     },
                 }
@@ -433,7 +433,7 @@ class _TestSubflowParameterPropagation_REMOVED:
         subflow_path = self._write_subflow(
             str(tmp_path),
             params={},
-            task_msg="mode=${flow.parameters.mode}",
+            task_msg="mode=${mode}",
         )
 
         flow_config = {
@@ -460,7 +460,7 @@ class _TestSubflowParameterPropagation_REMOVED:
         subflow_path = self._write_subflow(
             str(tmp_path),
             params={"env": "subflow-default"},
-            task_msg="env=${flow.parameters.env}",
+            task_msg="env=${env}",
         )
 
         flow_config = {
@@ -487,7 +487,7 @@ class _TestSubflowParameterPropagation_REMOVED:
 class TestParameterContextRegression:
 
     def test_task_without_params_still_works(self):
-        """Tasks that don't use ${flow.parameters.X} should be unaffected."""
+        """Tasks that don't use ${X} should be unaffected."""
         flow_config = {
             "id": "regression",
             "name": "Regression",
@@ -506,7 +506,7 @@ class TestParameterContextRegression:
         """${attr} resolution from FlowFile attributes still works."""
         from core.expression import resolve_expression
         result = resolve_expression(
-            "file=${filename} param=${flow.parameters.env}",
+            "file=${filename} param=${env}",
             attributes={"filename": "test.csv"},
             parameters={"env": "prod"},
         )
@@ -536,7 +536,7 @@ class _TestSubflowValidation_REMOVED:
         import logging
         subflow_path = self._write_subflow(
             str(tmp_path),
-            task_msg="${flow.parameters.missing_param}",
+            task_msg="${missing_param}",
         )
         flow_config = {
             "id": "parent", "name": "Parent", "parameters": {},
@@ -557,7 +557,7 @@ class _TestSubflowValidation_REMOVED:
         grandchild = {
             "id": "gc", "name": "GrandChild",
             "parameters": {},
-            "tasks": {"t": {"type": "log", "parameters": {"message": "${flow.parameters.env}"}}},
+            "tasks": {"t": {"type": "log", "parameters": {"message": "${env}"}}},
             "relations": [],
         }
         gc_path = os.path.join(str(tmp_path), "grandchild.json")

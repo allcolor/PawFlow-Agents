@@ -2,13 +2,13 @@
 // /compact, /rebuild, /rebuild_clean, /restart_from, /context, /summary, /resume
 // Loaded before commands.js — all functions are global.
 
-async function cmdRestartFrom(text, parts) {
+function cmdRestartFrom(text, parts) {
   let restartAgent = '';
   let restartN = 5;
   for (let i = 1; i < parts.length; i++) {
     const v = parseInt(parts[i]);
     if (!isNaN(v)) { restartN = v; }
-    else { restartAgent = parts[i]; }
+    else { restartAgent = stripTarget(parts[i]); }
   }
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
@@ -27,23 +27,23 @@ async function cmdRestartFrom(text, parts) {
   return true;
 }
 
-async function cmdResume(text) {
+function cmdResume(text) {
   const rargs = parseQuotedArgs(text);
-  const target = resolveAgentName(rargs[1] || '');
-  if (!target) { addMsg('system', 'Usage: /resume <agent|ALL>'); return true; }
+  const target = resolveAgentName(stripTarget(rargs[1] || ''));
+  if (!target) { addMsg('system', 'Usage: /resume @<agent|ALL>'); return true; }
   const resumeMsg = rargs.slice(2).join(' ') || 'Continue from where you left off.';
-  if (target.toUpperCase() === 'ALL') { await cmdAgentMsgAll(resumeMsg); }
-  else { await cmdAgentMsg(target, resumeMsg); }
+  if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(resumeMsg); }
+  else { cmdAgentMsg(target, resumeMsg); }
   return true;
 }
 
-async function cmdSummary(text, parts) {
+function cmdSummary(text, parts) {
   let summaryAgent = '';
   let summaryTokens = 500;
   for (let i = 1; i < parts.length; i++) {
     const v = parseInt(parts[i]);
     if (!isNaN(v)) { summaryTokens = v; }
-    else { summaryAgent = parts[i]; }
+    else { summaryAgent = stripTarget(parts[i]); }
   }
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
@@ -64,19 +64,19 @@ async function cmdSummary(text, parts) {
 
 function cmdCompactCmd(text, parts) {
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-  cmdCompact(parts[1] || '');
+  cmdCompact(stripTarget(parts[1] || ''));
   return true;
 }
 
 function cmdRebuildCmd(text, parts) {
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-  cmdRebuild(parts[1] || '');
+  cmdRebuild(stripTarget(parts[1] || ''));
   return true;
 }
 
 function cmdRebuildFullCmd(text, parts) {
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-  const rfAgent = parts[1] || '';
+  const rfAgent = stripTarget(parts[1] || '');
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   contextOpInProgress = true;
   const rfLabel = rfAgent ? 'Rebuilding full (' + rfAgent + ')' : 'Rebuilding full';
@@ -92,8 +92,8 @@ function cmdRebuildFullCmd(text, parts) {
   return true;
 }
 
-async function cmdContextCmd(text, parts) {
-  await cmdShowContext(parts[1] || '');
+function cmdContextCmd(text, parts) {
+  cmdShowContext(stripTarget(parts[1] || ''));
   return true;
 }
 

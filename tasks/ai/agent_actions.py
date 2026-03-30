@@ -37,6 +37,11 @@ _BG_ACTIONS = frozenset({
     "update_flow_params", "promote_flow",
     "relay_connect", "relay_disconnect",
     "claude_code_login_url", "claude_code_login_code", "claude_code_auth",
+    "claude_code_server_login", "claude_code_server_login_cleanup",
+    "claude_code_server_login_status",
+    "claude_code_relay_login", "claude_code_set_credentials",
+    "create_server_workspace", "destroy_server_workspace",
+    "start_code_server",
 })
 
 _ACTION_HANDLERS = [

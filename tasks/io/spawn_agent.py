@@ -8,8 +8,8 @@ Flow pattern:
     someTask → spawnAgent                  (async)
 
 Config:
-    conversation_id: "${flow.parameters._conversation_id}"
-    user_id: "${flow.parameters._user_id}"
+    conversation_id: "${_conversation_id}"
+    user_id: "${_user_id}"
     agent_name: Name of the agent to spawn
     mode: "sync" (wait for response) or "async" (fire and forget)
     context_mode: "isolated" | "last:N" | "summary:N" | "full"
@@ -39,12 +39,12 @@ class SpawnAgentTask(BaseTask):
         return {
             "conversation_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._conversation_id}",
+                "default": "${_conversation_id}",
                 "description": "Target conversation ID",
             },
             "user_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._user_id}",
+                "default": "${_user_id}",
                 "description": "User ID for agent resolution",
             },
             "agent_name": {

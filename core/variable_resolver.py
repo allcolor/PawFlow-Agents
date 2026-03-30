@@ -13,7 +13,7 @@ class VariableResolverMixin:
     """
     Mixin pour résoudre les variables dans les configurations.
 
-    Supporte le format ${variable} et ${flow.parameters.var}
+    Supporte le format ${variable} et ${var}
     """
 
     def _resolve_variables(self, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -47,7 +47,7 @@ class VariableResolverMixin:
         """
         Résoudre une chaîne contenant des variables.
 
-        Supporte le format ${variable} et ${flow.parameters.var}
+        Supporte le format ${variable} et ${var}
 
         Args:
             value: Chaîne à résoudre
@@ -61,9 +61,10 @@ class VariableResolverMixin:
         def replace_var(match):
             var_path = match.group(1)
 
-            # Support pour flow.parameters.var
+            # Support pour parameters (legacy flow.parameters. prefix removed)
             if var_path.startswith('flow.parameters.'):
                 param_name = var_path.replace('flow.parameters.', '')
+                # NOTE: legacy prefix — new expressions use ${var} directly
                 # Ceci nécessite un contexte global, retourner la chaîne telle quelle
                 return match.group(0)
 

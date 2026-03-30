@@ -77,6 +77,28 @@ class ClaudeCodeSessionMixin:
     - _build_claude_cmd: CLI command construction
     """
 
+    def _resolve_service_tokens(self) -> dict:
+        """Resolve Claude tokens from the service config store — always fresh.
+
+        Returns {"access_token": ..., "refresh_token": ..., "expires_at": ...}
+        """
+        from core.expression import resolve_value
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
+                if getattr(sdef, "service_type", "") == "llmConnection":
+                    cfg = getattr(sdef, "config", {}) or {}
+                    if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token"):
+                        resolved = resolve_value(cfg)
+                        return {
+                            "access_token": resolved.get("claude_access_token", "") or "",
+                            "refresh_token": resolved.get("claude_refresh_token", "") or "",
+                            "expires_at": resolved.get("claude_expires_at", 0) or 0,
+                        }
+        except Exception:
+            pass
+        return {"access_token": "", "refresh_token": "", "expires_at": 0}
+
     def _get_session_workdir(self, conversation_id: str,
                              agent_name: str = "") -> str:
         """Get or create a dedicated working directory for this session."""
@@ -158,37 +180,16 @@ class ClaudeCodeSessionMixin:
     def _setup_credentials(self, workdir: str):
         """Write .credentials.json in session workdir for Claude Code auth.
 
-        Reads tokens from the service config. If config values are
-        Reads tokens from self (set from service config at init) or
-        from the live service registry. No OAuth refresh — Claude Code
-        handles its own token refresh during the run, and we recover
-        updated tokens afterward via _recover_tokens.
+        Always resolves tokens just-in-time from the store — never cached.
 
         Raises LLMClientError if no credentials configured.
         """
         from core.llm_client import LLMClientError
 
-        access_token = getattr(self, 'claude_access_token', '') or ''
-        refresh_token = getattr(self, 'claude_refresh_token', '') or ''
-        expires_at = getattr(self, 'claude_expires_at', 0) or 0
-
-        if not access_token:
-            # Try live config from registry (tokens added after client init)
-            try:
-                from gui.services.global_service_registry import GlobalServiceRegistry
-                for sid, sdef in GlobalServiceRegistry.get_instance().get_all_definitions().items():
-                    if getattr(sdef, "service_type", "") == "llmConnection":
-                        cfg = getattr(sdef, "config", {}) or {}
-                        if cfg.get("provider") == "claude-code" and cfg.get("claude_access_token"):
-                            access_token = cfg["claude_access_token"]
-                            refresh_token = cfg.get("claude_refresh_token", "")
-                            expires_at = cfg.get("claude_expires_at", 0)
-                            self.claude_access_token = access_token
-                            self.claude_refresh_token = refresh_token
-                            self.claude_expires_at = expires_at
-                            break
-            except Exception:
-                pass
+        tokens = self._resolve_service_tokens()
+        access_token = tokens["access_token"]
+        refresh_token = tokens["refresh_token"]
+        expires_at = tokens["expires_at"]
 
         if not access_token:
             raise LLMClientError(
@@ -234,17 +235,13 @@ class ClaudeCodeSessionMixin:
             if not new_access:
                 return
 
-            # Check if tokens changed
-            old_access = getattr(self, 'claude_access_token', '')
-            if new_access == old_access:
+            # Check if tokens changed vs what's in the store
+            from core.expression import resolve_value
+            _current = self._resolve_service_tokens()
+            if new_access == _current.get("access_token", ""):
                 return
 
-            # Update in-memory
-            self.claude_access_token = new_access
-            self.claude_refresh_token = new_refresh
-            self.claude_expires_at = new_expires
-
-            # Persist to service config
+            # Persist to service config (no in-memory caching)
             _service_id = getattr(self, '_agent_service', '') or ''
             _persist_tokens_to_service(
                 new_access, new_refresh, new_expires,

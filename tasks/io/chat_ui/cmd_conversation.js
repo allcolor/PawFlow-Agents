@@ -14,16 +14,14 @@ function cmdConv() {
   return true;
 }
 
-async function cmdHistory(text, parts) {
+function cmdHistory(text, parts) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const n = parseInt(parts[1]) || 50;
   const offset = parseInt(parts[2]) || 0;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: n, offset }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: n, offset }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else {
       const msgs = data.messages || [];
@@ -36,19 +34,17 @@ async function cmdHistory(text, parts) {
       }
       addMsg('system', msgs.length + ' message(s) loaded.');
     }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }
 
-async function cmdExport(text, parts, cmd) {
+function cmdExport(text, parts, cmd) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const fmt = parts[1] || 'markdown';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'export', conversation_id: conversationId, format: fmt }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'export', conversation_id: conversationId, format: fmt }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else if (data.url) {
       const a = document.createElement('a');
@@ -57,70 +53,62 @@ async function cmdExport(text, parts, cmd) {
       a.click();
       addMsg('system', 'Exported: ' + (data.filename || data.url));
     }
-  } catch (e) { addMsg('error', 'Export failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Export failed: ' + e.message));
   return true;
 }
 
-async function cmdRename(text, parts, cmd) {
+function cmdRename(text, parts, cmd) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const title = text.slice(cmd.length).trim();
   if (!title) { addMsg('system', 'Usage: /rename <new title>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'set_conv_title', conversation_id: conversationId, title }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'set_conv_title', conversation_id: conversationId, title }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else { addMsg('system', 'Renamed to: ' + title); }
-  } catch (e) { addMsg('error', 'Rename failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Rename failed: ' + e.message));
   return true;
 }
 
-async function cmdDelete(text, parts) {
+function cmdDelete(text, parts) {
   const target = parts[1] || '';
   if (!target) { addMsg('system', 'Usage: /delete <conversation_id>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_conversation', conversation_id: target }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'delete_conversation', conversation_id: target }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else if (data.deleted) {
       addMsg('system', 'Deleted ' + target.slice(0, 8));
       if (conversationId === target) { newChat(); }
     }
-  } catch (e) { addMsg('error', 'Delete failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Delete failed: ' + e.message));
   return true;
 }
 
-async function cmdDeleteMsg(text, parts) {
+function cmdDeleteMsg(text, parts) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const idx = parseInt(parts[1]);
   if (isNaN(idx)) { addMsg('system', 'Usage: /delete-msg <index>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_message', conversation_id: conversationId, index: idx }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'delete_message', conversation_id: conversationId, index: idx }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else { addMsg('system', 'Message ' + idx + ' deleted'); }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }
 
-async function cmdSearch(text, parts, cmd) {
+function cmdSearch(text, parts, cmd) {
   if (!conversationId) { addMsg('system', t('noConv')); return true; }
   const query = text.slice(cmd.length).trim();
   if (!query) { addMsg('system', 'Usage: /search <query>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: 500, offset: 0 }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'load_history', conversation_id: conversationId, limit: 500, offset: 0 }),
+  }).then(r => r.json()).then(data => {
     const messages = data.messages || [];
     const lq = query.toLowerCase();
     const found = [];
@@ -135,7 +123,7 @@ async function cmdSearch(text, parts, cmd) {
     } else {
       addMsg('system', 'No matches found.');
     }
-  } catch (e) { addMsg('error', 'Search failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Search failed: ' + e.message));
   return true;
 }
 
@@ -144,28 +132,25 @@ function cmdClear() {
   return true;
 }
 
-async function cmdClearStore(text, parts) {
+function cmdClearStore(text, parts) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return true; }
-  const csArg = (parts[1] || '').trim();
+  const csArg = stripTarget((parts[1] || '').trim());
   const csPayload = {action: 'clear_store', conversation_id: conversationId};
   if (csArg && csArg.toUpperCase() === 'ALL') {
     csPayload.scope = 'all_agents';
   } else if (csArg) {
     csPayload.agent_name = csArg;
   }
-  try {
-    const r = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(csPayload),
-    }).then(res => res.json());
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(csPayload),
+  }).then(r => r.json()).then(r => {
     if (r && r.deleted !== undefined) {
       addMsg('system', 'FileStore: deleted ' + r.deleted + ' file(s)' + (r.scope ? ' (' + r.scope + ')' : ''));
     } else if (r && r.error) {
       addMsg('error', r.error);
     }
-  } catch (e) {
-    addMsg('error', 'clear-store failed: ' + e.message);
-  }
+  }).catch(e => addMsg('error', 'clear-store failed: ' + e.message));
   return true;
 }
 
@@ -176,53 +161,51 @@ function cmdUpload() {
   return true;
 }
 
-async function cmdCopy(text, parts) {
+function cmdCopy(text, parts) {
   const msgs = document.querySelectorAll('.msg.assistant');
   if (!msgs.length) { addMsg('system', 'No responses to copy.'); return true; }
   const n = parseInt(parts[1]) || 1;
   const target = msgs[msgs.length - n];
   if (!target) { addMsg('system', 'Only ' + msgs.length + ' responses available.'); return true; }
   const text_to_copy = target.textContent || '';
-  try {
-    await navigator.clipboard.writeText(text_to_copy);
+  navigator.clipboard.writeText(text_to_copy).then(() => {
     addMsg('system', 'Copied ' + text_to_copy.length + ' chars to clipboard.');
-  } catch (e) { addMsg('error', 'Copy failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Copy failed: ' + e.message));
   return true;
 }
 
-async function cmdPaste() {
-  try {
-    const items = await navigator.clipboard.read();
+function cmdPaste() {
+  navigator.clipboard.read().then(items => {
     for (const item of items) {
       if (item.types.includes('image/png')) {
-        const blob = await item.getType('image/png');
-        const reader = new FileReader();
-        reader.onload = function() {
-          const b64 = reader.result.split(',')[1];
-          pendingFiles.push({ filename: 'clipboard.png', mime_type: 'image/png', data: b64 });
-          addMsg('system', 'Image pasted from clipboard (' + pendingFiles.length + ' file(s) queued).');
-        };
-        reader.readAsDataURL(blob);
-        return true;
+        item.getType('image/png').then(blob => {
+          const reader = new FileReader();
+          reader.onload = function() {
+            const b64 = reader.result.split(',')[1];
+            pendingFiles.push({ filename: 'clipboard.png', mime_type: 'image/png', data: b64 });
+            addMsg('system', 'Image pasted from clipboard (' + pendingFiles.length + ' file(s) queued).');
+          };
+          reader.readAsDataURL(blob);
+        });
+        return;
       }
     }
-    const text_content = await navigator.clipboard.readText();
-    if (text_content) {
-      document.getElementById('chatInput').value += text_content;
-      addMsg('system', 'Text pasted from clipboard.');
-    }
-  } catch (e) { addMsg('error', 'Paste failed: ' + e.message); }
+    navigator.clipboard.readText().then(text_content => {
+      if (text_content) {
+        document.getElementById('chatInput').value += text_content;
+        addMsg('system', 'Text pasted from clipboard.');
+      }
+    });
+  }).catch(e => addMsg('error', 'Paste failed: ' + e.message));
   return true;
 }
 
-async function cmdDiff(text, parts) {
+function cmdDiff(text, parts) {
   const ref = parts.slice(1).join(' ') || '.';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'fs_exec', service: '', command: 'git diff ' + ref, timeout: 15 }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'fs_exec', service: '', command: 'git diff ' + ref, timeout: 15 }),
+  }).then(r => r.json()).then(data => {
     const output = data.stdout || '';
     if (!output) { addMsg('system', 'No changes.'); }
     else {
@@ -236,27 +219,25 @@ async function cmdDiff(text, parts) {
       const el = addMsg('system', '');
       el.innerHTML = '<pre class="diff">' + html + '</pre>';
     }
-  } catch (e) { addMsg('error', 'Diff failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Diff failed: ' + e.message));
   return true;
 }
 
-async function cmdPlan(text, parts, cmd) {
+function cmdPlan(text, parts, cmd) {
   const arg = text.slice(cmd.length).trim();
   if (!arg || arg === 'list') {
     const panel = document.getElementById('plansPanel');
     if (panel.style.display === 'none') {
       panel.style.display = 'block';
     }
-    await loadPlans();
+    loadPlans();
     if (arg === 'list') {
-      try {
-        const resp = await fetch(API, {
-          method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'get_plans', conversation_id: conversationId }),
-        });
-        const data = await resp.json();
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'get_plans', conversation_id: conversationId }),
+      }).then(r => r.json()).then(data => {
         let planArr = Array.isArray(data.plans) ? data.plans : Object.values(data.plans || {});
-        if (!planArr.length) { addMsg('system', 'No active plans.'); return true; }
+        if (!planArr.length) { addMsg('system', 'No active plans.'); return; }
         let lines = ['**Plans:**'];
         for (const p of planArr) {
           if (!p || !p.title) continue;
@@ -266,29 +247,27 @@ async function cmdPlan(text, parts, cmd) {
           lines.push('  ' + icon + ' **' + p.title + '** (`' + (p.id || '?') + '`) \u2014 ' + p.status + ' \u2014 ' + done + '/' + steps.length + ' done');
         }
         addMsg('system', lines.join('\n'));
-      } catch (e) { addMsg('error', 'Failed to list plans: ' + e.message); }
+      }).catch(e => addMsg('error', 'Failed to list plans: ' + e.message));
     }
     return true;
   }
   const planParts = arg.split(/\s+/);
   const subcmd = planParts[0].toLowerCase();
-  if (['approve', 'cancel', 'delete'].includes(subcmd)) {
+  if (['approve', 'cancel', 'delete', 'reset'].includes(subcmd)) {
     const planId = planParts[1];
     if (!planId) { addMsg('system', 'Usage: /plan ' + subcmd + ' <plan_id>'); return true; }
-    const actionMap = { 'approve': 'approve_plan', 'cancel': 'cancel_plan', 'delete': 'delete_plan' };
-    await planAction(actionMap[subcmd], planId);
+    const actionMap = { 'approve': 'approve_plan', 'cancel': 'cancel_plan', 'delete': 'delete_plan', 'reset': 'reset_plan' };
+    planAction(actionMap[subcmd], planId);
     return true;
   }
   const planMsg = '[Create a structured plan using the create_plan tool. Analyze the request, identify steps, then call create_plan.]\n\n' + arg;
   addMsg('user', '/plan ' + arg);
-  showTyping();
-  try {
-    const body = { message: planMsg };
-    if (conversationId) body.conversation_id = conversationId;
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
-    const data = await resp.json();
-    if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
-  } catch (e) { hideTyping(); addMsg('error', e.message); }
+  const body = { message: planMsg };
+  if (conversationId) body.conversation_id = conversationId;
+  fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
+    .then(r => r.json()).then(data => {
+      if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
+    }).catch(e => addMsg('error', e.message));
   return true;
 }
 
@@ -303,52 +282,48 @@ function cmdClearFiles() {
   return true;
 }
 
-async function cmdRun(text, parts, cmd) {
+function cmdRun(text, parts, cmd) {
   const command = text.slice(cmd.length).trim();
   if (!command) { addMsg('system', 'Usage: /run <command>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'fs_exec', service: '', command, timeout: 30 }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'fs_exec', service: '', command, timeout: 30 }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else {
       const out = (data.stdout || '') + (data.stderr ? '\n[stderr] ' + data.stderr : '');
       addMsg('system', '$ ' + command + ' (exit ' + (data.returncode || 0) + ')\n' + out);
     }
-  } catch (e) { addMsg('error', 'Exec failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Exec failed: ' + e.message));
   return true;
 }
 
-async function cmdLoop(text, parts) {
+function cmdLoop(text, parts) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return true; }
   const loopArg = parts[1] || '';
   if (loopArg === 'list') {
-    try {
-      const r = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({action: 'loop_list', conversation_id: conversationId}),
-      }).then(res => res.json());
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({action: 'loop_list', conversation_id: conversationId}),
+    }).then(r => r.json()).then(r => {
       const loops = r.loops || [];
       if (loops.length === 0) { addMsg('system', 'No active loops'); }
       else {
         const lines = loops.map(l => l.key + ' — every ' + l.interval_seconds + 's: ' + (l.prompt || '?'));
         addMsg('system', 'Active loops:\n' + lines.join('\n'));
       }
-    } catch(e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
     return true;
   }
   if (loopArg === 'stop') {
     const loopKey = parts[2] || '';
     if (!loopKey) { addMsg('system', 'Usage: /loop stop <key>'); return true; }
-    try {
-      const r = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({action: 'loop_stop', key: loopKey}),
-      }).then(res => res.json());
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({action: 'loop_stop', key: loopKey}),
+    }).then(r => r.json()).then(r => {
       addMsg('system', r.stopped ? 'Loop stopped: ' + loopKey : 'Loop not found: ' + loopKey);
-    } catch(e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
     return true;
   }
   const _units = {s:1, m:60, h:3600, d:86400};
@@ -371,16 +346,15 @@ async function cmdLoop(text, parts) {
   }
   const loopPrompt = parts.slice(2).join(' ').trim();
   if (!loopPrompt) { addMsg('system', 'Usage: /loop <interval> <prompt>'); return true; }
-  try {
-    const r = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({action: 'loop_start', conversation_id: conversationId,
-                            interval_seconds: intervalSec, prompt: loopPrompt}),
-    }).then(res => res.json());
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'loop_start', conversation_id: conversationId,
+                          interval_seconds: intervalSec, prompt: loopPrompt}),
+  }).then(r => r.json()).then(r => {
     if (r.started) {
       addMsg('system', 'Loop started: every ' + intervalSec + 's — ' + loopPrompt + '\nKey: ' + r.key);
     } else { addMsg('error', r.error || 'Failed to start loop'); }
-  } catch(e) { addMsg('error', e.message); }
+  }).catch(e => addMsg('error', e.message));
   return true;
 }
 
@@ -407,14 +381,12 @@ function cmdBatch(text) {
   return true;
 }
 
-async function cmdSchedulesList() {
+function cmdSchedulesList() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_schedules', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_schedules', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     const scheds = data.schedules || [];
     if (scheds.length === 0) {
       addMsg('system', 'No scheduled rechecks for this conversation.');
@@ -425,38 +397,34 @@ async function cmdSchedulesList() {
       });
       addMsg('system', 'Scheduled rechecks:\n' + lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed to list schedules: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to list schedules: ' + e.message));
 }
 
-async function cmdSchedulesDel() {
+function cmdSchedulesDel() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_schedule', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'delete_schedule', conversation_id: conversationId }),
+  }).then(r => r.json()).then(data => {
     addMsg('system', data.cancelled ? 'Schedule cancelled.' : 'No schedule to cancel.');
-  } catch (e) { addMsg('error', 'Failed to delete schedule: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to delete schedule: ' + e.message));
 }
 
-async function cmdSchedulesAdd(dateStr, reason) {
+function cmdSchedulesAdd(dateStr, reason) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
   if (!/^\d{14}$/.test(dateStr)) {
     addMsg('system', 'Invalid date format. Use YYYYMMDDHHmmss (e.g. 20260312140000)');
     return;
   }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'add_schedule', conversation_id: conversationId,
-        at: dateStr, reason: reason || 'manual schedule',
-      }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({
+      action: 'add_schedule', conversation_id: conversationId,
+      at: dateStr, reason: reason || 'manual schedule',
+    }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); return; }
     const dt = new Date(data.at * 1000).toLocaleString();
     addMsg('system', 'Schedule added: ' + dt);
-  } catch (e) { addMsg('error', 'Failed to add schedule: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to add schedule: ' + e.message));
 }

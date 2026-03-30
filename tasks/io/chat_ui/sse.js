@@ -11,7 +11,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('thinking', (e) => {
     lastSSEActivity = Date.now();
-    showTyping();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
     // New turn starting — clear cancel suppression so tool events show again
@@ -75,7 +74,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('token', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || streamingAgent || '';
     // Finalize thinking block when first text token arrives
@@ -246,7 +244,6 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
-    showTyping();
   });
 
   eventSource.addEventListener('sub_agent_iteration', (e) => {
@@ -277,7 +274,6 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent);
-    hideTyping();
     const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
     const srcInfo = data.source_agent ? displayAgentName(data.source_agent) + ' \u2192 ' : '';
     const header = srcInfo + displayAgentName(agent) + svcInfo;
@@ -345,7 +341,6 @@ function connectSSE(cid) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
         _attachToolResult(tcEl, data.result || '');
-        if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
         return;
       }
     }
@@ -360,7 +355,6 @@ function connectSSE(cid) {
       ts: data.ts,
       tc_id: tcId,
     });
-    if (data.agent_name === 'user') { hideTyping(); } else { showTyping(); }
   });
 
   eventSource.addEventListener('bg_task_update', (e) => {
@@ -481,7 +475,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('discard', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || '';
     trackAgentDone(agentName);
@@ -499,7 +492,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('done', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     const doneAgent = data.agent_name || data.source?.name || '';
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
@@ -574,14 +566,12 @@ function connectSSE(cid) {
     if (data.continuing) {
       // Intermediate round — agent will continue autonomously
       document.getElementById('status').textContent = t('continuing');
-      showTyping();
     } else {
       // Final response — ensure active panel is cleaned up
       sending = false;
       document.getElementById('sendBtn').disabled = false;
       document.getElementById('stopBtn').style.display = 'none';
       document.getElementById('status').textContent = t('ready');
-      hideTyping();
       // Force-clean all active interactions for this agent
       if (doneAgent) {
         trackAgentDone(doneAgent);
@@ -622,7 +612,6 @@ function connectSSE(cid) {
         if (el.dataset.finalizedAgent === cancelAgent.toLowerCase()) el.remove();
       });
     }
-    hideTyping();
     // Remove streaming chunks for the cancelled agent(s)
     if (cancelAgent === 'all') {
       clearAllStreams();
@@ -731,6 +720,12 @@ function connectSSE(cid) {
     }
   });
 
+  eventSource.addEventListener('vnc_login_ready', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    _openVncLoginDialog(data.session_id, data.service_id, null);
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
@@ -739,7 +734,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('error_event', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     addMsg('error', data.message || t('unknownError'));
     // Error could be from any agent — clear the agent's stream + active interaction
@@ -774,7 +768,6 @@ function connectSSE(cid) {
 
   eventSource.addEventListener('broadcast_done', (e) => {
     lastSSEActivity = Date.now();
-    hideTyping();
     const data = JSON.parse(e.data);
     if (data.message_count) serverMsgCount = data.message_count;
     sending = false;
@@ -798,7 +791,6 @@ function connectSSE(cid) {
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent || '');
     addMsg('system', t('thoughtFiring', { agent: displayAgentName(data.agent) }));
-    showTyping();
   });
 
   eventSource.addEventListener('theme', (e) => {

@@ -278,7 +278,7 @@ class BaseTask(VariableResolverMixin, Task, ABC):
     def set_parameter_context(self, ctx):
         """Inject the flow's ParameterContext (called by executor).
 
-        Once injected, ${flow.parameters.X} in the original config are
+        Once injected, ${X} in the original config are
         re-resolved with actual values, and resolve_value() becomes available.
         """
         self._parameter_context = ctx
@@ -292,27 +292,18 @@ class BaseTask(VariableResolverMixin, Task, ABC):
         return self._parameter_context
 
     def resolve_value(self, value: str, flowfile: Optional[FlowFile] = None) -> str:
-        """Resolve a string at runtime using both flow parameters and FlowFile attributes.
+        """Resolve a string at runtime via unified cascade.
 
-        Resolution order:
-        1. ${flow.parameters.X} → from ParameterContext
-        2. ${attr} → from FlowFile attributes
-        3. ${env.VAR} → from environment
-        4. Unresolved → left as-is
-
-        Args:
-            value: String potentially containing ${...} expressions
-            flowfile: Optional FlowFile for attribute resolution
-
-        Returns:
-            Resolved string
+        Cascade: secrets (conv→user→global) → params (flow attrs→flow params→conv→user→global→env).
         """
         if not isinstance(value, str) or '${' not in value:
             return value
         from core.expression import resolve_expression
-        params = self._parameter_context.parameters if self._parameter_context else {}
+        flow_params = self._parameter_context.parameters if self._parameter_context else {}
         attrs = flowfile.get_attributes() if flowfile else {}
-        return resolve_expression(value, attributes=attrs, parameters=params)
+        # Merge: flow params first, FlowFile attrs win (more specific)
+        merged = {**flow_params, **attrs}
+        return resolve_expression(value, parameters=merged)
 
     def bulletin(self, level: str, message: str):
         """Post a message to the bulletin board."""

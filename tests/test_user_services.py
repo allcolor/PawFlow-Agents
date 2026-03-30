@@ -290,11 +290,11 @@ class TestUserServicePersistence:
         assert (mod.USER_SERVICES_DIR / "bob.json").exists()
 
     def test_expressions_preserved_in_config(self):
-        """Expressions like ${secrets.user.key} are stored as-is in config."""
+        """Expressions like ${key} are stored as-is in config."""
         self.registry.install("alice", "mydb", SVC_TYPE,
-                              config={"password": "${secrets.user.db_pass}"})
+                              config={"password": "${db_pass}"})
         sdef = self.registry.get_definition("alice", "mydb")
-        assert sdef.config["password"] == "${secrets.user.db_pass}"
+        assert sdef.config["password"] == "${db_pass}"
 
 
 # ── UserServiceDef ─────────────────────────────────────────────────
@@ -616,8 +616,8 @@ class TestConfigParsing:
         }
 
     def test_expression_preserved(self):
-        result = self._parse_config_str("password=${secrets.user.db_pass}")
-        assert result["password"] == "${secrets.user.db_pass}"
+        result = self._parse_config_str("password=${db_pass}")
+        assert result["password"] == "${db_pass}"
 
     def test_empty_string(self):
         assert self._parse_config_str("") == {}

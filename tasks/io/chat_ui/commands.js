@@ -6,14 +6,14 @@ const HELP_DATA = {
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
   '/msg': {
-    usage: '/msg <name|ALL> <message>',
+    usage: '/msg [@agent] <message>',
     short: 'Send a message to a specific agent (shortcut for /agent msg)',
-    detail: 'Send a message to a specific agent without changing the active agent.\n\nExamples:\n  /msg grok Explain this code\n  /msg ALL What do you think?',
+    detail: 'Send a message to a specific agent without changing the active agent.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @"Agent With Spaces" Hello',
   },
   '/btw': {
-    usage: '/btw <name|ALL> <question>',
+    usage: '/btw [@agent|ALL] <question>',
     short: 'Side-channel question to an agent (shortcut for /agent btw)',
-    detail: 'Ask a quick question to an agent without interrupting its current work.\n\nExamples:\n  /btw claude What is the time complexity?\n  /btw ALL Any thoughts on this?',
+    detail: 'Ask a quick question to an agent without interrupting its current work.\n\nExamples:\n  /btw @claude What is the time complexity?\n  /btw @ALL Any thoughts on this?',
   },
   '/call': {
     usage: '/call tool_name(key=value, ...) or /call tool_name {"key": "value"}',
@@ -29,14 +29,14 @@ const HELP_DATA = {
       + '  /help call <toolname>   \u2014 show tool parameters and description\n',
   },
   '/vidservice': {
-    usage: '/vidservice [list | select <name> [agent] | clear [agent]]',
+    usage: '/vidservice [list | select <name> [@agent] | clear [@agent]]',
     short: 'Manage video generation service',
     detail: 'Choose which video generation service to use in this conversation.\n\n'
       + '  /vidservice list                  \u2014 Show available video services\n'
-      + '  /vidservice select <name>         \u2014 Set default for all agents\n'
-      + '  /vidservice select <name> <agent> \u2014 Set for a specific agent\n'
-      + '  /vidservice clear                 \u2014 Remove all preferences (auto-select)\n'
-      + '  /vidservice clear <agent>         \u2014 Remove preference for one agent\n',
+      + '  /vidservice select <name>          \u2014 Set default for all agents\n'
+      + '  /vidservice select <name> @<agent> \u2014 Set for a specific agent\n'
+      + '  /vidservice clear                  \u2014 Remove all preferences (auto-select)\n'
+      + '  /vidservice clear @<agent>         \u2014 Remove preference for one agent\n',
   },
   '/task': {
     usage: '/task create | assign | list | delete | pause | resume | cancel',
@@ -47,29 +47,29 @@ const HELP_DATA = {
       + '  /task delete <name>           \u2014 Delete a task definition\n'
       + '  /task list                    \u2014 Show library + running tasks\n\n'
       + '**Assignment (from library or inline):**\n'
-      + '  /task assign <agent> <taskname>              \u2014 From library\n'
-      + '  /task assign <agent> <taskname> --var nbr_images=20 --var style=cyberpunk\n'
-      + '  /task assign <agent> <taskname> --interval XX \u2014 Override interval\n'
-      + '  /task assign <agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier <agent>]\n\n'
+      + '  /task assign @<agent> <taskname>              \u2014 From library\n'
+      + '  /task assign @<agent> <taskname> --var nbr_images=20 --var style=cyberpunk\n'
+      + '  /task assign @<agent> <taskname> --interval XX \u2014 Override interval\n'
+      + '  /task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>]\n\n'
       + 'Variables: use ${name} in task definitions, resolved at assign time.\n'
-      + 'Use \\${...} to keep literal ${...}. ${global.*} and ${secrets.*} also resolved.\n\n'
+      + 'Use \\${...} to keep literal ${...}. Cascade: secrets → params → env.\n\n'
       + '**Control:**\n'
       + '  /task pause <task_id|agent>   \u2014 Pause a task or all tasks of an agent\n'
       + '  /task resume <task_id|agent>  \u2014 Resume a paused task or all of an agent\n'
       + '  /task cancel <task_id|agent>  \u2014 Cancel a task or all of an agent\n\n'
       + 'Task IDs look like t_xxxxxxxx. Use /task list to see them.\n'
       + 'Tasks survive server restarts and reschedule automatically.\n\n'
-      + 'Example: /task assign grok "Scrape the top 100 HN posts" --verifier claude --interval 120 --criteria "all 100 posts summarized"',
+      + 'Example: /task assign @grok "Scrape the top 100 HN posts" --verifier claude --interval 120 --criteria "all 100 posts summarized"',
   },
   '/imgservice': {
-    usage: '/imgservice [list | select <name> [agent] | clear [agent]]',
+    usage: '/imgservice [list | select <name> [@agent] | clear [@agent]]',
     short: 'Manage image generation service',
     detail: 'Choose which image generation service to use in this conversation.\n\n'
       + '  /imgservice list                  \u2014 Show available image services\n'
-      + '  /imgservice select <name>         \u2014 Set default for all agents\n'
-      + '  /imgservice select <name> <agent> \u2014 Set for a specific agent\n'
-      + '  /imgservice clear                 \u2014 Remove all preferences (auto-select)\n'
-      + '  /imgservice clear <agent>         \u2014 Remove preference for one agent\n',
+      + '  /imgservice select <name>          \u2014 Set default for all agents\n'
+      + '  /imgservice select <name> @<agent> \u2014 Set for a specific agent\n'
+      + '  /imgservice clear                  \u2014 Remove all preferences (auto-select)\n'
+      + '  /imgservice clear @<agent>         \u2014 Remove preference for one agent\n',
   },
   '/agent': {
     usage: '/agent list | create | select | delete | msg | interrupt | btw | resume | setname',
@@ -77,15 +77,15 @@ const HELP_DATA = {
     detail: 'Create, list, select, message, or control AI agents.\n\n'
       + '  /agent list                       — List all agents (user + global)\n'
       + '  /agent create                     — Create a new agent (interactive)\n'
-      + '  /agent select <name>              — Activate an agent (use real name or nickname)\n'
-      + '  /agent select assistant            — Switch back to the default assistant\n'
-      + '  /agent delete <name>              — Delete an agent by name\n'
-      + '  /agent msg <name> <text>          — Send a message to a specific agent\n'
-      + '  /agent msg ALL <text>             — Broadcast to all agents in parallel\n'
-      + '  /agent interrupt <name|ALL>       — Force agent to stop and respond immediately\n'
-      + '  /agent btw <name|ALL> <text>      — Side-channel question (no interruption)\n'
-      + '  /agent resume <name>              — Tell agent to continue from where it stopped\n'
-      + '  /agent setname <real> [nickname]  — Set or reset display name (omit to reset)\n\n'
+      + '  /agent select @<name>              — Activate an agent (use real name or nickname)\n'
+      + '  /agent select assistant             — Switch back to the default assistant\n'
+      + '  /agent delete @<name>              — Delete an agent by name\n'
+      + '  /agent msg @<name> <text>          — Send a message to a specific agent\n'
+      + '  /agent msg @ALL <text>             — Broadcast to all agents in parallel\n'
+      + '  /agent interrupt @<name|ALL>       — Force agent to stop and respond immediately\n'
+      + '  /agent btw @<name|ALL> <text>      — Side-channel question (no interruption)\n'
+      + '  /agent resume @<name>              — Tell agent to continue from where it stopped\n'
+      + '  /agent setname @<real> [nickname]  — Set or reset display name (omit to reset)\n\n'
       + 'Agents define a system prompt, tools, model, and LLM service. '
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
@@ -190,67 +190,67 @@ const HELP_DATA = {
       + '  /schedules del            — Delete all schedules',
   },
   '/llm': {
-    usage: '/llm <agent|assistant> <service|${variable}|restore>',
+    usage: '/llm @<agent|assistant> <service|${variable}|restore>',
     short: 'Change LLM service for an agent in this conversation',
     detail: 'Override the LLM service for any agent in the current conversation.\n\n'
-      + '  /llm assistant grok_llm_service    \u2014 Switch assistant to grok\n'
-      + '  /llm grok qwen_llm_service         \u2014 Switch grok to local qwen\n'
-      + '  /llm assistant ${user.my_service}   \u2014 Use a variable reference\n'
-      + '  /llm grok restore                   \u2014 Restore grok\'s default service\n\n'
+      + '  /llm @assistant grok_llm_service    \u2014 Switch assistant to grok\n'
+      + '  /llm @grok qwen_llm_service         \u2014 Switch grok to local qwen\n'
+      + '  /llm @assistant ${my_service}         \u2014 Use a variable reference\n'
+      + '  /llm @grok restore                   \u2014 Restore grok\'s default service\n\n'
       + 'The override is per-conversation and persists across restarts.',
   },
   '/stop': {
-    usage: '/stop <agent|ALL> [-f]',
+    usage: '/stop [@agent|ALL] [-f]',
     short: 'Stop an agent — asks it to respond immediately',
     detail: 'Interrupts the agent and asks it to give its best answer now.\n\n'
-      + '  /stop ALL          — Stop all agents (they respond with what they have)\n'
-      + '  /stop grok         — Stop only grok\n'
-      + '  /stop ALL -f       — Force stop all (immediate cancel, no response)\n'
-      + '  /stop grok -f      — Force stop grok (immediate cancel)',
+      + '  /stop @ALL          — Stop all agents (they respond with what they have)\n'
+      + '  /stop @grok         — Stop only grok\n'
+      + '  /stop @ALL -f       — Force stop all (immediate cancel, no response)\n'
+      + '  /stop @grok -f      — Force stop grok (immediate cancel)',
   },
   '/restart_from': {
-    usage: '/restart_from [agent|ALL] [N]',
+    usage: '/restart_from [@agent|ALL] [N]',
     short: 'Restart context from last N messages (default 5, 0 = empty)',
     detail: 'Keeps only the last N messages as LLM context. Earlier messages stay in history but are ignored by the agent.\n\n'
-      + '  /restart_from          \u2014 Keep last 5 messages (shared)\n'
-      + '  /restart_from 10       \u2014 Keep last 10 messages\n'
-      + '  /restart_from grok 3   \u2014 Keep last 3 for grok\'s context\n'
-      + '  /restart_from ALL 5    \u2014 Restart all agents\n'
-      + '  /restart_from 0    — Empty context (fresh start, keeps system prompt)\n\n'
+      + '  /restart_from            \u2014 Keep last 5 messages (shared)\n'
+      + '  /restart_from 10         \u2014 Keep last 10 messages\n'
+      + '  /restart_from @grok 3    \u2014 Keep last 3 for grok\'s context\n'
+      + '  /restart_from @ALL 5     \u2014 Restart all agents\n'
+      + '  /restart_from 0          — Empty context (fresh start, keeps system prompt)\n\n'
       + 'Useful when the conversation gets too long or the agent loses focus.',
   },
   '/summary': {
-    usage: '/summary [agent|ALL] [tokens]',
+    usage: '/summary [@agent|ALL] [tokens]',
     short: 'Summarize context to N tokens and restart from summary',
     detail: 'Asks the LLM to summarize the context to approximately N tokens (default 500), then restarts from that summary.\n\n'
-      + '  /summary              \u2014 Summarize shared context to ~500 tokens\n'
-      + '  /summary 1000         \u2014 Summarize to ~1000 tokens\n'
-      + '  /summary grok         \u2014 Summarize grok\'s context\n'
-      + '  /summary ALL          \u2014 Summarize all agents\' contexts\n'
-      + '  /summary qwen 2000    \u2014 Summarize qwen\'s context to ~2000 tokens\n\n'
+      + '  /summary               \u2014 Summarize shared context to ~500 tokens\n'
+      + '  /summary 1000          \u2014 Summarize to ~1000 tokens\n'
+      + '  /summary @grok         \u2014 Summarize grok\'s context\n'
+      + '  /summary @ALL          \u2014 Summarize all agents\' contexts\n'
+      + '  /summary @qwen 2000    \u2014 Summarize qwen\'s context to ~2000 tokens\n\n'
       + 'The summary replaces previous context for that agent. New messages build on top.',
   },
   '/resume': {
-    usage: '/resume <agent|ALL>',
+    usage: '/resume @<agent|ALL>',
     short: 'Tell an agent to continue from where it stopped',
-    detail: 'Resumes an agent that was interrupted or stopped.\n\nExamples:\n  /resume grok\n  /resume ALL',
+    detail: 'Resumes an agent that was interrupted or stopped.\n\nExamples:\n  /resume @grok\n  /resume @ALL',
   },
   '/compact': {
-    usage: '/compact [agent|ALL]',
+    usage: '/compact [@agent|ALL]',
     short: 'Compact context (summarize old messages)',
     detail: 'Summarizes older messages to reduce context size while preserving key information.\n\n'
-      + '  /compact        \u2014 Compact current agent\'s context (or shared if none selected)\n'
-      + '  /compact shared \u2014 Compact the shared context\n'
-      + '  /compact grok   \u2014 Compact grok\'s context only\n'
-      + '  /compact ALL    \u2014 Compact all agents\' contexts',
+      + '  /compact          \u2014 Compact current agent\'s context (or shared if none selected)\n'
+      + '  /compact shared   \u2014 Compact the shared context\n'
+      + '  /compact @grok    \u2014 Compact grok\'s context only\n'
+      + '  /compact @ALL     \u2014 Compact all agents\' contexts',
   },
   '/rebuild': {
-    usage: '/rebuild [agent|ALL]',
+    usage: '/rebuild [@agent|ALL]',
     short: 'Rebuild context from full conversation history',
     detail: 'Reconstructs the LLM context from the complete conversation. If everything fits, restores fully; otherwise compacts.\n\n'
-      + '  /rebuild        \u2014 Rebuild shared context\n'
-      + '  /rebuild grok   \u2014 Rebuild grok\'s context\n'
-      + '  /rebuild ALL    \u2014 Rebuild all agents',
+      + '  /rebuild          \u2014 Rebuild shared context\n'
+      + '  /rebuild @grok    \u2014 Rebuild grok\'s context\n'
+      + '  /rebuild @ALL     \u2014 Rebuild all agents',
   },
   '/rebuild_clean': {
     usage: '/rebuild_clean',
@@ -258,19 +258,19 @@ const HELP_DATA = {
     detail: 'Deprecated. Use /rebuild-full instead.',
   },
   '/rebuild-full': {
-    usage: '/rebuild-full [agent|ALL]',
+    usage: '/rebuild-full [@agent|ALL]',
     short: 'Set context = full conversation (no compaction)',
     detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.\n\n'
-      + '  /rebuild-full        \u2014 Rebuild shared context\n'
-      + '  /rebuild-full grok   \u2014 Rebuild grok\'s context\n'
-      + '  /rebuild-full ALL    \u2014 Rebuild all agents\' contexts',
+      + '  /rebuild-full          \u2014 Rebuild shared context\n'
+      + '  /rebuild-full @grok    \u2014 Rebuild grok\'s context\n'
+      + '  /rebuild-full @ALL     \u2014 Rebuild all agents\' contexts',
   },
   '/context': {
-    usage: '/context [agent]',
+    usage: '/context [@agent]',
     short: 'View the LLM context',
     detail: 'Shows what the LLM actually sees: messages, token estimate, divergence status.\n\n'
-      + '  /context        \u2014 View shared context\n'
-      + '  /context grok   \u2014 View grok\'s context\n\n'
+      + '  /context          \u2014 View shared context\n'
+      + '  /context @grok    \u2014 View grok\'s context\n\n'
       + 'The overlay includes an agent dropdown to switch between agent contexts.',
   },
   '/files': {
@@ -299,12 +299,12 @@ const HELP_DATA = {
     detail: 'Displays token usage for the current conversation (prompt tokens, completion tokens, total).',
   },
   '/memory': {
-    usage: '/memory [list [agent] | add | edit | del | search | panel]',
+    usage: '/memory [list [@agent] | add | edit | del | search | panel]',
     short: 'Manage agent memories',
     detail: 'View, add, edit and delete persistent agent memories.\n\n'
       + '  /memory                              \u2014 Open memory panel (visual editor)\n'
       + '  /memory list                         \u2014 List all memories\n'
-      + '  /memory list <agent>                 \u2014 List memories for an agent\n'
+      + '  /memory list @<agent>                \u2014 List memories for an agent\n'
       + '  /memory add <text> [#tag1] [@agent]  \u2014 Add a memory manually\n'
       + '  /memory edit <id> <new text>         \u2014 Edit a memory\n'
       + '  /memory del <id>                     \u2014 Delete a memory\n'
@@ -331,7 +331,7 @@ const HELP_DATA = {
   '/add-secret': {
     usage: '/add-secret <name> <value>',
     short: 'Store an encrypted secret',
-    detail: 'Stores a secret value encrypted at rest. Available as ${secrets.key} in expressions.',
+    detail: 'Stores a secret value encrypted at rest. Available as ${key} in expressions.',
   },
   '/secrets': {
     usage: '/secrets',
@@ -341,7 +341,7 @@ const HELP_DATA = {
   '/add-variable': {
     usage: '/add-variable <name> <value>',
     short: 'Store a plaintext variable',
-    detail: 'Stores a plaintext variable. Available as ${var.key} in expressions. Also: /add-var.',
+    detail: 'Stores a plaintext variable. Available as ${key} in expressions. Also: /add-var.',
   },
   '/variables': {
     usage: '/variables',
@@ -354,25 +354,25 @@ const HELP_DATA = {
     detail: 'Opens the file viewer overlay to preview a file by name. Supports images, PDF, text, and code files.',
   },
   '/cost': {
-    usage: '/cost <agent|ALL>',
+    usage: '/cost [@agent|ALL]',
     short: 'Show token usage and estimated cost per agent',
     detail: 'Displays input/output tokens, call count, and estimated cost per agent.\n\n'
-      + '  /cost ALL     — All agents\n'
-      + '  /cost grok    — Specific agent\n\n'
+      + '  /cost @ALL     — All agents\n'
+      + '  /cost @grok    — Specific agent\n\n'
       + 'Cost is calculated from cost_per_1m_input/output ($ per million tokens) on the LLM service.\n'
       + 'If not configured, shows "not configured".',
   },
   '/autoconv': {
-    usage: '/autoconv <on|off|status|now> <agent|ALL> [freq]',
+    usage: '/autoconv <on|off|status|now> @<agent|ALL> [freq]',
     short: 'Auto-conversation — agents contribute to the conversation autonomously',
     detail: 'Enable autonomous conversation contributions from an agent.\n\n'
-      + '  /autoconv on ALL              — All agents, default 6/1m\n'
-      + '  /autoconv on grok 2-3/h       — Grok, 2-3 times per hour\n'
-      + '  /autoconv on ALL 1/2h         — All agents, once per 2h\n'
-      + '  /autoconv off ALL             — Disable for all agents\n'
-      + '  /autoconv off grok            — Disable for grok\n'
-      + '  /autoconv status ALL          — Show config for all agents\n'
-      + '  /autoconv now ALL             — Trigger all immediately\n\n'
+      + '  /autoconv on @ALL              — All agents, default 6/1m\n'
+      + '  /autoconv on @grok 2-3/h       — Grok, 2-3 times per hour\n'
+      + '  /autoconv on @ALL 1/2h         — All agents, once per 2h\n'
+      + '  /autoconv off @ALL             — Disable for all agents\n'
+      + '  /autoconv off @grok            — Disable for grok\n'
+      + '  /autoconv status @ALL          — Show config for all agents\n'
+      + '  /autoconv now @ALL             — Trigger all immediately\n\n'
       + 'Frequency format: <min>[-<max>]/<duration>. Units: s, m, h, d.\n'
       + 'Only one schedule per agent — re-running /autoconv on replaces the previous.\n'
       + 'Only fires when the conversation is idle (no active interaction).',
@@ -421,9 +421,9 @@ const HELP_DATA = {
     detail: 'Search for text in all messages of the current conversation.',
   },
   '/model': {
-    usage: '/model <name>',
+    usage: '/model [@agent] <name>',
     short: 'Switch LLM model',
-    detail: 'Change the LLM model for the current agent.\n\n  /model gpt-4o\n  /model reset',
+    detail: 'Change the LLM model for the current (or specified) agent.\n\n  /model gpt-4o\n  /model @grok gpt-4o\n  /model reset',
   },
   '/flow': {
     usage: '/flow list | templates | deploy | start | stop | params | undeploy | promote',
@@ -497,9 +497,9 @@ const HELP_DATA = {
     detail: 'Removes all messages from the visible chat. History is preserved server-side.',
   },
   '/clear-store': {
-    usage: '/clear-store [agent|ALL]',
+    usage: '/clear-store [@agent|ALL]',
     short: 'Clean up FileStore files',
-    detail: '/clear-store — delete all FileStore files for this conversation.\n/clear-store <agent> — delete tool results for a specific agent.\n/clear-store ALL — delete tool results for all agents.',
+    detail: '/clear-store — delete all FileStore files for this conversation.\n/clear-store @<agent> — delete tool results for a specific agent.\n/clear-store @ALL — delete tool results for all agents.',
   },
   '/batch': {
     usage: '/batch <instruction> [--files <glob>]',
@@ -541,10 +541,13 @@ function displayAgentName(realName) {
 
 function parseQuotedArgs(text) {
   const args = [];
-  const re = /"([^"]*)"|\S+/g;
+  const re = /@"([^"]*)"|@(\S+)|"([^"]*)"|\S+/g;
   let m;
   while ((m = re.exec(text)) !== null) {
-    args.push(m[1] !== undefined ? m[1] : m[0]);
+    if (m[1] !== undefined) args.push('@' + m[1]);       // @"quoted target"
+    else if (m[2] !== undefined) args.push('@' + m[2]);   // @target
+    else if (m[3] !== undefined) args.push(m[3]);          // "quoted string"
+    else args.push(m[0]);                                   // plain word
   }
   return args;
 }
@@ -655,8 +658,58 @@ const _CMD_HANDLERS = {
   '/code':          (text, parts, cmd) => cmdCode(text, parts),
 };
 
+/**
+ * Tokenize a command string. Handles:
+ * - Quoted strings: "hello world" → single token (quotes stripped)
+ * - @target with quotes: @"Name With Spaces" → @Name With Spaces (quotes stripped, @ preserved)
+ * - Regular words split on whitespace
+ *
+ * The @ prefix is semantic (marks a target) and preserved in the token.
+ * Handlers call stripTarget() to get the name without @.
+ */
+function tokenizeCommand(text) {
+  const tokens = [];
+  let i = 0;
+  while (i < text.length) {
+    if (/\s/.test(text[i])) { i++; continue; }
+    // @target with optional quotes: @name or @"Name With Spaces"
+    if (text[i] === '@' && i + 1 < text.length) {
+      i++; // skip @
+      if (text[i] === '"' || text[i] === "'") {
+        const q = text[i]; i++;
+        const start = i;
+        while (i < text.length && text[i] !== q) i++;
+        tokens.push('@' + text.slice(start, i));
+        if (i < text.length) i++;
+      } else {
+        const start = i;
+        while (i < text.length && !/\s/.test(text[i])) i++;
+        tokens.push('@' + text.slice(start, i));
+      }
+      continue;
+    }
+    // Quoted string (no @)
+    if (text[i] === '"' || text[i] === "'") {
+      const q = text[i]; i++;
+      const start = i;
+      while (i < text.length && text[i] !== q) i++;
+      tokens.push(text.slice(start, i));
+      if (i < text.length) i++;
+      continue;
+    }
+    // Regular word
+    const start = i;
+    while (i < text.length && !/\s/.test(text[i])) i++;
+    tokens.push(text.slice(start, i));
+  }
+  return tokens;
+}
+
+/** Strip @ prefix from a target token. */
+function stripTarget(s) { return (s && s.startsWith('@')) ? s.slice(1) : s; }
+
 async function handleSlashCommand(text) {
-  const parts = text.split(/\s+/);
+  const parts = tokenizeCommand(text);
   const cmd = parts[0].toLowerCase();
 
   // Resolve aliases

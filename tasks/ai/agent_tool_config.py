@@ -56,6 +56,7 @@ class AgentToolConfigMixin:
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
             StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
+            VerifyPlanStepHandler,
             SecurityScanHandler,
         )
         from core.handlers._fs_base import BaseFsHandler
@@ -64,7 +65,7 @@ class AgentToolConfigMixin:
         file_base_url = self.config.get("file_base_url", "")
         # file_ttl is set per-request to match conversation TTL
         # (see _prepare_agent_context and _build_poll_context)
-        # Resolve any remaining expressions (e.g. ${secrets.*} from cascaded ${flow.parameters.*})
+        # Resolve any remaining expressions (e.g. ${api_key} from cascade)
         from core.expression import resolve_value as _rv
         file_base_url = _rv(file_base_url) or ""
 
@@ -143,9 +144,12 @@ class AgentToolConfigMixin:
                 if user_id:
                     h.set_user_id(user_id)
             elif isinstance(h, (CreatePlanHandler, UpdatePlanHandler, ApprovePlanHandler,
-                                 AssignPlanHandler, CancelPlanHandler, DeletePlanHandler)):
+                                 AssignPlanHandler, CancelPlanHandler, DeletePlanHandler,
+                                 VerifyPlanStepHandler)):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
+                if hasattr(h, 'set_agent_name') and agent_name:
+                    h.set_agent_name(agent_name)
             elif isinstance(h, NotifyUserHandler):
                 if conversation_id:
                     h.set_conversation_id(conversation_id)

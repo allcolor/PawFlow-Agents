@@ -68,7 +68,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 "ok": True, "message": "Effort override cleared. Using default.",
             }).encode())
         else:
-            # Value can be a number or an expression like ${user.effort}
+            # Value can be a number or an expression like ${effort}
             store.set_extra(conv_id, "effort_override", value, user_id=user_id)
             # Resolve for display
             from core.expression import resolve_value
@@ -95,7 +95,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
                 "ok": True, "message": "Fast mode disabled. Using normal model.",
             }).encode())
         else:
-            # Model can be explicit, expression, or default to ${user.fast_model}
+            # Model can be explicit, expression, or default to ${fast_model}
             fast_val = model or "${fast_model}"
             store.set_extra(conv_id, "fast_mode", fast_val, user_id=user_id)
             from core.expression import resolve_value

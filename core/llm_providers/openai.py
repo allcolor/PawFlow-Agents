@@ -26,7 +26,7 @@ class LLMOpenaiMixin:
         if temperature is not None:
             body["temperature"] = temperature
         # reasoning_effort for reasoning models (gpt-5*, o-series)
-        _re = getattr(self, '_reasoning_effort', None)
+        _re = self.reasoning_effort or None
         if _re:
             body["reasoning_effort"] = _re
         if max_tokens > 0:
@@ -280,7 +280,7 @@ class LLMOpenaiMixin:
         }
         if temperature is not None:
             body["temperature"] = temperature
-        _re = getattr(self, '_reasoning_effort', None)
+        _re = self.reasoning_effort or None
         if _re:
             body["reasoning_effort"] = _re
         if max_tokens > 0:

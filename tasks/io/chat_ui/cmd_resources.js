@@ -3,7 +3,7 @@
 // /share, /prompt, /service, /imgservice, /vidservice, /view
 // Loaded before commands.js — all functions are global.
 
-async function cmdTask(text, parts) {
+function cmdTask(text, parts) {
   const sub = (parts[1] || 'status').toLowerCase();
   if (sub === 'create') {
     const rawText = text.replace(/^\/task\s+create\s+/i, '');
@@ -45,10 +45,10 @@ async function cmdTask(text, parts) {
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'assign') {
     const qargs = parseQuotedArgs(text);
-    const taskAgent = qargs[2] || '';
+    const taskAgent = stripTarget(qargs[2] || '');
     const taskArg = qargs[3] || '';
     if (!taskAgent || !taskArg) {
-      addMsg('system', 'Usage: /task assign <agent> <taskname> [--interval N]\n       /task assign <agent> "<inline description>" [--criteria "..."] [--interval N]');
+      addMsg('system', 'Usage: /task assign @<agent> <taskname> [--interval N]\n       /task assign @<agent> "<inline description>" [--criteria "..."] [--interval N]');
       return true;
     }
     let interval = null, maxIter = 50, verifier = '', criteria = '';
@@ -56,7 +56,7 @@ async function cmdTask(text, parts) {
     for (let i = 4; i < qargs.length; i++) {
       if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
       else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 50; }
-      else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = qargs[++i]; }
+      else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = stripTarget(qargs[++i]); }
       else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
       else if (qargs[i] === '--var' && qargs[i+1]) {
         const kv = qargs[++i];
@@ -98,7 +98,7 @@ async function cmdTask(text, parts) {
       else addMsg('system', `Task definition '${taskName}' deleted.`);
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'status' || sub === 'list') {
-    const listAgent = parts[2] || '';
+    const listAgent = stripTarget(parts[2] || '');
     const listBody = { action: 'task_status', conversation_id: conversationId, include_library: true };
     if (listAgent) listBody.agent_name = listAgent;
     fetch(API, {
@@ -131,8 +131,9 @@ async function cmdTask(text, parts) {
       else addMsg('system', lines.join('\n'));
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
-    const taskAgent = parts[2];
-    if (!taskAgent) { addMsg('system', 'Usage: /task ' + sub + ' <task_id|agent>'); return true; }
+    const taskAgentRaw = parts[2];
+    if (!taskAgentRaw) { addMsg('system', 'Usage: /task ' + sub + ' <task_id|@agent>'); return true; }
+    const taskAgent = stripTarget(taskAgentRaw);
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -150,15 +151,13 @@ async function cmdTask(text, parts) {
   return true;
 }
 
-async function cmdVidservice(text, parts) {
+function cmdVidservice(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_video_services', conversation_id: conversationId }),
-      });
-      const services = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_video_services', conversation_id: conversationId }),
+    }).then(r => r.json()).then(services => {
       if (!Array.isArray(services) || services.length === 0) {
         addMsg('system', 'No video generation services deployed.');
       } else {
@@ -171,37 +170,33 @@ async function cmdVidservice(text, parts) {
         });
         addMsg('system', 'Video services available:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'select' && parts[2]) {
     const serviceName = parts[2];
-    const agentName = parts[3] || '*';
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'set_video_service', conversation_id: conversationId,
-          service_name: serviceName, agent_name: agentName,
-        }),
-      });
-      const data = await resp.json();
+    const agentName = parts[3] ? stripTarget(parts[3]) : '*';
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'set_video_service', conversation_id: conversationId,
+        service_name: serviceName, agent_name: agentName,
+      }),
+    }).then(r => r.json()).then(data => {
       if (data.ok) {
         const target = agentName === '*' ? 'all agents' : agentName;
         addMsg('system', 'Video service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set video service');
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'clear') {
-    const agentName = parts[2] || '';
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'clear_video_service', conversation_id: conversationId,
-          agent_name: agentName,
-        }),
-      });
-      const data = await resp.json();
+    const agentName = stripTarget(parts[2] || '');
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'clear_video_service', conversation_id: conversationId,
+        agent_name: agentName,
+      }),
+    }).then(r => r.json()).then(data => {
       if (data.ok) {
         addMsg('system', agentName
           ? 'Video service preference cleared for ' + agentName + '.'
@@ -209,22 +204,20 @@ async function cmdVidservice(text, parts) {
       } else {
         addMsg('error', data.error || 'Failed to clear');
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else {
-    addMsg('system', 'Usage: /vidservice list | select <name> [agent] | clear [agent]');
+    addMsg('system', 'Usage: /vidservice list | select <name> [@agent] | clear [@agent]');
   }
   return true;
 }
 
-async function cmdImgservice(text, parts) {
+function cmdImgservice(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_image_services', conversation_id: conversationId }),
-      });
-      const services = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_image_services', conversation_id: conversationId }),
+    }).then(r => r.json()).then(services => {
       if (!Array.isArray(services) || services.length === 0) {
         addMsg('system', 'No image generation services deployed.');
       } else {
@@ -237,37 +230,33 @@ async function cmdImgservice(text, parts) {
         });
         addMsg('system', 'Image services available:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'select' && parts[2]) {
     const serviceName = parts[2];
-    const agentName = parts[3] || '*';
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'set_image_service', conversation_id: conversationId,
-          service_name: serviceName, agent_name: agentName,
-        }),
-      });
-      const data = await resp.json();
+    const agentName = parts[3] ? stripTarget(parts[3]) : '*';
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'set_image_service', conversation_id: conversationId,
+        service_name: serviceName, agent_name: agentName,
+      }),
+    }).then(r => r.json()).then(data => {
       if (data.ok) {
         const target = agentName === '*' ? 'all agents' : agentName;
         addMsg('system', 'Image service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set image service');
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'clear') {
-    const agentName = parts[2] || '';
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({
-          action: 'clear_image_service', conversation_id: conversationId,
-          agent_name: agentName,
-        }),
-      });
-      const data = await resp.json();
+    const agentName = stripTarget(parts[2] || '');
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({
+        action: 'clear_image_service', conversation_id: conversationId,
+        agent_name: agentName,
+      }),
+    }).then(r => r.json()).then(data => {
       if (data.ok) {
         addMsg('system', agentName
           ? 'Image service preference cleared for ' + agentName + '.'
@@ -275,62 +264,62 @@ async function cmdImgservice(text, parts) {
       } else {
         addMsg('error', data.error || 'Failed to clear');
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else {
-    addMsg('system', 'Usage: /imgservice list | select <name> [agent] | clear [agent]');
+    addMsg('system', 'Usage: /imgservice list | select <name> [@agent] | clear [@agent]');
   }
   return true;
 }
 
-async function cmdSkill(text, parts) {
+function cmdSkill(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    await cmdSkillList();
+    cmdSkillList();
   } else if (sub === 'add' || sub === 'create') {
     const name = parts[2];
     const prompt = parts.slice(3).join(' ');
     if (!name || !prompt) { addMsg('system', 'Usage: /skill add <name> <prompt>'); return true; }
-    await cmdResourceAction('create_skill', {name, prompt});
+    cmdResourceAction('create_skill', {name, prompt});
   } else if (sub === 'del' || sub === 'delete') {
     const name = parts[2];
     if (!name) { addMsg('system', 'Usage: /skill del <name>'); return true; }
-    await cmdResourceAction('delete_skill', {name});
+    cmdResourceAction('delete_skill', {name});
   } else {
     addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name>');
   }
   return true;
 }
 
-async function cmdAddSkill(text, parts) {
+function cmdAddSkill(text, parts) {
   const name = parts[1];
   const prompt = parts.slice(2).join(' ');
   if (!name || !prompt) { addMsg('system', 'Usage: /add-skill <name> <prompt>'); return true; }
-  await cmdResourceAction('create_skill', {name, prompt});
+  cmdResourceAction('create_skill', {name, prompt});
   return true;
 }
 
-async function cmdResources() {
-  await cmdListResources();
+function cmdResources() {
+  cmdListResources();
   return true;
 }
 
-async function cmdActivate(text, parts) {
+function cmdActivate(text, parts) {
   const rtype = parts[1];
   const rname = parts[2];
   if (!rtype || !rname) { addMsg('system', 'Usage: /activate <agent|skill|mcp> <name>'); return true; }
-  await cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
+  cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
   return true;
 }
 
-async function cmdDeactivate(text, parts) {
+function cmdDeactivate(text, parts) {
   const rtype = parts[1];
   const rname = parts[2];
   if (!rtype || !rname) { addMsg('system', 'Usage: /deactivate <agent|skill|mcp> <name>'); return true; }
-  await cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
+  cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
   return true;
 }
 
-async function cmdShare(text, parts) {
+function cmdShare(text, parts) {
   const rtype = parts[1];
   const rname = parts[2];
   const targetConv = parts[3];
@@ -338,7 +327,7 @@ async function cmdShare(text, parts) {
     addMsg('system', 'Usage: /share <agent|skill|mcp> <name> <conversation_id>');
     return true;
   }
-  await cmdResourceAction('share_resource', {
+  cmdResourceAction('share_resource', {
     resource_type: rtype, name: rname, target_conversation_id: targetConv
   });
   return true;
@@ -351,10 +340,10 @@ function cmdView(text, parts) {
   return true;
 }
 
-async function cmdService(text, parts) {
+function cmdService(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    await cmdServiceList();
+    cmdServiceList();
   } else if (sub === 'install') {
     const svcType = parts[2];
     const svcName = parts[3];
@@ -363,70 +352,64 @@ async function cmdService(text, parts) {
       addMsg('system', 'Usage: /service install <type> <name> [key=val,key2=val2,...]');
       return true;
     }
-    await cmdServiceAction('service_install', {
+    cmdServiceAction('service_install', {
       service_type: svcType, service_name: svcName, config_str: configStr
     });
   } else if (sub === 'uninstall') {
     const svcName = parts[2];
     if (!svcName) { addMsg('system', 'Usage: /service uninstall <name>'); return true; }
-    await cmdServiceAction('service_uninstall', {service_id: svcName});
+    cmdServiceAction('service_uninstall', {service_id: svcName});
   } else if (sub === 'enable') {
     const svcName = parts[2];
     if (!svcName) { addMsg('system', 'Usage: /service enable <name>'); return true; }
-    await cmdServiceAction('service_enable', {service_id: svcName});
+    cmdServiceAction('service_enable', {service_id: svcName});
   } else if (sub === 'disable') {
     const svcName = parts[2];
     if (!svcName) { addMsg('system', 'Usage: /service disable <name>'); return true; }
-    await cmdServiceAction('service_disable', {service_id: svcName});
+    cmdServiceAction('service_disable', {service_id: svcName});
   } else {
     addMsg('system', 'Usage: /service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>');
   }
   return true;
 }
 
-async function cmdFlow(text, parts) {
+function cmdFlow(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_conv_flows' }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_conv_flows' }),
+    }).then(r => r.json()).then(data => {
       const flows = data.flows || [];
       if (!flows.length) { addMsg('system', 'No deployed flows.'); }
       else {
         const lines = flows.map(function(f) { return (f.status === 'running' ? '\u25b6' : '\u23f9') + ' ' + f.id + ' \u2014 ' + f.name + ' [' + f.status + ']'; });
         addMsg('system', 'Flows:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'templates') {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_available_flows' }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_available_flows' }),
+    }).then(r => r.json()).then(data => {
       const templates = data.templates || [];
       if (!templates.length) { addMsg('system', 'No flow templates.'); }
       else {
         const lines = templates.map(function(tmpl) { return tmpl.id + (tmpl.version ? ' v' + tmpl.version : '') + ' \u2014 ' + tmpl.name + ' (' + tmpl.tasks_count + ' tasks)'; });
         addMsg('system', 'Flow templates:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'deploy') {
     const templateId = parts[2];
     const scope = parts[3] || 'user';
     if (!templateId) { addMsg('system', 'Usage: /flow deploy <template_id> [user|conversation]'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, conversation_id: conversationId || '' }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, conversation_id: conversationId || '' }),
+    }).then(r => r.json()).then(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Deployed: ' + (data.instance_id || '?') + ' (' + scope + ')'); }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'start') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow start <instance_id> [key=val ...]'); return true; }
@@ -437,107 +420,97 @@ async function cmdFlow(text, parts) {
         overrides[k] = v.join('=');
       }
     }
-    try {
-      if (Object.keys(overrides).length) {
-        await fetch(API, {
-          method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'update_flow_params', instance_id: iid, parameters: overrides }),
-        });
-      }
-      const resp = await fetch(API, {
+    const startFlow = () => {
+      fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: 'start_flow', instance_id: iid }),
-      });
-      const data = await resp.json();
-      if (data.error) { addMsg('error', data.error); }
-      else { addMsg('system', 'Flow \'' + iid + '\' started'); }
-    } catch (e) { addMsg('error', e.message); }
+      }).then(r => r.json()).then(data => {
+        if (data.error) { addMsg('error', data.error); }
+        else { addMsg('system', 'Flow \'' + iid + '\' started'); }
+      }).catch(e => addMsg('error', e.message));
+    };
+    if (Object.keys(overrides).length) {
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'update_flow_params', instance_id: iid, parameters: overrides }),
+      }).then(() => startFlow()).catch(e => addMsg('error', e.message));
+    } else {
+      startFlow();
+    }
   } else if (sub === 'stop') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow stop <instance_id>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'stop_flow', instance_id: iid }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'stop_flow', instance_id: iid }),
+    }).then(r => r.json()).then(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' stopped'); }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'params') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow params <instance_id>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'get_flow_instance', instance_id: iid }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_flow_instance', instance_id: iid }),
+    }).then(r => r.json()).then(data => {
       if (data.error) { addMsg('error', data.error); }
       else {
         const params = { ...(data.template_parameters || {}), ...(data.parameters || {}) };
         const lines = Object.entries(params).map(function(entry) { return '  ' + entry[0] + ' = ' + entry[1]; });
         addMsg('system', 'Flow ' + (data.flow_name || iid) + ' [' + (data.status || '?') + ']:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'undeploy') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow undeploy <instance_id>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'undeploy_flow', instance_id: iid }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'undeploy_flow', instance_id: iid }),
+    }).then(r => r.json()).then(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' undeployed'); }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'promote') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow promote <instance_id>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'promote_flow', instance_id: iid, target_scope: 'user' }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'promote_flow', instance_id: iid, target_scope: 'user' }),
+    }).then(r => r.json()).then(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' promoted to user scope'); }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else {
     addMsg('system', 'Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote');
   }
   return true;
 }
 
-async function cmdPrompt(text, parts) {
+function cmdPrompt(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_prompts', conversation_id: conversationId || '' }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_prompts', conversation_id: conversationId || '' }),
+    }).then(r => r.json()).then(data => {
       const prompts = data.prompts || [];
       if (!prompts.length) { addMsg('system', 'No prompts.'); }
       else {
         const lines = prompts.map(function(p) { return '\u2022 ' + p.name + ': ' + (p.description || p.content || '').slice(0, 60); });
         addMsg('system', 'Prompts:\n' + lines.join('\n'));
       }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'use') {
     const name = parts[2] || '';
     if (!name) { addMsg('system', 'Usage: /prompt use <name>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'get_prompt', conversation_id: conversationId || '', name }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'get_prompt', conversation_id: conversationId || '', name }),
+    }).then(r => r.json()).then(data => {
       if (data.content) { addMsg('system', 'Prompt \'' + name + '\':\n' + data.content); }
       else { addMsg('error', 'Prompt \'' + name + '\' not found'); }
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else {
     addMsg('system', 'Usage: /prompt list | use <name>');
   }
@@ -549,9 +522,9 @@ function cmdInstall() {
   return true;
 }
 
-async function cmdUninstall(text, parts) {
+function cmdUninstall(text, parts) {
   const toolName = parts[1];
   if (!toolName) { addMsg('system', 'Usage: /uninstall <tool_name>'); return true; }
-  await cmdUninstallTool(toolName);
+  cmdUninstallTool(toolName);
   return true;
 }

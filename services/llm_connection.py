@@ -39,13 +39,6 @@ class LLMConnectionService(BaseService):
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._client = LLMClient.from_config(self.config)
-        self.provider = self._client.provider
-        self.api_key = self._client.api_key
-        self.base_url = self._client.base_url
-        self.default_model = self._client.default_model
-        self.timeout = self._client.timeout
-        self.max_retries = self._client.max_retries
-        self.fallback_model = self._client.fallback_model
         # Capacity management
         max_conc = int(self.config.get("max_concurrent", 0))
         self._semaphore = threading.Semaphore(max_conc) if max_conc > 0 else None
@@ -56,6 +49,34 @@ class LLMConnectionService(BaseService):
         self._call_count = 0
         # Wire tracking callback into the client
         self._client._on_tokens = self._on_client_tokens
+
+    @property
+    def provider(self) -> str:
+        return self._client.provider
+
+    @property
+    def api_key(self) -> str:
+        return self._client.api_key
+
+    @property
+    def base_url(self) -> str:
+        return self._client.base_url
+
+    @property
+    def default_model(self) -> str:
+        return self._client.default_model
+
+    @property
+    def timeout(self) -> int:
+        return self._client.timeout
+
+    @property
+    def max_retries(self) -> int:
+        return self._client.max_retries
+
+    @property
+    def fallback_model(self) -> str:
+        return self._client.fallback_model
 
     def _create_connection(self):
         """Validate config and return a marker (actual HTTP is per-request)."""

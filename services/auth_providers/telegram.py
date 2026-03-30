@@ -24,8 +24,7 @@ class TelegramAuthProvider(AuthProvider):
     """Telegram Login Widget provider."""
 
     def __init__(self, config: Dict[str, Any]):
-        self._bot_token = config.get("bot_token", "")
-        self._bot_username = config.get("bot_username", "")
+        self.config = config
 
     @property
     def name(self) -> str:
@@ -69,7 +68,8 @@ class TelegramAuthProvider(AuthProvider):
         Verification: HMAC-SHA256 of sorted data fields using
         SHA256(bot_token) as the key.
         """
-        if not self._bot_token:
+        bot_token = self.config.get("bot_token", "")
+        if not bot_token:
             return AuthResult(success=False, error="Bot token not configured")
 
         received_hash = data.get("hash", "")
@@ -88,7 +88,7 @@ class TelegramAuthProvider(AuthProvider):
         data_check_string = "\n".join(check_items)
 
         # Verify HMAC
-        secret_key = hashlib.sha256(self._bot_token.encode()).digest()
+        secret_key = hashlib.sha256(bot_token.encode()).digest()
         expected_hash = hmac.new(
             secret_key, data_check_string.encode(), hashlib.sha256
         ).hexdigest()
@@ -121,11 +121,12 @@ class TelegramAuthProvider(AuthProvider):
 
     def get_widget_html(self, callback_url: str) -> str:
         """Generate the Telegram Login Widget HTML for embedding in login page."""
-        if not self._bot_username:
+        bot_username = self.config.get("bot_username", "")
+        if not bot_username:
             return ""
         return (
             f'<script async src="https://telegram.org/js/telegram-widget.js?22" '
-            f'data-telegram-login="{self._bot_username}" '
+            f'data-telegram-login="{bot_username}" '
             f'data-size="large" '
             f'data-auth-url="{callback_url}" '
             f'data-request-access="write"></script>'

@@ -79,6 +79,7 @@ class PawCode:
         self._last_responses = []  # last N agent responses for /copy
         self._approval_queue = queue.Queue()  # background → main thread approval requests
         self._approval_response = queue.Queue()  # main thread → background approval responses
+        self._active_agents = {}  # server-polled active agents (single source of truth for typing)
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
@@ -172,6 +173,11 @@ class PawCode:
         self._event_thread = threading.Thread(target=self._event_consumer,
                                                daemon=True, name="pawcode-events")
         self._event_thread.start()
+
+        # Start active-agents poller (single source of truth for typing indicator)
+        self._active_poll_thread = threading.Thread(target=self._active_agents_poller,
+                                                     daemon=True, name="pawcode-active-poll")
+        self._active_poll_thread.start()
 
         if HAS_PROMPT_TOOLKIT:
             from prompt_toolkit.patch_stdout import patch_stdout
@@ -490,6 +496,66 @@ class PawCode:
                     self.renderer.print_error(f"Event error: {e}")
                 except Exception:
                     pass
+
+    def _active_agents_poller(self):
+        """Background thread: poll server for active agents every 3s.
+
+        This is the SINGLE source of truth for the typing/status indicator,
+        matching the web UI's syncActiveFromServer approach.
+        """
+        while self._running:
+            time.sleep(3)
+            if not self._running or not self.api or not self.conversation_id:
+                continue
+            try:
+                data = self.api.send_action("list_active",
+                                             conversation_id=self.conversation_id)
+                server_active = data.get("active", [])
+                server_keys = {a.get("agent_name", "").lower() for a in server_active}
+
+                # Remove agents server doesn't know about
+                for key in list(self._active_agents.keys()):
+                    if key not in server_keys:
+                        del self._active_agents[key]
+
+                # Add/update from server
+                for a in server_active:
+                    key = a.get("agent_name", "").lower()
+                    existing = self._active_agents.get(key, {})
+                    self._active_agents[key] = {
+                        "name": a.get("agent_name", ""),
+                        "iteration": a.get("iteration", existing.get("iteration", 0)),
+                        "round": a.get("round", 0),
+                        "max_rounds": a.get("max_rounds", 0),
+                        "last_tool": a.get("last_tool", existing.get("last_tool", "")),
+                        "total_tools": a.get("total_tools", existing.get("total_tools", 0)),
+                        "duration_s": a.get("duration_s", 0),
+                    }
+
+                # Update status bar based on active agents (single source of truth)
+                if self._active_agents:
+                    from pawflow_cli.ui.renderer import _random_verb
+                    parts = []
+                    for info in self._active_agents.values():
+                        name = info["name"]
+                        detail_parts = []
+                        if info.get("iteration"):
+                            detail_parts.append(f"iter {info['iteration']}")
+                        if info.get("round") and info.get("max_rounds", 0) > 1:
+                            detail_parts.append(f"round {info['round']}/{info['max_rounds']}")
+                        if info.get("total_tools"):
+                            detail_parts.append(f"{info['total_tools']} tools")
+                        if info.get("last_tool"):
+                            detail_parts.append(info["last_tool"])
+                        detail = " \u00b7 ".join(detail_parts) if detail_parts else _random_verb() + "..."
+                        parts.append(f"{name} ({detail})")
+                    self._update_status(f"\u25b6 {', '.join(parts)}")
+                else:
+                    # Only clear if no active streams either (avoid flicker during token streaming)
+                    if not self.renderer._streams:
+                        self._update_status("")
+            except Exception:
+                pass  # silent — network may be down
 
     def _dispatch_event(self, event, streaming_agent, thinking_agent):
         """Dispatch a single SSE event. Returns True to keep waiting, False when done."""

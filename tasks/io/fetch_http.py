@@ -332,7 +332,7 @@ class FetchHTTPTask(BaseTask):
             return None
 
     def _resolve_value(self, flowfile: FlowFile, value: str) -> str:
-        """Resolve ${attribute} and ${flow.parameters.X} expressions."""
+        """Resolve ${attribute} and ${X} expressions."""
         if not value or '${' not in value:
             return value
         return self.resolve_value(value, flowfile=flowfile)

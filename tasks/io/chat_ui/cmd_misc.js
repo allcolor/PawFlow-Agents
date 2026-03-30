@@ -43,13 +43,11 @@ function cmdHelp(topic) {
   }
 }
 
-async function cmdHelpToolList() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_tool_schemas' }),
-    });
-    const data = await resp.json();
+function cmdHelpToolList() {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'get_tool_schemas' }),
+  }).then(r => r.json()).then(data => {
     const tools = (data.tools || []).sort((a, b) => a.name.localeCompare(b.name));
     let lines = ['<b>Available tools for /call:</b>', ''];
     for (const t of tools) {
@@ -60,16 +58,14 @@ async function cmdHelpToolList() {
     lines.push('', 'Type <code>/help call &lt;toolname&gt;</code> for detailed parameter info.');
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
 }
 
-async function cmdHelpTool(toolName) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_tool_schemas' }),
-    });
-    const data = await resp.json();
+function cmdHelpTool(toolName) {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'get_tool_schemas' }),
+  }).then(r => r.json()).then(data => {
     const tools = data.tools || [];
     const tool = tools.find(t => t.name === toolName);
     if (!tool) {
@@ -107,16 +103,14 @@ async function cmdHelpTool(toolName) {
     lines.push('  <code>/call ' + tool.name + '(' + exArgs.join(', ') + ')</code>');
     const el = addMsg('system', '');
     el.innerHTML = lines.join('<br>');
-  } catch (e) { addMsg('error', 'Failed to load tool schema: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to load tool schema: ' + e.message));
 }
 
-async function cmdUsage() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_usage' }),
-    });
-    const data = await resp.json();
+function cmdUsage() {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'get_usage' }),
+  }).then(r => r.json()).then(data => {
     const usage = data.usage || {};
     const lines = [];
     for (const [uid, u] of Object.entries(usage)) {
@@ -130,19 +124,17 @@ async function cmdUsage() {
     }
     if (lines.length === 0) { addMsg('system', 'No token usage recorded yet.'); }
     else { addMsg('system', 'Token usage:\n' + lines.join('\n')); }
-  } catch (e) { addMsg('error', 'Failed to get usage: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to get usage: ' + e.message));
 }
 
-async function cmdCost(text) {
+function cmdCost(text) {
   const cargs = parseQuotedArgs(text);
-  const target = cargs[1] || selectedAgent || 'ALL';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'cost', agent: target }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+  const target = stripTarget(cargs[1] || '') || selectedAgent || 'ALL';
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'cost', agent: target }),
+    credentials: 'same-origin',
+  }).then(r => r.json()).then(data => {
     const services = data.services || [];
     if (services.length === 0) {
       addMsg('system', 'No usage data found.');
@@ -170,21 +162,21 @@ async function cmdCost(text) {
         + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
       addMsg('system', lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }
 
-async function cmdMemory(text, parts) {
+function cmdMemory(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (!sub || sub === 'panel') {
-    await cmdShowMemories();
+    cmdShowMemories();
   } else if (sub === 'list') {
-    const agentFilter = parts[2] || null;
-    await cmdMemoryList(agentFilter);
+    const agentFilter = parts[2] ? stripTarget(parts[2]) : null;
+    cmdMemoryList(agentFilter);
   } else if (sub === 'del' || sub === 'delete') {
     const memId = parts[2];
     if (!memId) { addMsg('system', 'Usage: /memory del <memory_id>'); }
-    else { await cmdMemoryDel(memId); }
+    else { cmdMemoryDel(memId); }
   } else if (sub === 'add') {
     const rest = text.replace(/^\/memory\s+add\s*/i, '');
     if (!rest.trim()) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
@@ -196,45 +188,39 @@ async function cmdMemory(text, parts) {
     const tags = tagMatches.map(t => t.slice(1));
     memText = memText.replace(/#\S+/g, '').trim();
     if (!memText) { addMsg('system', 'Usage: /memory add <text> [#tag1 #tag2] [@agent]'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'add_memory', text: memText, tags, agent }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'add_memory', text: memText, tags, agent }),
+    }).then(r => r.json()).then(data => {
       addMsg('system', 'Memory added (id: ' + (data.id || '?') + ', agent: ' + (data.agent || 'global') + ')');
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'edit') {
     const memId = parts[2];
     const newText = parts.slice(3).join(' ');
     if (!memId || !newText) { addMsg('system', 'Usage: /memory edit <id> <new text>'); return true; }
-    try {
-      const resp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'edit_memory', memory_id: memId, text: newText }),
-      });
-      const data = await resp.json();
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'edit_memory', memory_id: memId, text: newText }),
+    }).then(r => r.json()).then(data => {
       addMsg('system', data.updated ? 'Memory updated.' : 'Memory not found.');
-    } catch (e) { addMsg('error', e.message); }
+    }).catch(e => addMsg('error', e.message));
   } else if (sub === 'search') {
     const query = parts.slice(2).join(' ');
     if (!query) { addMsg('system', 'Usage: /memory search <query>'); return true; }
-    await cmdMemoryList(null, query);
+    cmdMemoryList(null, query);
   } else {
-    addMsg('system', 'Usage: /memory [list [agent] | add | edit | del | search | panel]');
+    addMsg('system', 'Usage: /memory [list [@agent] | add | edit | del | search | panel]');
   }
   return true;
 }
 
-async function cmdMemoryList(agentFilter, searchQuery) {
-  try {
-    const body = { action: 'list_memories' };
-    if (agentFilter !== undefined && agentFilter !== null) body.agent_name = agentFilter;
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
+function cmdMemoryList(agentFilter, searchQuery) {
+  const body = { action: 'list_memories' };
+  if (agentFilter !== undefined && agentFilter !== null) body.agent_name = agentFilter;
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(body),
+  }).then(r => r.json()).then(data => {
     let mems = data.memories || [];
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
@@ -251,28 +237,24 @@ async function cmdMemoryList(agentFilter, searchQuery) {
       const title = searchQuery ? 'Search results' : (agentFilter !== null && agentFilter !== undefined ? 'Memories for ' + (agentFilter || 'global') : 'All memories');
       addMsg('system', title + ' (' + mems.length + '):\n' + lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed to list memories: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to list memories: ' + e.message));
 }
 
-async function cmdMemoryDel(memId) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_memory', memory_id: memId }),
-    });
-    const data = await resp.json();
+function cmdMemoryDel(memId) {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'delete_memory', memory_id: memId }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', data.deleted ? `Memory ${memId} deleted.` : `Memory ${memId} not found.`);
-  } catch (e) { addMsg('error', 'Failed to delete memory: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to delete memory: ' + e.message));
 }
 
-async function cmdToolsList() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_tools' }),
-    });
-    const data = await resp.json();
+function cmdToolsList() {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_tools' }),
+  }).then(r => r.json()).then(data => {
     const tools = data.tools || [];
     if (tools.length === 0) {
       addMsg('system', 'No dynamic tools installed. Use /install to add one.');
@@ -282,30 +264,26 @@ async function cmdToolsList() {
       );
       addMsg('system', 'Dynamic tools:\n' + lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed to list tools: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to list tools: ' + e.message));
 }
 
-async function cmdUninstallTool(toolName) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'uninstall_tool', tool_name: toolName }),
-    });
-    const data = await resp.json();
+function cmdUninstallTool(toolName) {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'uninstall_tool', tool_name: toolName }),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', data.uninstalled ? `Tool '${toolName}' uninstalled.` : `Tool '${toolName}' not found.`);
-  } catch (e) { addMsg('error', 'Failed to uninstall tool: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to uninstall tool: ' + e.message));
 }
 
-async function cmdLinkAccount(provider, providerId, botToken) {
-  try {
-    const payload = { action: 'link_account', provider, provider_id: providerId };
-    if (botToken) { payload.bot_token = botToken; }
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
+function cmdLinkAccount(provider, providerId, botToken) {
+  const payload = { action: 'link_account', provider, provider_id: providerId };
+  if (botToken) { payload.bot_token = botToken; }
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).then(data => {
     if (data.error) { addMsg('error', data.error); }
     else {
       let msg = provider + ' account ' + providerId + ' linked successfully!';
@@ -313,28 +291,24 @@ async function cmdLinkAccount(provider, providerId, botToken) {
       if (data.bot_warning) { msg += '\n\u26a0\ufe0f ' + data.bot_warning; }
       addMsg('system', msg);
     }
-  } catch (e) { addMsg('error', 'Failed to link: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to link: ' + e.message));
 }
 
-async function cmdUnlinkAccount(provider) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'unlink_account', provider }),
-    });
-    const data = await resp.json();
+function cmdUnlinkAccount(provider) {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'unlink_account', provider }),
+  }).then(r => r.json()).then(data => {
     if (data.unlinked) { addMsg('system', provider + ' account unlinked.'); }
     else { addMsg('system', 'No ' + provider + ' link found.'); }
-  } catch (e) { addMsg('error', 'Failed to unlink: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to unlink: ' + e.message));
 }
 
-async function cmdLinkStatus() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_linked_accounts' }),
-    });
-    const data = await resp.json();
+function cmdLinkStatus() {
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_linked_accounts' }),
+  }).then(r => r.json()).then(data => {
     const links = data.links || {};
     if (Object.keys(links).length === 0) {
       addMsg('system', 'No linked accounts. Use /link <provider> <id> to link.');
@@ -342,64 +316,69 @@ async function cmdLinkStatus() {
       const lines = Object.entries(links).map(function(entry) { return '\u2022 ' + entry[0] + ': ' + entry[1]; });
       addMsg('system', 'Linked accounts:\n' + lines.join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed to get links: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed to get links: ' + e.message));
 }
 
-async function cmdLink(text, parts) {
+function cmdLink(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'status' || !sub) {
-    await cmdLinkStatus();
+    cmdLinkStatus();
   } else if (sub === 'unlink') {
     const provider = parts[2] || '';
     if (!provider) { addMsg('system', 'Usage: /link unlink <provider>'); return true; }
-    await cmdUnlinkAccount(provider);
+    cmdUnlinkAccount(provider);
   } else {
     const provider = parts[1];
     const providerId = parts[2] || '';
     const botToken = parts[3] || '';
     if (!providerId) { addMsg('system', 'Usage: /link <provider> <id> [bot_token]'); return true; }
-    await cmdLinkAccount(provider, providerId, botToken);
+    cmdLinkAccount(provider, providerId, botToken);
   }
   return true;
 }
 
-async function cmdAddSecretCmd(text, parts) {
+function cmdAddSecretCmd(text, parts) {
   const name = parts[1];
   const value = parts.slice(2).join(' ');
   if (!name || !value) { addMsg('system', t('secretAddUsage')); return true; }
-  await cmdAddSecret(name, value);
+  cmdAddSecret(name, value);
   return true;
 }
 
-async function cmdListSecretsCmd() {
-  await cmdListSecrets();
+function cmdListSecretsCmd() {
+  cmdListSecrets();
   return true;
 }
 
-async function cmdAddVariableCmd(text, parts) {
+function cmdAddVariableCmd(text, parts) {
   const name = parts[1];
   const value = parts.slice(2).join(' ');
   if (!name || !value) { addMsg('system', t('variableAddUsage')); return true; }
-  await cmdAddVariable(name, value);
+  cmdAddVariable(name, value);
   return true;
 }
 
-async function cmdListVariablesCmd() {
-  await cmdListVariables();
+function cmdListVariablesCmd() {
+  cmdListVariables();
   return true;
 }
 
-async function cmdModel(text, parts) {
-  const modelName = parts[1] || '';
-  if (!modelName) { addMsg('system', 'Usage: /model <name>'); return true; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'model', model: modelName, agent: '', conversation_id: conversationId || '' }),
-    });
-    const data = await resp.json();
+function cmdModel(text, parts) {
+  let agent = '';
+  let modelName = '';
+  if (parts[1] && parts[1].startsWith('@')) {
+    agent = stripTarget(parts[1]);
+    modelName = parts[2] || '';
+  } else {
+    modelName = parts[1] || '';
+  }
+  if (!modelName) { addMsg('system', 'Usage: /model [@agent] <name>'); return true; }
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'model', model: modelName, agent: agent, conversation_id: conversationId || '' }),
+  }).then(r => r.json()).then(data => {
     addMsg('system', data.message || data.error || 'Model updated');
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }
 
@@ -415,7 +394,7 @@ function cmdLogin() {
   return true;
 }
 
-async function cmdCall(text) {
+function cmdCall(text) {
   const callText = text.replace(/^\/call\s+/, '').trim();
   if (!callText) {
     addMsg('system', 'Usage: /call tool_name(key=value, ...) or /call tool_name {"key": "value"}\nType /help call for details.');
@@ -426,7 +405,6 @@ async function cmdCall(text) {
     addMsg('system', 'Parse error: ' + parsed.error + '\nType /help call <toolname> for parameter info.');
     return true;
   }
-  showTyping();
   fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({
@@ -438,96 +416,92 @@ async function cmdCall(text) {
     }),
   }).then(r => r.json()).then(data => {
     if (data.error) {
-      hideTyping();
       addMsg('error', data.error);
     }
-  }).catch(e => { hideTyping(); addMsg('error', 'Tool call failed: ' + e.message); });
+  }).catch(e => { addMsg('error', 'Tool call failed: ' + e.message); });
   return true;
 }
 
-async function cmdAutoconv(text) {
+function cmdAutoconv(text) {
   if (!conversationId) { addMsg('system', t('thoughtNoConv')); return true; }
   const qargs = parseQuotedArgs(text);
   const sub = (qargs[1] || '').toLowerCase();
   if (!sub || !['on', 'off', 'status', 'now'].includes(sub)) {
-    addMsg('system', 'Usage: /autoconv <on|off|status|now> <agent|ALL> [freq]');
+    addMsg('system', 'Usage: /autoconv <on|off|status|now> @<agent|ALL> [freq]');
     return true;
   }
   const body = { action: 'random_thought', conversation_id: conversationId, sub };
   const freqPattern = /^\d+(-\d+)?\/\d*[smhd]$/;
   if (sub === 'on') {
-    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv on <agent|ALL> [freq]'); return true; }
+    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv on @<agent|ALL> [freq]'); return true; }
     if (freqPattern.test(qargs[2])) {
-      addMsg('system', 'Usage: /autoconv on <agent|ALL> [freq]');
+      addMsg('system', 'Usage: /autoconv on @<agent|ALL> [freq]');
       return true;
     }
-    body.agent = resolveAgentName(qargs[2]);
+    body.agent = resolveAgentName(stripTarget(qargs[2]));
     body.frequency = qargs[3] || '6/1m';
   } else {
-    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv ' + sub + ' <agent|ALL>'); return true; }
-    body.agent = resolveAgentName(qargs[2]);
+    if (!qargs[2]) { addMsg('system', 'Usage: /autoconv ' + sub + ' @<agent|ALL>'); return true; }
+    body.agent = resolveAgentName(stripTarget(qargs[2]));
   }
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); }
-    else if (sub === 'on') {
-      const agents = data.agents || [data.agent];
-      addMsg('system', t('thoughtEnabled', { agent: agents.map(displayAgentName).join(', '), freq: data.frequency, delay: data.next_in_seconds }));
-    }
-    else if (sub === 'off') {
-      const agents = data.agents || [data.agent];
-      addMsg('system', t('thoughtDisabled', { agent: agents.map(displayAgentName).join(', ') }));
-    }
-    else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: displayAgentName(data.agent) })); }
-    else {
-      if (data.agents && Array.isArray(data.agents)) {
-        const lines = data.agents.map(a =>
-          a.enabled
-            ? t('thoughtStatus', { agent: displayAgentName(a.agent), freq: a.frequency, delay: a.next_in_seconds })
-            : t('thoughtStatusOff', { agent: displayAgentName(a.agent) })
-        );
-        addMsg('system', lines.join('\n'));
-      } else {
-        addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) }));
+  fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
+    .then(r => r.json()).then(data => {
+      if (data.error) { addMsg('error', data.error); }
+      else if (sub === 'on') {
+        const agents = data.agents || [data.agent];
+        addMsg('system', t('thoughtEnabled', { agent: agents.map(displayAgentName).join(', '), freq: data.frequency, delay: data.next_in_seconds }));
       }
-    }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+      else if (sub === 'off') {
+        const agents = data.agents || [data.agent];
+        addMsg('system', t('thoughtDisabled', { agent: agents.map(displayAgentName).join(', ') }));
+      }
+      else if (sub === 'now') { addMsg('system', t('thoughtTriggered', { agent: displayAgentName(data.agent) })); }
+      else {
+        if (data.agents && Array.isArray(data.agents)) {
+          const lines = data.agents.map(a =>
+            a.enabled
+              ? t('thoughtStatus', { agent: displayAgentName(a.agent), freq: a.frequency, delay: a.next_in_seconds })
+              : t('thoughtStatusOff', { agent: displayAgentName(a.agent) })
+          );
+          addMsg('system', lines.join('\n'));
+        } else {
+          addMsg('system', data.enabled ? t('thoughtStatus', { agent: displayAgentName(data.agent), freq: data.frequency, delay: data.next_in_seconds }) : t('thoughtStatusOff', { agent: displayAgentName(data.agent) }));
+        }
+      }
+    }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }
 
-async function cmdSchedules(text, parts) {
+function cmdSchedules(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    await cmdSchedulesList();
+    cmdSchedulesList();
   } else if (sub === 'del' || sub === 'delete') {
-    await cmdSchedulesDel();
+    cmdSchedulesDel();
   } else if (sub === 'add' && parts[2]) {
-    await cmdSchedulesAdd(parts[2], parts.slice(3).join(' '));
+    cmdSchedulesAdd(parts[2], parts.slice(3).join(' '));
   } else {
     addMsg('system', 'Usage: /schedules list | /schedules del | /schedules add YYYYMMDDHHmmss [reason]');
   }
   return true;
 }
 
-async function cmdLlm(text, parts) {
-  const agent = parts[1] || '';
+function cmdLlm(text, parts) {
+  const agent = stripTarget(parts[1] || '');
   const svc = parts.slice(2).join(' ') || '';
   if (!agent || !svc) {
-    addMsg('system', 'Usage: /llm <agent|assistant> <service_name|${variable}|restore>');
+    addMsg('system', 'Usage: /llm @<agent|assistant> <service_name|${variable}|restore>');
     return true;
   }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'set_llm_service', conversation_id: conversationId,
-        agent_name: agent, llm_service: svc,
-      }),
-    });
-    const data = await resp.json();
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({
+      action: 'set_llm_service', conversation_id: conversationId,
+      agent_name: agent, llm_service: svc,
+    }),
+  }).then(r => r.json()).then(data => {
     addMsg('system', data.result || data.error || 'Done.');
-  } catch (e) { addMsg('error', e.message); }
+  }).catch(e => addMsg('error', e.message));
   return true;
 }
 

@@ -1107,68 +1107,59 @@ function _renderServiceActions(actions, serviceId) {
 
 // -- Slash command handlers for claude login --
 
-async function cmdClaudeLoginServer(parts) {
-  const serviceId = parts[1];
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-server <service_name>'); return; }
-  addMsg('system', 'Starting Claude Code server login...');
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'claude_code_server_login', service_id: serviceId,
-        conversation_id: conversationId || '' })
-    }).then(r => r.json());
-    if (resp.error) { addMsg('error', resp.error); return; }
-    _openVncLoginDialog(resp.session_id, serviceId, null);
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+function cmdClaudeLoginServer(parts) {
+  const serviceId = stripTarget(parts[1]);
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-server <service_name>'); return true; }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'claude_code_server_login', service_id: serviceId,
+      conversation_id: conversationId || '' })
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  return true;
 }
 
-async function cmdClaudeLoginRelay(parts) {
-  const serviceId = parts[1];
-  const relayId = parts[2];
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-relay <service_name> [relay_name]'); return; }
+function cmdClaudeLoginRelay(parts) {
+  const serviceId = stripTarget(parts[1]);
+  const relayId = stripTarget(parts[2]);
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-relay <service_name> [relay_name]'); return true; }
 
   if (relayId) {
-    // Explicit relay
-    await _startRelayLogin(serviceId, relayId);
-    return;
+    _startRelayLogin(serviceId, relayId);
+    return true;
   }
 
   // No relay specified — list and auto-select if single
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'claude_code_list_relays', service_id: serviceId })
-    }).then(r => r.json());
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'claude_code_list_relays', service_id: serviceId })
+  }).then(r => r.json()).then(resp => {
     const relays = resp.relays || [];
     if (relays.length === 0) { addMsg('error', 'No relay connected.'); return; }
     if (relays.length === 1) {
-      await _startRelayLogin(serviceId, relays[0].relay_id);
+      _startRelayLogin(serviceId, relays[0].relay_id);
     } else {
       addMsg('system', 'Multiple relays available. Specify one:\n'
         + relays.map(r => '  ' + r.relay_id + ' (' + r.platform + ')').join('\n'));
     }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  return true;
 }
 
-async function cmdClaudeLoginCredentials(text, parts) {
-  const serviceId = parts[1];
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-credentials <service_name> <credentials_json>'); return; }
-  // Everything after the service name is the JSON
-  const jsonStart = text.indexOf(serviceId) + serviceId.length;
+function cmdClaudeLoginCredentials(text, parts) {
+  const serviceId = stripTarget(parts[1]);
+  if (!serviceId) { addMsg('error', 'Usage: /claude-login-credentials <service_name> <credentials_json>'); return true; }
+  const jsonStart = text.indexOf(parts[1]) + parts[1].length;
   const credsJson = text.substring(jsonStart).trim();
-  if (!credsJson) { addMsg('error', 'Missing credentials JSON. Paste the content of .credentials.json'); return; }
+  if (!credsJson) { addMsg('error', 'Missing credentials JSON. Paste the content of .credentials.json'); return true; }
   try {
-    JSON.parse(credsJson); // validate
+    JSON.parse(credsJson);
   } catch (e) {
     addMsg('error', 'Invalid JSON: ' + e.message);
-    return;
+    return true;
   }
-  addMsg('system', 'Saving credentials...');
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'claude_code_login_code', service_id: serviceId, credentials: credsJson })
-    }).then(r => r.json());
-    if (resp.ok) { addMsg('system', resp.message || 'Credentials saved!'); }
-    else { addMsg('error', resp.error || 'Failed to save credentials'); }
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'claude_code_login_code', service_id: serviceId,
+      credentials: credsJson, conversation_id: conversationId || '' })
+  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  return true;
 }
 
 function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
@@ -1226,45 +1217,30 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
       }).then(r => r.json());
       if (st.ok) { closeDialog(st.message || 'Claude Code login successful!'); }
       else if (st.error) { closeDialog('Login error: ' + st.error); }
+      else if (st.status === 'starting') { status.textContent = 'Starting container...'; }
+      else if (st.status === 'pending') { status.textContent = 'Waiting for authorization...'; }
     } catch (e) { /* ignore */ }
   }, 3000);
 }
 
-async function _startRelayLogin(serviceId, relayId) {
-  addMsg('system', 'Starting Claude Code login via relay...');
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'claude_code_relay_login', service_id: serviceId, relay_id: relayId })
-    }).then(r => r.json());
-    if (resp.error) { addMsg('error', resp.error); }
-    else if (resp.ok) { addMsg('system', resp.message || 'Claude Code login successful!'); }
-  } catch (e) { addMsg('error', 'Relay login failed: ' + e.message); }
+function _startRelayLogin(serviceId, relayId) {
+  addMsg('system', 'Starting Claude Code login via relay — authorize in the browser...');
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'claude_code_relay_login', service_id: serviceId,
+      relay_id: relayId, conversation_id: conversationId || '' })
+  }).catch(e => addMsg('error', 'Relay login failed: ' + e.message));
 }
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   const btn = event && event.target ? event.target : null;
   if (flow === 'claude_login_server') {
     try {
-      const container = btn ? btn.parentElement : null;
-      if (!container) return;
-      btn.disabled = true;
-      btn.textContent = 'Starting...';
-
-      // Step 1: spawn container + get VNC path
-      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
+      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: serverAction, service_id: serviceId,
           conversation_id: conversationId || '' })
-      }).then(r => r.json());
-
-      if (resp.error) {
-        btn.textContent = 'Login via server';
-        btn.disabled = false;
-        addMsg('error', resp.error);
-        return;
-      }
-
-      // Open VNC in a centered dialog
-      _openVncLoginDialog(resp.session_id, serviceId, btn);
+      });
+      // Dialog opens when SSE vnc_login_ready arrives
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else if (flow === 'claude_login_relay') {
     try {
@@ -1311,22 +1287,16 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         statusEl.textContent = 'A browser window should open on the relay machine. Authorize there.';
 
         try {
-          const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
+          await fetch(API, { method: 'POST', headers: getAuthHeaders(),
             body: JSON.stringify({
               action: 'claude_code_relay_login',
               service_id: serviceId,
               relay_id: relayId,
+              conversation_id: conversationId || '',
             })
-          }).then(r => r.json());
-
-          if (resp.error) {
-            statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + escapeHtml(resp.error) + '</span>';
-            loginBtn.textContent = 'Start login';
-            loginBtn.disabled = false;
-          } else if (resp.ok) {
-            statusEl.innerHTML = '<span style="color:#2ecc71;">\u2714 ' + escapeHtml(resp.message) + '</span>';
-            loginBtn.textContent = 'Done';
-          }
+          });
+          statusEl.textContent = 'Authorize in the browser that opens on the relay...';
+          // Result arrives via SSE command_result
         } catch (e) {
           statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + e.message + '</span>';
           loginBtn.textContent = 'Start login';

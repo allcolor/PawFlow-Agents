@@ -146,15 +146,31 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             data.get("duration_ms", 0),
             data.get("model", ""),
         )
+        # Optimistic removal from active agents (poller will confirm on next tick)
+        agent_key = agent.lower()
+        if agent_key in app._active_agents:
+            del app._active_agents[agent_key]
+        if not app._active_agents and not app.renderer._streams:
+            app._update_status("")
         if not data.get("continuing"):
             return False, streaming_agent, thinking_agent
 
     elif ev_type == "error_event":
         app.renderer.print_error(data.get("message", "Unknown error"))
+        # Clear active agents on error (agent loop terminated)
+        app._active_agents.clear()
+        app._update_status("")
         return False, streaming_agent, thinking_agent
 
     elif ev_type == "cancelled":
-        app.renderer.print_system(f"[{data.get('agent_name', '?')}] Cancelled")
+        agent = data.get('agent_name', '?')
+        app.renderer.print_system(f"[{agent}] Cancelled")
+        # Optimistic removal from active agents
+        agent_key = agent.lower()
+        if agent_key in app._active_agents:
+            del app._active_agents[agent_key]
+        if not app._active_agents and not app.renderer._streams:
+            app._update_status("")
         return False, streaming_agent, thinking_agent
 
     elif ev_type == "compact_progress":
@@ -163,10 +179,12 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         if stage == "done":
             before = data.get("before", 0)
             after = data.get("after", 0)
-            app.renderer.print_system(f"Compacted: {before} → {after} messages")
-            app._update_status("")
+            app.renderer.print_system(f"Compacted: {before} \u2192 {after} messages")
+            # Only clear status if no active agents (poller is source of truth)
+            if not app._active_agents:
+                app._update_status("")
         else:
-            app._update_status(f"▶ Compacting... {stage} {detail}")
+            app._update_status(f"\u25b6 Compacting... {stage} {detail}")
 
     elif ev_type == "task_progress":
         stage = data.get("stage", "")
@@ -174,9 +192,10 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         task = data.get("task", "")
         if stage == "done":
             app.renderer.print_system(f"Task '{task}' completed by {agent}")
-            app._update_status("")
+            if not app._active_agents:
+                app._update_status("")
         else:
-            app._update_status(f"▶ {agent} task: {stage}")
+            app._update_status(f"\u25b6 {agent} task: {stage}")
 
     elif ev_type == "thought_scheduled":
         agent = data.get("agent", "")

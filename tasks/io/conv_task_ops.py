@@ -33,12 +33,12 @@ class AssignTaskToAgentTask(BaseTask):
         return {
             "conversation_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._conversation_id}",
+                "default": "${_conversation_id}",
                 "description": "Target conversation ID",
             },
             "user_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._user_id}",
+                "default": "${_user_id}",
                 "description": "User ID",
             },
             "agent_name": {
@@ -131,7 +131,7 @@ class CancelAgentTaskTask(BaseTask):
         return {
             "conversation_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._conversation_id}",
+                "default": "${_conversation_id}",
                 "description": "Target conversation ID",
             },
             "task_id": {

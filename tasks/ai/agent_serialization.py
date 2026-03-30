@@ -19,6 +19,17 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 
 logger = logging.getLogger(__name__)
 
+_LLM_ERROR_PATTERNS = (
+    "LLM call failed:", "API Error:", "Failed to authenticate",
+    "LLMClientError:", "Claude Code auth failed:",
+    "Budget exceeded", "LLM streaming failed",
+)
+
+def _looks_like_llm_error(text: str) -> bool:
+    """Heuristic: detect LLM error messages for legacy messages without is_error flag."""
+    if len(text) > 500:
+        return False
+    return any(p in text for p in _LLM_ERROR_PATTERNS)
 
 
 class AgentSerializationMixin:
@@ -46,6 +57,8 @@ class AgentSerializationMixin:
                 entry["source"] = m.source
             if m.display_only:
                 entry["display_only"] = True
+            if m.is_error:
+                entry["is_error"] = True
             result.append(entry)
         return result
 
@@ -250,7 +263,13 @@ class AgentSerializationMixin:
                         "content": m["thinking"],
                         "source": m.get("source"),
                     })
-                entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx}
+                _type = role
+                if role == "assistant" and (
+                    m.get("is_error")
+                    or (content and _looks_like_llm_error(content))
+                ):
+                    _type = "error"
+                entry = {"type": _type, "role": role, "content": content, "raw_index": raw_idx}
                 if m.get("msg_id"):
                     entry["msg_id"] = m["msg_id"]
                 if m.get("display_only"):

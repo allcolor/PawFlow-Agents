@@ -32,34 +32,37 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
     };
     view.webview.html = this.getHtml();
 
-    view.webview.onDidReceiveMessage(async (msg) => {
+    view.webview.onDidReceiveMessage((msg) => {
+      // All handlers fire-and-forget: webview posts, extension dispatches,
+      // results come back via SSE or postMessage. No awaiting network calls
+      // in the message loop — that would block subsequent message processing.
       switch (msg.type) {
         case 'sendMessage':
-          await this.sendMessage(msg.text, msg.attachments, msg.reply_to);
+          this.sendMessage(msg.text, msg.attachments, msg.reply_to);
           break;
         case 'newConversation':
           this.newConversation();
           break;
         case 'loadConversations':
-          await this.loadConversations();
+          this.loadConversations();
           break;
         case 'resumeConversation':
-          await this.resumeConversation(msg.conversationId, msg.offset);
+          this.resumeConversation(msg.conversationId, msg.offset);
           break;
         case 'approval':
-          await this.handleApproval(msg.requestId, msg.result, msg.approvalType);
+          this.handleApproval(msg.requestId, msg.result, msg.approvalType);
           break;
         case 'backgroundTool':
-          await this.handleBackgroundTool(msg.tcId);
+          this.handleBackgroundTool(msg.tcId);
           break;
         case 'reconnectRelay':
-          await vscode.commands.executeCommand('pawflow.toggleRelay');
+          vscode.commands.executeCommand('pawflow.toggleRelay');
           break;
         case 'relayConnect':
-          await vscode.commands.executeCommand('pawflow.connectRelay', msg.path || '');
+          vscode.commands.executeCommand('pawflow.connectRelay', msg.path || '');
           break;
         case 'relayDisconnect':
-          await vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
+          vscode.commands.executeCommand('pawflow.disconnectRelay', msg.path || '');
           break;
         case 'openFile':
           // Open a file in VS Code editor from the webview
@@ -77,30 +80,32 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
               filePath = require('path').join(relayRoot, filePath);
             }
             const uri = vscode.Uri.file(filePath);
-            await vscode.window.showTextDocument(uri, { preview: true });
+            vscode.window.showTextDocument(uri, { preview: true });
           } catch (e: any) {
             vscode.window.showWarningMessage(`Cannot open file: ${e.message}`);
           }
           break;
         case 'command':
           if (msg.command === 'clipboard_write') {
-            await vscode.env.clipboard.writeText(msg.arg || '');
-            this.postMessage({ type: 'actionResult', action: 'clipboard_write', data: { ok: true } });
+            vscode.env.clipboard.writeText(msg.arg || '').then(() => {
+              this.postMessage({ type: 'actionResult', action: 'clipboard_write', data: { ok: true } });
+            });
           } else if (msg.command === 'clipboard_read') {
-            const text = await vscode.env.clipboard.readText();
-            this.postMessage({ type: 'clipboardContent', text });
+            vscode.env.clipboard.readText().then((text) => {
+              this.postMessage({ type: 'clipboardContent', text });
+            });
           } else if (msg.command === 'clear_attachments') {
             this.pendingAttachments = [];
             this.postMessage({ type: 'actionResult', action: 'clear_attachments', data: { ok: true } });
           } else if (msg.command === 'assign_plan_dialog') {
-            await this.showAssignPlanDialog(msg.arg);
+            this.showAssignPlanDialog(msg.arg);
           } else if (msg.command === 'assign_step_dialog') {
             const parsed = JSON.parse(msg.arg || '{}');
-            await this.showAssignStepDialog(parsed.plan_id, parsed.step);
+            this.showAssignStepDialog(parsed.plan_id, parsed.step);
           } else if (msg.command === 'create_plan_dialog') {
-            await this.showCreatePlanDialog();
+            this.showCreatePlanDialog();
           } else {
-            await this.sendCommand(msg.command, msg.arg);
+            this.sendCommand(msg.command, msg.arg);
           }
           break;
       }

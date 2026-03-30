@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 """One-shot migration: strip scope prefixes from ${...} expressions.
 
-Before: ${global.api_key}, ${user.fast_model}, ${secrets.openai_key}
-After:  ${api_key},         ${fast_model},      ${openai_key}
+Before: ${global.api_key}, ${user.fast_model}, ${secrets.openai_key}, ${env.HOME}
+After:  ${api_key},         ${fast_model},      ${openai_key},         ${HOME:!important(env)}
+
+All prefixes are legacy — the expression engine uses unified cascade.
+Use ${key:!important(scope)} to force a specific scope.
 
 Scans:
 - config/*.json (agents, skills, mcp_servers, etc.)
 - config/users/**/*.json
 - data/conversations/**/*.json (conv extras)
 
-Preserves ${env.X} (only real prefix).
 Dry-run by default. Use --apply to write changes.
 """
 
@@ -33,7 +35,7 @@ STRIP_PREFIXES = [
     'env.',
 ]
 
-# Regex: match ${prefix.name} but NOT ${env.X}
+# Regex: match ${prefix.name} for all legacy prefixes
 EXPR_RE = re.compile(r'\$\{(' + '|'.join(re.escape(p) for p in STRIP_PREFIXES) + r')([^}]+)\}')
 
 
@@ -42,6 +44,8 @@ def migrate_string(s: str) -> str:
     def _replace(m):
         prefix = m.group(1)
         rest = m.group(2)
+        if prefix == 'env.':
+            return '${' + rest + ':!important(env)}'
         return '${' + rest + '}'
     return EXPR_RE.sub(_replace, s)
 

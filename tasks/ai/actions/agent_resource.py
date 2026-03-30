@@ -235,7 +235,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "result": f"LLM service for '{agent}' restored to default."
             }).encode())
         else:
-            # Accept expressions like ${global.xxx} or direct service names
+            # Accept expressions like ${xxx} or direct service names
             overrides[agent] = svc_value
             store.set_extra(conv_id, "agent_llm_overrides", overrides)
             flowfile.set_content(json.dumps({

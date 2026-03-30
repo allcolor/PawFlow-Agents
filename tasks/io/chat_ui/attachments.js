@@ -264,8 +264,6 @@ async function send() {
       s.el = null; s.text = '';
     }
   }
-  showTyping();
-
   try {
     const body = { message: text, target_agent: targetAgent };
     if (conversationId) body.conversation_id = conversationId;
@@ -299,7 +297,6 @@ async function send() {
 
     // Session expired → 401 JSON or opaque redirect (302 to OAuth)
     if (resp.type === 'opaqueredirect' || resp.status === 401 || resp.status === 403) {
-      hideTyping();
       if (LOGIN_URL) { window.location.href = LOGIN_URL; return; }
       addMsg('error', t('sessionExpired'));
       sending = false;
@@ -308,7 +305,6 @@ async function send() {
     }
 
     if (!resp.ok) {
-      hideTyping();
       const errText = await resp.text();
       addMsg('error', 'Error ' + resp.status + ': ' + errText);
       sending = false;
@@ -346,7 +342,6 @@ async function send() {
     }
 
     // Non-streaming mode: show response directly
-    hideTyping();
     conversationId = data.conversation_id || conversationId;
     const nsExtra = data.source ? { source: data.source } : undefined;
     addMsg('assistant', data.response || data.content || JSON.stringify(data), nsExtra);
@@ -356,7 +351,6 @@ async function send() {
     loadResources();
 
   } catch (e) {
-    hideTyping();
     console.error('send() failed:', e);
     addMsg('error', t('connError', {msg: e.message + ' (check console)'}));
     sending = false;

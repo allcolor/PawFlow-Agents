@@ -714,7 +714,7 @@ class CreatePlanHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
-        self._agent_name = "agent"
+        self._agent_name = ""
 
     @property
     def name(self) -> str:
@@ -817,7 +817,7 @@ class UpdatePlanHandler(ToolHandler):
 
     def __init__(self):
         self._conversation_id = ""
-        self._agent_name = "agent"
+        self._agent_name = ""
 
     @property
     def name(self) -> str:
@@ -883,14 +883,25 @@ class UpdatePlanHandler(ToolHandler):
         if not plan:
             return f"Error: plan '{plan_id}' not found."
 
+        _needs_verify = []
         for u in updates:
             step_num = int(u.get("step") or u.get("index") or 0)
             if step_num == 0:
-                continue  # invalid step number
+                continue
             status = u.get("status", "")
             note = u.get("note", "")
             for s in plan["steps"]:
                 if s["index"] == step_num:
+                    # If marking done and there's a verifier, intercept
+                    if status == "done":
+                        verifier = (s.get("verifier") or
+                                    plan.get("verifier", ""))
+                        if verifier:
+                            s["status"] = "pending_verification"
+                            if note:
+                                s["note"] = note
+                            _needs_verify.append((step_num, verifier))
+                            break
                     s["status"] = status
                     if note:
                         s["note"] = note
@@ -911,7 +922,6 @@ class UpdatePlanHandler(ToolHandler):
                 plans = store.get_extra(self._conversation_id, "plans") or {}
                 plans[plan_id] = plan
                 store.set_extra(self._conversation_id, "plans", plans)
-                # Emit SSE event
                 try:
                     from core.conversation_event_bus import ConversationEventBus
                     ConversationEventBus.instance().publish_event(
@@ -921,8 +931,33 @@ class UpdatePlanHandler(ToolHandler):
             except Exception:
                 pass
 
-        # Step chaining: if any step was marked done/skipped, trigger next
-        _any_done = any(u.get("status") in ("done", "skipped") for u in updates)
+        # Schedule verifiers if any steps need verification
+        if _needs_verify and self._conversation_id:
+            try:
+                from core.poll_scheduler import PollScheduler
+                for step_num, verifier in _needs_verify:
+                    PollScheduler.instance().schedule_delay(
+                        self._conversation_id, 0,
+                        key=(f"{self._conversation_id}::plan_verify::"
+                             f"{plan_id}::step{step_num}::{verifier}"),
+                        reason=(f"[plan_verify:{plan_id}:{step_num}:"
+                                f"{self._agent_name}] ({verifier})"),
+                        user_id="",
+                    )
+                try:
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    AgentLoopTask.wake_poller()
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        # Step chaining: if any step was marked done/skipped (not pending_verification)
+        _any_done = any(
+            u.get("status") in ("done", "skipped")
+            and not any(sv[0] == int(u.get("step", 0)) for sv in _needs_verify)
+            for u in updates
+        )
         if _any_done and plan["status"] != "completed" and self._conversation_id:
             try:
                 from tasks.ai.actions.plans import _trigger_next_plan_step
@@ -940,7 +975,8 @@ class UpdatePlanHandler(ToolHandler):
         lines = [f"**{plan['title']}** — {done_count}/{total} done [{plan['status']}]"]
         for s in plan["steps"]:
             icon = {"pending": "○", "in_progress": "◔", "done": "✓",
-                    "skipped": "–", "error": "✗"}.get(s["status"], "○")
+                    "skipped": "–", "error": "✗",
+                    "pending_verification": "⚐"}.get(s["status"], "○")
             note = f' — {s["note"]}' if s.get("note") else ""
             lines.append(f"  {icon} {s['index']}. {s['description']}{note}")
         return "\n".join(lines)
@@ -1204,5 +1240,154 @@ class DeletePlanHandler(ToolHandler):
             except Exception:
                 pass
             return f"Plan '{plan_id}' deleted."
+        except Exception as e:
+            return f"Error: {e}"
+
+
+class VerifyPlanStepHandler(ToolHandler):
+    """Verify (approve or reject) a plan step that is pending verification."""
+
+    def __init__(self):
+        self._conversation_id = ""
+        self._agent_name = ""
+
+    @property
+    def name(self) -> str:
+        return "verify_plan_step"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Approve or reject a plan step that is pending verification. "
+            "If approved, the step is marked done and the next step is triggered. "
+            "If rejected, the step is sent back to the executor for rework."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "plan_id": {"type": "string", "description": "Plan ID"},
+                "step": {"type": "integer", "description": "Step number (1-based)"},
+                "approved": {"type": "boolean", "description": "True to approve, false to reject"},
+                "reason": {"type": "string", "description": "Reason for approval/rejection"},
+            },
+            "required": ["plan_id", "step", "approved"],
+        }
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        plan_id = arguments.get("plan_id", "")
+        step_num = int(arguments.get("step", 0))
+        approved = arguments.get("approved", False)
+        reason = arguments.get("reason", "")
+
+        if not plan_id or not step_num or not self._conversation_id:
+            return "Error: plan_id, step, and approved are required"
+
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            plans = store.get_extra(self._conversation_id, "plans") or {}
+            plan = plans.get(plan_id)
+            if not plan:
+                return f"Error: plan '{plan_id}' not found"
+
+            step = None
+            for s in plan["steps"]:
+                if s["index"] == step_num:
+                    step = s
+                    break
+            if not step:
+                return f"Error: step {step_num} not found in plan '{plan_id}'"
+
+            if step["status"] != "pending_verification":
+                return f"Error: step {step_num} is '{step['status']}', not pending_verification"
+
+            executor = step.get("assigned_to") or plan.get("created_by", "")
+
+            if approved:
+                step["status"] = "done"
+                step["verified_by"] = self._agent_name
+                if reason:
+                    step["note"] = (step.get("note", "") + f" [verified: {reason}]").strip()
+
+                # Check if plan is completed
+                statuses = [s["status"] for s in plan["steps"]]
+                if all(s in ("done", "skipped") for s in statuses):
+                    plan["status"] = "completed"
+
+                plans[plan_id] = plan
+                store.set_extra(self._conversation_id, "plans", plans)
+
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        self._conversation_id, "plan_updated", {"plan": plan})
+                except Exception:
+                    pass
+
+                # Trigger next step
+                if plan["status"] != "completed":
+                    try:
+                        from tasks.ai.actions.plans import _trigger_next_plan_step
+                        _trigger_next_plan_step(
+                            self._conversation_id, plan_id, plan, store, "",
+                            current_agent=self._agent_name)
+                    except Exception:
+                        pass
+
+                return (
+                    f"Step {step_num} approved."
+                    + (f" Reason: {reason}" if reason else "")
+                    + (f" Plan completed!" if plan["status"] == "completed" else "")
+                )
+            else:
+                # Rejected: send back to executor
+                step["status"] = "pending"
+                step["rejected_by"] = self._agent_name
+                if reason:
+                    step["note"] = (step.get("note", "") + f" [rejected: {reason}]").strip()
+
+                plans[plan_id] = plan
+                store.set_extra(self._conversation_id, "plans", plans)
+
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        self._conversation_id, "plan_updated", {"plan": plan})
+                except Exception:
+                    pass
+
+                # Re-trigger the executor for this step
+                if executor and executor != "user":
+                    try:
+                        from core.poll_scheduler import PollScheduler
+                        PollScheduler.instance().schedule_delay(
+                            self._conversation_id, 0,
+                            key=(f"{self._conversation_id}::plan::"
+                                 f"{plan_id}::step{step_num}::{executor}"),
+                            reason=(f"[plan_step:{plan_id}:{step_num}] "
+                                    f"({executor})"),
+                            user_id="",
+                        )
+                        try:
+                            from tasks.ai.agent_loop import AgentLoopTask
+                            AgentLoopTask.wake_poller()
+                        except Exception:
+                            pass
+                    except Exception:
+                        pass
+
+                return (
+                    f"Step {step_num} rejected and sent back to {executor}."
+                    + (f" Reason: {reason}" if reason else "")
+                )
         except Exception as e:
             return f"Error: {e}"

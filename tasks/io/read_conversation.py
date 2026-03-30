@@ -30,7 +30,7 @@ class ReadConversationTask(BaseTask):
         return {
             "conversation_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._conversation_id}",
+                "default": "${_conversation_id}",
                 "description": "Conversation to read from",
             },
             "limit": {

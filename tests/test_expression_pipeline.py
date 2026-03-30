@@ -39,10 +39,10 @@ class TestParsePipeline(unittest.TestCase):
         self.assertEqual(ops, [("uuid", [])])
 
     def test_nested_expr_in_args(self):
-        key, ops = parse_pipeline('global.x:else(${global.y:upper})')
-        self.assertEqual(key, "global.x")
+        key, ops = parse_pipeline('x:else(${y:upper})')
+        self.assertEqual(key, "x")
         self.assertEqual(len(ops), 1)
-        self.assertIn("${global.y:upper}", ops[0][1][0])
+        self.assertIn("${y:upper}", ops[0][1][0])
 
 
 class TestEvaluatePipeline(unittest.TestCase):
@@ -164,29 +164,29 @@ class TestResolveExpressionPipeline(unittest.TestCase):
     """Test full integration with resolve_expression."""
 
     def test_simple_pipeline(self):
-        r = resolve_expression("${flow.x:upper}", parameters={"x": "hello"})
+        r = resolve_expression("${x:upper}", parameters={"x": "hello"})
         self.assertEqual(r, "HELLO")
 
     def test_conditional(self):
         r = resolve_expression(
-            '${flow.v:equals("yes"):then("OUI"):else("NON")}',
+            '${v:equals("yes"):then("OUI"):else("NON")}',
             parameters={"v": "yes"})
         self.assertEqual(r, "OUI")
 
     def test_conditional_false(self):
         r = resolve_expression(
-            '${flow.v:equals("yes"):then("OUI"):else("NON")}',
+            '${v:equals("yes"):then("OUI"):else("NON")}',
             parameters={"v": "no"})
         self.assertEqual(r, "NON")
 
     def test_nested_expr_in_else(self):
         r = resolve_expression(
-            '${flow.x:equals("A"):then("matched"):else(${flow.x:upper})}',
+            '${x:equals("A"):then("matched"):else(${x:upper})}',
             parameters={"x": "hello"})
         self.assertEqual(r, "HELLO")
 
     def test_default_missing(self):
-        r = resolve_expression('${flow.missing:default("none")}', parameters={})
+        r = resolve_expression('${missing:default("none")}', parameters={})
         self.assertEqual(r, "none")
 
     def test_generator_uuid(self):
@@ -194,38 +194,38 @@ class TestResolveExpressionPipeline(unittest.TestCase):
         self.assertEqual(len(r), 12)
 
     def test_mixed_text(self):
-        r = resolve_expression("Hi ${flow.name:upper}!", parameters={"name": "bob"})
+        r = resolve_expression("Hi ${name:upper}!", parameters={"name": "bob"})
         self.assertEqual(r, "Hi BOB!")
 
     def test_multiple_expressions(self):
         r = resolve_expression(
-            "${flow.a:upper} and ${flow.b:lower}",
+            "${a:upper} and ${b:lower}",
             parameters={"a": "hello", "b": "WORLD"})
         self.assertEqual(r, "HELLO and world")
 
     def test_replace_in_context(self):
         r = resolve_expression(
-            '${flow.greeting:replace("hello","bonjour")}',
+            '${greeting:replace("hello","bonjour")}',
             parameters={"greeting": "hello world"})
         self.assertEqual(r, "bonjour world")
 
     def test_split_index(self):
         r = resolve_expression(
-            '${flow.csv:split(","):index(1)}',
+            '${csv:split(","):index(1)}',
             parameters={"csv": "a,b,c"})
         self.assertEqual(r, "b")
 
     def test_user_example_case1(self):
         """User's exact test case 1: mavar=mavar, plop=plip → OUI Et plop: plip"""
         r = resolve_expression(
-            '${flow.mavar:upper:equals("MAVAR"):then("OUI"):else(${flow.mavar:upper})} Et plop: ${flow.plop}',
+            '${mavar:upper:equals("MAVAR"):then("OUI"):else(${mavar:upper})} Et plop: ${plop}',
             parameters={"mavar": "mavar", "plop": "plip"})
         self.assertEqual(r, "OUI Et plop: plip")
 
     def test_user_example_case2(self):
         """User's exact test case 2: mavar=zob, plop=tutu → ZOB Et plop: tutu"""
         r = resolve_expression(
-            '${flow.mavar:upper:equals("MAVAR"):then("OUI"):else(${flow.mavar:upper})} Et plop: ${flow.plop}',
+            '${mavar:upper:equals("MAVAR"):then("OUI"):else(${mavar:upper})} Et plop: ${plop}',
             parameters={"mavar": "zob", "plop": "tutu"})
         self.assertEqual(r, "ZOB Et plop: tutu")
 

@@ -8,7 +8,7 @@ Supporte :
 - Paramètres définis dans le flow JSON (`flow.parameters`)
 - Overrides au déploiement (API, CLI, scheduler)
 - Merge hiérarchique (parent flow → subflow avec mapping)
-- Résolution d'expressions `${flow.parameters.X}` dans les configs de tâches
+- Résolution d'expressions `${X}` dans les configs de tâches
 """
 
 from typing import Any, Dict, Optional
@@ -23,7 +23,7 @@ class ParameterContext:
     Usage:
         ctx = ParameterContext({"env": "prod", "batch_size": "100"})
         ctx = ctx.with_overrides({"env": "staging"})
-        value = ctx.resolve("${flow.parameters.env}")  # → "staging"
+        value = ctx.resolve("${env}")  # → "staging"
     """
 
     def __init__(self, parameters: Optional[Dict[str, Any]] = None):
@@ -60,11 +60,11 @@ class ParameterContext:
         """Créer un nouveau contexte pour un subflow via un mapping.
 
         Le mapping définit : {subflow_param_name: expression_or_value}
-        Les expressions ${flow.parameters.X} sont résolues depuis le contexte courant.
+        Les expressions ${X} sont résolues depuis le contexte courant.
 
         Exemple:
             parent_ctx = ParameterContext({"env": "prod", "key": "abc"})
-            mapping = {"sub_env": "${flow.parameters.env}", "mode": "fast"}
+            mapping = {"sub_env": "${env}", "mode": "fast"}
             child_ctx = parent_ctx.with_mapping(mapping)
             # child_ctx.get("sub_env") == "prod"
             # child_ctx.get("mode") == "fast"
@@ -78,7 +78,7 @@ class ParameterContext:
         return ParameterContext(child_params)
 
     def resolve(self, template: str) -> str:
-        """Résoudre les expressions ${flow.parameters.X} dans un template.
+        """Résoudre les expressions ${X} dans un template.
 
         Utilise le moteur d'expressions existant.
         """
@@ -89,7 +89,7 @@ class ParameterContext:
     def resolve_config(self, config: Dict[str, Any]) -> Dict[str, Any]:
         """Résoudre toutes les expressions dans un dict de config (récursif).
 
-        Résout les ${flow.parameters.X} dans toutes les valeurs string.
+        Résout les ${X} dans toutes les valeurs string.
         """
         return self._resolve_dict(config)
 
@@ -102,7 +102,7 @@ class ParameterContext:
                 result[key] = value
             elif isinstance(value, str):
                 resolved = self.resolve(value)
-                # Second pass for cascading: ${flow.parameters.x} → ${global.y} → actual value
+                # Second pass for cascading: ${x} → ${y} → actual value
                 if isinstance(resolved, str) and '${' in resolved:
                     resolved = self.resolve(resolved)
                 result[key] = resolved

@@ -32,7 +32,7 @@ class CreateConversationTask(BaseTask):
         return {
             "user_id": {
                 "type": "string", "required": True,
-                "default": "${flow.parameters._user_id}",
+                "default": "${_user_id}",
                 "description": "Owner of the conversation",
             },
             "preview": {

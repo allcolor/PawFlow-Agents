@@ -113,6 +113,7 @@ function _renderActiveAgents() {
   var keys = Object.keys(activeAgents);
   if (keys.length === 0) {
     el.style.display = 'none';
+    statusEl.textContent = '';
   } else {
     el.style.display = 'flex';
     el.innerHTML = keys.map(function(a) {
@@ -123,6 +124,9 @@ function _renderActiveAgents() {
         + '<strong>' + esc(a) + '</strong> ' + esc(s)
         + '</span>';
     }).join('');
+    // Typing indicator driven solely by active agents
+    var parts = keys.map(function(a) { return a + ' ' + (activeAgents[a].status || ''); });
+    statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... ' + esc(parts.join(', ')) + '</span>';
   }
 }
 
@@ -306,6 +310,10 @@ function addMsg(type, content, meta) {
     }
   } else if (type === 'tool_result') {
     div.innerHTML = '&#10003; ' + renderToolResult(content);
+  } else if (type === 'error') {
+    var errAgent = (meta && meta.agent_name) || (meta && meta.source && meta.source.name) || '';
+    var errBadge = errAgent ? '<span class="agent-badge" style="background:#e94560">' + esc(errAgent) + '</span>' : '';
+    div.innerHTML = errBadge + renderMd(content);
   } else if (type === 'sub_agent_trace') {
     var src = (meta && meta.source) || {};
     var trace = (meta && meta.trace) || [];
@@ -497,12 +505,10 @@ function handleSSE(event) {
 
   switch (evType) {
     case 'thinking':
-      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
       updateActiveAgents(agent, 'thinking');
       break;
 
     case 'thinking_content':
-      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '...</span>';
       updateActiveAgents(agent, 'thinking');
       // Display reasoning content in a collapsible block
       if (data.text) {
@@ -538,7 +544,6 @@ function handleSSE(event) {
       if (data.msg_id) streamEl.dataset.msgid = data.msg_id;
       streamEl.textContent = streaming[agent];
       messagesEl.scrollTop = messagesEl.scrollHeight;
-      statusEl.textContent = agent + ' writing...';
       updateActiveAgents(agent, 'writing');
       break;
 
@@ -700,13 +705,11 @@ function handleSSE(event) {
       break;
 
     case 'cancelled':
-      statusEl.textContent = agent + ' cancelled';
       updateActiveAgents(agent, 'cancelled');
       break;
 
     case 'iteration_status':
-      statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... iter ' +
-        data.iteration + ' \u00b7 ' + data.total_tools + ' tools</span>';
+      updateActiveAgents(agent, 'iter ' + data.iteration + ' \u00b7 ' + data.total_tools + ' tools');
       break;
 
     case 'exec_approval_request':

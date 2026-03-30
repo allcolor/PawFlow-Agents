@@ -293,7 +293,6 @@ async function _recoverConversation(cid) {
     const last = newMsgs[newMsgs.length - 1];
     const lastType = last ? (last.type || last.role) : '';
     if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
-      showTyping();
       document.getElementById('status').textContent = t('thinking');
     } else {
       sending = false;
@@ -598,7 +597,6 @@ async function refreshCurrentConv() {
     const lastRole = msgs.length > 0 ? (msgs[msgs.length - 1].type || msgs[msgs.length - 1].role) : '';
     if (lastRole !== 'assistant' && lastRole !== 'user') {
       sending = true;
-      showTyping();
       document.getElementById('status').textContent = t('thinking');
     } else {
       sending = false;

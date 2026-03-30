@@ -137,6 +137,18 @@ def unregister_session(session_id: str):
         _sessions.pop(session_id, None)
 
 
+def update_session_ready(session_id: str):
+    with _lock:
+        if session_id in _sessions:
+            _sessions[session_id]["ready"] = True
+
+
+def update_session_error(session_id: str, error: str):
+    with _lock:
+        if session_id in _sessions:
+            _sessions[session_id]["error"] = error
+
+
 def cleanup_user_login_sessions(user_id: str):
     """Kill all login containers for a specific user."""
     import subprocess

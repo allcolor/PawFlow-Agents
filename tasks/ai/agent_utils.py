@@ -158,7 +158,7 @@ class AgentUtilsMixin:
         Returns the resolved service ID string, or "" if not configured.
         """
         svc_id = self.config.get(param_name, "")
-        # If not in config, try schema default (e.g. "${conv.summarizer_service}")
+        # If not in config, try schema default (e.g. "${summarizer_service}")
         if not svc_id:
             schema = {}
             if hasattr(self, 'get_parameter_schema'):

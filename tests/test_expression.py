@@ -27,38 +27,37 @@ class TestExpression(unittest.TestCase):
 
     def test_resolve_attribute(self):
         """${filename} resolu depuis les attributs."""
-        result = resolve_expression("${filename}", attributes={"filename": "test.txt"})
+        result = resolve_expression("${filename}", parameters={"filename": "test.txt"})
         self.assertEqual(result, "test.txt")
 
     def test_resolve_multiple(self):
         """Plusieurs ${} resolus dans la meme string."""
         result = resolve_expression(
             "File ${filename} is ${fileSize} bytes",
-            attributes={"filename": "test.txt", "fileSize": "100"}
+            parameters={"filename": "test.txt", "fileSize": "100"}
         )
         self.assertEqual(result, "File test.txt is 100 bytes")
 
     def test_unresolved_kept(self):
         """${unknown} sans attribut correspondant reste tel quel."""
-        result = resolve_expression("${unknown}", attributes={"filename": "test.txt"})
+        result = resolve_expression("${unknown}", parameters={"filename": "test.txt"})
         self.assertEqual(result, "${unknown}")
 
     def test_flow_parameters(self):
-        """${flow.parameters.env} resolu depuis les parametres."""
-        result = resolve_expression("${flow.parameters.env}", parameters={"env": "prod"})
+        """${key} resolu depuis les parametres flow."""
+        result = resolve_expression("${env}", parameters={"env": "prod"})
         self.assertEqual(result, "prod")
 
     def test_env_variable(self):
-        """${env.PATH} resolu depuis l'environnement."""
-        result = resolve_expression("${env.PATH}")
+        """${PATH:!important(env)} resolu depuis l'environnement."""
+        result = resolve_expression("${PATH:!important(env)}")
         self.assertEqual(result, os.environ.get("PATH", ""))
 
     def test_mixed(self):
         """Attributs + parametres flow resolus ensemble."""
         result = resolve_expression(
-            "${filename} in ${flow.parameters.dir}",
-            attributes={"filename": "test.txt"},
-            parameters={"dir": "/home/user"}
+            "${filename} in ${dir}",
+            parameters={"filename": "test.txt", "dir": "/home/user"}
         )
         self.assertEqual(result, "test.txt in /home/user")
 
@@ -97,7 +96,7 @@ class TestCascadeResolution(unittest.TestCase):
         (self._user_dir / "parameters.json").write_text(json.dumps({
             "shared_key": "from_user",
             "user_only": "user_value",
-            "indirect": "${global.cascade_target}",
+            "indirect": "${cascade_target}",
         }), encoding="utf-8")
 
     def tearDown(self):
@@ -109,131 +108,92 @@ class TestCascadeResolution(unittest.TestCase):
         if self._user_dir and self._user_dir.exists():
             shutil.rmtree(self._user_dir)
 
-    def test_user_found(self):
-        """${user.X} resolves from user params when present."""
-        result = resolve_expression("${user.shared_key}", owner="testuser")
+    def test_cascade_with_owner(self):
+        """${key} with owner resolves from user params first."""
+        result = resolve_expression("${shared_key}", owner="testuser")
         self.assertEqual(result, "from_user")
 
-    def test_user_cascades_to_global(self):
-        """${user.X} falls back to global when not in user params."""
-        result = resolve_expression("${user.only_global}", owner="testuser")
+    def test_cascade_to_global(self):
+        """${key} falls back to global when not in user params."""
+        result = resolve_expression("${only_global}", owner="testuser")
         self.assertEqual(result, "global_value")
 
-    def test_user_no_owner_cascades_to_global(self):
-        """${user.X} without owner still cascades to global."""
-        result = resolve_expression("${user.shared_key}")
+    def test_cascade_no_owner(self):
+        """${key} without owner cascades to global."""
+        result = resolve_expression("${shared_key}")
         self.assertEqual(result, "from_global")
 
-    def test_global_cascades(self):
-        """${global.X} cascades: flow → conv → user → global."""
-        # No user/flow context → resolves from global
-        result = resolve_expression("${global.only_global}")
-        self.assertEqual(result, "global_value")
-        # With user context → user wins over global
-        result = resolve_expression("${global.shared_key}", owner="testuser")
-        self.assertEqual(result, "from_user")
-
-    def test_global_important(self):
-        """${global.X:!important} resolves from global ONLY."""
-        result = resolve_expression("${global.shared_key:!important}", owner="testuser")
+    def test_important_global(self):
+        """${key:!important(global)} resolves from global ONLY."""
+        result = resolve_expression("${shared_key:!important(global)}", owner="testuser")
         self.assertEqual(result, "from_global")
 
-    def test_user_important(self):
-        """${user.X:!important} resolves from user ONLY."""
-        result = resolve_expression("${user.shared_key:!important}", owner="testuser")
+    def test_important_user(self):
+        """${key:!important(user)} resolves from user ONLY."""
+        result = resolve_expression("${shared_key:!important(user)}", owner="testuser")
         self.assertEqual(result, "from_user")
-        # Key only in global → unresolved with !important on user
-        result = resolve_expression("${user.only_global:!important}", owner="testuser")
-        self.assertEqual(result, "${user.only_global:!important}")
+        # Key only in global → unresolved with !important(user)
+        result = resolve_expression("${only_global:!important(user)}", owner="testuser")
+        self.assertEqual(result, "${only_global:!important(user)}")
 
     def test_flow_params_cascade_to_user(self):
-        """${flow.parameters.X} cascades to user when not in flow params."""
+        """${key} cascades to user when not in flow params."""
         result = resolve_expression(
-            "${flow.parameters.shared_key}",
+            "${shared_key}",
             parameters={},
             owner="testuser",
         )
         self.assertEqual(result, "from_user")
 
     def test_flow_params_cascade_to_global(self):
-        """${flow.parameters.X} cascades to global when not in flow or user."""
+        """${key} cascades to global when not in flow or user."""
         result = resolve_expression(
-            "${flow.parameters.only_global}",
+            "${only_global}",
             parameters={},
             owner="testuser",
         )
         self.assertEqual(result, "global_value")
 
     def test_flow_params_priority(self):
-        """${flow.parameters.X} prefers flow params over user/global."""
+        """${key} prefers flow params over user/global."""
         result = resolve_expression(
-            "${flow.parameters.shared_key}",
+            "${shared_key}",
             parameters={"shared_key": "from_flow"},
             owner="testuser",
         )
         self.assertEqual(result, "from_flow")
 
-    def test_flow_shorthand(self):
-        """${flow.X} works as alias for ${flow.parameters.X}."""
+    def test_important_flow(self):
+        """${key:!important(flow)} resolves from flow params ONLY."""
         result = resolve_expression(
-            "${flow.shared_key}",
+            "${shared_key:!important(flow)}",
             parameters={"shared_key": "from_flow"},
             owner="testuser",
         )
         self.assertEqual(result, "from_flow")
-
-    def test_flow_shorthand_cascades(self):
-        """${flow.X} cascades to user/global when not in flow params."""
+        # Key only in user → unresolved with !important(flow)
         result = resolve_expression(
-            "${flow.only_global}",
+            "${user_only:!important(flow)}",
             parameters={},
             owner="testuser",
         )
-        self.assertEqual(result, "global_value")
-
-    def test_all_prefixes_cascade_same(self):
-        """All prefixes cascade identically: flow → conv → user → global."""
-        # With flow param set, all prefixes find it
-        for prefix in ["flow.", "flow.parameters.", "conv.", "user.", "global."]:
-            result = resolve_expression(
-                f"${{{prefix}shared_key}}",
-                parameters={"shared_key": "from_flow"},
-                owner="testuser",
-            )
-            self.assertEqual(result, "from_flow",
-                             f"${{{prefix}shared_key}} should find flow param")
-
-    def test_flow_important(self):
-        """${flow.X:!important} resolves from flow params ONLY."""
-        result = resolve_expression(
-            "${flow.shared_key:!important}",
-            parameters={"shared_key": "from_flow"},
-            owner="testuser",
-        )
-        self.assertEqual(result, "from_flow")
-        # Key only in user → unresolved with !important on flow
-        result = resolve_expression(
-            "${flow.user_only:!important}",
-            parameters={},
-            owner="testuser",
-        )
-        self.assertEqual(result, "${flow.user_only:!important}")
+        self.assertEqual(result, "${user_only:!important(flow)}")
 
     def test_recursive_resolution(self):
         """Resolved value containing ${...} gets resolved again."""
-        result = resolve_expression("${user.indirect}", owner="testuser")
+        # user indirect = "${cascade_target}" → resolves to "final_value"
+        result = resolve_expression("${indirect}", owner="testuser")
         self.assertEqual(result, "final_value")
 
     def test_recursion_limit(self):
         """Recursion stops at depth 10 to prevent infinite loops."""
-        # ${user.indirect} → ${global.cascade_target} → final_value (depth 2)
-        # This should work fine, just testing the mechanism works
-        result = resolve_expression("${user.indirect}", owner="testuser")
+        # ${indirect} → ${cascade_target} → final_value (depth 2)
+        result = resolve_expression("${indirect}", owner="testuser")
         self.assertEqual(result, "final_value")
 
     def test_user_overrides_global(self):
         """When both user and global have the key, user wins."""
-        result = resolve_expression("${user.shared_key}", owner="testuser")
+        result = resolve_expression("${shared_key}", owner="testuser")
         self.assertEqual(result, "from_user")
 
 

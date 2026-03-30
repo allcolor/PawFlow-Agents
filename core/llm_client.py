@@ -86,6 +86,7 @@ class LLMMessage:
     msg_id: str = ""  # unique ID — auto-generated if empty
     display_only: bool = False  # True = visible in transcript, excluded from LLM context
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
+    is_error: bool = False  # True = LLM error message (displayed as error in UI)
 
     def __post_init__(self):
         if not self.msg_id:
@@ -158,63 +159,69 @@ class LLMClient(
     # Regex for parsing <tool_call>...</tool_call> tags from claude-code responses
     TOOL_CALL_RE = re.compile(r'<tool_call>\s*(\{.*?\})\s*</tool_call>', re.DOTALL)
 
-    def __init__(
-        self,
-        provider: str = "openai",
-        api_key: str = "",
-        base_url: str = "",
-        default_model: str = "",
-        timeout: int = 60,
-        max_retries: int = 2,
-        claude_binary: str = "claude",
-        claude_access_token: str = "",
-        claude_refresh_token: str = "",
-        claude_expires_at: float = 0.0,
-        gemini_binary: str = "gemini",
-        refresh_token: str = "",
-        token_expires_at: float = 0.0,
-        token_url: str = "",
-        fallback_model: str = "",
-    ):
+    def __init__(self, provider: str = "openai", config: Dict[str, Any] = None):
         self.provider = provider
-        self._api_key = api_key
-        self._base_url = base_url
-        self.default_model = default_model or self.DEFAULT_MODELS.get(provider, "")
-        self.timeout = timeout
-        self.max_retries = max_retries
-        self.claude_binary = claude_binary
-        self.claude_access_token = claude_access_token
-        self.claude_refresh_token = claude_refresh_token
-        self.claude_expires_at = claude_expires_at
-        self.gemini_binary = gemini_binary
-        self.refresh_token = refresh_token
-        self.token_expires_at = token_expires_at
-        self.token_url = token_url or "https://console.anthropic.com/v1/oauth/token"
-        self.fallback_model = fallback_model
-        self._token_lock = threading.Lock() if refresh_token else None
+        self._config_ref = config or {}
         # Token tracking callback — set by LLMConnectionService
-        self._on_tokens = None  # callable(tokens_in, tokens_out, model)
+        self._on_tokens = None
         # Abort signal — set from another thread to cancel the current LLM call
         self._abort = threading.Event()
-        # If created via from_config, _config_ref holds the lazy dict
-        self._config_ref = None  # set by from_config
+
+    def _cfg(self, key: str, default: Any = "") -> Any:
+        """Read a config value just-in-time (resolves expressions on every call)."""
+        return self._config_ref.get(key, default) if self._config_ref else default
 
     @property
     def api_key(self):
-        if self._config_ref:
-            return self._config_ref.get("api_key", "") or self._api_key
-        return self._api_key
-
-    @api_key.setter
-    def api_key(self, val):
-        self._api_key = val
+        return self._cfg("api_key", "")
 
     @property
     def base_url(self):
-        if self._config_ref:
-            v = self._config_ref.get("base_url", "")
-            return v or self.DEFAULT_URLS.get(self.provider, "")
-        return self._base_url or self.DEFAULT_URLS.get(self.provider, "")
+        return self._cfg("base_url", "") or self.DEFAULT_URLS.get(self.provider, "")
+
+    @property
+    def default_model(self):
+        return self._cfg("default_model", "") or self.DEFAULT_MODELS.get(self.provider, "")
+
+    @property
+    def timeout(self):
+        return int(self._cfg("timeout", 60))
+
+    @property
+    def max_retries(self):
+        return int(self._cfg("max_retries", 2))
+
+    @property
+    def claude_binary(self):
+        return self._cfg("claude_binary", "claude")
+
+    @property
+    def gemini_binary(self):
+        return self._cfg("gemini_binary", "gemini")
+
+    @property
+    def fallback_model(self):
+        return self._cfg("fallback_model", "")
+
+    @property
+    def containerize(self):
+        return bool(self._cfg("containerize", False))
+
+    @property
+    def docker_image(self):
+        return self._cfg("docker_image", "pawflow-claude-code:latest")
+
+    @property
+    def docker_cpu_limit(self):
+        return self._cfg("docker_cpu_limit", "2")
+
+    @property
+    def docker_memory_limit(self):
+        return self._cfg("docker_memory_limit", "2g")
+
+    @property
+    def reasoning_effort(self):
+        return self._cfg("reasoning_effort", "")
 
     @staticmethod
     def _parse_retry_after(error_text: str) -> float:
@@ -254,38 +261,9 @@ class LLMClient(
     def from_config(cls, config: Dict[str, Any]) -> "LLMClient":
         """Create from a config dict (may be LazyResolveDict).
 
-        The config ref is kept so api_key/base_url resolve lazily
-        on every access — changes to global params/secrets take
-        effect immediately.
+        All values resolve just-in-time via _cfg() on every access.
         """
-        client = cls(
-            provider=config.get("provider", "openai"),
-            api_key=config.get("api_key", ""),
-            base_url=config.get("base_url", ""),
-            default_model=config.get("default_model", ""),
-            timeout=int(config.get("timeout", 60)),
-            max_retries=int(config.get("max_retries", 2)),
-            claude_binary=config.get("claude_binary", "claude"),
-            claude_access_token=config.get("claude_access_token", ""),
-            claude_refresh_token=config.get("claude_refresh_token", ""),
-            claude_expires_at=float(config.get("claude_expires_at", 0)),
-            gemini_binary=config.get("gemini_binary", "gemini"),
-            refresh_token=config.get("refresh_token", ""),
-            token_expires_at=float(config.get("token_expires_at", 0)),
-            token_url=config.get("token_url", ""),
-            fallback_model=config.get("fallback_model", ""),
-        )
-        client._config_ref = config
-        # reasoning_effort for reasoning models (read from service config)
-        _re = config.get("reasoning_effort", "")
-        if _re:
-            client._reasoning_effort = _re
-        # Docker containerization (claude-code provider)
-        if config.get("containerize"):
-            client.containerize = True
-            client.docker_image = config.get("docker_image", "pawflow-claude-code:latest")
-            client.docker_cpu_limit = config.get("docker_cpu_limit", "2")
-            client.docker_memory_limit = config.get("docker_memory_limit", "2g")
+        client = cls(provider=config.get("provider", "openai"), config=config)
         return client
 
     def complete(

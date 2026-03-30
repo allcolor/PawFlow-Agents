@@ -99,6 +99,68 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "file_id": file_id}).encode())
         return [flowfile]
 
+    if action == "flow_runtime_graph":
+        instance_id = body.get("instance_id", "")
+        if not instance_id:
+            flowfile.set_content(json.dumps({"error": "Missing instance_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        try:
+            from gui.services.executor_registry import ExecutorRegistry
+            from gui.services.deployment_registry import DeploymentRegistry
+            dep_reg = DeploymentRegistry.get_instance()
+            inst = dep_reg.get(instance_id)
+            flow_name = inst.flow_name if inst else instance_id
+
+            executor = ExecutorRegistry.get_instance().get(instance_id)
+            is_running = False
+            nodes = {}
+            edges = []
+
+            if executor:
+                is_running = executor.is_running
+                for tid, st in executor.get_all_task_states().items():
+                    nodes[tid] = {
+                        "type": st.get("task_type", "?"),
+                        "state": st.get("state", "stopped"),
+                        "in": st.get("flowfiles_in", 0),
+                        "out": st.get("flowfiles_out", 0),
+                        "error_count": st.get("error_count", 0),
+                        "error": (st.get("error_message") or st.get("error", ""))[:80],
+                        "in_flight": st.get("in_flight", False),
+                    }
+                for qs in executor.get_queue_stats():
+                    edges.append({
+                        "source": qs["source"],
+                        "target": qs["target"],
+                        "relationship": qs.get("relationship", qs.get("type", "success")),
+                        "queue_size": qs.get("queue_size", 0),
+                        "max_queue": qs.get("max_queue_size", 10000),
+                        "backpressured": qs.get("backpressured", False),
+                    })
+            elif inst and inst.flow_path:
+                # Stopped flow — load structure from file
+                from pathlib import Path as _P
+                try:
+                    raw = json.loads(_P(inst.flow_path).read_text(encoding="utf-8"))
+                    for tid, tdef in raw.get("tasks", {}).items():
+                        nodes[tid] = {"type": tdef.get("type", "?"), "state": "stopped",
+                                      "in": 0, "out": 0, "error_count": 0, "error": "", "in_flight": False}
+                    for rel in raw.get("relations", []):
+                        edges.append({"source": rel["from"], "target": rel["to"],
+                                      "relationship": rel.get("type", "success"),
+                                      "queue_size": 0, "max_queue": 10000, "backpressured": False})
+                except Exception:
+                    pass
+
+            flowfile.set_content(json.dumps({
+                "flow_name": flow_name, "instance_id": instance_id,
+                "is_running": is_running, "nodes": nodes, "edges": edges,
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "list_conv_flows":
         # Show all flows belonging to this user (not conversation-scoped)
         try:

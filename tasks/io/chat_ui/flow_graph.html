@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Flow Graph</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body, #root { width: 100%; height: 100%; background: #0a0a0a; color: #ccc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; overflow: hidden; }
+  .react-flow__minimap { background: #141414 !important; border: 1px solid #333 !important; border-radius: 4px !important; }
+  .react-flow__controls { background: #1a1a2e !important; border: 1px solid #333 !important; border-radius: 6px !important; }
+  .react-flow__controls-button { background: #1a1a2e !important; border-bottom: 1px solid #333 !important; fill: #ccc !important; }
+  .react-flow__controls-button:hover { background: #2a2a4a !important; }
+  .react-flow__attribution { display: none !important; }
+  .react-flow__edge-text { font-size: 9px !important; }
+  .react-flow__edge-textbg { fill: #0a0a0a !important; fill-opacity: 0.85 !important; }
+
+  /* Status bar */
+  #statusBar { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: 10;
+    background: #141414; border: 1px solid #333; border-radius: 6px; padding: 4px 14px;
+    font-size: 12px; color: #888; display: flex; gap: 12px; align-items: center; }
+  #statusBar .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  #statusBar .dot.running { background: #28a745; animation: pulse 1.5s infinite; }
+  #statusBar .dot.stopped { background: #6c757d; }
+  #statusBar .dot.error { background: #dc3545; }
+  #statusBar .name { color: #e0e0e0; font-weight: 600; }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  @keyframes edgeFlow { to { stroke-dashoffset: -20; } }
+
+  /* Custom node */
+  .flow-node { background: #1a1a2e; border: 2px solid #333; border-radius: 8px; padding: 8px 12px;
+    min-width: 150px; font-size: 11px; text-align: center; color: #e0e0e0; transition: border-color 0.3s, background 0.3s; }
+  .flow-node.running { border-color: #28a745; }
+  .flow-node.error { border-color: #dc3545; }
+  .flow-node.disabled { border-color: #343a40; opacity: 0.5; }
+  .flow-node.in-flight { box-shadow: 0 0 8px rgba(40,167,69,0.4); }
+  .flow-node .node-type { font-size: 10px; color: #888; margin-bottom: 2px; }
+  .flow-node .node-id { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+  .flow-node .node-stats { font-size: 10px; color: #666; display: flex; justify-content: center; gap: 8px; }
+  .flow-node .node-stats span { display: flex; align-items: center; gap: 2px; }
+  .flow-node .node-error { font-size: 9px; color: #e94560; margin-top: 3px; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .flow-node .state-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: middle; }
+  .flow-node .state-dot.running { background: #28a745; }
+  .flow-node .state-dot.stopped { background: #6c757d; }
+  .flow-node .state-dot.error { background: #dc3545; }
+
+  /* Loading */
+  #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    background: #0a0a0a; z-index: 100; font-size: 14px; color: #888; }
+</style>
+</head>
+<body>
+<div id="loading">Loading flow graph...</div>
+<div id="root"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "@xyflow/react": "https://esm.sh/@xyflow/react@12.6.0?external=react,react-dom",
+    "@dagrejs/dagre": "https://esm.sh/@dagrejs/dagre@1.1.4"
+  }
+}
+</script>
+<link rel="stylesheet" href="https://esm.sh/@xyflow/react@12.6.0/dist/style.css">
+
+<script type="module">
+import React, { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { createRoot } from 'react-dom/client';
+import { jsx, jsxs, Fragment } from 'react/jsx-runtime';
+import { ReactFlow, MiniMap, Controls, Background, Handle, Position, useNodesState, useEdgesState } from '@xyflow/react';
+import dagre from '@dagrejs/dagre';
+
+const params = new URLSearchParams(window.location.search);
+const INSTANCE_ID = params.get('instance_id') || '';
+const API_BASE = window.location.origin;
+const POLL_INTERVAL = 3000;
+
+// ── Auth: read cookie ──
+function getAuthHeaders() {
+  const cookies = document.cookie.split(';').reduce((acc, c) => {
+    const [k, v] = c.trim().split('='); acc[k] = v; return acc;
+  }, {});
+  const h = { 'Content-Type': 'application/json' };
+  if (cookies.pawflow_token) h['Authorization'] = 'Bearer ' + cookies.pawflow_token;
+  return h;
+}
+
+// ── Dagre layout ──
+function layoutGraph(nodes, edges) {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({ rankdir: 'LR', nodesep: 60, ranksep: 120, marginx: 40, marginy: 40 });
+  nodes.forEach(n => g.setNode(n.id, { width: 170, height: 80 }));
+  edges.forEach(e => g.setEdge(e.source, e.target));
+  dagre.layout(g);
+  return nodes.map(n => {
+    const pos = g.node(n.id);
+    return { ...n, position: { x: pos.x - 85, y: pos.y - 40 } };
+  });
+}
+
+// ── State colors ──
+const STATE_COLORS = { running: '#28a745', stopped: '#6c757d', error: '#dc3545', disabled: '#343a40' };
+
+function queueColor(size, max) {
+  const pct = max > 0 ? (size / max) * 100 : 0;
+  if (pct >= 90) return '#dc3545';
+  if (pct >= 60) return '#fd7e14';
+  if (pct >= 30) return '#ffc107';
+  if (size > 0) return '#28a745';
+  return '#555';
+}
+
+// ── Custom Node ──
+const FlowNode = memo(({ data }) => {
+  const st = data.state || 'stopped';
+  const cls = ['flow-node', st, data.in_flight ? 'in-flight' : ''].filter(Boolean).join(' ');
+  return jsx('div', { className: cls, children: jsxs(Fragment, { children: [
+    jsx(Handle, { type: 'target', position: Position.Left, style: { background: '#555' } }),
+    jsx('div', { className: 'node-type', children: data.taskType }),
+    jsxs('div', { className: 'node-id', children: [
+      jsx('span', { className: 'state-dot ' + st }), data.label
+    ] }),
+    jsxs('div', { className: 'node-stats', children: [
+      jsxs('span', { children: ['\u2B07 ', data.stats_in] }),
+      jsxs('span', { children: ['\u2B06 ', data.stats_out] }),
+      data.error_count > 0 && jsxs('span', { style: { color: '#e94560' }, children: ['\u26A0 ', data.error_count] }),
+    ] }),
+    data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
+    jsx(Handle, { type: 'source', position: Position.Right, style: { background: '#555' } }),
+  ] }) });
+});
+FlowNode.displayName = 'FlowNode';
+
+const nodeTypes = { flowNode: FlowNode };
+
+// ── Convert API data to React Flow format ──
+function toRFNodes(apiNodes) {
+  return Object.entries(apiNodes).map(([id, n]) => ({
+    id,
+    type: 'flowNode',
+    position: { x: 0, y: 0 },
+    data: {
+      label: id, taskType: n.type, state: n.state,
+      stats_in: n.in, stats_out: n.out,
+      error_count: n.error_count, error: n.error,
+      in_flight: n.in_flight,
+    },
+  }));
+}
+
+function toRFEdges(apiEdges) {
+  return apiEdges.map((e, i) => {
+    const animated = e.queue_size > 0;
+    const color = queueColor(e.queue_size, e.max_queue);
+    let label = e.relationship;
+    if (e.queue_size > 0) label += ` (${e.queue_size})`;
+    if (e.backpressured) label = '\uD83D\uDD34 ' + label;
+    return {
+      id: `e-${i}-${e.source}-${e.target}`,
+      source: e.source, target: e.target,
+      animated,
+      label,
+      type: 'smoothstep',
+      style: { stroke: color, strokeWidth: animated ? 2.5 : 1.5 },
+      labelStyle: { fill: '#888', fontSize: 9 },
+      labelBgStyle: { fill: '#0a0a0a', fillOpacity: 0.85 },
+    };
+  });
+}
+
+// ── Main App ──
+function App() {
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [flowName, setFlowName] = useState('');
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState('');
+  const layoutDone = useRef(false);
+  const timerRef = useRef(null);
+
+  const fetchData = useCallback(async () => {
+    try {
+      const resp = await fetch(API_BASE + '/api/agent', {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'flow_runtime_graph', instance_id: INSTANCE_ID }),
+      });
+      const data = await resp.json();
+      if (data.error) { setError(data.error); return; }
+      setFlowName(data.flow_name || INSTANCE_ID);
+      setIsRunning(data.is_running);
+      setError('');
+
+      const rfNodes = toRFNodes(data.nodes);
+      const rfEdges = toRFEdges(data.edges);
+
+      if (!layoutDone.current && rfNodes.length > 0) {
+        const laid = layoutGraph(rfNodes, rfEdges);
+        setNodes(laid);
+        layoutDone.current = true;
+      } else {
+        // Update data in-place, keep positions
+        setNodes(prev => {
+          const posMap = {};
+          prev.forEach(n => { posMap[n.id] = n.position; });
+          // New nodes that weren't in prev need layout
+          const newIds = rfNodes.filter(n => !posMap[n.id]);
+          if (newIds.length > 0) {
+            // Re-layout everything
+            const laid = layoutGraph(rfNodes, rfEdges);
+            // Keep existing positions for known nodes
+            return laid.map(n => posMap[n.id] ? { ...n, position: posMap[n.id] } : n);
+          }
+          return rfNodes.map(n => ({ ...n, position: posMap[n.id] || { x: 0, y: 0 } }));
+        });
+      }
+      setEdges(rfEdges);
+    } catch (e) {
+      setError('Fetch failed: ' + e.message);
+    }
+  }, [setNodes, setEdges]);
+
+  useEffect(() => {
+    if (!INSTANCE_ID) { setError('No instance_id parameter'); return; }
+    fetchData();
+    timerRef.current = setInterval(fetchData, POLL_INTERVAL);
+    return () => clearInterval(timerRef.current);
+  }, [fetchData]);
+
+  // Hide loading
+  useEffect(() => {
+    const el = document.getElementById('loading');
+    if (el && (nodes.length > 0 || error)) el.style.display = 'none';
+  }, [nodes, error]);
+
+  const statusClass = isRunning ? 'running' : 'stopped';
+
+  return jsxs(Fragment, { children: [
+    jsxs('div', { id: 'statusBar', children: [
+      jsx('span', { className: 'dot ' + statusClass }),
+      jsx('span', { className: 'name', children: flowName }),
+      jsx('span', { children: isRunning ? 'Running' : 'Stopped' }),
+      error && jsx('span', { style: { color: '#e94560' }, children: error }),
+    ] }),
+    jsx(ReactFlow, {
+      nodes, edges, onNodesChange, onEdgesChange,
+      nodeTypes,
+      fitView: true,
+      proOptions: { hideAttribution: true },
+      style: { background: '#0a0a0a' },
+      children: jsxs(Fragment, { children: [
+        jsx(Background, { color: '#1a1a1a', gap: 20, size: 1 }),
+        jsx(MiniMap, {
+          nodeColor: n => STATE_COLORS[n.data?.state] || '#555',
+          maskColor: 'rgba(0,0,0,0.7)',
+          style: { background: '#141414' },
+        }),
+        jsx(Controls, { showInteractive: false }),
+      ] }),
+    }),
+  ] });
+}
+
+createRoot(document.getElementById('root')).render(jsx(App, {}));
+</script>
+</body>
+</html>

@@ -22,6 +22,7 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
     item('\u25B6 Start...', () => _showFlowStartDialog(instanceId));
   }
   item('\u270F Edit params...', () => _showFlowStartDialog(instanceId, true));
+  item('\ud83d\udcc8 View graph', () => addBrowserTab(instanceId, '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId)));
   if (scope === 'conversation') {
     item('\u2B06 Promote to user', () => {
       fetch(API, { method: 'POST', headers: getAuthHeaders(),

@@ -646,13 +646,13 @@ class TestLoadAgentToolsAllowedRoles(unittest.TestCase):
             },
             "scraper": {
                 "type": "builtin",
-                "handler": "scrape_url",
+                "handler": "fetch",
             },
         }
         registry = load_agent_tools(config)
         # Builtins are registered under their handler name
         calc = registry.get("execute_script")
-        scraper = registry.get("scrape_url")
+        scraper = registry.get("fetch")
 
         assert calc is not None
         assert getattr(calc, "allowed_roles", None) == ["admin", "editor"]

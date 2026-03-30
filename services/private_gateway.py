@@ -171,12 +171,12 @@ _CHALLENGE_HTML = """<!DOCTYPE html>
     background: #141414; border: 1px solid #222; border-radius: 8px;
     padding: 2rem; width: 360px;
   }
-  input[type=text] {
+  input[type=password] {
     width: 100%%; padding: .6rem .8rem; font-size: .95rem;
     background: #1a1a1a; border: 1px solid #333; border-radius: 4px;
     color: #eee; margin-bottom: 1rem; outline: none;
   }
-  input[type=text]:focus { border-color: #555; }
+  input[type=password]:focus { border-color: #555; }
   button {
     width: 100%%; padding: .6rem; font-size: .95rem;
     background: #2563eb; color: #fff; border: none; border-radius: 4px;
@@ -191,7 +191,7 @@ _CHALLENGE_HTML = """<!DOCTYPE html>
 <body>
 <div class="box">
   <form method="POST" action="/_gateway" id="f">
-    <input type="text" name="secret" id="s" placeholder="Access key" autocomplete="off" autofocus>
+    <input type="password" name="secret" id="s" placeholder="Access key" autocomplete="off" autofocus>
     <div class="err" id="e">%(error)s</div>
     <button type="submit" id="b">Enter</button>
   </form>
@@ -230,6 +230,22 @@ def check_request(handler) -> bool:
     Returns True if the request was handled (blocked/challenged).
     Returns False if the request should proceed normally.
     """
+    try:
+        return _check_request_inner(handler)
+    except Exception as e:
+        logger.error("Private gateway error: %s", e, exc_info=True)
+        try:
+            handler.send_response(500)
+            handler.send_header("Content-Type", "text/plain")
+            handler.end_headers()
+            handler.wfile.write(b"Internal Server Error")
+            handler.wfile.flush()
+        except Exception:
+            pass
+        return True
+
+
+def _check_request_inner(handler) -> bool:
     if not is_enabled():
         return False
 
@@ -240,11 +256,7 @@ def check_request(handler) -> bool:
         return False
 
     if is_banned(ip):
-        handler.send_response(403)
-        handler.send_header("Content-Type", "text/plain")
-        handler.send_header("Connection", "close")
-        handler.end_headers()
-        handler.wfile.write(b"Forbidden")
+        _send_page(handler, 403, b"Forbidden", "text/plain")
         return True
 
     cookie_header = handler.headers.get("Cookie", "")
@@ -262,13 +274,18 @@ def check_request(handler) -> bool:
 
     cooldown = get_cooldown_remaining(ip)
     page = render_challenge(cooldown=cooldown)
-    handler.send_response(200)
-    handler.send_header("Content-Type", "text/html; charset=utf-8")
-    handler.send_header("Content-Length", str(len(page)))
+    _send_page(handler, 200, page, "text/html; charset=utf-8")
+    return True
+
+
+def _send_page(handler, status, body, content_type):
+    handler.send_response(status)
+    handler.send_header("Content-Type", content_type)
+    handler.send_header("Content-Length", str(len(body)))
     handler.send_header("Cache-Control", "no-store")
     handler.end_headers()
-    handler.wfile.write(page)
-    return True
+    handler.wfile.write(body)
+    handler.wfile.flush()
 
 
 def _handle_submit(handler, ip, body):
@@ -280,33 +297,20 @@ def _handle_submit(handler, ip, body):
     if cooldown > 0:
         record_failure(ip)
         page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip))
-        handler.send_response(429)
-        handler.send_header("Content-Type", "text/html; charset=utf-8")
-        handler.send_header("Content-Length", str(len(page)))
-        handler.send_header("Cache-Control", "no-store")
-        handler.end_headers()
-        handler.wfile.write(page)
+        _send_page(handler, 429, page, "text/html; charset=utf-8")
         return True
 
     if not submitted or not verify_secret(submitted):
         record_failure(ip)
         if is_banned(ip):
-            handler.send_response(403)
-            handler.send_header("Content-Type", "text/plain")
-            handler.send_header("Connection", "close")
-            handler.end_headers()
-            handler.wfile.write(b"Forbidden")
+            _send_page(handler, 403, b"Forbidden", "text/plain")
             return True
         cooldown = get_cooldown_remaining(ip)
         page = render_challenge(error="Invalid key.", cooldown=cooldown)
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/html; charset=utf-8")
-        handler.send_header("Content-Length", str(len(page)))
-        handler.send_header("Cache-Control", "no-store")
-        handler.end_headers()
-        handler.wfile.write(page)
+        _send_page(handler, 200, page, "text/html; charset=utf-8")
         return True
 
+    # Success — set cookie and redirect to /
     record_success(ip)
     cookie_val = _make_cookie_value(ip)
     cookie = f"{_COOKIE_NAME}={cookie_val}; Path=/; Max-Age={_COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax"
@@ -314,5 +318,7 @@ def _handle_submit(handler, ip, body):
     handler.send_header("Location", "/")
     handler.send_header("Set-Cookie", cookie)
     handler.send_header("Cache-Control", "no-store")
+    handler.send_header("Content-Length", "0")
     handler.end_headers()
+    handler.wfile.flush()
     return True

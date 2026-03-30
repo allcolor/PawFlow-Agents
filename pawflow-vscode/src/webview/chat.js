@@ -355,9 +355,9 @@ var _TOOL_DISPLAY = {
   delete:'Delete',mkdir:'Mkdir',stat:'Stat',exists:'Exists',list_dir:'ListDir',
   batch_edit:'BatchEdit',apply_patch:'ApplyPatch',find_replace:'FindReplace',
   notebook_edit:'NotebookEdit',copy:'Copy',execute_script:'Script',
-  web_search:'WebSearch',web_fetch:'WebFetch',scrape_url:'Scrape',
+  web_search:'WebSearch',fetch:'Fetch',
   generate_image:'ImageGen',remember:'Remember',recall:'Recall',
-  spawn_agents:'SpawnAgents',show_file:'ShowFile',get_tool_schema:'GetToolSchema',
+  delegate:'Delegate',show_file:'ShowFile',get_tool_schema:'GetToolSchema',
 };
 
 function _toolSummary(name, args) {
@@ -368,7 +368,7 @@ function _toolSummary(name, args) {
   else if (name === 'glob') s = args.pattern || '';
   else if (name === 'grep') s = (args.pattern || '') + (args.path ? ', ' + args.path : '');
   else if (name === 'web_search') s = args.query || '';
-  else if (name === 'web_fetch' || name === 'scrape_url') s = args.url || '';
+  else if (name === 'fetch') s = args.url || '';
   else s = JSON.stringify(args || {}).substring(0, 100);
   if (s.length > 120) s = s.substring(0, 120) + '\u2026';
   return display + '(' + s + ')';

@@ -29,11 +29,10 @@ class SeeHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "View an image, video, or audio file. "
-            "Images are sent as visual content (the LLM sees them). "
-            "Videos: key frames are extracted and sent as images. "
-            "Audio: transcribed to text. "
-            "Use source parameter to specify the filesystem service."
+            "Analyze an image, video, or audio file — the content is sent to YOU (the LLM) for analysis. "
+            "Images: you see them. Videos: key frames extracted. Audio: transcribed to text. "
+            "Use this when YOU need to see/understand the file. "
+            "To show a file to the USER in their chat viewer, use 'show_file' instead."
         )
 
     @property

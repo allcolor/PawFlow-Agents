@@ -25,15 +25,14 @@ class CreateFileHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "create_file"
+        return "share_file"
 
     @property
     def description(self) -> str:
         return (
-            "Create a file and return its location. "
-            "By default writes to the server FileStore (downloadable URL). "
-            "Set destination to a relay service name to write directly "
-            "to the user's machine."
+            "Upload a file to the server and return a download URL for the user. "
+            "Use this ONLY to share files with the user via chat (images, PDFs, exports). "
+            "Do NOT use this to create or modify code/workspace files — use 'write' instead."
         )
 
     @property

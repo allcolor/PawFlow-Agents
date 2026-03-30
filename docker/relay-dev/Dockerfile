@@ -9,27 +9,68 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates gnupg2 software-properties-common \
     build-essential make cmake pkg-config autoconf automake libtool \
     jq sqlite3 libsqlite3-dev openssh-client unzip zip \
+    ripgrep fd-find bat tree htop strace ltrace \
+    file less man-db \
+    libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
+    libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Python ──────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip python3-venv python3-dev \
     && ln -sf /usr/bin/python3 /usr/bin/python \
-    && pip3 install --break-system-packages --no-cache-dir \
+    && apt-get remove -y python3-blinker || true \
+    && pip3 install --break-system-packages --no-cache-dir --ignore-installed \
        pip setuptools wheel pipx poetry \
+       pytest pytest-cov pytest-asyncio pytest-mock pytest-xdist \
+       hypothesis tox nox \
+       mypy ruff black isort bandit pylint flake8 \
+       pyright types-requests types-pyyaml \
+       requests httpx aiohttp websockets grpcio grpcio-tools \
+       pydantic fastapi uvicorn flask django starlette \
+       sqlalchemy alembic psycopg2-binary pymongo redis asyncpg \
+       pillow numpy pandas matplotlib scipy scikit-learn \
+       pyyaml toml python-dotenv msgpack orjson \
+       beautifulsoup4 lxml html5lib cssselect \
+       cryptography paramiko bcrypt pyjwt \
+       click typer rich textual prompt-toolkit \
+       celery dramatiq \
+       docker boto3 google-cloud-storage azure-storage-blob \
+       jinja2 mako \
+       python-dateutil arrow pendulum \
+       pydantic-settings loguru structlog \
+       tenacity backoff \
+       tqdm tabulate colorama \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js / TypeScript ────────────────────────────────────────────
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g typescript ts-node tsx pnpm yarn \
+    && npm install -g \
+       typescript ts-node tsx pnpm yarn \
+       # Testing
+       jest vitest mocha chai @types/jest @types/mocha \
+       # Linting / formatting
+       eslint prettier @typescript-eslint/parser @typescript-eslint/eslint-plugin \
+       # Build tools
+       esbuild rollup webpack webpack-cli vite \
+       # Frameworks
+       express @nestjs/cli next create-react-app \
+       # Utilities
+       nodemon concurrently pm2 http-server \
+       zod ajv \
+       # Database
+       prisma drizzle-kit knex typeorm \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Rust ────────────────────────────────────────────────────────────
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile minimal \
+    sh -s -- -y --default-toolchain stable --profile default \
     && echo 'source $HOME/.cargo/env' >> /etc/profile.d/cargo.sh
 ENV PATH="/root/.cargo/bin:${PATH}"
+# Rust dev tools
+RUN cargo install cargo-watch cargo-edit cargo-expand \
+    && rustup component add clippy rustfmt rust-analyzer
 
 # ── Go ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
@@ -37,8 +78,13 @@ RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
 ENV PATH="/usr/local/go/bin:${PATH}"
 ENV GOPATH="/root/go"
 ENV PATH="${GOPATH}/bin:${PATH}"
+# Go dev tools
+RUN go install golang.org/x/tools/gopls@latest \
+    && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest \
+    && go install gotest.tools/gotestsum@latest \
+    && go install github.com/air-verse/air@latest
 
-# ── Java (OpenJDK) + Kotlin + Scala ─────────────────────────────────
+# ── Java (OpenJDK) + Kotlin ─────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     openjdk-21-jdk-headless maven gradle \
     && rm -rf /var/lib/apt/lists/*
@@ -54,27 +100,35 @@ ENV DOTNET_ROOT="/usr/share/dotnet"
 
 # ── Ruby ────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ruby ruby-dev \
+    ruby ruby-dev ruby-bundler \
+    && gem install rspec rubocop solargraph rake \
     && rm -rf /var/lib/apt/lists/*
 
 # ── PHP ─────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    php-cli php-mbstring php-xml php-curl php-zip \
+    php-cli php-mbstring php-xml php-curl php-zip php-sqlite3 php-mysql php-pgsql \
+    && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Perl ────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    perl cpanminus \
+    perl cpanminus libtest-simple-perl \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Lua ─────────────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     lua5.4 liblua5.4-dev luarocks \
+    && luarocks install busted \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Zig ─────────────────────────────────────────────────────────────
 RUN curl -fsSL https://ziglang.org/download/0.13.0/zig-linux-x86_64-0.13.0.tar.xz | \
     tar -C /opt -xJf - && ln -sf /opt/zig-linux-x86_64-0.13.0/zig /usr/local/bin/zig
+
+# ── Database CLIs ───────────────────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    postgresql-client mysql-client redis-tools \
+    && rm -rf /var/lib/apt/lists/*
 
 # ── code-server (VS Code in browser) ──────────────────────────────
 RUN curl -fsSL https://code-server.dev/install.sh | sh

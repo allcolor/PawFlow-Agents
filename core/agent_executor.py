@@ -1,7 +1,7 @@
 """SubAgentExecutor — Lightweight agent loop for sub-agent and skill execution.
 
 Used by the main AgentLoopTask to:
-- Spawn sub-agents in parallel (spawn_agents tool)
+- Spawn sub-agents in parallel (delegate tool)
 - Execute skills as single-shot LLM calls (use_skill tool)
 
 Each sub-agent runs its own tool-use loop with:

@@ -568,7 +568,7 @@ class AgentPollerMixin:
                 "Respond as if you're still in the conversation, not arriving from somewhere else. "
                 "No preamble like 'a thought occurred to me' or 'while thinking about it'. "
                 "Just say what you have to say, naturally.\n"
-                "You can also engage other agents via spawn_agents if you want their perspective.\n"
+                "You can also engage other agents via delegate if you want their perspective.\n"
                 "Do NOT respond with [NO_PENDING_WORK] — always contribute something."
             )
 

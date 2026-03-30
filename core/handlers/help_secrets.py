@@ -247,7 +247,7 @@ Tools that read/write files support `source` and `destination` params:
 - `"<service>"`: shorthand for `"fs:<service>"`
 
 Examples (use the actual filesystem service name from the conversation context):
-- `create_file(filename="report.csv", content="...", destination="<fs_service_name>")` - write directly to user's disk
+- `share_file(filename="report.csv", content="...", destination="<fs_service_name>")` - write directly to user's disk
 - `read_file(path="src/main.py", source="<fs_service_name>")` - read from user's filesystem
 - `generate_image(prompt="...", destination="<fs_service_name>", path="assets/hero.png")` - render directly to filesystem
 - `execute_script(code="...", destination="<fs_service_name>")` - execute on user's machine via relay
@@ -352,12 +352,12 @@ Available tool tasks (use `pawflow_help topic='tasks'` for full list):
 - `tool.generate_image` — Generate an image via the configured image service
 - `tool.generate_video` — Generate a video
 - `tool.notify_user` — Send a notification to a user/conversation
-- `tool.create_file` — Create a file in the FileStore
+- `tool.share_file` — Create a file in the FileStore
 - `tool.remember` / `tool.recall` — Memory store/retrieve
-- `tool.scrape_url` — Scrape a web page
+- `tool.fetch` — Fetch a web page
 - `tool.web_search` — Web search
 - `tool.execute_script` — Run a sandboxed Python script
-- `tool.spawn_agents` — Spawn sub-agents
+- `tool.delegate` — Delegate to sub-agents
 - `tool.assign_task` — Assign a task to an agent
 - `tool.manage_flow` — Create/deploy/manage flows
 
@@ -571,10 +571,10 @@ Model Context Protocol server connections.
 CRUD operations: create, update, delete, list, get, activate, deactivate
 Activation scopes a resource to the current conversation.
 
-### spawn_agents tool
+### delegate tool
 Delegate work to sub-agents in parallel:
 ```
-spawn_agents(tasks=[
+delegate(tasks=[
   {"agent": "analyst", "message": "Analyze this data"},
   {"agent": "writer", "message": "Write a report on..."}
 ], wait=true)

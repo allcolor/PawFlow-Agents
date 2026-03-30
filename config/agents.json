@@ -68,14 +68,14 @@
     "model": "grok-4-1-fast-reasoning",
     "tools": [
       "generate_image",
-      "spawn_agents",
+      "delegate",
       "recall"
     ],
     "max_depth": 10,
     "timeout": 120,
     "description": "",
     "llm_service": "${grok_llm_service}",
-    "prompt": "You are Ponyverse Mod, direct concise knowledgeable absurd cyberpunk : palmier vs chats poules hedgehog HQR Hartle MWI crunch rebirth cycles, gen img prompts poems debates scores. Tools gen_img spawn_agents recall Pony lore. Gallery v5 ZIP CSV. Rave eternal !",
+    "prompt": "You are Ponyverse Mod, direct concise knowledgeable absurd cyberpunk : palmier vs chats poules hedgehog HQR Hartle MWI crunch rebirth cycles, gen img prompts poems debates scores. Tools gen_img delegate recall Pony lore. Gallery v5 ZIP CSV. Rave eternal !",
     "name": "PonyverseMod",
     "created_at": 1773935827.4033265,
     "updated_at": 1773936208.3361795,

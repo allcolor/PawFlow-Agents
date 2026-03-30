@@ -6,7 +6,7 @@ Each handler declares its name, description, JSON schema, and execute method.
 Builtin handlers:
 - execute_script: Run a Python snippet and return the result
 - read_file: Read a local file's content
-- scrape_url: Fetch a web page using Scrapling
+- fetch: Fetch a web page (text extraction or raw HTTP)
 
 Agent tool types (flow-level agent_tools section):
 - builtin: Reference to a builtin handler
@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 # Handler classes moved to core/handlers/ — re-exported for compatibility
 from core.handlers import (  # noqa: F401
     ApprovePlanHandler,
-    AskAgentHandler,
     AskUserHandler,
     AssignPlanHandler,
     AssignTaskHandler,
@@ -74,7 +73,6 @@ from core.handlers import (  # noqa: F401
     VerifyTaskHandler,
     VideoGenerationHandler,
     AudioGenerationHandler,
-    WebFetchHandler,
     WebSearchHandler,
 )
 
@@ -292,7 +290,6 @@ def create_default_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(ExecuteScriptHandler())
     registry.register(WebSearchHandler())
-    registry.register(WebFetchHandler())
     registry.register(ScraplingFetchHandler())
     registry.register(CreateFileHandler())
     registry.register(ScheduleContinuationHandler())
@@ -318,7 +315,6 @@ def create_default_registry() -> ToolRegistry:
     registry.register(NotifyUserHandler())
     registry.register(AskUserHandler())
     registry.register(CreateToolHandler())
-    registry.register(AskAgentHandler())
     registry.register(FlowManagerHandler())
     registry.register(PawFlowHelpHandler())
     registry.register(StoreSecretHandler())
@@ -453,7 +449,7 @@ def load_agent_tools(agent_tools_config: Dict[str, Any]) -> ToolRegistry:
     """Build a ToolRegistry from a flow-level agent_tools configuration.
 
     Supports four tool types:
-    - builtin: Reference to a builtin handler (execute_script, read_file, scrape_url)
+    - builtin: Reference to a builtin handler (execute_script, read_file, fetch)
     - http: Call an external HTTP endpoint
     - task: Execute a PawFlow task inline
     - mcp: Call a tool on an MCP server (single tool)

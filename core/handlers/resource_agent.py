@@ -338,16 +338,15 @@ class SpawnAgentsHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "spawn_agents"
+        return "delegate"
 
     @property
     def description(self) -> str:
         base = (
-            "Send a message to one or more existing agents. "
+            "Delegate tasks to one or more agents. "
             "Each agent runs independently with its own LLM service and tools. "
-            "Use 'wait: true' (default) to get results immediately, "
-            "or 'wait: false' to run in background and check later "
-            "with get_agent_results."
+            "Waits for all results by default (wait=true). "
+            "Set wait=false to run in background."
         )
         if self._available_agents:
             base += (
@@ -389,7 +388,7 @@ class SpawnAgentsHandler(ToolHandler):
                 },
                 "wait": {
                     "type": "boolean",
-                    "description": "Wait for all results (default true)",
+                    "description": "Wait for all results (default: true).",
                 },
             },
             "required": ["tasks"],
@@ -555,7 +554,7 @@ class GetAgentResultsHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Get results from agents spawned with wait=false. "
-            "Pass the task_ids returned by spawn_agents."
+            "Pass the task_ids returned by delegate."
         )
 
     @property
@@ -573,7 +572,7 @@ class GetAgentResultsHandler(ToolHandler):
         }
 
     def execute(self, arguments: Dict[str, Any]) -> str:
-        return "Error: get_agent_results is not supported. Use spawn_agents with wait=true (default)."
+        return "Error: get_agent_results is not supported. Use delegate with wait=true (default)."
 
 
 class UseSkillHandler(ToolHandler):
@@ -673,11 +672,9 @@ class ShowFileHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Display a file in the chat viewer panel. Supports images, "
-            "PDFs, text, and code files. Works with FileStore files "
-            "(from create_file, generate_image, execute_script) AND "
-            "filesystem service files (pass path + service). "
-            "Pass file_id, filename, or path+service."
+            "Display a file to the USER in their chat viewer panel. "
+            "Use this to show results to the user (images, PDFs, code). "
+            "If YOU need to analyze a file yourself, use 'see' or 'read' instead."
         )
 
     @property

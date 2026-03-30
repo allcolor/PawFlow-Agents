@@ -124,12 +124,12 @@ class AgentToolExecMixin:
                 if isinstance(result, str) and result.startswith("__ASK_USER__:"):
                     # Strip the prefix — the question text becomes the tool result
                     result = result[len("__ASK_USER__:"):]
-                # Hint: prefer write() over create_file when FS is available
-                if tc.name == "create_file":
+                # Hint: prefer write() over share_file when FS is available
+                if tc.name == "share_file":
                     from core.handlers._fs_base import BaseFsHandler as _BFH
                     for _h in registry.list_tools():
                         if isinstance(_h, _BFH) and _h._find_service():
-                            result += "\n[Hint: a filesystem service is available — use write(path=..., content=...) to write directly to the user's machine instead of create_file]"
+                            result += "\n[Hint: a filesystem service is available — use write(path=..., content=...) to write directly to the user's machine instead of share_file]"
                             break
                 # Auto-suggest related tests after file modifications
                 if tc.name in ("write", "edit"):

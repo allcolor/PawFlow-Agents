@@ -280,7 +280,7 @@ class TestCreateFileHandler(unittest.TestCase):
 
     def test_handler_in_default_registry(self):
         registry = create_default_registry()
-        assert registry.get("create_file") is not None
+        assert registry.get("share_file") is not None
 
     def test_create_file(self):
         h = CreateFileHandler()
@@ -538,7 +538,7 @@ class TestAgentFlowStructure(unittest.TestCase):
 
         assert data["id"] == "pawflow-agent"
         assert "agent_tools" in data
-        assert "create_file" in data["agent_tools"]
+        assert "share_file" in data["agent_tools"]
 
         # Check routes
         routes = data["tasks"]["http_in"]["parameters"]["routes"]

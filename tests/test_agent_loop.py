@@ -6,7 +6,7 @@ Tests cover:
 - LLMMessage extended fields (tool_calls, tool_call_id)
 - LLMResponse.tool_calls field
 - ToolRegistry (register, execute, list)
-- Builtin tool handlers (execute_script, scrape_url, read_file)
+- Builtin tool handlers (execute_script, fetch, read_file)
 - AgentLoopTask (loop logic, max iterations, conversation persistence)
 - Agent flow template
 - i18n keys
@@ -311,13 +311,13 @@ class TestToolRegistry(unittest.TestCase):
         tools = registry.list_tools()
         names = [t.name for t in tools]
         assert "execute_script" in names
-        assert "scrape_url" in names
+        assert "fetch" in names
         assert "read_file" in names
 
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 45  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests + web_fetch
+        assert len(defs) == 43  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 45  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + ask_agent + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests + web_fetch
+        assert len(registry.list_tools()) == 43  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})
@@ -972,11 +972,11 @@ class TestLoadAgentTools(unittest.TestCase):
     def test_load_builtin(self):
         config = {
             "calc": {"type": "builtin", "handler": "execute_script"},
-            "scraper": {"type": "builtin", "handler": "scrape_url"},
+            "scraper": {"type": "builtin", "handler": "fetch"},
         }
         registry = load_agent_tools(config)
         assert registry.get("execute_script") is not None  # keeps original name
-        assert registry.get("scrape_url") is not None
+        assert registry.get("fetch") is not None
 
     def test_load_http_tool(self):
         config = {
@@ -1155,7 +1155,7 @@ class TestAgentLoopWithAgentTools(unittest.TestCase):
         registry = task.get_tool_registry()
         names = [h.name for h in registry.list_tools()]
         assert "execute_script" in names
-        assert "scrape_url" in names
+        assert "fetch" in names
         assert "read_file" in names
 
 

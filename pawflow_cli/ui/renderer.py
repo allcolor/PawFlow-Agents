@@ -54,9 +54,9 @@ _TOOL_DISPLAY_NAMES = {
     "batch_edit": "BatchEdit", "apply_patch": "ApplyPatch",
     "find_replace": "FindReplace", "notebook_edit": "NotebookEdit",
     "copy": "Copy", "execute_script": "Script",
-    "web_search": "WebSearch", "web_fetch": "WebFetch", "scrape_url": "Scrape",
+    "web_search": "WebSearch", "fetch": "Fetch",
     "generate_image": "ImageGen", "remember": "Remember", "recall": "Recall",
-    "spawn_agents": "SpawnAgents", "ask_agent": "AskAgent",
+    "delegate": "Delegate",
     "show_file": "ShowFile", "get_tool_schema": "GetToolSchema",
 }
 
@@ -75,7 +75,7 @@ def _tool_summary(tool: str, args: dict) -> str:
         s = (args.get("pattern") or "") + (", " + args["path"] if args.get("path") else "")
     elif tool in ("web_search",):
         s = args.get("query") or ""
-    elif tool in ("web_fetch", "scrape_url"):
+    elif tool in ("fetch",):
         s = args.get("url") or ""
     else:
         parts = []

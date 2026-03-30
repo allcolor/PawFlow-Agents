@@ -37,7 +37,7 @@ class AgentToolConfigMixin:
     ) -> None:
         """Configure tool handlers with runtime settings (base_url, API keys, TTL)."""
         from core.tool_registry import (
-            AskAgentHandler, AskUserHandler, BrowserActionHandler,
+            AskUserHandler, BrowserActionHandler,
             CreateFileHandler,
             ApprovePlanHandler,
             AssignPlanHandler,
@@ -178,15 +178,6 @@ class AgentToolConfigMixin:
             elif isinstance(h, ListSecretsHandler):
                 if user_id:
                     h.set_user_id(user_id)
-            elif isinstance(h, AskAgentHandler):
-                if conversation_id:
-                    h.set_conversation_id(conversation_id)
-                if user_id:
-                    h.set_user_id(user_id)
-                if llm_client:
-                    h.set_llm_client(llm_client, llm_model)
-                h.set_client_resolver(
-                    lambda svc, uid: self._resolve_llm_service(svc, uid))
             elif isinstance(h, ManageResourceHandler):
                 h.set_user_id(user_id)
                 h.set_conversation_id(conversation_id)

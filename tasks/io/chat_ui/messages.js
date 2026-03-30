@@ -5,10 +5,10 @@ const _TOOL_DISPLAY = {
   batch_edit: 'BatchEdit', apply_patch: 'ApplyPatch',
   find_replace: 'FindReplace', notebook_edit: 'NotebookEdit',
   copy: 'Copy', execute_script: 'Script',
-  web_search: 'WebSearch', web_fetch: 'WebFetch', scrape_url: 'Scrape',
+  web_search: 'WebSearch', fetch: 'Fetch',
   generate_image: 'ImageGen', generate_video: 'VideoGen',
   remember: 'Remember', recall: 'Recall', semantic_recall: 'SemanticRecall',
-  forget: 'Forget', spawn_agents: 'SpawnAgents', ask_agent: 'AskAgent',
+  forget: 'Forget', delegate: 'Delegate',
   show_file: 'ShowFile', compact_result: 'CompactResult',
   get_tool_schema: 'GetToolSchema',
 };

@@ -25,11 +25,11 @@ def _synthesize_narration(tool_calls: List[LLMToolCall]) -> str:
     _VERBS = {
         "generate_image": ("Generating", "image"),
         "web_search": ("Searching the web", None),
-        "scrape_url": ("Scraping", "page"),
+        "fetch": ("Fetching", "page"),
         "execute_script": ("Running", "script"),
-        "create_file": ("Creating", "file"),
+        "share_file": ("Sharing", "file"),
         "schedule_continuation": ("Scheduling continuation", None),
-        "spawn_agents": ("Spawning", "agent"),
+        "delegate": ("Delegating to", "agent"),
         # Split filesystem tools — tool name IS the action
         "read": ("Reading", "file"),
         "write": ("Writing", "file"),

@@ -282,124 +282,6 @@ class WebSearchHandler(ToolHandler):
             return f"Error searching: {e}"
 
 
-class WebFetchHandler(ToolHandler):
-    """Fetch raw content from a URL (text or binary)."""
-
-    @property
-    def name(self) -> str:
-        return "web_fetch"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Fetch the raw content of a URL. Returns text for HTML/JSON/text content, "
-            "or base64 for binary content. Use for downloading files, reading APIs, "
-            "or fetching web page source."
-        )
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "The URL to fetch",
-                },
-                "method": {
-                    "type": "string",
-                    "description": "HTTP method (default: GET)",
-                },
-                "headers": {
-                    "type": "object",
-                    "description": "Optional HTTP headers",
-                },
-                "body": {
-                    "type": "string",
-                    "description": "Request body for POST/PUT",
-                },
-                "max_size": {
-                    "type": "integer",
-                    "description": "Max response size in bytes (default: 5MB)",
-                },
-            },
-            "required": ["url"],
-        }
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        import http.client
-        import base64
-        from urllib.parse import urlparse
-
-        # Resolve expressions in all arguments (secrets in headers, urls, etc.)
-        from core.expression import resolve_value
-        arguments = resolve_value(arguments, owner=getattr(self, '_user_id', ''))
-
-        url = arguments.get("url", "")
-        if not url:
-            return "Error: missing 'url' parameter"
-
-        method = arguments.get("method", "GET").upper()
-        extra_headers = arguments.get("headers", {})
-        body = arguments.get("body", "")
-        max_size = arguments.get("max_size", 5 * 1024 * 1024)
-
-        try:
-            parsed = urlparse(url)
-            use_ssl = parsed.scheme == "https"
-            host = parsed.hostname or "localhost"
-            port = parsed.port or (443 if use_ssl else 80)
-            path = parsed.path or "/"
-            if parsed.query:
-                path += "?" + parsed.query
-
-            if use_ssl:
-                import ssl
-                ctx = ssl.create_default_context()
-                conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=30)
-            else:
-                conn = http.client.HTTPConnection(host, port, timeout=30)
-
-            headers = {"User-Agent": "PawFlow/1.0"}
-            headers.update(extra_headers)
-
-            payload = body.encode("utf-8") if body else None
-            if payload and "Content-Type" not in headers:
-                headers["Content-Type"] = "application/json"
-
-            conn.request(method, path, body=payload, headers=headers)
-            resp = conn.getresponse()
-            data = resp.read(max_size)
-            conn.close()
-
-            content_type = resp.getheader("Content-Type", "")
-            status = resp.status
-
-            # Build result
-            result = f"HTTP {status} {resp.reason}\n"
-            result += f"Content-Type: {content_type}\n"
-            result += f"Size: {len(data)} bytes\n\n"
-
-            # Try text decoding
-            is_text = any(t in content_type.lower() for t in
-                         ["text/", "json", "xml", "javascript", "html", "css", "yaml", "toml"])
-            if is_text or not content_type:
-                try:
-                    text = data.decode("utf-8")
-                    result += _sanitize_external_content(text)
-                    return result
-                except UnicodeDecodeError:
-                    pass
-
-            # Binary content - return base64
-            b64 = base64.b64encode(data).decode("ascii")
-            result += f"(binary content, base64 encoded)\n{b64}"
-            return result
-
-        except Exception as e:
-            return f"Error fetching {url}: {e}"
-
-
 class ScraplingFetchHandler(ToolHandler):
     """Fetch a web page using Scrapling and extract its text content.
 
@@ -413,13 +295,13 @@ class ScraplingFetchHandler(ToolHandler):
 
     @property
     def name(self) -> str:
-        return "scrape_url"
+        return "fetch"
 
     @property
     def description(self) -> str:
         return (
             "Fetch a web page and extract its text content. "
-            "Handles JavaScript-heavy sites and anti-bot protections. "
+            "For raw HTTP requests (APIs, downloads), use method/headers/body parameters. "
             "Use 'selector' to extract specific elements via CSS selector."
         )
 
@@ -438,8 +320,20 @@ class ScraplingFetchHandler(ToolHandler):
                 },
                 "mode": {
                     "type": "string",
-                    "description": "Fetch mode: 'fast' (default, recommended), 'stealth' (anti-bot bypass for protected sites). Auto-escalates if first mode fails.",
-                    "enum": ["fast", "stealth"],
+                    "description": "Fetch mode: 'fast' (default, recommended), 'stealth' (anti-bot bypass for protected sites), 'raw' (direct HTTP, returns raw content — for APIs/downloads). Auto-escalates if first mode fails.",
+                    "enum": ["fast", "stealth", "raw"],
+                },
+                "method": {
+                    "type": "string",
+                    "description": "HTTP method for raw mode (default: GET)",
+                },
+                "headers": {
+                    "type": "object",
+                    "description": "Optional HTTP headers (for raw/API requests)",
+                },
+                "body": {
+                    "type": "string",
+                    "description": "Request body for POST/PUT (raw mode)",
                 },
             },
             "required": ["url"],
@@ -467,6 +361,14 @@ class ScraplingFetchHandler(ToolHandler):
 
         selector = arguments.get("selector", "")
         mode = arguments.get("mode", "fast")
+
+        # Auto-detect raw mode when method/headers/body are provided
+        if mode == "fast" and (arguments.get("method") or arguments.get("headers") or arguments.get("body")):
+            mode = "raw"
+
+        # Raw mode: direct HTTP request (replaces old web_fetch behavior)
+        if mode == "raw":
+            return self._raw_fetch(url, arguments)
 
         try:
             # Step 1: Always try fast mode first (httpx, no Playwright)
@@ -662,6 +564,73 @@ class ScraplingFetchHandler(ToolHandler):
         except Exception as e2:
             return (f"Error fetching {url}: scrapling={scrapling_error}, "
                     f"fallback={e2}")
+
+    def _raw_fetch(self, url: str, arguments: Dict[str, Any]) -> str:
+        """Direct HTTP fetch — returns raw content (replaces old web_fetch tool)."""
+        import http.client
+        import base64
+        from urllib.parse import urlparse
+
+        # Resolve expressions in all arguments (secrets in headers, urls, etc.)
+        from core.expression import resolve_value
+        arguments = resolve_value(arguments, owner=getattr(self, '_user_id', ''))
+
+        method = arguments.get("method", "GET").upper()
+        extra_headers = arguments.get("headers", {}) or {}
+        body = arguments.get("body", "")
+        max_size = 5 * 1024 * 1024
+
+        try:
+            parsed = urlparse(url)
+            use_ssl = parsed.scheme == "https"
+            host = parsed.hostname or "localhost"
+            port = parsed.port or (443 if use_ssl else 80)
+            path = parsed.path or "/"
+            if parsed.query:
+                path += "?" + parsed.query
+
+            if use_ssl:
+                import ssl as _ssl
+                ctx = _ssl.create_default_context()
+                conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=30)
+            else:
+                conn = http.client.HTTPConnection(host, port, timeout=30)
+
+            headers = {"User-Agent": "PawFlow/1.0"}
+            headers.update(extra_headers)
+
+            payload = body.encode("utf-8") if body else None
+            if payload and "Content-Type" not in headers:
+                headers["Content-Type"] = "application/json"
+
+            conn.request(method, path, body=payload, headers=headers)
+            resp = conn.getresponse()
+            data = resp.read(max_size)
+            conn.close()
+
+            content_type = resp.getheader("Content-Type", "")
+            status = resp.status
+
+            result = f"HTTP {status} {resp.reason}\n"
+            result += f"Content-Type: {content_type}\n"
+            result += f"Size: {len(data)} bytes\n\n"
+
+            is_text = any(t in content_type.lower() for t in
+                         ["text/", "json", "xml", "javascript", "html", "css", "yaml", "toml"])
+            if is_text or not content_type:
+                try:
+                    text = data.decode("utf-8")
+                    result += _sanitize_external_content(text)
+                    return result
+                except UnicodeDecodeError:
+                    pass
+
+            b64 = base64.b64encode(data).decode("ascii")
+            result += f"(binary content, base64 encoded)\n{b64}"
+            return result
+
+        except Exception as e:
+            return f"Error fetching {url}: {e}"
 
     def _extract_pdf(self, page, url: str) -> str:
         """Extract text from a PDF response.

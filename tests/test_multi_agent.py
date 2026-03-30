@@ -419,25 +419,25 @@ class TestResolveAgentTask:
                 resolve_agent_task("nope", "Hi", "user1")
 
 
-class TestSpawnAgentsExcluded:
-    def test_spawn_agents_excluded_by_default(self):
-        """spawn_agents tool is excluded from sub-agent tools by default."""
-        class SpawnHandler(ToolHandler):
+class TestDelegateExcluded:
+    def test_delegate_excluded_by_default(self):
+        """delegate tool is excluded from sub-agent tools by default."""
+        class DelegateHandler(ToolHandler):
             @property
-            def name(self): return "spawn_agents"
+            def name(self): return "delegate"
             @property
-            def description(self): return "Spawn"
+            def description(self): return "Delegate"
             @property
             def parameters_schema(self): return {"type": "object"}
             def execute(self, args): return ""
 
         client = make_client_mock([simple_response("ok")])
-        registry = make_registry(EchoToolHandler(), SpawnHandler())
+        registry = make_registry(EchoToolHandler(), DelegateHandler())
         executor = SubAgentExecutor(client, registry)
 
         task = AgentTask(
             id="t1", agent_name="test", message="Hi",
-            system_prompt="...", tools=["echo"],  # explicit whitelist excludes spawn
+            system_prompt="...", tools=["echo"],  # explicit whitelist excludes delegate
         )
         executor.execute_agent(task)
 
@@ -445,5 +445,5 @@ class TestSpawnAgentsExcluded:
         tools_passed = call_args.kwargs.get("tools") or []
         tool_names = [t.name for t in tools_passed]
         assert "echo" in tool_names
-        assert "spawn_agents" not in tool_names
+        assert "delegate" not in tool_names
         executor.shutdown()

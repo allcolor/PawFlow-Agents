@@ -65,7 +65,7 @@ Ordered by priority within each category. Dependencies noted.
 2. New tool `worktree_merge(agent_name)`:
    - `bash("git merge .worktrees/{agent_name}")` from main
    - `bash("git worktree remove .worktrees/{agent_name}")`
-3. `spawn_agents` option `isolation: "worktree"`:
+3. `delegate` option `isolation: "worktree"`:
    - Auto-create worktree per sub-agent
    - Auto-merge on completion
 4. `/batch` command:
@@ -434,7 +434,7 @@ Ordered by priority within each category. Dependencies noted.
 ```
 A1 (cost cap) ← standalone
 A2 (voice) ← see() audio [done] + UI changes
-A3 (worktrees) ← bash relay [done] + spawn_agents orchestration
+A3 (worktrees) ← bash relay [done] + delegate orchestration
 A4 (mobile PWA) ← webchat responsive CSS
 B1 (@file) ← relay list_dir [done] + UI autocomplete
 B2 (providers) ← OpenAI provider base_url

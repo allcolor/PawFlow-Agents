@@ -23,7 +23,6 @@ SKIP_TOOLS = {
     "complete_task", "verify_task",  # task lifecycle (agent-only)
     "manage_resource",  # resource CRUD
     "create_tool",  # dynamic tool creation
-    "ask_agent",  # requires LLM client
     "pawflow_help",  # help text
     "update_plan", "create_plan",  # plan management
     "link_identity",  # identity linking

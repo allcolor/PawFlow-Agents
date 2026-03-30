@@ -19,8 +19,9 @@ class WriteHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Write content to a file, or copy a FileStore file to a filesystem path. "
-            "Use destination parameter to specify the filesystem service."
+            "Write or create a file on the workspace filesystem. "
+            "This is the primary tool for creating and modifying code files. "
+            "Use destination parameter to specify which filesystem service."
         )
 
     @property
@@ -76,7 +77,7 @@ class WriteHandler(BaseFsHandler):
             return self._no_target_error(dest)
 
         if svc == "filestore":
-            return "Error: cannot write to FileStore directly. Use copy or create_file instead."
+            return "Error: cannot write to FileStore directly. Use copy or share_file instead."
 
         # Service
         try:

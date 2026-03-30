@@ -13,6 +13,14 @@ function openExplorer(){
   o.addEventListener('click',e=>{if(e.target===o)closeExplorer();});
   document.body.appendChild(o);_fe.overlay=o;
   document.addEventListener('keydown',_feKeys);
+  // Drag-and-drop upload
+  const panel=o.querySelector('.fe-panel');
+  panel.addEventListener('dragover',e=>{e.preventDefault();e.stopPropagation();panel.classList.add('fe-dragover');});
+  panel.addEventListener('dragleave',e=>{e.preventDefault();panel.classList.remove('fe-dragover');});
+  panel.addEventListener('drop',e=>{
+    e.preventDefault();e.stopPropagation();panel.classList.remove('fe-dragover');
+    if(e.dataTransfer.files.length>0)_feUploadFiles(e.dataTransfer.files);
+  });
   _feLoadSvcs();
 }
 
@@ -82,8 +90,18 @@ function _feBc(){
 function _feStatus(){
   const c=document.getElementById('feCount');
   const cl=document.getElementById('feClip');
-  if(c)c.textContent=_fe.entries.length+' items';
-  if(cl)cl.textContent=_fe.clip?(_fe.clip.action+': '+_fe.clip.name):'';
+  if(c){
+    let t=_fe.entries.length+' items';
+    if(_fe.sel.size>0)t+=' ('+_fe.sel.size+' selected)';
+    c.textContent=t;
+  }
+  if(cl){
+    if(_fe.clip&&_fe.clip.items){
+      const names=_fe.clip.items.map(i=>i.name);
+      const label=names.length>2?names[0]+' + '+(names.length-1)+' more':names.join(', ');
+      cl.textContent=_fe.clip.action+': '+label;
+    } else cl.textContent='';
+  }
 }
 
 function _feClick(e,name,kind){
@@ -112,9 +130,10 @@ function _feCtx(e,name,kind){
     items+=`<div onclick="_feCopyToStore('${_feEsc(name)}')">&#128230; Copy to FileStore</div>`;
   }
   items+=`<hr>`;
-  items+=`<div onclick="_feCopy('${_feEsc(name)}')">&#128203; Copy</div>`;
-  items+=`<div onclick="_feCut('${_feEsc(name)}')">&#9986; Cut</div>`;
-  if(_fe.clip)items+=`<div onclick="_fePaste()">&#128203; Paste here</div>`;
+  const selCount=_fe.sel.size;
+  items+=`<div onclick="_feCopySelected()">&#128203; Copy${selCount>1?' ('+selCount+')':''}</div>`;
+  items+=`<div onclick="_feCutSelected()">&#9986; Cut${selCount>1?' ('+selCount+')':''}</div>`;
+  if(_fe.clip)items+=`<div onclick="_fePaste()">&#128203; Paste here (${_fe.clip.items.length})</div>`;
   items+=`<hr>`;
   items+=`<div onclick="_feRenameStart('${_feEsc(name)}')">&#9998; Rename</div>`;
   items+=`<div onclick="_feDel('${_feEsc(name)}')">&#128465; Delete</div>`;
@@ -130,21 +149,35 @@ function _feCtx(e,name,kind){
 
 function _fePath(name){return _fe.path==='.'?name:_fe.path+'/'+name;}
 
-function _feCopy(name){_fe.clip={action:'copy',service:_fe.svc,path:_fePath(name),name};_feStatus();}
-function _feCut(name){_fe.clip={action:'cut',service:_fe.svc,path:_fePath(name),name};_feRender();}
+function _feCopySelected(){
+  const names=[..._fe.sel];if(!names.length)return;
+  _fe.clip={action:'copy',service:_fe.svc,basePath:_fe.path,items:names.map(n=>({name:n,path:_fePath(n)}))};
+  _feStatus();
+}
+function _feCutSelected(){
+  const names=[..._fe.sel];if(!names.length)return;
+  _fe.clip={action:'cut',service:_fe.svc,basePath:_fe.path,items:names.map(n=>({name:n,path:_fePath(n)}))};
+  _feRender();
+}
+function _feCopy(name){_fe.sel.clear();_fe.sel.add(name);_feCopySelected();}
+function _feCut(name){_fe.sel.clear();_fe.sel.add(name);_feCutSelected();}
 
 async function _fePaste(){
-  if(!_fe.clip)return;
-  const dest=_fePath(_fe.clip.name);
-  if(_fe.clip.service===_fe.svc){
-    const d=await _feApi('fs_read_file',{service:_fe.clip.service,path:_fe.clip.path});
-    if(d.error){alert('Error: '+d.error);return;}
-    const enc=d.encoding||'utf-8';
-    await _feApi('fs_write_file',{service:_fe.svc,path:dest,content:d.content,encoding:enc});
-    if(_fe.clip.action==='cut')await _feApi('fs_delete',{service:_fe.clip.service,path:_fe.clip.path});
-  } else {
-    await _feApi('fs_copy',{source_service:_fe.clip.service,source_path:_fe.clip.path,dest_service:_fe.svc,dest_path:dest});
-    if(_fe.clip.action==='cut')await _feApi('fs_delete',{service:_fe.clip.service,path:_fe.clip.path});
+  if(!_fe.clip||!_fe.clip.items.length)return;
+  for(const item of _fe.clip.items){
+    let destName=item.name;
+    // Same folder? Auto-rename to avoid overwrite
+    if(_fe.clip.service===_fe.svc&&_fe.clip.basePath===_fe.path&&_fe.clip.action==='copy'){
+      const dot=destName.lastIndexOf('.');
+      destName=dot>0?destName.slice(0,dot)+' (copy)'+destName.slice(dot):destName+' (copy)';
+    }
+    const dest=_fePath(destName);
+    // Server-side copy (no client round-trip for file content)
+    const d=await _feApi('fs_copy',{source_service:_fe.clip.service,source_path:item.path,dest_service:_fe.svc,dest_path:dest});
+    if(d.error){addMsg('error','Paste failed: '+d.error);return;}
+    if(_fe.clip.action==='cut'){
+      await _feApi('fs_delete',{service:_fe.clip.service,path:item.path});
+    }
   }
   if(_fe.clip.action==='cut')_fe.clip=null;
   _feNav(_fe.path);
@@ -153,6 +186,15 @@ async function _fePaste(){
 async function _feDel(name){
   if(!confirm('Delete "'+name+'"? This cannot be undone.'))return;
   await _feApi('fs_delete',{service:_fe.svc,path:_fePath(name)});
+  _feNav(_fe.path);
+}
+
+async function _feDelSelected(){
+  const names=[..._fe.sel];
+  if(!names.length)return;
+  const label=names.length===1?'"'+names[0]+'"':names.length+' items';
+  if(!confirm('Delete '+label+'? This cannot be undone.'))return;
+  for(const n of names)await _feApi('fs_delete',{service:_fe.svc,path:_fePath(n)});
   _feNav(_fe.path);
 }
 
@@ -195,20 +237,22 @@ async function _feDl(name){
   const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
 }
 
-async function _feUpload(){
+function _feUpload(){
   const inp=document.createElement('input');inp.type='file';inp.multiple=true;
-  inp.onchange=async()=>{
-    for(const f of inp.files){
-      const reader=new FileReader();
-      reader.onload=async()=>{
-        const b64=reader.result.split(',')[1];
-        await _feApi('fs_write_file',{service:_fe.svc,path:_fePath(f.name),content:b64,encoding:'base64'});
-        _feNav(_fe.path);
-      };
-      reader.readAsDataURL(f);
-    }
-  };
+  inp.onchange=()=>{if(inp.files.length)_feUploadFiles(inp.files);};
   inp.click();
+}
+
+async function _feUploadFiles(files){
+  const count=files.length;
+  const status=document.getElementById('feCount');
+  let done=0;
+  for(const f of files){
+    if(status)status.textContent=`Uploading ${++done}/${count}: ${f.name}`;
+    const b64=await new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result.split(',')[1]);rd.readAsDataURL(f);});
+    await _feApi('fs_write_file',{service:_fe.svc,path:_fePath(f.name),content:b64,encoding:'base64'});
+  }
+  _feNav(_fe.path);
 }
 
 async function _feCopyToStore(name){
@@ -283,10 +327,10 @@ function _feKeys(e){
     e.preventDefault();
     if(_fe.path!=='.'&&_fe.path){const p=_fe.path.replace(/\\/g,'/').split('/');p.pop();_feNav(p.join('/')||'.');}
   }
-  if(e.key==='Delete'){const s=[..._fe.sel];if(s.length===1)_feDel(s[0]);}
+  if(e.key==='Delete'&&_fe.sel.size>0){e.preventDefault();_feDelSelected();}
   if(e.key==='F2'){const s=[..._fe.sel];if(s.length===1)_feRenameStart(s[0]);}
-  if(e.ctrlKey&&e.key==='c'){const s=[..._fe.sel];if(s.length===1)_feCopy(s[0]);}
-  if(e.ctrlKey&&e.key==='x'){const s=[..._fe.sel];if(s.length===1)_feCut(s[0]);}
+  if(e.ctrlKey&&e.key==='c'&&_fe.sel.size>0){e.preventDefault();_feCopySelected();}
+  if(e.ctrlKey&&e.key==='x'&&_fe.sel.size>0){e.preventDefault();_feCutSelected();}
   if(e.ctrlKey&&e.key==='v')_fePaste();
 }
 

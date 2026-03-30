@@ -179,8 +179,8 @@ class AgentSerializationMixin:
                     _src_label = _src_agent
                     if _src_svc:
                         _src_label += f" via {_src_svc}"
-                    # Special formatting for spawn_agents
-                    if _tc_name == "spawn_agents" and isinstance(_tc_args, dict):
+                    # Special formatting for delegate
+                    if _tc_name == "delegate" and isinstance(_tc_args, dict):
                         tasks = _tc_args.get("tasks", [])
                         if tasks and isinstance(tasks, list):
                             lines = []

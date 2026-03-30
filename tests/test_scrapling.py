@@ -1,13 +1,13 @@
-"""Tests for Scrapling integration — ScraplingFetchHandler + ScraplingFetchTask.
+"""Tests for Scrapling integration — ScraplingFetchHandler (fetch tool) + ScraplingFetchTask.
 
 Tests cover:
-- ScraplingFetchHandler (builtin agent tool)
+- ScraplingFetchHandler (builtin agent tool, name="fetch")
 - ScraplingFetchTask (standalone task)
 - Registration and parameter schema
 - Error handling (missing URL, import errors)
 - CSS selector extraction
-- Mode selection (fast, stealth, browser)
-- Default registry includes scrape_url
+- Mode selection (fast, stealth, raw)
+- Default registry includes fetch
 - i18n keys
 """
 
@@ -48,7 +48,7 @@ class TestScraplingFetchHandler(unittest.TestCase):
 
     def test_handler_properties(self):
         h = ScraplingFetchHandler()
-        assert h.name == "scrape_url"
+        assert h.name == "fetch"
         assert "web page" in h.description.lower()
         assert "url" in h.parameters_schema["properties"]
         assert "selector" in h.parameters_schema["properties"]
@@ -56,7 +56,7 @@ class TestScraplingFetchHandler(unittest.TestCase):
 
     def test_handler_in_default_registry(self):
         registry = create_default_registry()
-        handler = registry.get("scrape_url")
+        handler = registry.get("fetch")
         assert handler is not None
         assert isinstance(handler, ScraplingFetchHandler)
 
@@ -142,10 +142,10 @@ class TestScraplingFetchHandler(unittest.TestCase):
         mock_sub.assert_called_once()
 
     def test_handler_as_agent_tool(self):
-        """scrape_url works as a builtin agent_tool reference."""
-        config = {"web": {"type": "builtin", "handler": "scrape_url"}}
+        """fetch works as a builtin agent_tool reference."""
+        config = {"web": {"type": "builtin", "handler": "fetch"}}
         registry = load_agent_tools(config)
-        handler = registry.get("scrape_url")
+        handler = registry.get("fetch")
         assert handler is not None
         assert isinstance(handler, ScraplingFetchHandler)
 

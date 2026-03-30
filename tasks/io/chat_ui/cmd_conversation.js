@@ -374,7 +374,7 @@ function cmdBatch(text) {
     + 'Steps:\n'
     + '1. Use glob(...) or grep(...) to find all matching files\n'
     + '2. Split files into groups of 3-5\n'
-    + '3. Use spawn_agents to process each group in parallel — each agent applies the instruction to its files\n'
+    + '3. Use delegate to process each group in parallel — each agent applies the instruction to its files\n'
     + '4. Report a summary of all changes made\n'
     + 'Use the current agent for each sub-task. Work in parallel for speed.]';
   sendMessage(batchMsg);

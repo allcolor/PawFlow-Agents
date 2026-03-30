@@ -75,7 +75,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Wire embedding function for semantic memory handlers
         self._wire_embed_fn(registry, client)
 
-        # Set up SubAgentExecutor for spawn_agents/use_skill/get_agent_results
+        # Set up SubAgentExecutor for delegate/use_skill/get_agent_results
         from core.agent_executor import SubAgentExecutor
         from core.tool_registry import (
             SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
@@ -532,7 +532,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         if others:
                             system_prompt += (
                                 f"\n\nOther agents available: "
-                                f"{', '.join(others)}. Use spawn_agents or "
+                                f"{', '.join(others)}. Use delegate or "
                                 f"manage_resource to work with them."
                             )
 

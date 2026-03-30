@@ -159,7 +159,7 @@ function toRFEdges(apiEdges) {
     const animated = e.queue_size > 0;
     const color = queueColor(e.queue_size, e.max_queue);
     let label = e.relationship;
-    if (e.queue_size > 0) label += ` (${e.queue_size})`;
+    if (e.queue_size > 0) label += ` (${e.queue_size}/${e.max_queue})`;
     if (e.backpressured) label = '\uD83D\uDD34 ' + label;
     return {
       id: `e-${i}-${e.source}-${e.target}`,
@@ -176,8 +176,8 @@ function toRFEdges(apiEdges) {
 
 // ── Main App ──
 function App() {
-  const [nodes, setNodes, onNodesChange] = useNodesState([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
+  const [nodes, setNodes] = useNodesState([]);
+  const [edges, setEdges] = useEdgesState([]);
   const [flowName, setFlowName] = useState('');
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState('');
@@ -248,8 +248,11 @@ function App() {
       error && jsx('span', { style: { color: '#e94560' }, children: error }),
     ] }),
     jsx(ReactFlow, {
-      nodes, edges, onNodesChange, onEdgesChange,
+      nodes, edges,
       nodeTypes,
+      nodesDraggable: false,
+      nodesConnectable: false,
+      elementsSelectable: false,
       fitView: true,
       proOptions: { hideAttribution: true },
       style: { background: '#0a0a0a' },

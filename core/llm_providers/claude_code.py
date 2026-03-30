@@ -559,14 +559,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
                     if sid and conv_id:
-                            try:
-                                from core.conversation_store import ConversationStore
-                                ConversationStore.instance().set_extra(
-                                    conv_id,
-                                    f"claude_session:{agent_name or 'default'}",
-                                    sid)
-                            except Exception:
-                                pass
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().set_extra(
+                                conv_id,
+                                f"claude_session:{agent_name or 'default'}",
+                                sid)
+                        except Exception:
+                            pass
                     continue
 
                 if etype == "assistant":

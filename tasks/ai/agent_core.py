@@ -57,6 +57,7 @@ class AgentCoreMixin:
     def _run_agent_loop_inner(self, ctx, emitter):
         conversation_id = ctx.get("conversation_id", "")
         start_time = time.time()
+        ctx["_started_at"] = start_time
         total_tokens_in = 0
         total_tokens_out = 0
         tools_called: List[str] = []
@@ -66,6 +67,7 @@ class AgentCoreMixin:
         response_content = ""
         _need_more_retried = False
         _fatal_error = False
+        _fatal_error_msg = ""
 
         client: LLMClient = ctx["client"]
         registry = ctx["registry"]
@@ -513,8 +515,17 @@ class AgentCoreMixin:
                                 ) for tc in tool_calls
                             ]
                             for tc_obj in tc_objects:
-                                tools_called.append(tc_obj.name)
-                                ctx["_last_tool"] = tc_obj.name
+                                # Unwrap MCP tool names for display
+                                _display_name = tc_obj.name
+                                if _display_name.startswith("mcp__"):
+                                    # mcp__server__tool → tool
+                                    _parts = _display_name.split("__", 2)
+                                    _display_name = _parts[-1] if len(_parts) >= 3 else _display_name
+                                    # For use_tool, show the inner tool_name
+                                    if _display_name == "use_tool" and isinstance(tc_obj.arguments, dict):
+                                        _display_name = tc_obj.arguments.get("tool_name", _display_name)
+                                tools_called.append(_display_name)
+                                ctx["_last_tool"] = _display_name
 
                             # Tool call message (in LLM context, includes thinking)
                             tc_msg = LLMMessage(
@@ -592,7 +603,7 @@ class AgentCoreMixin:
                         if "Budget exceeded" in err_str:
                             logger.warning("[agent:%s] %s", conversation_id[:8], err_str)
                             emitter.on_fatal_error(err_str)
-                            _fatal_error = True
+                            _fatal_error = True; _fatal_error_msg = _fatal_error_msg or err_str
                             break
                         # Claude-code resume failed → invalidate session, retry
                         # with full context (first-message flow).
@@ -625,7 +636,7 @@ class AgentCoreMixin:
                             except Exception as retry_err:
                                 logger.error("Claude-code full-context retry failed: %s", retry_err)
                                 emitter.on_fatal_error(f"LLM call failed: {retry_err}")
-                                _fatal_error = True
+                                _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
                                 break
                         if _resume_retried:
                             pass  # resume fallback succeeded
@@ -651,12 +662,12 @@ class AgentCoreMixin:
                             except Exception as retry_err:
                                 logger.error(f"LLM retry failed: {retry_err}")
                                 emitter.on_fatal_error(f"LLM call failed: {retry_err}")
-                                _fatal_error = True
+                                _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
                                 break
                         else:
                             logger.error(f"LLM call failed (iter {iteration}): {llm_err}")
                             emitter.on_fatal_error(f"LLM call failed: {llm_err}")
-                            _fatal_error = True
+                            _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {llm_err}"
                             break
                     finally:
                         pass  # heartbeat stopped at iteration end
@@ -858,10 +869,44 @@ class AgentCoreMixin:
                     if fm:
                         final_model = fm
 
+                # Mark last assistant message as error before persisting
+                if _fatal_error:
+                    # Find last assistant msg — may be in new_messages (not yet flushed)
+                    # or in messages (already flushed by turn_callback for claude-code)
+                    _err_mid = ""
+                    for m in reversed(new_messages):
+                        if m.role == "assistant":
+                            m.is_error = True
+                            _err_mid = m.msg_id
+                            break
+                    if not _err_mid:
+                        # Already flushed (claude-code path) — find in full messages
+                        for m in reversed(messages):
+                            if m.role == "assistant":
+                                m.is_error = True
+                                _err_mid = m.msg_id
+                                break
+                    if not _err_mid and _fatal_error_msg:
+                        # No assistant message at all — create one
+                        _err_msg = LLMMessage(
+                            role="assistant", content=_fatal_error_msg,
+                            is_error=True, source=_agent_source())
+                        new_messages.append(_err_msg)
+                        messages.append(_err_msg)
+                        _err_mid = _err_msg.msg_id
+
                 _flush()
 
                 if _fatal_error:
                     finish_reason = "error"
+                    # Patch the message in store (may have been flushed earlier)
+                    if _err_mid and use_conv_store and conversation_id:
+                        try:
+                            from core.conversation_store import ConversationStore
+                            ConversationStore.instance().patch_message(
+                                conversation_id, _err_mid, is_error=True)
+                        except Exception:
+                            pass
                     break
 
                 # Continuation

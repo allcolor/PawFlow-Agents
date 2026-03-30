@@ -112,7 +112,7 @@ async function syncActiveFromServer() {
       const existing = activeInteractions[key];
       activeInteractions[key] = {
         name: a.agent_name,
-        startedAt: existing ? existing.startedAt : now - (a.duration_s * 1000),
+        startedAt: existing ? existing.startedAt : now - ((a.duration_s || 0) * 1000),
         iteration: a.iteration || (existing ? existing.iteration : 0),
         round: a.round || 0,
         maxRounds: a.max_rounds || 0,

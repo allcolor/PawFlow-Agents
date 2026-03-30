@@ -600,29 +600,63 @@ class AgentLoopTask(
         _now = _t.time()
         _last = self._interrupt_cooldowns.get(_synth_key, 0)
         if _now - _last < 10:
-            logger.info(f"[agent:{conversation_id[:8]}] interrupt cooldown ({_now - _last:.1f}s < 10s), skipping")
+            # Second interrupt within cooldown = escalate to force stop
+            logger.info(f"[agent:{conversation_id[:8]}] repeat interrupt → escalating to force stop")
+            self._interrupt_cooldowns.pop(_synth_key, None)
+            self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+            # Force kill Claude Code subprocess if applicable
+            if hasattr(self, '_active_claude_client'):
+                _cc_client = self._active_claude_client.get(conversation_id)
+                if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
+                    _cc_client.cancel_claude_code(force=True)
+            # Force cleanup
+            from core.conversation_store import ConversationStore as _CS_int
+            _CS_int.instance().set_status(conversation_id, "idle")
+            from core.conversation_event_bus import ConversationEventBus as _CEB_int
+            _CEB_int.instance().publish_event(
+                conversation_id, "done", {
+                    "response": "[Force stopped by user]",
+                    "agent_name": agent_name or "",
+                    "force_stopped": True,
+                })
+            with self._active_lock:
+                self._active_conversations.pop(conversation_id, None)
+                self._user_active_conversations.discard(conversation_id)
+            with self._active_contexts_lock:
+                self._active_contexts.pop(conversation_id, None)
             return
         self._interrupt_cooldowns[_synth_key] = _now
 
         logger.info(f"[agent:{conversation_id[:8]}] interrupt for '{agent_name or 'agent'}'")
 
-        # For claude-code: graceful interrupt only (stdin message).
-        # Claude Code will acknowledge, summarize, and exit normally.
-        # No cancel_agent (which kills the process), no parallel synthesis.
-        # Claude-code: graceful interrupt via stdin (only if process is alive)
+        # For claude-code: graceful interrupt via stdin + cancel in-flight tools
+        _is_cc = False
         if hasattr(self, '_active_claude_client'):
             _cc_client = self._active_claude_client.get(conversation_id)
             if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
                 _proc = getattr(_cc_client, '_claude_proc', None)
                 if _proc and _proc.poll() is None:
+                    _is_cc = True
+                    # Cancel in-flight MCP tool calls so Claude Code gets
+                    # tool errors back quickly and can wrap up
+                    try:
+                        from services.tool_relay_service import ToolRelayService
+                        ToolRelayService.cancel_agent(conversation_id, agent_name)
+                    except Exception:
+                        pass
+                    # Send graceful interrupt on stdin
                     _cc_client.cancel_claude_code(force=False)
-                    logger.info(f"[agent:{conversation_id[:8]}] claude-code graceful interrupt sent")
-                    return  # Claude Code handles its own response
+                    logger.info(f"[agent:{conversation_id[:8]}] claude-code interrupt: "
+                                f"tools cancelled + stdin interrupt sent")
+                    # Don't cancel_agent / don't spawn synthesis — Claude Code
+                    # will emit a result event, the stream loop exits, and
+                    # the agent loop publishes 'done' normally.
+                    return
                 else:
                     # Stale client — process dead, clean up
                     self._active_claude_client.pop(conversation_id, None)
 
-        # Cancel the current run — publish cancelled event so UI stops
+        # Non-claude-code: cancel the current run
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
 
         # Note: _active_contexts cleanup happens in _run_agent_loop finally

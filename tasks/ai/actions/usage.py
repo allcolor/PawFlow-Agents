@@ -80,12 +80,15 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         with self._active_contexts_lock:
             ctx = self._active_contexts.get(conv_id)
             if ctx:
+                import time as _time
+                _started = ctx.get("_started_at", 0)
                 active.append({
                     "agent_name": ctx.get("active_agent_name", ""),
                     "iteration": ctx.get("_iteration", 0),
                     "round": ctx.get("_round", 0),
                     "max_rounds": ctx.get("max_rounds", 0),
                     "last_tool": ctx.get("_last_tool", ""),
+                    "duration_s": _time.time() - _started if _started else 0,
                 })
         flowfile.set_content(json.dumps({"active": active}).encode())
         return [flowfile]

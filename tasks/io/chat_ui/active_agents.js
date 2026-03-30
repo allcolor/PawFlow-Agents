@@ -8,63 +8,11 @@ let activeTimer = null;
 function agentKey(name) { return (name || '').toLowerCase(); }
 
 // ── SSE hints (fast UI update between polls) ──
-function trackAgentStart(agentName, msgPreview) {
-  if (!agentName) return;
-  const key = agentKey(agentName);
-  if (!activeInteractions[key]) {
-    activeInteractions[key] = {
-      name: agentName, startedAt: Date.now(),
-      lastTool: '', activeTools: [], status: 'thinking',
-      msgPreview: msgPreview || '', updatedAt: Date.now(),
-    };
-  } else {
-    activeInteractions[key].status = 'thinking';
-    activeInteractions[key].activeTools = [];
-    activeInteractions[key].updatedAt = Date.now();
-  }
-  updateActivePanel();
-  if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
-}
-
-function _ensureInteraction(agentName) {
-  if (!agentName) return '';
-  const key = agentKey(agentName);
-  if (!activeInteractions[key]) {
-    activeInteractions[key] = {
-      name: agentName, startedAt: Date.now(),
-      lastTool: '', activeTools: [], status: 'thinking',
-      msgPreview: '', updatedAt: Date.now(),
-    };
-    if (!activeTimer) activeTimer = setInterval(updateActivePanel, 1000);
-  }
-  if (!activeInteractions[key].activeTools) activeInteractions[key].activeTools = [];
-  return key;
-}
-
-function trackAgentTool(agentName, toolName) {
-  const key = _ensureInteraction(agentName);
-  if (!key) return;
-  activeInteractions[key].lastTool = toolName;
-  activeInteractions[key].status = toolName;
-  activeInteractions[key].updatedAt = Date.now();
-  const at = activeInteractions[key].activeTools;
-  if (at.indexOf(toolName) === -1) at.push(toolName);
-  updateActivePanel();
-}
-
-function trackAgentToolDone(agentName, toolName) {
-  const key = _ensureInteraction(agentName);
-  if (!key) return;
-  const info = activeInteractions[key];
-  if (info) {
-    const at = info.activeTools;
-    const idx = at.indexOf(toolName);
-    if (idx !== -1) at.splice(idx, 1);
-    info.status = at.length > 0 ? at[at.length - 1] : 'thinking';
-    info.updatedAt = Date.now();
-  }
-  updateActivePanel();
-}
+// Active agents come ONLY from syncActiveFromServer (list_active).
+// SSE events do NOT add agents to activeInteractions.
+function trackAgentStart(agentName, msgPreview) { /* no-op */ }
+function trackAgentTool(agentName, toolName) { /* no-op */ }
+function trackAgentToolDone(agentName, toolName) { /* no-op */ }
 
 function trackAgentDone(agentName) {
   const key = agentKey(agentName);

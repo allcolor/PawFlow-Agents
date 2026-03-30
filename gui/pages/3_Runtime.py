@@ -413,8 +413,15 @@ def _render_new_executor_form():
             # Apply global service forwards
             _apply_service_forwards(flow, service_overrides)
 
+            # Allow flow parameters to override max_workers
+            _eff_workers = max_workers
+            _fp = flow_dict.get('parameters', {})
+            if cont_params and 'max_workers' in cont_params:
+                _eff_workers = int(cont_params['max_workers'])
+            elif 'max_workers' in _fp:
+                _eff_workers = int(_fp['max_workers'])
             ex = ContinuousFlowExecutor(
-                flow, max_workers=max_workers, max_retries=max_retries,
+                flow, max_workers=_eff_workers, max_retries=max_retries,
                 parameters=cont_params if cont_params else None,
             )
             ex.start()
@@ -676,9 +683,16 @@ def _render_stopped_instance_panel(inst):
                         # Apply global service forwards
                         if inst.service_overrides:
                             _apply_service_forwards(flow, inst.service_overrides)
+                        # Allow flow parameters to override max_workers
+                        _eff_w = inst.max_workers
+                        _fp2 = flow.parameters if hasattr(flow, 'parameters') else {}
+                        if inst.parameters and 'max_workers' in inst.parameters:
+                            _eff_w = int(inst.parameters['max_workers'])
+                        elif _fp2 and 'max_workers' in _fp2:
+                            _eff_w = int(_fp2['max_workers'])
                         ex = ContinuousFlowExecutor(
                             flow,
-                            max_workers=inst.max_workers,
+                            max_workers=_eff_w,
                             max_retries=inst.max_retries,
                             parameters=inst.parameters if inst.parameters else None,
                         )

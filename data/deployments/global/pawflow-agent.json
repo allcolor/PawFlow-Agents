@@ -7,11 +7,11 @@
   "source": "gui",
   "parameters": {},
   "created_at": 1774604599.4518635,
-  "max_workers": 4,
+  "max_workers": 32,
   "max_retries": 3,
   "service_overrides": {},
   "service_configs": {},
   "layout": {},
-  "flow_version": 1,
+  "flow_version": 2,
   "last_started": 1774606265.6881132
 }

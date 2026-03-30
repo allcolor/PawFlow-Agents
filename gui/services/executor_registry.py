@@ -212,9 +212,16 @@ class ExecutorRegistry:
             from engine.parser import FlowParser
             flow = FlowParser.parse(clean)
 
+            # Allow flow parameters to override max_workers
+            _eff_workers = max_workers
+            _flow_params = clean.get('parameters', {})
+            if parameters and 'max_workers' in parameters:
+                _eff_workers = int(parameters['max_workers'])
+            elif 'max_workers' in _flow_params:
+                _eff_workers = int(_flow_params['max_workers'])
             executor = ContinuousFlowExecutor(
                 flow,
-                max_workers=max_workers,
+                max_workers=_eff_workers,
                 max_retries=max_retries,
                 parameters=parameters if parameters else None,
             )

@@ -127,6 +127,9 @@ class AgentLoopTask(
         self._context_op_lock = threading.Lock()
         # Calibrated chars-per-token ratio per LLM service (learned from actual usage)
         self._calibrated_cpt: Dict[str, float] = {}  # service_id -> chars_per_token
+        self._calibrated_cpt_lock = threading.Lock()
+        # Interrupt cooldowns — keyed by synth_key → timestamp
+        self._interrupt_cooldowns: Dict[str, float] = {}
 
 
     def initialize(self):
@@ -589,8 +592,6 @@ class AgentLoopTask(
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
 
-    _interrupt_cooldowns: dict = {}  # key → timestamp of last interrupt
-
     def interrupt_agent(self, conversation_id: str, agent_name: str = ""):
         """Interrupt: cancel the current LLM call and spawn a parallel synthesis.
 
@@ -609,11 +610,16 @@ class AgentLoopTask(
         import time as _t
         _synth_key = f"{conversation_id}:{agent_name or 'all'}"
         _now = _t.time()
-        _last = self._interrupt_cooldowns.get(_synth_key, 0)
-        if _now - _last < 10:
+        with self._interrupt_lock:
+            _last = self._interrupt_cooldowns.get(_synth_key, 0)
+            _is_repeat = _now - _last < 10
+            if _is_repeat:
+                self._interrupt_cooldowns.pop(_synth_key, None)
+            else:
+                self._interrupt_cooldowns[_synth_key] = _now
+        if _is_repeat:
             # Second interrupt within cooldown = escalate to force stop
             logger.info(f"[agent:{conversation_id[:8]}] repeat interrupt → escalating to force stop")
-            self._interrupt_cooldowns.pop(_synth_key, None)
             self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
             # Force kill Claude Code subprocess if applicable
             _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
@@ -640,7 +646,6 @@ class AgentLoopTask(
                     if k == conversation_id or k.startswith(conversation_id + ":"):
                         del self._active_contexts[k]
             return
-        self._interrupt_cooldowns[_synth_key] = _now
 
         logger.info(f"[agent:{conversation_id[:8]}] interrupt for '{agent_name or 'agent'}'")
 

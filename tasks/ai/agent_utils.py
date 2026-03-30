@@ -370,12 +370,13 @@ class AgentUtilsMixin:
         if not service_id or actual_tokens <= 0 or total_chars <= 0:
             return
         measured = total_chars / actual_tokens
-        old = self._calibrated_cpt.get(service_id)
-        if old is None:
-            self._calibrated_cpt[service_id] = measured
-        else:
-            alpha = 0.3
-            self._calibrated_cpt[service_id] = old * (1 - alpha) + measured * alpha
+        with self._calibrated_cpt_lock:
+            old = self._calibrated_cpt.get(service_id)
+            if old is None:
+                self._calibrated_cpt[service_id] = measured
+            else:
+                alpha = 0.3
+                self._calibrated_cpt[service_id] = old * (1 - alpha) + measured * alpha
 
 
     def _get_cpt(self, service_id: str, fallback: float = 0) -> float:
@@ -383,7 +384,8 @@ class AgentUtilsMixin:
 
         Priority: calibrated (learned) → service config → default (2.0).
         """
-        cal = self._calibrated_cpt.get(service_id)
+        with self._calibrated_cpt_lock:
+            cal = self._calibrated_cpt.get(service_id)
         if cal and cal > 0:
             return cal
         return fallback if fallback > 0 else 2.0

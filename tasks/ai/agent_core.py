@@ -44,6 +44,18 @@ def _check_budget(ctx, total_in, total_out):
 class AgentCoreMixin:
     def _run_agent_loop(self, ctx: Dict, emitter: AgentEmitter) -> AgentResult:
         """The ONE agent execution loop — used by both sync and streaming."""
+        conversation_id = ctx.get("conversation_id", "")
+        # Push context into active stack — pop in finally (guarantees no ghost)
+        with self._active_contexts_lock:
+            self._active_contexts[conversation_id] = ctx
+        try:
+            return self._run_agent_loop_inner(ctx, emitter)
+        finally:
+            with self._active_contexts_lock:
+                self._active_contexts.pop(conversation_id, None)
+
+    def _run_agent_loop_inner(self, ctx, emitter):
+        conversation_id = ctx.get("conversation_id", "")
         start_time = time.time()
         total_tokens_in = 0
         total_tokens_out = 0

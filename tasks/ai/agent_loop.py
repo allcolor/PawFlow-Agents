@@ -85,6 +85,7 @@ class AgentLoopTask(
     NAME = "Agent Loop"
     DESCRIPTION = "LLM agent with tool-use loop (function calling)"
     ICON = "ai"
+    _live_instance = None  # set by __init__ for wake_poller access
 
 
     def __init__(self, config: Dict[str, Any]):
@@ -92,6 +93,8 @@ class AgentLoopTask(
         self._tool_registry: Optional[ToolRegistry] = None
         self._poller_started = False
         self._poller_stop = threading.Event()
+        self._poller_wake = threading.Event()  # signal immediate poll
+        AgentLoopTask._live_instance = self
         self._active_conversations: Dict[str, int] = {}  # conv_id -> refcount
         # Set by ContinuousFlowExecutor before execute() — callable that
         # dequeues and returns all pending FlowFiles from input queue
@@ -108,8 +111,12 @@ class AgentLoopTask(
         self._conv_interrupt: Dict[str, bool] = {}
         self._interrupt_lock = threading.Lock()
         # Running agents — state-based tracker (stack on loop entry, pop on exit)
-        # Key: gen_key (conv_id or conv_id:agent), Value: metadata dict
-        # This is the SINGLE source of truth for "is an agent running?"
+        # Active agent contexts — push on enter, pop on exit (finally).
+        # Key: conversation_id, Value: ctx dict (has agent_name, iteration, etc.)
+        # This is the SOLE source of truth for "which agents are active".
+        self._active_contexts: Dict[str, dict] = {}
+        self._active_contexts_lock = threading.Lock()
+        # Legacy — kept temporarily for cancel_interrupt and heartbeat SSE
         self._running_agents: Dict[str, Dict] = {}
         self._running_agents_lock = threading.Lock()
         # Context operation locks — prevents FlowFile processing during context mutations
@@ -138,6 +145,13 @@ class AgentLoopTask(
             poller.start()
             logger.info(f"Agent poller started at flow init (interval={poll_interval}s)")
 
+
+    @classmethod
+    def wake_poller(cls):
+        """Wake the poller immediately (call after schedule_delay with delay=0)."""
+        inst = cls._live_instance
+        if inst and hasattr(inst, '_poller_wake'):
+            inst._poller_wake.set()
 
     def get_tool_registry(self) -> ToolRegistry:
         """Get or create the tool registry for this agent.

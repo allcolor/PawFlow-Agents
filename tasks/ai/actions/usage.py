@@ -74,31 +74,14 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
 
-        # An agent is active IFF it has a live thread processing for this conversation.
-        # No separate tracking dict — the thread IS the source of truth.
+        # An agent is active IFF its context is in the active stack.
+        # Push on enter, pop on exit (finally). No ghosts possible.
         active = []
-        now = time.time()
-        for t in threading.enumerate():
-            if not t.is_alive():
-                continue
-            if t.name == f"agent-stream-{conv_id}":
-                # Find the agent name from _running_agents metadata (if available)
-                _info = {}
-                with self._running_agents_lock:
-                    for k, v in self._running_agents.items():
-                        if v.get("conversation_id") == conv_id:
-                            _info = v
-                            break
+        with self._active_contexts_lock:
+            ctx = self._active_contexts.get(conv_id)
+            if ctx:
                 active.append({
-                    "agent_name": _info.get("agent_name", ""),
-                    "message_preview": _info.get("message_preview", ""),
-                    "duration_s": round(now - _info.get("started_at", now), 1),
-                    "iteration": _info.get("iteration", 0),
-                    "round": _info.get("round", 0),
-                    "max_rounds": _info.get("max_rounds", 0),
-                    "last_tool": _info.get("last_tool", ""),
-                    "total_tools": _info.get("total_tools", 0),
-                    "status": _info.get("status", "thinking"),
+                    "agent_name": ctx.get("active_agent_name", ""),
                 })
         flowfile.set_content(json.dumps({"active": active}).encode())
         return [flowfile]

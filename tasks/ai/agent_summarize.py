@@ -301,10 +301,8 @@ class AgentSummarizeMixin:
         # Save and clear session — compact uses a temporary session
         # The LLMClient may be nested inside a service wrapper
         _inner = getattr(client, '_client', client)
-        _saved_session = getattr(_inner, '_claude_session_id', '')
         _saved_conv = getattr(_inner, '_conversation_id', '')
         _saved_agent = getattr(_inner, '_agent_name', '')
-        _inner._claude_session_id = ''
         _inner._conversation_id = ''
         _inner._agent_name = 'compact'
 
@@ -343,7 +341,6 @@ class AgentSummarizeMixin:
 
             raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
         finally:
-            _inner._claude_session_id = _saved_session
             _inner._conversation_id = _saved_conv
             _inner._agent_name = _saved_agent
             try:

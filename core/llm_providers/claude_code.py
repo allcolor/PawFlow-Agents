@@ -266,8 +266,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 if isinstance(b, dict) and b.get("type") == "text")
 
         new_session = data.get("session_id", "")
-        if new_session:
-            self._claude_session_id = new_session
 
         return LLMResponse(
             content=content,
@@ -373,19 +371,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         initial_text = self._build_stdin_with_system(system_prompt, user_text)
 
-        session_id = getattr(self, '_claude_session_id', "")
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")
         agent_name = getattr(self, '_agent_name', "")
 
-        # Restore session_id from conversation store if not in memory
-        if not session_id and conv_id:
+        # Always load session_id from the store for THIS conversation
+        # (never from self — the client is shared across conversations)
+        session_id = ""
+        if conv_id:
             try:
                 from core.conversation_store import ConversationStore
                 session_id = ConversationStore.instance().get_extra(
                     conv_id, f"claude_session:{agent_name or 'default'}") or ""
                 if session_id:
-                    self._claude_session_id = session_id
                     logger.info("Restored claude session: %s", session_id)
             except Exception:
                 pass
@@ -560,9 +558,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # Must be in ConversationStore before any preempt triggers
                     # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
-                    if sid:
-                        self._claude_session_id = sid
-                        if conv_id:
+                    if sid and conv_id:
                             try:
                                 from core.conversation_store import ConversationStore
                                 ConversationStore.instance().set_extra(
@@ -706,8 +702,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # Check for API errors (auth failure, rate limit, etc.)
                     if event.get("is_error") or event.get("subtype") == "error_during_execution":
                         _err_text = event.get("result", "")
+                        _errors = event.get("errors", [])
+                        if _errors:
+                            _err_text = _err_text or "; ".join(
+                                e.get("message", str(e)) if isinstance(e, dict) else str(e)
+                                for e in _errors)
+                            logger.error("[claude-code] errors: %s", _errors)
                         if "authentication" in _err_text.lower() or "401" in _err_text:
                             raise LLMClientError(f"Claude Code auth failed: {_err_text[:300]}")
+                        if event.get("subtype") == "error_during_execution":
+                            raise LLMClientError(f"Claude Code error: {_err_text[:300]}")
                         # Other errors: log but continue (may have partial results)
                         logger.warning("[claude-code] result has is_error=True: %s", _err_text[:200])
                     result_text = event.get("result", "")
@@ -791,8 +795,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         new_session = last_data.get("session_id", "")
         if new_session:
-            self._claude_session_id = new_session
-            # Persist session_id in conversation store for resume after restart
+            # Persist session_id in conversation store (NOT on self — client is shared)
             if conv_id:
                 try:
                     from core.conversation_store import ConversationStore

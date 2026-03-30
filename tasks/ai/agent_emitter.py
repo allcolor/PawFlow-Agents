@@ -421,14 +421,18 @@ class StreamEmitter(AgentEmitter):
                     _page = _cs.load_page(self.conversation_id,
                                           limit=_current - _known, offset=_known)
                     _tail = _page["messages"] if _page else []
+                    # Collect msg_ids already in context to avoid duplicates
+                    _existing_ids = {m.msg_id for m in messages if m.msg_id}
                     for m in (_tail or []):
                         if (isinstance(m, dict) and m.get("role") == "user"
                                 and not (isinstance(m.get("content"), str)
-                                         and m["content"].startswith("[System:"))):
+                                         and m["content"].startswith("[System:"))
+                                and m.get("msg_id") not in _existing_ids):
                             messages.append(LLMMessage(
                                 role="user",
                                 content=m.get("content", ""),
                                 source=m.get("source"),
+                                msg_id=m.get("msg_id", ""),
                             ))
                     self.ctx["_last_known_msg_count"] = _current
             except Exception as e:
@@ -466,9 +470,10 @@ class StreamEmitter(AgentEmitter):
             ConversationWriter.for_conversation(_parent).enqueue(
                 public, user_id=self._user_id)
 
-        from core.conversation_store import ConversationStore
-        self.ctx["_last_known_msg_count"] = ConversationStore.instance().message_count(
-            self.conversation_id)
+        # Update known count: add the number of public messages we just enqueued
+        # (don't re-read from store — the async writer may not have written yet)
+        _public_count = len(public)
+        self.ctx["_last_known_msg_count"] = self.ctx.get("_last_known_msg_count", 0) + _public_count
 
     def on_no_pending_work(self, content: str, ctx: dict) -> Optional[str]:
         """Handle [NO_PENDING_WORK] / [RECHECK_IN:N] tags from poller responses."""

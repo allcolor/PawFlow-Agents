@@ -625,7 +625,14 @@ class AgentCoreMixin:
                                     conversation_id)
                             except Exception:
                                 pass
-                            client._claude_session_id = ""
+                            # Invalidate session in store
+                            try:
+                                from core.conversation_store import ConversationStore
+                                _an = ctx.get("active_agent_name", "") or "default"
+                                ConversationStore.instance().set_extra(
+                                    conversation_id, f"claude_session:{_an}", "")
+                            except Exception:
+                                pass
                             ctx["_claude_has_session"] = False
                             try:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
@@ -675,8 +682,14 @@ class AgentCoreMixin:
 
                     # Post-response — mark session as active for next iteration
                     if _is_claude_code and not ctx.get("_claude_has_session"):
-                        if getattr(client, '_claude_session_id', ''):
-                            ctx["_claude_has_session"] = True
+                        try:
+                            from core.conversation_store import ConversationStore
+                            _an = ctx.get("active_agent_name", "") or "default"
+                            if ConversationStore.instance().get_extra(
+                                    conversation_id, f"claude_session:{_an}"):
+                                ctx["_claude_has_session"] = True
+                        except Exception:
+                            pass
                         # Check: if context was offloaded to file, did CC read it?
                         _cc_fid = getattr(self, '_cc_context_file_id', '')
                         if _cc_fid and iteration == 1 and response.tool_calls:

@@ -1082,6 +1082,21 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "text/plain", "text/html", "text/markdown", "text/csv",
             "application/json", "application/xml",
         }
+        _CONVERTIBLE_TYPES = {
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",  # .pptx
+            "application/vnd.oasis.opendocument.text",  # .odt
+            "application/vnd.oasis.opendocument.spreadsheet",  # .ods
+            "application/msword",  # .doc (old)
+            "application/vnd.ms-excel",  # .xls (old)
+            "application/rtf",  # .rtf
+            "application/epub+zip",  # .epub
+        }
+        _CONVERTIBLE_EXTS = {
+            ".docx", ".xlsx", ".pptx", ".odt", ".ods",
+            ".doc", ".xls", ".rtf", ".epub",
+        }
 
         parts: List[Dict[str, Any]] = []
 
@@ -1130,15 +1145,178 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         "type": "text",
                         "text": f"[Attached file: {filename} — could not decode: {e}]",
                     })
+            elif mime in _CONVERTIBLE_TYPES or any(filename.endswith(ext) for ext in _CONVERTIBLE_EXTS):
+                # Convert document to text
+                try:
+                    raw = base64.b64decode(data_b64)
+                    converted = self._convert_document_to_text(raw, filename, mime)
+                    parts.append({
+                        "type": "document",
+                        "filename": filename,
+                        "text": converted,
+                    })
+                except Exception as e:
+                    logger.warning("Failed to convert %s: %s", filename, e)
+                    parts.append({
+                        "type": "text",
+                        "text": f"[Attached file: {filename} ({mime}) — conversion failed: {e}]",
+                    })
             else:
-                # Unknown type — mention it
-                parts.append({
-                    "type": "text",
-                    "text": f"[Attached file: {filename} ({mime}) — binary content not supported]",
-                })
+                # Unknown type — store in FileStore, give URL
+                try:
+                    raw = base64.b64decode(data_b64)
+                    from core.file_store import FileStore
+                    fid = FileStore.instance().store(filename, raw, mime)
+                    url = f"/files/{fid}/{filename}"
+                    parts.append({
+                        "type": "text",
+                        "text": f"[Attached file: {filename} ({mime}, {len(raw):,} bytes) — download: {url}]",
+                    })
+                except Exception:
+                    parts.append({
+                        "type": "text",
+                        "text": f"[Attached file: {filename} ({mime}) — binary content, not convertible]",
+                    })
 
         return parts if len(parts) > 1 or any(p["type"] != "text" for p in parts) else (parts[0]["text"] if parts else text)
 
+
+    @staticmethod
+    def _convert_document_to_text(raw: bytes, filename: str, mime: str) -> str:
+        """Convert office documents to text. Tries multiple libraries."""
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+        # DOCX
+        if ext == "docx" or "wordprocessingml" in mime:
+            try:
+                import io
+                from docx import Document
+                doc = Document(io.BytesIO(raw))
+                paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+                if paragraphs:
+                    return "\n\n".join(paragraphs)
+            except ImportError:
+                pass
+            # Fallback: extract from zip XML
+            try:
+                import zipfile, io, re
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    xml = z.read("word/document.xml").decode("utf-8")
+                    text = re.sub(r'<[^>]+>', '', xml)
+                    text = re.sub(r'\s+', ' ', text).strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+            raise ValueError("python-docx not available and XML extraction failed")
+
+        # ODT
+        if ext == "odt" or "opendocument.text" in mime:
+            try:
+                import zipfile, io, re
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    xml = z.read("content.xml").decode("utf-8")
+                    # Extract text between tags
+                    text = re.sub(r'<[^>]+>', '\n', xml)
+                    text = re.sub(r'\n{3,}', '\n\n', text).strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+            raise ValueError("ODT extraction failed")
+
+        # XLSX
+        if ext in ("xlsx", "xls") or "spreadsheet" in mime:
+            try:
+                import io
+                from openpyxl import load_workbook
+                wb = load_workbook(io.BytesIO(raw), read_only=True, data_only=True)
+                sheets = []
+                for ws in wb.worksheets:
+                    rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        cells = [str(c) if c is not None else "" for c in row]
+                        if any(cells):
+                            rows.append("\t".join(cells))
+                    if rows:
+                        sheets.append(f"## Sheet: {ws.title}\n" + "\n".join(rows))
+                wb.close()
+                if sheets:
+                    return "\n\n".join(sheets)
+            except ImportError:
+                pass
+            raise ValueError("openpyxl not available")
+
+        # PPTX
+        if ext == "pptx" or "presentationml" in mime:
+            try:
+                import io
+                from pptx import Presentation
+                prs = Presentation(io.BytesIO(raw))
+                slides = []
+                for i, slide in enumerate(prs.slides, 1):
+                    texts = []
+                    for shape in slide.shapes:
+                        if shape.has_text_frame:
+                            for para in shape.text_frame.paragraphs:
+                                t = para.text.strip()
+                                if t:
+                                    texts.append(t)
+                    if texts:
+                        slides.append(f"## Slide {i}\n" + "\n".join(texts))
+                if slides:
+                    return "\n\n".join(slides)
+            except ImportError:
+                pass
+            raise ValueError("python-pptx not available")
+
+        # ODS
+        if ext == "ods" or "opendocument.spreadsheet" in mime:
+            try:
+                import zipfile, io, re
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    xml = z.read("content.xml").decode("utf-8")
+                    text = re.sub(r'<[^>]+>', '\t', xml)
+                    text = re.sub(r'\t{3,}', '\n', text).strip()
+                    if text:
+                        return text
+            except Exception:
+                pass
+            raise ValueError("ODS extraction failed")
+
+        # RTF
+        if ext == "rtf" or "rtf" in mime:
+            try:
+                from striprtf.striprtf import rtf_to_text
+                return rtf_to_text(raw.decode("utf-8", errors="replace"))
+            except ImportError:
+                # Basic RTF strip
+                import re
+                text = raw.decode("utf-8", errors="replace")
+                text = re.sub(r'\\[a-z]+\d*\s?', '', text)
+                text = re.sub(r'[{}]', '', text)
+                return text.strip() or "(empty RTF)"
+
+        # EPUB
+        if ext == "epub" or "epub" in mime:
+            try:
+                import zipfile, io, re
+                with zipfile.ZipFile(io.BytesIO(raw)) as z:
+                    html_parts = []
+                    for name in z.namelist():
+                        if name.endswith((".html", ".xhtml", ".htm")):
+                            html = z.read(name).decode("utf-8", errors="replace")
+                            text = re.sub(r'<[^>]+>', ' ', html)
+                            text = re.sub(r'\s+', ' ', text).strip()
+                            if text:
+                                html_parts.append(text)
+                    if html_parts:
+                        return "\n\n".join(html_parts)
+            except Exception:
+                pass
+            raise ValueError("EPUB extraction failed")
+
+        raise ValueError(f"No converter for {ext}/{mime}")
 
     @staticmethod
     def _extract_pdf_text(raw_bytes: bytes) -> str:

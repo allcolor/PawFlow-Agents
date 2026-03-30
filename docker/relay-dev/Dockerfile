@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        pydantic-settings loguru structlog \
        tenacity backoff \
        tqdm tabulate colorama \
+       python-docx openpyxl python-pptx striprtf PyPDF2 ebooklib \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js / TypeScript ────────────────────────────────────────────

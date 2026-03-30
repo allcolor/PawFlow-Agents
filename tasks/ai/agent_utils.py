@@ -357,7 +357,10 @@ class AgentUtilsMixin:
         if ctx:
             gen_key = ctx.get("_gen_key", conversation_id)
             with self._running_agents_lock:
+                _was = gen_key in self._running_agents
                 self._running_agents.pop(gen_key, None)
+                logger.info("[decrement_active] pop '%s' from _running_agents (was_present=%s, remaining=%d)",
+                            gen_key, _was, len(self._running_agents))
         # Clean up active claude-code client reference
         if hasattr(self, '_active_claude_client'):
             self._active_claude_client.pop(conversation_id, None)

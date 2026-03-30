@@ -91,9 +91,6 @@ class AgentCoreMixin:
         if hasattr(client, 'send_user_message') and conversation_id:
             with self._active_contexts_lock:
                 self._active_claude_client[_agent_name_key] = client
-            if not hasattr(self, '_active_agent_names'):
-                self._active_agent_names = {}
-            self._active_agent_names[conversation_id] = ctx.get("active_agent_name", "")
             # Clear cancelled state from previous run
             try:
                 from services.tool_relay_service import ToolRelayService

@@ -701,7 +701,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _is_btw = body_json.get("btw", False) if body_json else False
             if _is_btw:
                 user_source["btw"] = True
-            messages.append(LLMMessage(role="user", content=user_content, source=user_source))
+            _umid = flowfile.get_attribute("_user_msg_id") or (body_json.get("msg_id", "") if body_json else "")
+            _umsg = LLMMessage(role="user", content=user_content, source=user_source)
+            if _umid:
+                _umsg.msg_id = _umid
+            messages.append(_umsg)
 
         # _active_agent_name, _active_llm_service, client, resolved_svc
         # are resolved early (before message loading) — see above.

@@ -121,7 +121,15 @@ class Connection:
 
     def peek(self) -> Optional[FlowFile]:
         """Peek at next FlowFile without removing."""
-        return self._queue.peek()
+        with self._lock:
+            return self._queue.peek()
+
+    def requeue(self, flowfile: FlowFile) -> None:
+        """Re-enqueue a FlowFile for rollback (bypasses backpressure)."""
+        with self._lock:
+            self._queue.put(flowfile)
+            self._total_bytes += flowfile.size()
+            # Don't increment _flowfiles_in — already counted on first enqueue
 
     def peek_all(self, limit: int = 100) -> List[FlowFile]:
         """Return up to `limit` FlowFiles without removing them."""

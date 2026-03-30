@@ -360,17 +360,22 @@ class StreamEmitter(AgentEmitter):
                         except Exception as _ae:
                             logger.debug(f"Inline action failed: {_ae}")
                     elif _ptext and _ptext.strip():
-                        append_fn(LLMMessage(
+                        _pmid = _pff.get_attribute("_user_msg_id") or ""
+                        _msg = LLMMessage(
                             role="user", content=_ptext,
                             source={"type": "user",
                                     "name": _pff.get_attribute("http.auth.principal") or self._user_id},
-                        ))
+                        )
+                        if _pmid:
+                            _msg.msg_id = _pmid
+                        append_fn(_msg)
                         self._respond_http(_pff)
             except Exception as _e:
                 logger.debug(f"Queue drain failed: {_e}")
 
         # Source 2: internal "already active" queue (FlowFiles queued while agent was busy)
-        _queued_key = f"_queued_msgs:{self.conversation_id}"
+        _agent_key = f"{self.conversation_id}:{self._agent_name}" if self._agent_name else self.conversation_id
+        _queued_key = f"_queued_msgs:{_agent_key}"
         if hasattr(self.agent, '_pending_user_msgs') and _queued_key in self.agent._pending_user_msgs:
             _queued = self.agent._pending_user_msgs.pop(_queued_key, [])
             for _qff in _queued:
@@ -389,10 +394,15 @@ class StreamEmitter(AgentEmitter):
                     _text = ""
                     _uid = self._user_id
                 if _text:
-                    append_fn(LLMMessage(
+                    _qmid = (_qff.get_attribute("_user_msg_id")
+                             if hasattr(_qff, "get_attribute") else "") or _parsed.get("msg_id", "")
+                    _msg = LLMMessage(
                         role="user", content=_text,
                         source={"type": "user", "name": _uid},
-                    ))
+                    )
+                    if _qmid:
+                        _msg.msg_id = _qmid
+                    append_fn(_msg)
 
         # Source 3: conversation store (cross-channel messages)
         if self._use_conv_store and self.conversation_id and iteration > 1:

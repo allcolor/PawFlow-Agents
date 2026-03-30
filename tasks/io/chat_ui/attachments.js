@@ -244,10 +244,13 @@ async function send() {
   input.value = '';
   input.style.height = 'auto';
 
+  // Generate msg_id client-side so dedup works across SSE + poll recovery
+  const userMsgId = crypto.randomUUID().replace(/-/g, '').slice(0, 12);
+
   // Show user message with target badge (all messages explicitly show who they go to)
   const targetAgent = selectedAgent || '';
   const userSource = { type: 'user', name: '', target_agent: targetAgent };
-  const msgEl = addMsg('user', text || '', { source: userSource });
+  const msgEl = addMsg('user', text || '', { source: userSource, msg_id: userMsgId });
   if (attachmentsForDisplay.length > 0) {
     msgEl.innerHTML = sourceBadge(userSource) + escapeHtml(text || '') + renderUserAttachments(attachmentsForDisplay);
   }
@@ -264,7 +267,7 @@ async function send() {
     }
   }
   try {
-    const body = { message: text, target_agent: targetAgent };
+    const body = { message: text, target_agent: targetAgent, msg_id: userMsgId };
     if (conversationId) body.conversation_id = conversationId;
     if (attachments.length > 0) body.attachments = attachments;
     if (pendingAgent) { body.pending_agent = pendingAgent; pendingAgent = null; }

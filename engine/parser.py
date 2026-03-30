@@ -79,6 +79,7 @@ class FlowParser:
 
             task_class = TaskFactory.get(task_type)
             task = task_class(task_parameters)
+            task._max_instances = task_config.get('max_instances', 1)
             flow.add_task(task_id, task)
 
         # Parser les services — resolve expressions (secrets, env, flow params)

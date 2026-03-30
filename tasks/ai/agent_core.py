@@ -46,13 +46,15 @@ class AgentCoreMixin:
         """The ONE agent execution loop — used by both sync and streaming."""
         conversation_id = ctx.get("conversation_id", "")
         # Push context into active stack — pop in finally (guarantees no ghost)
+        _agent_name = ctx.get("active_agent_name", "")
+        _ctx_key = f"{conversation_id}:{_agent_name}" if _agent_name else conversation_id
         with self._active_contexts_lock:
-            self._active_contexts[conversation_id] = ctx
+            self._active_contexts[_ctx_key] = ctx
         try:
             return self._run_agent_loop_inner(ctx, emitter)
         finally:
             with self._active_contexts_lock:
-                self._active_contexts.pop(conversation_id, None)
+                self._active_contexts.pop(_ctx_key, None)
 
     def _run_agent_loop_inner(self, ctx, emitter):
         conversation_id = ctx.get("conversation_id", "")
@@ -85,10 +87,11 @@ class AgentCoreMixin:
         client._agent_service = ctx.get("active_llm_service", "")
 
         # Register active claude-code client for preempt (stdin injection)
+        _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
         if hasattr(client, 'send_user_message') and conversation_id:
             if not hasattr(self, '_active_claude_client'):
                 self._active_claude_client = {}
-            self._active_claude_client[conversation_id] = client
+            self._active_claude_client[_agent_name_key] = client
             if not hasattr(self, '_active_agent_names'):
                 self._active_agent_names = {}
             self._active_agent_names[conversation_id] = ctx.get("active_agent_name", "")
@@ -972,8 +975,9 @@ class AgentCoreMixin:
                 _flush()
 
             # Unregister claude-code client BEFORE done (prevents stale preempt)
-            if hasattr(self, '_active_claude_client') and conversation_id in getattr(self, '_active_claude_client', {}):
-                del self._active_claude_client[conversation_id]
+            _unreg_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
+            if hasattr(self, '_active_claude_client') and _unreg_key in getattr(self, '_active_claude_client', {}):
+                del self._active_claude_client[_unreg_key]
 
             # Post-loop: ALWAYS publish done, even if cleanup fails
             try:

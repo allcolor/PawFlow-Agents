@@ -83,7 +83,7 @@ class ContinuousFlowExecutor:
     """
 
     def __init__(self, flow: Flow,
-                 max_workers: int = 8,
+                 max_workers: int = 32,
                  max_retries: int = 3,
                  schedule_interval: float = 0.05,
                  provenance: Optional[ProvenanceRepository] = None,
@@ -106,8 +106,9 @@ class ContinuousFlowExecutor:
         self._stop_event = threading.Event()
         self._lock = threading.Lock()
 
-        # Track which tasks are currently being processed (avoid double-scheduling)
-        self._in_flight: Dict[str, bool] = {}
+        # Track concurrent executions per task (counter, not boolean)
+        self._in_flight: Dict[str, int] = {}
+        self._max_instances: Dict[str, int] = {}  # populated in _build()
 
         self._flow_version = 1
         self._version_history: List[Dict[str, Any]] = []
@@ -147,6 +148,7 @@ class ContinuousFlowExecutor:
             task_type = task.TYPE if hasattr(task, 'TYPE') else ''
             self._task_states.register_task(task_id, task_type)
             self._task_retry_counts[task_id] = 0
+            self._max_instances[task_id] = getattr(task, '_max_instances', 1)
             # Inject controller services into task
             if flow.services and hasattr(task, 'set_services'):
                 task.set_services(flow.services)
@@ -375,10 +377,12 @@ class ContinuousFlowExecutor:
                 if not self._task_states.is_runnable(task_id):
                     continue
 
-                # Skip if already in flight
+                # Skip if at max concurrent instances
+                max_inst = self._max_instances.get(task_id, 1)
                 with self._lock:
-                    if self._in_flight.get(task_id, False):
-                        continue
+                    current = self._in_flight.get(task_id, 0)
+                if current >= max_inst:
+                    continue
 
                 # Check output backpressure — don't consume if downstream is full
                 if self._connections.any_backpressured(task_id):
@@ -400,18 +404,25 @@ class ContinuousFlowExecutor:
                 elif not has_input:
                     continue
 
-                # Schedule this task
-                with self._lock:
-                    self._in_flight[task_id] = True
-
-                try:
-                    self._pool.submit(self._execute_task, task_id)
-                except RuntimeError:
-                    # Pool was shutdown between stop_event check and submit
+                # Schedule up to (max_inst - current) instances this cycle
+                slots = max_inst - current
+                for _ in range(slots):
+                    # Re-check input availability for each slot
+                    if incoming and not any(not c.is_empty() for c in incoming):
+                        break
                     with self._lock:
-                        self._in_flight[task_id] = False
-                    break
-                scheduled_any = True
+                        self._in_flight[task_id] = self._in_flight.get(task_id, 0) + 1
+                    try:
+                        self._pool.submit(self._execute_task, task_id)
+                    except RuntimeError:
+                        # Pool was shutdown between stop_event check and submit
+                        with self._lock:
+                            self._in_flight[task_id] = max(0, self._in_flight.get(task_id, 1) - 1)
+                        break
+                    scheduled_any = True
+                    # Self-triggering tasks: only 1 at a time
+                    if not incoming:
+                        break
 
             if not scheduled_any:
                 self._stop_event.wait(timeout=self._schedule_interval)
@@ -419,7 +430,7 @@ class ContinuousFlowExecutor:
                 # Auto-stop for one-shot flows (no persistent sources)
                 if not self._has_persistent_sources:
                     with self._lock:
-                        any_in_flight = any(self._in_flight.values())
+                        any_in_flight = any(v > 0 for v in self._in_flight.values())
                     if not any_in_flight:
                         all_empty = self._connections.all_empty()
                         if all_empty:
@@ -457,20 +468,20 @@ class ContinuousFlowExecutor:
     def _execute_task(self, task_id: str):
         """Execute a task with transactional semantics.
 
-        1. Peek a FlowFile from the input connection (don't remove yet)
+        1. Atomically dequeue a FlowFile from the input connection
         2. Execute the task
-        3. On success: dequeue from input, enqueue results to output -> COMMIT
-        4. On error after retries: leave in queue, set ERROR state -> ROLLBACK
+        3. On success: enqueue results to output -> COMMIT
+        4. On error after retries: route to failure or discard -> ROLLBACK
         """
         try:
             task = self._tasks.get(task_id)
             if not task:
                 return
 
-            # Find input FlowFile (peek from first non-empty incoming connection)
+            # Atomically dequeue input FlowFile
             incoming = self._connections.get_incoming(task_id)
             source_conn = None
-            peeked_ff = None
+            dequeued_ff = None
             is_self_triggering = False
             use_selective_dequeue = False
 
@@ -479,31 +490,35 @@ class ContinuousFlowExecutor:
             if incoming and hasattr(task, 'select_processable'):
                 result = task.select_processable(incoming)
                 if result is not None:
-                    peeked_ff, source_conn = result
-                    use_selective_dequeue = True
+                    _sel_ff, source_conn = result
+                    # Atomically remove the selected FlowFile (peek_all doesn't dequeue)
+                    if source_conn.remove(_sel_ff):
+                        dequeued_ff = _sel_ff
+                        use_selective_dequeue = True
+                    # else: another thread got it first, skip
                 # else: nothing processable right now
             elif incoming:
                 for conn in incoming:
-                    ff = conn.peek()
+                    ff = conn.dequeue()  # atomic, thread-safe
                     if ff is not None:
                         source_conn = conn
-                        peeked_ff = ff
+                        dequeued_ff = ff
                         break
 
             # Self-triggering tasks (e.g. httpReceiver) don't need incoming
-            if peeked_ff is None and not incoming:
+            if dequeued_ff is None and not incoming:
                 if hasattr(task, 'has_pending_input') and task.has_pending_input():
                     is_self_triggering = True
                     # Will call execute(None) — task generates its own FlowFile
                 else:
                     return
 
-            if peeked_ff is None and not is_self_triggering:
+            if dequeued_ff is None and not is_self_triggering:
                 return
 
             # Debugger: check if we should pause before execution
-            if self._debugger and self._debugger.should_pause(task_id, peeked_ff):
-                self._debugger.pause_at(task_id, peeked_ff)
+            if self._debugger and self._debugger.should_pause(task_id, dequeued_ff):
+                self._debugger.pause_at(task_id, dequeued_ff)
 
             # Check if debugging was stopped
             if self._debugger:
@@ -512,9 +527,9 @@ class ContinuousFlowExecutor:
                     self._debugger = None
 
             # Discard stale HTTP FlowFiles (request already timed out / responded)
-            if peeked_ff and peeked_ff.get_attribute("http.request.id"):
-                _req_id = peeked_ff.get_attribute("http.request.id")
-                _svc_id = peeked_ff.get_attribute("http.listener.service_id") or ""
+            if dequeued_ff and dequeued_ff.get_attribute("http.request.id"):
+                _req_id = dequeued_ff.get_attribute("http.request.id")
+                _svc_id = dequeued_ff.get_attribute("http.listener.service_id") or ""
                 _still_valid = False
                 try:
                     from services.http_listener_service import HTTPListenerService, _instances
@@ -525,9 +540,7 @@ class ContinuousFlowExecutor:
                 except Exception:
                     _still_valid = True  # can't check → assume valid
                 if not _still_valid:
-                    # Request expired — silently discard
-                    if source_conn:
-                        source_conn.dequeue()
+                    # Request expired — silently discard (already dequeued above)
                     self._task_states.record_run(task_id)
                     return
 
@@ -541,14 +554,13 @@ class ContinuousFlowExecutor:
             if hasattr(task, '_drain_pending'):
                 _incoming = self._connections.get_incoming(task_id)
                 def _drain_fn():
-                    """Dequeue all pending FlowFiles from input queue."""
+                    """Dequeue all pending FlowFiles from input queue (atomic)."""
                     drained = []
                     for conn in (_incoming or []):
                         while True:
-                            ff = conn.peek()
+                            ff = conn.dequeue()
                             if ff is None:
                                 break
-                            conn.dequeue()
                             drained.append(ff)
                     return drained
                 task._drain_pending = _drain_fn
@@ -556,7 +568,7 @@ class ContinuousFlowExecutor:
             for attempt in range(1, self._max_retries + 1):
                 try:
                     start = time.time()
-                    result = task.execute(peeked_ff)
+                    result = task.execute(dequeued_ff)
                     duration_ms = (time.time() - start) * 1000
 
                     if result is None:
@@ -568,7 +580,7 @@ class ContinuousFlowExecutor:
 
                     # SUCCESS — commit the transaction
                     self._commit(task_id, task_type, source_conn,
-                                 peeked_ff, result, duration_ms,
+                                 dequeued_ff, result, duration_ms,
                                  selective=use_selective_dequeue)
                     self._task_retry_counts[task_id] = 0
 
@@ -589,7 +601,7 @@ class ContinuousFlowExecutor:
                         time.sleep(min(attempt * 0.3, 3))
 
             # All retries exhausted — ROLLBACK (FlowFile stays in queue)
-            self._rollback(task_id, task_type, peeked_ff, last_error)
+            self._rollback(task_id, task_type, dequeued_ff, last_error)
 
         except Exception as e:
             logger.error(f"Unexpected error in task '{task_id}': {e}")
@@ -597,7 +609,7 @@ class ContinuousFlowExecutor:
 
         finally:
             with self._lock:
-                self._in_flight[task_id] = False
+                self._in_flight[task_id] = max(0, self._in_flight.get(task_id, 1) - 1)
 
     def _commit(self, task_id: str, task_type: str,
                 source_conn: Optional[Connection], input_ff: Optional[FlowFile],
@@ -614,13 +626,9 @@ class ContinuousFlowExecutor:
         - FlowFiles without that attribute go to "success" connections
         - If no matching connection, fall back to all outgoing connections
         """
-        # Dequeue (remove from input queue) — skip for self-triggering tasks
-        if source_conn is not None:
-            if selective and input_ff is not None:
-                # Selective dequeue: remove specific FF (not necessarily head)
-                source_conn.remove(input_ff)
-            else:
-                source_conn.dequeue()
+        # Input FlowFile was already dequeued atomically in _execute_task.
+        # For selective dequeue (select_processable), the task handled removal.
+        # Nothing to dequeue here.
 
         # Enqueue results to output connections with relationship routing
         outgoing = self._connections.get_outgoing(task_id)
@@ -718,15 +726,9 @@ class ContinuousFlowExecutor:
         outgoing = self._connections.get_outgoing(task_id)
         failure_conns = [c for c in outgoing if c.relationship == "failure"]
 
+        # FlowFile was already dequeued atomically in _execute_task.
         if failure_conns:
-            # Route to failure connection (dequeue from input)
-            incoming = self._connections.get_incoming(task_id)
-            for conn in incoming:
-                ff = conn.peek()
-                if ff is input_ff:
-                    conn.dequeue()
-                    break
-
+            # Route to failure connection
             input_ff.set_attribute("error.message", error_msg)
             input_ff.set_attribute("error.task", task_id)
             for i, fc in enumerate(failure_conns):
@@ -738,16 +740,6 @@ class ContinuousFlowExecutor:
             )
             # Task stays RUNNING (failure was handled)
             return
-
-        # No failure connection — dequeue the bad FlowFile and try to
-        # send an error response if it's an HTTP request. The task stays
-        # RUNNING so other FlowFiles can still be processed.
-        incoming = self._connections.get_incoming(task_id)
-        for conn in incoming:
-            ff = conn.peek()
-            if ff is input_ff:
-                conn.dequeue()
-                break
 
         # If this is an HTTP request, send error response so client doesn't hang
         req_id = input_ff.get_attribute("http.request.id") if input_ff else None
@@ -1067,10 +1059,10 @@ class ContinuousFlowExecutor:
         return self._connections.get_all_stats()
 
     def get_all_task_states(self) -> Dict[str, dict]:
-        """Get all task states, enriched with in_flight processing indicator."""
+        """Get all task states, enriched with in_flight count."""
         states = self._task_states.get_all_states()
         for tid, s in states.items():
-            s["in_flight"] = self._in_flight.get(tid, False)
+            s["in_flight"] = self._in_flight.get(tid, 0)
         return states
 
     def get_status(self) -> Dict[str, Any]:

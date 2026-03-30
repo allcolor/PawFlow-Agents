@@ -33,15 +33,19 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             ToolRelayService.cancel_agent(conv_id, agent_name)
         except Exception:
             pass
-        # Kill Claude Code subprocess
+        # Kill Claude Code subprocess (check keyed entries)
         if hasattr(self, '_active_claude_client'):
-            client = self._active_claude_client.get(conv_id)
-            if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code(force=True)
+            _cc_keys = [f"{conv_id}:{agent_name}"] if agent_name else \
+                [k for k in self._active_claude_client if k == conv_id or k.startswith(conv_id + ":")]
+            for _cc_key in _cc_keys:
+                client = self._active_claude_client.get(_cc_key)
+                if client and hasattr(client, 'cancel_claude_code'):
+                    client.cancel_claude_code(force=True)
         # Kill the thread and force UI cleanup
         _killed = 0
         for t in threading.enumerate():
-            if t.name == f"agent-stream-{conv_id}" and t.is_alive():
+            if t.is_alive() and (t.name == f"agent-stream-{conv_id}" or
+                    t.name.startswith(f"agent-stream-{conv_id}:")):
                 _killed += 1
         store.set_status(conv_id, "idle")
         from core.conversation_event_bus import ConversationEventBus
@@ -56,7 +60,9 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             self._active_conversations.pop(conv_id, None)
             self._user_active_conversations.discard(conv_id)
         with self._active_contexts_lock:
-            self._active_contexts.pop(conv_id, None)
+            for k in list(self._active_contexts):
+                if k == conv_id or k.startswith(conv_id + ":"):
+                    del self._active_contexts[k]
         logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,

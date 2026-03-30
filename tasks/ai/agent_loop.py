@@ -112,7 +112,7 @@ class AgentLoopTask(
         self._interrupt_lock = threading.Lock()
         # Running agents — state-based tracker (stack on loop entry, pop on exit)
         # Active agent contexts — push on enter, pop on exit (finally).
-        # Key: conversation_id, Value: ctx dict (has agent_name, iteration, etc.)
+        # Key: "conversation_id:agent_name", Value: ctx dict
         # This is the SOLE source of truth for "which agents are active".
         self._active_contexts: Dict[str, dict] = {}
         self._active_contexts_lock = threading.Lock()
@@ -542,10 +542,14 @@ class AgentLoopTask(
             pass
         # Kill any running Claude Code subprocess for this conversation
         _force = False  # force stop handled separately by FORCE_STOP action
+        # Kill Claude Code subprocess (check both conv:agent and conv-only keys)
         if hasattr(self, '_active_claude_client'):
-            client = self._active_claude_client.get(conversation_id)
-            if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code(force=_force)
+            _cc_keys = [f"{conversation_id}:{agent_name}"] if _is_named else \
+                [k for k in self._active_claude_client if k == conversation_id or k.startswith(conversation_id + ":")]
+            for _cc_key in _cc_keys:
+                client = self._active_claude_client.get(_cc_key)
+                if client and hasattr(client, 'cancel_claude_code'):
+                    client.cancel_claude_code(force=_force)
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()
@@ -590,7 +594,9 @@ class AgentLoopTask(
         """
         # Check if anything is actually running for this conversation
         with self._active_contexts_lock:
-            _any_active = conversation_id in self._active_contexts
+            _any_active = any(
+                k == conversation_id or k.startswith(conversation_id + ":")
+                for k in self._active_contexts)
         if not _any_active:
             logger.info(f"[agent:{conversation_id[:8]}] interrupt ignored — no active agent")
             return
@@ -606,7 +612,8 @@ class AgentLoopTask(
             self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
             # Force kill Claude Code subprocess if applicable
             if hasattr(self, '_active_claude_client'):
-                _cc_client = self._active_claude_client.get(conversation_id)
+                _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+                _cc_client = self._active_claude_client.get(_esc_key)
                 if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
                     _cc_client.cancel_claude_code(force=True)
             # Force cleanup
@@ -623,7 +630,10 @@ class AgentLoopTask(
                 self._active_conversations.pop(conversation_id, None)
                 self._user_active_conversations.discard(conversation_id)
             with self._active_contexts_lock:
-                self._active_contexts.pop(conversation_id, None)
+                # Remove all agents for this conversation
+                for k in list(self._active_contexts):
+                    if k == conversation_id or k.startswith(conversation_id + ":"):
+                        del self._active_contexts[k]
             return
         self._interrupt_cooldowns[_synth_key] = _now
 
@@ -632,7 +642,8 @@ class AgentLoopTask(
         # For claude-code: graceful interrupt via stdin + cancel in-flight tools
         _is_cc = False
         if hasattr(self, '_active_claude_client'):
-            _cc_client = self._active_claude_client.get(conversation_id)
+            _int_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+            _cc_client = self._active_claude_client.get(_int_key)
             if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
                 _proc = getattr(_cc_client, '_claude_proc', None)
                 if _proc and _proc.poll() is None:
@@ -654,7 +665,7 @@ class AgentLoopTask(
                     return
                 else:
                     # Stale client — process dead, clean up
-                    self._active_claude_client.pop(conversation_id, None)
+                    self._active_claude_client.pop(_int_key, None)
 
         # Non-claude-code: cancel the current run
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
@@ -675,8 +686,9 @@ class AgentLoopTask(
             # Mark synthesis as active in _active_contexts
             _synth_ctx = {"active_agent_name": agent_name or "assistant",
                           "conversation_id": conversation_id}
+            _synth_ctx_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with self._active_contexts_lock:
-                self._active_contexts[conversation_id] = _synth_ctx
+                self._active_contexts[_synth_ctx_key] = _synth_ctx
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
@@ -808,10 +820,10 @@ class AgentLoopTask(
                     pass
             finally:
                 with self._active_contexts_lock:
-                    self._active_contexts.pop(conversation_id, None)
+                    self._active_contexts.pop(_synth_ctx_key, None)
 
         t = threading.Thread(target=_synthesis, daemon=True,
-                             name=f"interrupt-synth-{conversation_id[:8]}")
+                             name=f"interrupt-synth-{conversation_id[:8]}:{agent_name or 'agent'}")
         t.start()
 
 

@@ -354,9 +354,11 @@ class AgentUtilsMixin:
                 _tk = ctx.get("_thought_key")
                 if _tk:
                     self._active_thoughts.discard(_tk)
-        # Clean up active claude-code client reference
+        # Clean up active claude-code client reference (keyed by conv:agent)
         if hasattr(self, '_active_claude_client'):
-            self._active_claude_client.pop(conversation_id, None)
+            _agent_n = ctx.get("active_agent_name", "") if ctx else ""
+            _cc_key = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
+            self._active_claude_client.pop(_cc_key, None)
 
     def _calibrate_cpt(self, service_id: str, total_chars: int,
                        actual_tokens: int):

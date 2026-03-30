@@ -230,14 +230,19 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         )
         _user_text = _body.get("message", "")
         _target = _body.get("target_agent", "")
+        _user_msg_id = _body.get("msg_id", "")
+        if _user_msg_id:
+            flowfile.set_attribute("_user_msg_id", _user_msg_id)
         bus = ConversationEventBus.instance()
 
-        # If agent thread already running, preempt or queue
+        # If agent thread already running FOR THIS AGENT, preempt or queue
+        _agent_key = f"{conversation_id}:{_target}" if _target else conversation_id
+        _thread_name = f"agent-stream-{_agent_key}"
         _already_active = any(
-            t.is_alive() and t.name == f"agent-stream-{conversation_id}"
+            t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
         if _already_active:
-            _active_client = getattr(self, '_active_claude_client', {}).get(conversation_id)
+            _active_client = getattr(self, '_active_claude_client', {}).get(_agent_key)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
@@ -251,7 +256,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             logger.info(f"[agent:{conversation_id[:8]}] already active — queueing")
             # Preserve the original user message before overwriting with ack
             flowfile.set_attribute("_queued_user_text", _user_text)
-            _queued_key = f"_queued_msgs:{conversation_id}"
+            _queued_key = f"_queued_msgs:{_agent_key}"
             if not hasattr(self, '_pending_user_msgs'):
                 self._pending_user_msgs = {}
             self._pending_user_msgs.setdefault(_queued_key, []).append(flowfile)
@@ -321,7 +326,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         thread = threading.Thread(
             target=_bg_streaming, daemon=True,
-            name=f"agent-stream-{conversation_id}")
+            name=_thread_name)
         thread.start()
 
         # Start poller if configured

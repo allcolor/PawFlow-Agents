@@ -279,10 +279,10 @@ async function cmdPortForward(text, parts) {
     }
     try {
       const resp = await fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
         body: JSON.stringify({ action: 'port_forward_add', relay_id: relayId,
           port: parseInt(port),
           ext_port: extPort ? parseInt(extPort) : undefined }),
-        body: JSON.stringify({ action: 'port_forward_add', relay_id: relayId, port: parseInt(port) }),
       }).then(r => r.json());
       if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);
@@ -305,14 +305,14 @@ async function cmdPortForward(text, parts) {
     try {
       const resp = await fetch(API, {
         method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'port_forward_remove', relay_id: relayId, port: parseInt(port) }),
-      }).then(r => r.json());
         body: JSON.stringify({ action: 'port_forward_remove', relay_id: relayId, ext_port: parseInt(port) }),
+      }).then(r => r.json());
+      if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);
       } else {
-        addMsg('system', resp.removed ? 'Port forward removed.' : 'No such forward.');
-      }
         addMsg('system', 'Port forward removed.');
+      }
+    } catch (e) {
       addMsg('system', 'Failed: ' + e.message);
     }
     return true;

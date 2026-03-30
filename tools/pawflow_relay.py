@@ -1451,9 +1451,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     continue
 
                 msg = json.loads(payload.decode("utf-8"))
-                # Debug: log all received messages to file
-                with open("/tmp/_relay_msgs.log", "a") as _mlog:
-                    _mlog.write(f"{time.strftime('%H:%M:%S')} recv: type={msg.get('type')} action={msg.get('action','')} sessions={list(_terminal_sessions.keys())}\n")
                 if msg.get("type") == "spawn_relay":
                     # Server asks us to create a child relay for a different root
                     _sr_root = msg.get("root", "")
@@ -1547,14 +1544,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 elif msg.get("type") == "terminal_input":
                     _tid = msg.get("session_id", "")
                     _tsess = _terminal_sessions.get(_tid)
-                    sys.stderr.write(f"[FSRelay] terminal_input: sid={_tid}, found={_tsess is not None}, sessions={list(_terminal_sessions.keys())}\n")
-                    # Debug: file log
-                    with open("/tmp/_term_debug.log", "a") as _dbg:
-                        _dbg.write(f"terminal_input: sid={_tid}, found={_tsess is not None}, sessions={list(_terminal_sessions.keys())}\n")
                     if _tsess:
                         try:
                             _raw = base64.b64decode(msg.get("data", ""))
-                            sys.stderr.write(f"[FSRelay] writing {len(_raw)} bytes to fd {_tsess['master_fd']}\n")
                             os.write(_tsess["master_fd"], _raw)
                         except OSError as _oe:
                             sys.stderr.write(f"[FSRelay] terminal write error: {_oe}\n")
@@ -1610,8 +1602,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         except KeyboardInterrupt:
             sys.stderr.write("\n[FSRelay] Shutting down.\n")
-            with open("/tmp/_relay_msgs.log", "a") as _mlog:
-                _mlog.write(f"{time.strftime('%H:%M:%S')} SHUTDOWN (KeyboardInterrupt)\n")
             _close_all_terminals()
             try:
                 sock.close()
@@ -1620,11 +1610,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return
         except Exception as e:
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
-            with open("/tmp/_relay_msgs.log", "a") as _mlog:
-                _mlog.write(f"{time.strftime('%H:%M:%S')} CONNECTION ERROR: {e}\n")
         finally:
-            with open("/tmp/_relay_msgs.log", "a") as _mlog:
-                _mlog.write(f"{time.strftime('%H:%M:%S')} FINALLY: closing all terminals, reconnecting\n")
             _close_all_terminals()
             # Always close socket before reconnecting — prevents socket leak
             try:

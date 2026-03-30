@@ -17,6 +17,7 @@ Toggle: global parameter ``private_gateway_enabled`` ("true" / "false").
 
 import hashlib
 import hmac
+import json
 import logging
 import threading
 import time
@@ -60,6 +61,37 @@ _lock = threading.Lock()
 _COOLDOWNS = [0, 1, 3, 10, 30]
 _MAX_FAILURES = 5
 _BAN_DURATION = 24 * 3600
+_BAN_FILE = Path("data/gateway_bans.json")
+
+
+def _save_bans():
+    """Persist banned IPs to disk. Call with _lock held."""
+    now = time.time()
+    bans = {ip: st for ip, st in _ip_state.items() if st.get("banned_until", 0) > now}
+    try:
+        _BAN_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _BAN_FILE.write_text(json.dumps(bans), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Failed to save gateway bans: %s", e)
+
+
+def _load_bans():
+    """Load banned IPs from disk on startup."""
+    if not _BAN_FILE.exists():
+        return
+    try:
+        data = json.loads(_BAN_FILE.read_text(encoding="utf-8"))
+        now = time.time()
+        with _lock:
+            for ip, st in data.items():
+                if st.get("banned_until", 0) > now:
+                    _ip_state[ip] = st
+        logger.info("Loaded %d gateway ban(s) from disk", len(_ip_state))
+    except Exception as e:
+        logger.warning("Failed to load gateway bans: %s", e)
+
+
+_load_bans()
 
 
 def _get_ip_state(ip: str) -> dict:
@@ -101,11 +133,14 @@ def record_failure(ip: str):
             st["banned_until"] = time.time() + _BAN_DURATION
             logger.warning("Private gateway: banned IP %s for 24h after %d failures",
                            ip, st["failures"])
+            _save_bans()
 
 
 def record_success(ip: str):
     with _lock:
-        _ip_state.pop(ip, None)
+        was_banned = _ip_state.pop(ip, {}).get("banned_until", 0) > time.time()
+        if was_banned:
+            _save_bans()
 
 
 def list_bans() -> list:
@@ -122,7 +157,10 @@ def list_bans() -> list:
 def unban_ip(ip: str) -> bool:
     with _lock:
         st = _ip_state.pop(ip, None)
-        return st is not None and st.get("banned_until", 0) > time.time()
+        was_banned = st is not None and st.get("banned_until", 0) > time.time()
+        if was_banned:
+            _save_bans()
+        return was_banned
 
 
 def _load_gateway_secrets() -> Dict[str, str]:

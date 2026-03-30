@@ -255,11 +255,6 @@ def _respond(req_id, result=None, error=None):
 def _log(msg):
     sys.stderr.write(f"[mcp-bridge] {msg}\n")
     sys.stderr.flush()
-    try:
-        with open("/workspace/mcp_bridge.log", "a") as f:
-            f.write(f"[mcp-bridge] {msg}\n")
-    except Exception:
-        pass
 
 
 def main():
@@ -398,12 +393,6 @@ def main():
                 else:
                     break
             _log(f"CALL {name}({json.dumps(args)[:300]})")
-            # Debug: log when use_tool has empty inner arguments
-            if name == "use_tool":
-                _inner_name = args.get("tool_name", "?") if isinstance(args, dict) else "?"
-                _inner_args = args.get("arguments", {}) if isinstance(args, dict) else {}
-                if not _inner_args or _inner_args == {}:
-                    _log(f"WARNING: use_tool({_inner_name}) with EMPTY arguments! raw params: {json.dumps(params)[:500]}")
 
             if not client:
                 result = "Error: tool relay not connected"

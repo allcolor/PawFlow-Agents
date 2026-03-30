@@ -445,6 +445,7 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
 
     if action == "fs_copy_to_store":
         import mimetypes as _mt_fcs
+        from core.handlers._fs_base import find_fs_service as _find_svc
         _fs_svc = _find_svc(user_id, body.get("service", ""))
         if not _fs_svc:
             flowfile.set_content(json.dumps({"error": "Filesystem service not found"}).encode())

@@ -199,12 +199,17 @@ class AgentLoopTask(
                 "description": "Maximum response tokens per LLM call",
             },
             "max_iterations": {
-                "type": "integer", "required": False, "default": 200,
-                "description": "Maximum tool-use loop iterations (safety limit — agent synthesizes at the end if reached)",
+                "type": "integer", "required": False, "default": 1000,
+                "description": "Maximum tool-use iterations (0 = default 1000). Overrides LLM service value.",
             },
             "max_consecutive_tool_calls": {
-                "type": "integer", "required": False, "default": 25,
-                "description": "Max consecutive calls to the same tool before the agent must ask for confirmation (0 = unlimited)",
+                "type": "integer", "required": False, "default": 100,
+                "description": "Max consecutive calls to same tool (0 = default 100). Overrides LLM service value.",
+            },
+            "resilience_style": {
+                "type": "select", "required": False, "default": "",
+                "options": ["", "cautious", "balanced", "aggressive"],
+                "description": "Tool call resilience (empty = LLM service default or balanced)",
             },
             "thinking_budget": {
                 "type": "integer", "required": False, "default": 0,

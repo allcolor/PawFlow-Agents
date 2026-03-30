@@ -116,9 +116,6 @@ class AgentLoopTask(
         # This is the SOLE source of truth for "which agents are active".
         self._active_contexts: Dict[str, dict] = {}
         self._active_contexts_lock = threading.Lock()
-        # Legacy — kept temporarily for cancel_interrupt and heartbeat SSE
-        self._running_agents: Dict[str, Dict] = {}
-        self._running_agents_lock = threading.Lock()
         # Context operation locks — prevents FlowFile processing during context mutations
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
@@ -573,17 +570,7 @@ class AgentLoopTask(
         # Reset status
         from core.conversation_store import ConversationStore
         ConversationStore.instance().set_status(conversation_id, "idle")
-        # Remove from interaction tracker (including thought entries)
-        with self._running_agents_lock:
-            for k in list(self._running_agents):
-                if _is_named:
-                    if k == f"{conversation_id}:{agent_name}" or \
-                       k == f"{conversation_id}::thought::{agent_name.lower()}":
-                        self._running_agents.pop(k, None)
-                else:
-                    if k == conversation_id or k.startswith(conversation_id + ":") or \
-                       k.startswith(conversation_id + "::"):
-                        self._running_agents.pop(k, None)
+        # _active_contexts cleanup happens in _run_agent_loop finally
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
 
@@ -597,11 +584,8 @@ class AgentLoopTask(
         No-op if no agent is actively running.
         """
         # Check if anything is actually running for this conversation
-        with self._running_agents_lock:
-            _any_active = any(
-                v.get("conversation_id") == conversation_id
-                for v in self._running_agents.values()
-            )
+        with self._active_contexts_lock:
+            _any_active = conversation_id in self._active_contexts
         if not _any_active:
             logger.info(f"[agent:{conversation_id[:8]}] interrupt ignored — no active agent")
             return
@@ -636,7 +620,7 @@ class AgentLoopTask(
         # Cancel the current run — publish cancelled event so UI stops
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
 
-        # Note: do NOT clear _running_agents here — the agent loop's finally
+        # Note: _active_contexts cleanup happens in _run_agent_loop finally
         # block handles that. The agent is still running (doing synthesis).
 
         # Spawn parallel synthesis thread
@@ -649,13 +633,11 @@ class AgentLoopTask(
 
         def _synthesis():
             _synth_gen_key = f"{conversation_id}:__synth__"
-            with self._running_agents_lock:
-                self._running_agents[_synth_gen_key] = {
-                    "agent_name": agent_name or "assistant",
-                    "conversation_id": conversation_id,
-                    "started_at": time.time(),
-                    "status": "synthesizing",
-                }
+            # Mark synthesis as active in _active_contexts
+            _synth_ctx = {"active_agent_name": agent_name or "assistant",
+                          "conversation_id": conversation_id}
+            with self._active_contexts_lock:
+                self._active_contexts[conversation_id] = _synth_ctx
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
@@ -786,8 +768,8 @@ class AgentLoopTask(
                 except Exception:
                     pass
             finally:
-                with self._running_agents_lock:
-                    self._running_agents.pop(_synth_gen_key, None)
+                with self._active_contexts_lock:
+                    self._active_contexts.pop(conversation_id, None)
 
         t = threading.Thread(target=_synthesis, daemon=True,
                              name=f"interrupt-synth-{conversation_id[:8]}")

@@ -39,7 +39,12 @@ class AgentPollerMixin:
         except Exception as e:
             logger.warning(f"Failed to reschedule active tasks on startup: {e}")
 
-        while not self._poller_stop.wait(interval):
+        while not self._poller_stop.is_set():
+            # Wait for interval OR immediate wake signal
+            self._poller_wake.wait(timeout=interval)
+            self._poller_wake.clear()
+            if self._poller_stop.is_set():
+                break
             try:
                 self._poll_once()
             except Exception as e:
@@ -112,7 +117,7 @@ class AgentPollerMixin:
                 thought_entries.append(entry)
                 continue
 
-            if "::plan::" in entry_key:
+            if "::plan::" in entry_key or "::plan_verify::" in entry_key:
                 thought_entries.append(entry)
                 continue
 
@@ -185,19 +190,7 @@ class AgentPollerMixin:
                 ctx["_generation"] = gen
                 ctx["_gen_key"] = conversation_id
 
-                # Register in active interactions
-                _poll_agent = ctx.get("active_agent_name", "") or ""
-                with self._running_agents_lock:
-                    self._running_agents[conversation_id] = {
-                        "agent_name": _poll_agent,
-                        "message_preview": ", ".join(reasons)[:80] if reasons else "poll",
-                        "started_at": time.time(),
-                        "iteration": 0,
-                        "last_tool": "",
-                        "status": "thinking",
-                        "conversation_id": conversation_id,
-                    }
-
+                # _active_contexts is managed by _run_agent_loop (push/pop in finally)
                 bus.publish_event(conversation_id, "thinking", {
                     "iteration": 0,
                     "poll": True,
@@ -270,6 +263,28 @@ class AgentPollerMixin:
                     self._active_thoughts.discard(entry_key)
                 continue
 
+            # Validate agent exists — never spawn a phantom agent
+            if "::plan::" in entry_key or "::plan_verify::" in entry_key:
+                try:
+                    from core.resource_store import ResourceStore as _RS_chk
+                    _meta_chk = store.get_metadata(cid)
+                    _uid_chk = _meta_chk["user_id"] if _meta_chk else ""
+                    _adef_chk = _RS_chk.instance().get_any(
+                        "agent", _thought_agent, _uid_chk)
+                    if not _adef_chk:
+                        logger.error(
+                            f"[plan] Agent '{_thought_agent}' not found in "
+                            f"ResourceStore for entry '{entry_key}'. "
+                            f"Refusing to spawn — would fallback on default LLM.")
+                        with self._active_lock:
+                            self._active_thoughts.discard(entry_key)
+                        continue
+                except Exception as _e_chk:
+                    logger.error(f"[plan] Failed to validate agent '{_thought_agent}': {_e_chk}")
+                    with self._active_lock:
+                        self._active_thoughts.discard(entry_key)
+                    continue
+
             # Skip if this agent already has a thought running
             with self._active_lock:
                 if entry_key in self._active_thoughts:
@@ -316,18 +331,7 @@ class AgentPollerMixin:
                 ctx["_gen_key"] = _thought_gen_key
                 ctx["_thought_key"] = entry_key
 
-                # Register in active interactions so list_active reports it
-                with self._running_agents_lock:
-                    self._running_agents[_thought_gen_key] = {
-                        "agent_name": _thought_agent,
-                        "message_preview": reason[:80],
-                        "started_at": time.time(),
-                        "iteration": 0,
-                        "last_tool": "",
-                        "status": "thinking",
-                        "conversation_id": cid,
-                    }
-
+                # _active_contexts is managed by _run_agent_loop (push/pop in finally)
                 bus.publish_event(cid, "thinking", {
                     "iteration": 0,
                     "poll": True,
@@ -403,6 +407,7 @@ class AgentPollerMixin:
         _is_task = any("[agent_task:" in r for r in (scheduled_reasons or []))
         _is_task_verify = any("[task_verify:" in r for r in (scheduled_reasons or []))
         _is_plan_step = any("[plan_step:" in r for r in (scheduled_reasons or []))
+        _is_plan_verify = any("[plan_verify:" in r for r in (scheduled_reasons or []))
         is_random_thought = any(
             r.startswith("[random_thought]") for r in (scheduled_reasons or [])
         )
@@ -415,7 +420,7 @@ class AgentPollerMixin:
             conversation_id, scheduled_reasons or [],
             _active_agent or ctx.get("active_agent_name", ""),
             _is_task, _is_task_verify, is_random_thought,
-            _is_plan_step,
+            _is_plan_step, _is_plan_verify,
         )
         ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
         ctx["_base_message_count"] = len(ctx["messages"])
@@ -442,6 +447,9 @@ class AgentPollerMixin:
             plan_match = re.search(r'\[plan_step:\w+:\d+\]\s*\(([\w.-]+)\)', sr)
             if plan_match:
                 return plan_match.group(1)
+            pv_match = re.search(r'\[plan_verify:\w+:\d+:[\w.-]+\]\s*\(([\w.-]+)\)', sr)
+            if pv_match:
+                return pv_match.group(1)
             sched_match = re.match(r'\[scheduled:(\w+)\]', sr)
             if sched_match:
                 return sched_match.group(1)
@@ -453,9 +461,14 @@ class AgentPollerMixin:
                             agent_name: str,
                             is_task: bool, is_task_verify: bool,
                             is_random_thought: bool,
-                            is_plan_step: bool = False) -> str:
+                            is_plan_step: bool = False,
+                            is_plan_verify: bool = False) -> str:
         """Build the check-in prompt for a poll-triggered agent run."""
         from core.conversation_store import ConversationStore as _CS3
+
+        if is_plan_verify:
+            return self._build_plan_verify_checkin(
+                conversation_id, scheduled_reasons, agent_name)
 
         if is_plan_step:
             return self._build_plan_step_checkin(
@@ -623,7 +636,8 @@ class AgentPollerMixin:
         for s in plan["steps"]:
             marker = ">>" if s["index"] == step_num else "  "
             icon = {"done": "\u2713", "skipped": "\u2014", "in_progress": "\u25d4",
-                    "error": "\u2717", "pending": "\u25cb"}.get(s["status"], "?")
+                    "error": "\u2717", "pending": "\u25cb",
+                    "pending_verification": "\u2690"}.get(s["status"], "?")
             steps_text += f"{marker} {icon} {s['index']}. {s['description']}"
             if s.get("note"):
                 steps_text += f" [{s['note']}]"
@@ -639,6 +653,75 @@ class AgentPollerMixin:
             f"\"status\": \"done\", \"note\": \"what you did\"}}])\n\n"
             f"If the step fails, set status to \"error\" with a note explaining why.\n"
             f"Do NOT skip ahead to other steps. Do NOT respond with [NO_PENDING_WORK]."
+        )
+
+    def _build_plan_verify_checkin(self, conversation_id: str,
+                                    scheduled_reasons: List[str],
+                                    agent_name: str) -> str:
+        """Build check-in prompt for a plan step verification."""
+        import re
+        from core.conversation_store import ConversationStore as _CS5
+
+        # Extract plan_id, step number, and executor from reason:
+        # [plan_verify:p_xxx:N:executor_agent] (verifier)
+        plan_id = ""
+        step_num = 0
+        executor = ""
+        for sr in scheduled_reasons:
+            m = re.search(r'\[plan_verify:(p_\w+):(\d+):([\w.-]+)\]', sr)
+            if m:
+                plan_id = m.group(1)
+                step_num = int(m.group(2))
+                executor = m.group(3)
+                break
+
+        if not plan_id:
+            return "[System: Plan verification scheduled but no plan_id found.]"
+
+        store = _CS5.instance()
+        plans = store.get_extra(conversation_id, "plans") or {}
+        plan = plans.get(plan_id)
+        if not plan:
+            return f"[System: Plan {plan_id} not found.]"
+
+        step = None
+        for s in plan["steps"]:
+            if s["index"] == step_num:
+                step = s
+                break
+        if not step:
+            return f"[System: Step {step_num} not found in plan {plan_id}.]"
+
+        # Build context: show full plan with current step highlighted
+        total = len(plan["steps"])
+        steps_text = ""
+        for s in plan["steps"]:
+            marker = ">>" if s["index"] == step_num else "  "
+            icon = {"done": "\u2713", "skipped": "\u2014", "in_progress": "\u25d4",
+                    "error": "\u2717", "pending": "\u25cb",
+                    "pending_verification": "\u2690"}.get(s["status"], "?")
+            steps_text += f"{marker} {icon} {s['index']}. {s['description']}"
+            if s.get("note"):
+                steps_text += f" [{s['note']}]"
+            steps_text += "\n"
+
+        executor_note = step.get("note", "No note provided.")
+
+        return (
+            f"[System: Plan step verification — {plan['title']}]\n\n"
+            f"**Plan:** {plan_id} — {plan['title']}\n"
+            f"**Step {step_num}/{total}:** {step['description']}\n"
+            f"**Executed by:** {executor}\n"
+            f"**Executor's note:** {executor_note}\n\n"
+            f"All steps:\n{steps_text}\n"
+            f"Review step {step_num}. Verify the work was done correctly.\n"
+            f"When done, call:\n"
+            f"  verify_plan_step(plan_id=\"{plan_id}\", step={step_num}, "
+            f"approved=true, reason=\"looks good\")\n\n"
+            f"If the step needs rework:\n"
+            f"  verify_plan_step(plan_id=\"{plan_id}\", step={step_num}, "
+            f"approved=false, reason=\"what needs to be fixed\")\n\n"
+            f"Do NOT respond with [NO_PENDING_WORK]."
         )
 
     def _reschedule_active_tasks(self):

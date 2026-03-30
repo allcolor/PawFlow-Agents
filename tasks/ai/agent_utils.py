@@ -354,24 +354,9 @@ class AgentUtilsMixin:
                 _tk = ctx.get("_thought_key")
                 if _tk:
                     self._active_thoughts.discard(_tk)
-        if ctx:
-            gen_key = ctx.get("_gen_key", conversation_id)
-            with self._running_agents_lock:
-                _was = gen_key in self._running_agents
-                self._running_agents.pop(gen_key, None)
-                logger.info("[decrement_active] pop '%s' from _running_agents (was_present=%s, remaining=%d)",
-                            gen_key, _was, len(self._running_agents))
         # Clean up active claude-code client reference
         if hasattr(self, '_active_claude_client'):
             self._active_claude_client.pop(conversation_id, None)
-
-
-    def _update_running_agent(self, gen_key: str, **kwargs):
-        """Update metadata for a running agent (iteration, last_tool, status)."""
-        with self._running_agents_lock:
-            info = self._running_agents.get(gen_key)
-            if info:
-                info.update(kwargs)
 
     def _calibrate_cpt(self, service_id: str, total_chars: int,
                        actual_tokens: int):

@@ -34,13 +34,13 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         except Exception:
             pass
         # Kill Claude Code subprocess (check keyed entries)
-        if hasattr(self, '_active_claude_client'):
+        with self._active_contexts_lock:
             _cc_keys = [f"{conv_id}:{agent_name}"] if agent_name else \
                 [k for k in self._active_claude_client if k == conv_id or k.startswith(conv_id + ":")]
-            for _cc_key in _cc_keys:
-                client = self._active_claude_client.get(_cc_key)
-                if client and hasattr(client, 'cancel_claude_code'):
-                    client.cancel_claude_code(force=True)
+            _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
+        for _cc_key, client in _cc_clients:
+            if client and hasattr(client, 'cancel_claude_code'):
+                client.cancel_claude_code(force=True)
         # Kill the thread and force UI cleanup
         _killed = 0
         for t in threading.enumerate():

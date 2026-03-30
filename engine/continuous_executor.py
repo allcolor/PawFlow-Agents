@@ -563,7 +563,13 @@ class ContinuousFlowExecutor:
                                 break
                             drained.append(ff)
                     return drained
+                def _requeue_fn(flowfiles):
+                    """Re-enqueue FlowFiles back to the input queue."""
+                    if _incoming:
+                        for ff in flowfiles:
+                            _incoming[0].requeue(ff)
                 task._drain_pending = _drain_fn
+                task._requeue_flowfiles = _requeue_fn
 
             for attempt in range(1, self._max_retries + 1):
                 try:

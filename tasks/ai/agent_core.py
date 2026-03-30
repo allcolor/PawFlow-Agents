@@ -89,9 +89,8 @@ class AgentCoreMixin:
         # Register active claude-code client for preempt (stdin injection)
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
         if hasattr(client, 'send_user_message') and conversation_id:
-            if not hasattr(self, '_active_claude_client'):
-                self._active_claude_client = {}
-            self._active_claude_client[_agent_name_key] = client
+            with self._active_contexts_lock:
+                self._active_claude_client[_agent_name_key] = client
             if not hasattr(self, '_active_agent_names'):
                 self._active_agent_names = {}
             self._active_agent_names[conversation_id] = ctx.get("active_agent_name", "")
@@ -976,8 +975,8 @@ class AgentCoreMixin:
 
             # Unregister claude-code client BEFORE done (prevents stale preempt)
             _unreg_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
-            if hasattr(self, '_active_claude_client') and _unreg_key in getattr(self, '_active_claude_client', {}):
-                del self._active_claude_client[_unreg_key]
+            with self._active_contexts_lock:
+                self._active_claude_client.pop(_unreg_key, None)
 
             # Post-loop: ALWAYS publish done, even if cleanup fails
             try:

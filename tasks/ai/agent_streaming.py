@@ -242,7 +242,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
         if _already_active:
-            _active_client = getattr(self, '_active_claude_client', {}).get(_agent_key)
+            with self._active_contexts_lock:
+                _active_client = self._active_claude_client.get(_agent_key)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
@@ -257,9 +258,8 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # Preserve the original user message before overwriting with ack
             flowfile.set_attribute("_queued_user_text", _user_text)
             _queued_key = f"_queued_msgs:{_agent_key}"
-            if not hasattr(self, '_pending_user_msgs'):
-                self._pending_user_msgs = {}
-            self._pending_user_msgs.setdefault(_queued_key, []).append(flowfile)
+            with self._active_lock:
+                self._pending_user_msgs.setdefault(_queued_key, []).append(flowfile)
             bus.publish_event(conversation_id, "message_queued", {"conversation_id": conversation_id})
             ack = json.dumps({"status": "queued", "conversation_id": conversation_id,
                               "message_count": ConversationStore.instance().message_count(conversation_id)})

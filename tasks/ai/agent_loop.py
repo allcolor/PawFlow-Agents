@@ -99,6 +99,7 @@ class AgentLoopTask(
         # Set by ContinuousFlowExecutor before execute() — callable that
         # dequeues and returns all pending FlowFiles from input queue
         self._drain_pending = None  # type: Optional[Callable[[], List[FlowFile]]]
+        self._requeue_flowfiles = None  # type: Optional[Callable[[List[FlowFile]], None]]
         self._user_active_conversations: set = set()  # convs with active USER interaction
         self._active_thoughts: set = set()  # active thought keys (conv_id::thought::agent)
         self._active_lock = threading.Lock()
@@ -116,6 +117,10 @@ class AgentLoopTask(
         # This is the SOLE source of truth for "which agents are active".
         self._active_contexts: Dict[str, dict] = {}
         self._active_contexts_lock = threading.Lock()
+        # Claude Code client references — keyed by conv_id:agent_name
+        self._active_claude_client: Dict[str, Any] = {}
+        # Pending user messages queued while agent is busy — keyed by _queued_msgs:{agent_key}
+        self._pending_user_msgs: Dict[str, list] = {}
         # Context operation locks — prevents FlowFile processing during context mutations
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
@@ -543,13 +548,13 @@ class AgentLoopTask(
         # Kill any running Claude Code subprocess for this conversation
         _force = False  # force stop handled separately by FORCE_STOP action
         # Kill Claude Code subprocess (check both conv:agent and conv-only keys)
-        if hasattr(self, '_active_claude_client'):
+        with self._active_contexts_lock:
             _cc_keys = [f"{conversation_id}:{agent_name}"] if _is_named else \
                 [k for k in self._active_claude_client if k == conversation_id or k.startswith(conversation_id + ":")]
-            for _cc_key in _cc_keys:
-                client = self._active_claude_client.get(_cc_key)
-                if client and hasattr(client, 'cancel_claude_code'):
-                    client.cancel_claude_code(force=_force)
+            _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
+        for _cc_key, client in _cc_clients:
+            if client and hasattr(client, 'cancel_claude_code'):
+                client.cancel_claude_code(force=_force)
         # Also cancel thought threads and schedules for this agent
         from core.poll_scheduler import PollScheduler
         scheduler = PollScheduler.instance()
@@ -611,11 +616,11 @@ class AgentLoopTask(
             self._interrupt_cooldowns.pop(_synth_key, None)
             self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
             # Force kill Claude Code subprocess if applicable
-            if hasattr(self, '_active_claude_client'):
-                _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+            _esc_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+            with self._active_contexts_lock:
                 _cc_client = self._active_claude_client.get(_esc_key)
-                if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
-                    _cc_client.cancel_claude_code(force=True)
+            if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
+                _cc_client.cancel_claude_code(force=True)
             # Force cleanup
             from core.conversation_store import ConversationStore as _CS_int
             _CS_int.instance().set_status(conversation_id, "idle")
@@ -641,30 +646,31 @@ class AgentLoopTask(
 
         # For claude-code: graceful interrupt via stdin + cancel in-flight tools
         _is_cc = False
-        if hasattr(self, '_active_claude_client'):
-            _int_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+        _int_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+        with self._active_contexts_lock:
             _cc_client = self._active_claude_client.get(_int_key)
-            if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
-                _proc = getattr(_cc_client, '_claude_proc', None)
-                if _proc and _proc.poll() is None:
-                    _is_cc = True
-                    # Cancel in-flight MCP tool calls so Claude Code gets
-                    # tool errors back quickly and can wrap up
-                    try:
-                        from services.tool_relay_service import ToolRelayService
-                        ToolRelayService.cancel_agent(conversation_id, agent_name)
-                    except Exception:
-                        pass
-                    # Send graceful interrupt on stdin
-                    _cc_client.cancel_claude_code(force=False)
-                    logger.info(f"[agent:{conversation_id[:8]}] claude-code interrupt: "
-                                f"tools cancelled + stdin interrupt sent")
-                    # Don't cancel_agent / don't spawn synthesis — Claude Code
-                    # will emit a result event, the stream loop exits, and
-                    # the agent loop publishes 'done' normally.
-                    return
-                else:
-                    # Stale client — process dead, clean up
+        if _cc_client and hasattr(_cc_client, 'cancel_claude_code'):
+            _proc = getattr(_cc_client, '_claude_proc', None)
+            if _proc and _proc.poll() is None:
+                _is_cc = True
+                # Cancel in-flight MCP tool calls so Claude Code gets
+                # tool errors back quickly and can wrap up
+                try:
+                    from services.tool_relay_service import ToolRelayService
+                    ToolRelayService.cancel_agent(conversation_id, agent_name)
+                except Exception:
+                    pass
+                # Send graceful interrupt on stdin
+                _cc_client.cancel_claude_code(force=False)
+                logger.info(f"[agent:{conversation_id[:8]}] claude-code interrupt: "
+                            f"tools cancelled + stdin interrupt sent")
+                # Don't cancel_agent / don't spawn synthesis — Claude Code
+                # will emit a result event, the stream loop exits, and
+                # the agent loop publishes 'done' normally.
+                return
+            else:
+                # Stale client — process dead, clean up
+                with self._active_contexts_lock:
                     self._active_claude_client.pop(_int_key, None)
 
         # Non-claude-code: cancel the current run

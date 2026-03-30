@@ -334,6 +334,7 @@ class StreamEmitter(AgentEmitter):
         # Source 1: executor queue drain
         if hasattr(self.agent, '_drain_pending') and self.agent._drain_pending:
             try:
+                _requeue = []
                 for _pff in self.agent._drain_pending():
                     _pbody = _pff.get_content()
                     if isinstance(_pbody, bytes):
@@ -347,6 +348,7 @@ class StreamEmitter(AgentEmitter):
                             if not _is_action:
                                 _pconv = _pjson.get("conversation_id")
                                 if _pconv and _pconv != self.conversation_id:
+                                    _requeue.append(_pff)
                                     continue
                                 _ptext = _pjson.get("message", "")
                     except (json.JSONDecodeError, ValueError):
@@ -370,14 +372,18 @@ class StreamEmitter(AgentEmitter):
                             _msg.msg_id = _pmid
                         append_fn(_msg)
                         self._respond_http(_pff)
+                # Re-enqueue FlowFiles that belong to other conversations
+                if _requeue and hasattr(self.agent, '_requeue_flowfiles'):
+                    self.agent._requeue_flowfiles(_requeue)
             except Exception as _e:
                 logger.debug(f"Queue drain failed: {_e}")
 
         # Source 2: internal "already active" queue (FlowFiles queued while agent was busy)
         _agent_key = f"{self.conversation_id}:{self._agent_name}" if self._agent_name else self.conversation_id
         _queued_key = f"_queued_msgs:{_agent_key}"
-        if hasattr(self.agent, '_pending_user_msgs') and _queued_key in self.agent._pending_user_msgs:
+        with self.agent._active_lock:
             _queued = self.agent._pending_user_msgs.pop(_queued_key, [])
+        if _queued:
             for _qff in _queued:
                 # _qff is a FlowFile — extract user text
                 try:

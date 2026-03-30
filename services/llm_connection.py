@@ -251,6 +251,22 @@ class LLMConnectionService(BaseService):
                 "options": ["", "cautious", "balanced", "aggressive"],
                 "description": "Tool call resilience (empty = default balanced)",
             },
+            "thinking_budget": {
+                "type": "integer", "default": 0,
+                "description": "Thinking token budget for reasoning models (0 = auto, -1 = disabled)",
+            },
+            "max_rounds": {
+                "type": "integer", "default": 0,
+                "description": "Max conversation rounds (0 = default 1)",
+            },
+            "tool_result_max_chars": {
+                "type": "integer", "default": 0,
+                "description": "Max chars per tool result (0 = default 50000)",
+            },
+            "context_compact_threshold": {
+                "type": "float", "default": 0,
+                "description": "Context compaction threshold 0-1 (0 = default 0.75)",
+            },
             "max_concurrent": {
                 "type": "integer", "default": 0,
                 "description": "Max concurrent requests (0 = unlimited)",

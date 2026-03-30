@@ -151,20 +151,30 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         # Will be overridden below if a persona is selected (after conversation_id is known)
         _base_system_prompt = system_prompt
-        # Agent config → service config → defaults (service overrides agent)
+        # Resolution order: agent config > LLM service config > defaults
         _svc_cfg = getattr(resolved_svc, 'config', {}) or {}
-        temperature = float(_svc_cfg.get("temperature") or self.config.get("temperature", 0.7))
+        def _cfg(key, default):
+            """Agent overrides service, service overrides default.
+            None or empty string = not set. 0 IS a valid override."""
+            v = self.config.get(key)
+            if v is not None and v != "":
+                return v
+            v = _svc_cfg.get(key)
+            if v is not None and v != "":
+                return v
+            return default
+        temperature = float(_cfg("temperature", 0.7))
         max_tokens = int(self.config.get("max_context_size", 0))
-        max_iterations = int(_svc_cfg.get("max_iterations") or self.config.get("max_iterations", 1000))
-        max_consecutive_tool_calls = int(_svc_cfg.get("max_consecutive_tool_calls") or self.config.get("max_consecutive_tool_calls", 100))
-        _resilience_style = _svc_cfg.get("resilience_style") or self.config.get("resilience_style", "balanced")
+        max_iterations = int(_cfg("max_iterations", 1000))
+        max_consecutive_tool_calls = int(_cfg("max_consecutive_tool_calls", 100))
+        _resilience_style = _cfg("resilience_style", "balanced")
         if _resilience_style == "cautious":
             max_consecutive_tool_calls = min(max_consecutive_tool_calls, 10)
         elif _resilience_style == "aggressive":
             max_consecutive_tool_calls = max(max_consecutive_tool_calls, 50)
         # thinking_budget: -1 = auto (10k for reasoning models, 0 for others)
         # 0 = disabled, >0 = explicit budget
-        thinking_budget = int(self.config.get("thinking_budget", -1))
+        thinking_budget = int(_cfg("thinking_budget", -1))
 
         use_conv_store = self.config.get("conversation_store", False)
         conv_ttl = int(self.config.get("conversation_ttl", 0))
@@ -987,7 +997,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "max_iterations": max_iterations,
             "max_consecutive_tool_calls": max_consecutive_tool_calls,
             "thinking_budget": thinking_budget,
-            "max_rounds": int(self.config.get("max_rounds", 1)),
+            "max_rounds": int(_cfg("max_rounds", 1)),
             "use_conv_store": use_conv_store, "conv_ttl": conv_ttl,
             "conv_attr": conv_attr, "conversation_id": conversation_id,
             "user_id": user_id,
@@ -996,8 +1006,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 # Per-agent: use service max_tokens (= context window size)
                 _resolved_max_ctx
             ),
-            "context_compact_threshold": float(self.config.get("context_compact_threshold", 0.75)),
-            "context_keep_recent": int(self.config.get("context_keep_recent", 6)),
+            "context_compact_threshold": float(_cfg("context_compact_threshold", 0.75)),
+            "context_keep_recent": int(_cfg("context_keep_recent", 6)),
             "chars_per_token": float(
                 (getattr(resolved_svc, 'config', {}) or {}).get("chars_per_token", 0)
                 or self.config.get("chars_per_token", 0)

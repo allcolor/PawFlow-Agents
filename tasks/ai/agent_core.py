@@ -446,6 +446,8 @@ class AgentCoreMixin:
                     _tb = ctx.get("thinking_budget", 0)
                     _is_claude_code = _client_provider == "claude-code"
 
+                    _cc_turn_count = [0]
+
                     def _claude_code_turn_callback(text, tool_calls):
                         """Called by claude-code at each internal turn boundary.
 
@@ -462,6 +464,9 @@ class AgentCoreMixin:
                         """
                         nonlocal tools_called
                         from core.llm_client import LLMToolCall
+
+                        _cc_turn_count[0] += 1
+                        ctx["_iteration"] = _cc_turn_count[0]
 
                         _bus = emitter.bus
                         _cid = conversation_id
@@ -509,6 +514,7 @@ class AgentCoreMixin:
                             ]
                             for tc_obj in tc_objects:
                                 tools_called.append(tc_obj.name)
+                                ctx["_last_tool"] = tc_obj.name
 
                             # Tool call message (in LLM context, includes thinking)
                             tc_msg = LLMMessage(

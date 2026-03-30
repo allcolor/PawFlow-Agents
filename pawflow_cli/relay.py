@@ -64,7 +64,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def _api_call(server_url, method, path, body=None, session_token=""):
+def _api_call(server_url, method, path, body=None, session_token="", gateway_cookie=""):
     """HTTP request to PawFlow agent API (stdlib only)."""
     import http.client
     from urllib.parse import urlparse
@@ -86,6 +86,8 @@ def _api_call(server_url, method, path, body=None, session_token=""):
     headers = {"Content-Type": "application/json"}
     if session_token:
         headers["Authorization"] = f"Bearer {session_token}"
+    if gateway_cookie:
+        headers["Cookie"] = f"_pf_gw={gateway_cookie}"
 
     payload = json.dumps(body).encode("utf-8") if body else None
     conn.request(method, path, body=payload, headers=headers)
@@ -114,13 +116,14 @@ class RelayThread:
 
     def __init__(self, server_url: str, session_token: str, username: str,
                  directory: str, allow_exec: bool = True,
-                 docker_image: str = ""):
+                 docker_image: str = "", gateway_cookie: str = ""):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
         self.directory = str(Path(directory).resolve())
         self.allow_exec = allow_exec
         self.docker_image = docker_image
+        self.gateway_cookie = gateway_cookie
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
@@ -138,7 +141,7 @@ class RelayThread:
         try:
             _api_call(self.server_url, "POST", "/api/agent",
                       body={"action": "service_uninstall", "service_id": self.relay_id},
-                      session_token=self.session_token)
+                      session_token=self.session_token, gateway_cookie=self.gateway_cookie)
         except Exception:
             pass
 
@@ -153,7 +156,7 @@ class RelayThread:
                       "service_name": self.relay_id,
                       "config_str": config_str,
                   },
-                  session_token=self.session_token)
+                  session_token=self.session_token, gateway_cookie=self.gateway_cookie)
         self._registered = True
 
         # Wait for WS listener to start
@@ -171,7 +174,7 @@ class RelayThread:
             try:
                 _api_call(self.server_url, "POST", "/api/agent",
                           body={"action": "service_uninstall", "service_id": self.relay_id},
-                          session_token=self.session_token)
+                          session_token=self.session_token, gateway_cookie=self.gateway_cookie)
             except Exception:
                 pass
             self._registered = False

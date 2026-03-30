@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { AgentAPIClient } from './api/client';
+import { AgentAPIClient, acquireGatewayCookie } from './api/client';
 import { SSEClient } from './api/sse';
 import { PawFlowAuth } from './auth/provider';
 import { RelayManager } from './relay/manager';
@@ -16,6 +16,22 @@ let chatProvider: ChatPanelProvider;
 export async function activate(context: vscode.ExtensionContext) {
   const config = vscode.workspace.getConfiguration('pawflow');
   const serverUrl = config.get<string>('serverUrl', 'http://localhost:9090');
+  const gatewayKey = config.get<string>('gatewayKey', '');
+
+  // Acquire gateway cookie if key is configured
+  let gatewayCookie = '';
+  if (gatewayKey) {
+    try {
+      gatewayCookie = await acquireGatewayCookie(serverUrl, gatewayKey);
+      if (gatewayCookie) {
+        console.log('[PawFlow] Gateway cookie acquired.');
+      } else {
+        console.warn('[PawFlow] Gateway POST returned no cookie.');
+      }
+    } catch (e: any) {
+      console.warn(`[PawFlow] Gateway cookie acquisition failed: ${e.message}`);
+    }
+  }
 
   // Initialize components
   auth = new PawFlowAuth(context);
@@ -25,7 +41,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Try cached auth — validate token before using it
   let session = await auth.getSession(serverUrl);
   if (session) {
-    apiClient = new AgentAPIClient(serverUrl, session.token);
+    apiClient = new AgentAPIClient(serverUrl, session.token, gatewayCookie);
     apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
 
     // Validate token with a lightweight API call
@@ -44,7 +60,7 @@ export async function activate(context: vscode.ExtensionContext) {
     }
 
     if (session && apiClient) {
-      sseClient = new SSEClient(serverUrl, session.token);
+      sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
       statusBar.setConnected(session.username);
 
       // Auto-start relay
@@ -81,13 +97,13 @@ export async function activate(context: vscode.ExtensionContext) {
         if (apiClient) {
           apiClient.setToken(session.token);
         } else {
-          apiClient = new AgentAPIClient(serverUrl, session.token);
+          apiClient = new AgentAPIClient(serverUrl, session.token, gatewayCookie);
           apiClient.onAuthExpired(() => { vscode.commands.executeCommand('pawflow.login'); });
         }
         if (sseClient) {
           sseClient.disconnect();
         }
-        sseClient = new SSEClient(serverUrl, session.token);
+        sseClient = new SSEClient(serverUrl, session.token, gatewayCookie);
         statusBar.setConnected(session.username);
         vscode.window.showInformationMessage(`PawFlow: Logged in as ${session.username}`);
 

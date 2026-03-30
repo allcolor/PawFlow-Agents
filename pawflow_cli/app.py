@@ -55,11 +55,12 @@ class PawCode:
     """Main CLI application."""
 
     def __init__(self, server_url: str, directory: str, allow_exec: bool = True,
-                 docker_image: str = ""):
+                 docker_image: str = "", gateway_cookie: str = ""):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
         self.allow_exec = allow_exec
         self.docker_image = docker_image
+        self.gateway_cookie = gateway_cookie
 
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
@@ -96,7 +97,7 @@ class PawCode:
         self.renderer.print_system(f"Authenticated as {self.username}")
 
         # API client
-        self.api = AgentAPIClient(self.server_url, self.session_token)
+        self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         self.connect_relay(self.directory)
 
@@ -460,7 +461,7 @@ class PawCode:
     def _ensure_sse(self):
         """Ensure SSE client is connected for the current conversation."""
         if self.conversation_id and (not self.sse or not self.sse.connected):
-            self.sse = SSEClient(self.server_url, self.session_token)
+            self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
             self.sse.connect(self.conversation_id)
 
     def _event_consumer(self):
@@ -779,7 +780,7 @@ class PawCode:
             save_config({"last_conversation_id": cid})
 
         # Connect SSE and wait for response
-        self.sse = SSEClient(self.server_url, self.session_token)
+        self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
         self.sse.connect(cid)
 
         response_text = ""
@@ -872,6 +873,7 @@ class PawCode:
             self.server_url, self.session_token, self.username,
             directory, self.allow_exec,
             docker_image=self.docker_image,
+            gateway_cookie=self.gateway_cookie,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
@@ -911,13 +913,26 @@ def main():
     parser.add_argument("--output", choices=["text", "json", "markdown", "full"],
                         default="text",
                         help="Output format for -p mode (default: text)")
+    parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
+                        help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
     args = parser.parse_args()
+
+    # Acquire gateway cookie if key provided
+    gateway_cookie = ""
+    if args.gateway_key:
+        from pawflow_cli.api import acquire_gateway_cookie
+        gateway_cookie = acquire_gateway_cookie(args.server, args.gateway_key)
+        if gateway_cookie:
+            print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
+        else:
+            print("[PawCode] Warning: gateway POST returned no cookie.", file=sys.stderr)
 
     cli = PawCode(
         server_url=args.server,
         directory=args.dir,
         allow_exec=not args.no_exec,
         docker_image=args.docker_image,
+        gateway_cookie=gateway_cookie,
     )
 
     if args.login:

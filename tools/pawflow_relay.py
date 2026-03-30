@@ -1281,6 +1281,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 sock = ctx.wrap_socket(sock, server_hostname=host)
 
             ws_key = b64.b64encode(os.urandom(16)).decode()
+            _extra_hdrs = ""
+            if _gateway_cookie:
+                _extra_hdrs = f"Cookie: _pf_gw={_gateway_cookie}\r\n"
             handshake = (
                 f"GET {path} HTTP/1.1\r\n"
                 f"Host: {host}:{port}\r\n"
@@ -1288,6 +1291,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 f"Connection: Upgrade\r\n"
                 f"Sec-WebSocket-Key: {ws_key}\r\n"
                 f"Sec-WebSocket-Version: 13\r\n"
+                f"{_extra_hdrs}"
                 f"\r\n"
             )
             sock.sendall(handshake.encode())
@@ -1641,6 +1645,54 @@ def _find_free_port():
         return s.getsockname()[1]
 
 
+def _acquire_gateway_cookie(api_url, gateway_key):
+    """POST /_gateway with the access key, return the _pf_gw cookie value or empty string."""
+    import http.client
+    from urllib.parse import urlparse, urlencode
+
+    parsed = urlparse(api_url)
+    use_ssl = parsed.scheme == "https"
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if use_ssl else 80)
+
+    if use_ssl:
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        conn = http.client.HTTPSConnection(host, port, context=ctx)
+    else:
+        conn = http.client.HTTPConnection(host, port)
+
+    body = urlencode({"secret": gateway_key, "next": "/"})
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    conn.request("POST", "/_gateway", body=body, headers=headers)
+    resp = conn.getresponse()
+    resp.read()  # drain
+
+    # Extract _pf_gw from Set-Cookie header
+    cookie_val = ""
+    for hdr in resp.msg.get_all("Set-Cookie") or []:
+        for part in hdr.split(";"):
+            part = part.strip()
+            if part.startswith("_pf_gw="):
+                cookie_val = part[len("_pf_gw="):]
+                break
+        if cookie_val:
+            break
+
+    conn.close()
+    if cookie_val:
+        sys.stderr.write(f"[FSRelay] Gateway cookie acquired.\n")
+    else:
+        sys.stderr.write(f"[FSRelay] Warning: gateway POST returned no _pf_gw cookie.\n")
+    return cookie_val
+
+
+# Module-level gateway cookie — set once in main(), used by _api_call and _ws_connect
+_gateway_cookie = ""
+
+
 def _api_call(api_url, method, path, body=None, session_id=""):
     """Make an HTTP request to the PawFlow API (stdlib only)."""
     import http.client
@@ -1663,6 +1715,8 @@ def _api_call(api_url, method, path, body=None, session_id=""):
     headers = {"Content-Type": "application/json"}
     if session_id:
         headers["Authorization"] = f"Bearer {session_id}"
+    if _gateway_cookie:
+        headers["Cookie"] = f"_pf_gw={_gateway_cookie}"
 
     payload = json.dumps(body).encode("utf-8") if body else None
     conn.request(method, path, body=payload, headers=headers)
@@ -1845,6 +1899,8 @@ def main():
                         help="Use ws:// instead of wss:// (default is wss with self-signed cert)")
     parser.add_argument("--docker-image", default="",
                         help="Run exec/git commands inside this Docker image (mounts --dir as /workspace)")
+    parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
+                        help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
     args = parser.parse_args()
     # Apply env var defaults that argparse store_true can't handle natively
     if _env_allow_exec:
@@ -1883,8 +1939,22 @@ def main():
         f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
         f"  Automation:{'enabled' if args.allow_automation else 'disabled'}\n"
         f"  Token:     {masked}\n"
-        f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n\n"
+        f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n"
+        f"  Gateway:   {'key provided' if args.gateway_key else 'none'}\n\n"
     )
+
+    # Acquire gateway cookie if key provided
+    global _gateway_cookie
+    if args.gateway_key:
+        # Determine the HTTP URL for the gateway POST
+        _gw_url = login_url or args.login_url.rstrip("/")
+        if not _gw_url:
+            # Derive from WS URL
+            from urllib.parse import urlparse as _gw_parse
+            _gw_parsed = _gw_parse(ws_url)
+            _gw_scheme = "https" if _gw_parsed.scheme in ("wss", "https") else "http"
+            _gw_url = f"{_gw_scheme}://{_gw_parsed.hostname}:{_gw_parsed.port or 80}"
+        _gateway_cookie = _acquire_gateway_cookie(_gw_url, args.gateway_key)
 
     # Cleanup on exit (auto-registration only)
     def _cleanup():

@@ -7,15 +7,51 @@ import ssl
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
+
+
+def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
+    """POST /_gateway with the access key, return the _pf_gw cookie value or empty string."""
+    parsed = urlparse(server_url)
+    use_ssl = parsed.scheme == "https"
+    host = parsed.hostname or "localhost"
+    port = parsed.port or (443 if use_ssl else 80)
+
+    if use_ssl:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        conn = http.client.HTTPSConnection(host, port, context=ctx)
+    else:
+        conn = http.client.HTTPConnection(host, port)
+
+    body = urlencode({"secret": gateway_key, "next": "/"})
+    headers = {"Content-Type": "application/x-www-form-urlencoded"}
+    conn.request("POST", "/_gateway", body=body, headers=headers)
+    resp = conn.getresponse()
+    resp.read()  # drain
+
+    cookie_val = ""
+    for hdr in resp.msg.get_all("Set-Cookie") or []:
+        for part in hdr.split(";"):
+            part = part.strip()
+            if part.startswith("_pf_gw="):
+                cookie_val = part[len("_pf_gw="):]
+                break
+        if cookie_val:
+            break
+
+    conn.close()
+    return cookie_val
 
 
 class AgentAPIClient:
     """HTTP client for the PawFlow agent API."""
 
-    def __init__(self, server_url: str, session_token: str):
+    def __init__(self, server_url: str, session_token: str, gateway_cookie: str = ""):
         self.server_url = server_url.rstrip("/")
         self.session_token = session_token
+        self.gateway_cookie = gateway_cookie
         self._parsed = urlparse(self.server_url)
         self._host = self._parsed.hostname or "localhost"
         self._port = self._parsed.port or (443 if self._parsed.scheme == "https" else 80)
@@ -33,6 +69,8 @@ class AgentAPIClient:
         h = {"Content-Type": "application/json"}
         if self.session_token:
             h["Authorization"] = f"Bearer {self.session_token}"
+        if self.gateway_cookie:
+            h["Cookie"] = f"_pf_gw={self.gateway_cookie}"
         return h
 
     def send_action(self, action: str, **kwargs) -> dict:
@@ -96,9 +134,10 @@ class SSEClient:
     Parses the SSE wire format and dispatches events to a callback.
     """
 
-    def __init__(self, server_url: str, session_token: str):
+    def __init__(self, server_url: str, session_token: str, gateway_cookie: str = ""):
         self.server_url = server_url.rstrip("/")
         self.session_token = session_token
+        self.gateway_cookie = gateway_cookie
         self._parsed = urlparse(self.server_url)
         self._host = self._parsed.hostname or "localhost"
         self._port = self._parsed.port or (443 if self._parsed.scheme == "https" else 80)
@@ -168,6 +207,8 @@ class SSEClient:
         headers = {"Accept": "text/event-stream", "Cache-Control": "no-cache"}
         if self.session_token:
             headers["Authorization"] = f"Bearer {self.session_token}"
+        if self.gateway_cookie:
+            headers["Cookie"] = f"_pf_gw={self.gateway_cookie}"
 
         conn.request("GET", path, headers=headers)
         resp = conn.getresponse()

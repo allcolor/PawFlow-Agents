@@ -8,6 +8,7 @@ import { SSEEvent } from './types';
 export class SSEClient extends EventEmitter {
   private serverUrl: string;
   private sessionToken: string;
+  private gatewayCookie: string;
   private request: http.ClientRequest | null = null;
   private connected = false;
   private shouldReconnect = true;
@@ -15,10 +16,11 @@ export class SSEClient extends EventEmitter {
   private retryCount = 0;
   private static readonly MAX_RETRIES = 30;
 
-  constructor(serverUrl: string, sessionToken: string) {
+  constructor(serverUrl: string, sessionToken: string, gatewayCookie: string = '') {
     super();
     this.serverUrl = serverUrl.replace(/\/$/, '');
     this.sessionToken = sessionToken;
+    this.gatewayCookie = gatewayCookie;
   }
 
   connect(conversationId: string): void {
@@ -45,16 +47,20 @@ export class SSEClient extends EventEmitter {
     const isHttps = url.protocol === 'https:';
     const mod = isHttps ? https : http;
 
+    const sseHeaders: Record<string, string> = {
+      'Accept': 'text/event-stream',
+      'Authorization': `Bearer ${this.sessionToken}`,
+      'Cache-Control': 'no-cache',
+    };
+    if (this.gatewayCookie) {
+      sseHeaders['Cookie'] = `_pf_gw=${this.gatewayCookie}`;
+    }
     const options: http.RequestOptions = {
       hostname: url.hostname,
       port: url.port,
       path: url.pathname + url.search,
       method: 'GET',
-      headers: {
-        'Accept': 'text/event-stream',
-        'Authorization': `Bearer ${this.sessionToken}`,
-        'Cache-Control': 'no-cache',
-      },
+      headers: sseHeaders,
       timeout: 0, // no timeout for SSE
     };
 

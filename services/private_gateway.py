@@ -138,7 +138,7 @@ def verify_secret(submitted: str) -> bool:
         logger.warning("Private gateway enabled but no privategateway.* secrets found")
         return False
     for _name, value in gw_secrets.items():
-        if hmac.compare_digest(submitted.strip(), value.strip()):
+        if hmac.compare_digest(submitted.strip().encode('utf-8'), value.strip().encode('utf-8')):
             return True
     return False
 
@@ -191,6 +191,7 @@ _CHALLENGE_HTML = """<!DOCTYPE html>
 <body>
 <div class="box">
   <form method="POST" action="/_gateway" id="f">
+    <input type="hidden" name="next" value="%(next_url)s">
     <input type="password" name="secret" id="s" placeholder="Access key" autocomplete="off" autofocus>
     <div class="err" id="e">%(error)s</div>
     <button type="submit" id="b">Enter</button>
@@ -215,8 +216,10 @@ _CHALLENGE_HTML = """<!DOCTYPE html>
 </html>"""
 
 
-def render_challenge(error="", cooldown=0):
-    html = _CHALLENGE_HTML % {"error": error, "cooldown": max(0, int(cooldown))}
+def render_challenge(error="", cooldown=0, next_url="/"):
+    import html as _html
+    html = _CHALLENGE_HTML % {"error": error, "cooldown": max(0, int(cooldown)),
+                              "next_url": _html.escape(next_url, quote=True)}
     return html.encode("utf-8")
 
 
@@ -272,8 +275,10 @@ def _check_request_inner(handler) -> bool:
         body = handler.rfile.read(content_length) if content_length > 0 else b""
         return _handle_submit(handler, ip, body)
 
+    # Show challenge page, preserving original URL for post-auth redirect
+    original_url = handler.path  # includes query string
     cooldown = get_cooldown_remaining(ip)
-    page = render_challenge(cooldown=cooldown)
+    page = render_challenge(cooldown=cooldown, next_url=original_url)
     _send_page(handler, 200, page, "text/html; charset=utf-8")
     return True
 
@@ -292,11 +297,15 @@ def _handle_submit(handler, ip, body):
     from urllib.parse import parse_qs
     params = parse_qs(body.decode("utf-8", errors="replace"))
     submitted = params.get("secret", [""])[0]
+    next_url = params.get("next", ["/"])[0] or "/"
+    # Ensure redirect is relative (prevent open redirect)
+    if not next_url.startswith("/"):
+        next_url = "/"
 
     cooldown = get_cooldown_remaining(ip)
     if cooldown > 0:
         record_failure(ip)
-        page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip))
+        page = render_challenge(error="Too many attempts.", cooldown=get_cooldown_remaining(ip), next_url=next_url)
         _send_page(handler, 429, page, "text/html; charset=utf-8")
         return True
 
@@ -306,16 +315,16 @@ def _handle_submit(handler, ip, body):
             _send_page(handler, 403, b"Forbidden", "text/plain")
             return True
         cooldown = get_cooldown_remaining(ip)
-        page = render_challenge(error="Invalid key.", cooldown=cooldown)
+        page = render_challenge(error="Invalid key.", cooldown=cooldown, next_url=next_url)
         _send_page(handler, 200, page, "text/html; charset=utf-8")
         return True
 
-    # Success — set cookie and redirect to /
+    # Success — set cookie and redirect to original URL
     record_success(ip)
     cookie_val = _make_cookie_value(ip)
     cookie = f"{_COOKIE_NAME}={cookie_val}; Path=/; Max-Age={_COOKIE_MAX_AGE}; HttpOnly; SameSite=Lax"
     handler.send_response(302)
-    handler.send_header("Location", "/")
+    handler.send_header("Location", next_url)
     handler.send_header("Set-Cookie", cookie)
     handler.send_header("Cache-Control", "no-store")
     handler.send_header("Content-Length", "0")

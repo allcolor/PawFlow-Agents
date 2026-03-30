@@ -167,6 +167,11 @@
           "default": false,
           "description": "Allow screen automation (screenshot, click, type) via relay. Requires pyautogui + mss installed."
         },
+        "pawflow.gatewayKey": {
+          "type": "string",
+          "default": "",
+          "description": "Private gateway access key. When set, the extension authenticates with the gateway before making API requests."
+        },
         "pawflow.pythonPath": {
           "type": "string",
           "default": "python",

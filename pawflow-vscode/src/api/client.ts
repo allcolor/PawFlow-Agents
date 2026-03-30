@@ -4,15 +4,64 @@ import { URL } from 'url';
 import { API_PATH } from '../constants';
 import { AgentResponse, SendMessageRequest } from './types';
 
+/**
+ * POST /_gateway with the access key, return the _pf_gw cookie value or empty string.
+ */
+export async function acquireGatewayCookie(serverUrl: string, gatewayKey: string): Promise<string> {
+  return new Promise((resolve) => {
+    const url = new URL(serverUrl);
+    const isHttps = url.protocol === 'https:';
+    const body = `secret=${encodeURIComponent(gatewayKey)}&next=/`;
+    const options: http.RequestOptions = {
+      hostname: url.hostname,
+      port: url.port,
+      path: '/_gateway',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(body).toString(),
+      },
+      timeout: 10000,
+    };
+
+    const mod = isHttps ? https : http;
+    const req = mod.request(options, (res) => {
+      res.resume(); // drain
+      const setCookie = res.headers['set-cookie'];
+      if (setCookie) {
+        for (const hdr of setCookie) {
+          for (const part of hdr.split(';')) {
+            const trimmed = part.trim();
+            if (trimmed.startsWith('_pf_gw=')) {
+              resolve(trimmed.slice('_pf_gw='.length));
+              return;
+            }
+          }
+        }
+      }
+      resolve('');
+    });
+    req.on('error', () => resolve(''));
+    req.write(body);
+    req.end();
+  });
+}
+
 export class AgentAPIClient {
   private serverUrl: string;
   private sessionToken: string;
+  private gatewayCookie: string;
   private _onAuthExpired: (() => void) | null = null;
   private _authExpiredFired = false;
 
-  constructor(serverUrl: string, sessionToken: string) {
+  constructor(serverUrl: string, sessionToken: string, gatewayCookie: string = '') {
     this.serverUrl = serverUrl.replace(/\/$/, '');
     this.sessionToken = sessionToken;
+    this.gatewayCookie = gatewayCookie;
+  }
+
+  setGatewayCookie(cookie: string): void {
+    this.gatewayCookie = cookie;
   }
 
   setToken(token: string): void {
@@ -36,15 +85,19 @@ export class AgentAPIClient {
     return new Promise((resolve, reject) => {
       const url = new URL(this.serverUrl + path);
       const isHttps = url.protocol === 'https:';
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${this.sessionToken}`,
+      };
+      if (this.gatewayCookie) {
+        headers['Cookie'] = `_pf_gw=${this.gatewayCookie}`;
+      }
       const options: http.RequestOptions = {
         hostname: url.hostname,
         port: url.port,
         path: url.pathname,
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.sessionToken}`,
-        },
+        headers,
         timeout: 30000,
       };
 

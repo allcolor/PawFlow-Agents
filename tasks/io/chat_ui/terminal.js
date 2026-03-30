@@ -28,14 +28,38 @@ function _loadXterm() {
   });
 }
 
-/** Auto-detect the first connected relay. */
-async function _findRelay() {
+/** Get all connected relays. */
+async function _getRelays() {
   const resp = await fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'service_list' }),
   }).then(r => r.json());
-  const relays = (resp.services || []).filter(s => s.type === 'relay' && s.started);
-  return relays.length ? relays[0].id : null;
+  return (resp.services || []).filter(s => s.type === 'relay' && s.started);
+}
+
+/** Pick a relay: auto if 1, dialog if multiple, null if none. */
+function _pickRelay(relays) {
+  if (!relays.length) return Promise.resolve(null);
+  if (relays.length === 1) return Promise.resolve(relays[0].id);
+  return new Promise(resolve => {
+    const bg = document.createElement('div');
+    bg.className = 'dialog-bg';
+    bg.innerHTML = '<div class="dialog" style="max-width:340px">'
+      + '<div class="dialog-title">Choose relay</div>'
+      + '<div class="dialog-body" id="_relayPickList"></div>'
+      + '<div class="dialog-actions"><button onclick="this.closest(\'.dialog-bg\').remove()" class="btn">Cancel</button></div>'
+      + '</div>';
+    const list = bg.querySelector('#_relayPickList');
+    for (const r of relays) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary';
+      btn.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
+      btn.textContent = r.id + (r.name && r.name !== r.id ? ' (' + r.name + ')' : '');
+      btn.onclick = () => { bg.remove(); resolve(r.id); };
+      list.appendChild(btn);
+    }
+    document.body.appendChild(bg);
+  });
 }
 
 /** /terminal command */
@@ -56,7 +80,8 @@ async function cmdTerminal(text, parts) {
   let relayId = parts[1] || '';
   if (!relayId) {
     try {
-      relayId = await _findRelay();
+      const relays = await _getRelays();
+      relayId = await _pickRelay(relays);
       if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /terminal <relay_name>');
         return true;
@@ -159,7 +184,14 @@ function _initXterm(container, sessionId) {
 async function cmdCode(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'close') {
-    closeVSCodeTab();
+    // Close the active vscode tab, or the only one
+    if (_activeTab && _activeTab.startsWith('vscode-')) {
+      closeVSCodeTab(_activeTab);
+    } else {
+      // Find any vscode tab
+      const btn = document.querySelector('.tab-btn[data-tab^="vscode-"]');
+      if (btn) closeVSCodeTab(btn.dataset.tab);
+    }
     addMsg('system', 'Code server closed.');
     return true;
   }
@@ -167,7 +199,8 @@ async function cmdCode(text, parts) {
   let relayId = parts[1] || '';
   if (!relayId) {
     try {
-      relayId = await _findRelay();
+      const relays = await _getRelays();
+      relayId = await _pickRelay(relays);
       if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /code <relay_name>');
         return true;
@@ -186,6 +219,17 @@ async function cmdCode(text, parts) {
     }).then(r => r.json());
 
     if (resp.error) {
+      addMsg('system', '⚠ ' + resp.error);
+      return true;
+    }
+
+    addVSCodeTab(relayId, resp.url || '/code/' + relayId + '/');
+    addMsg('system', 'code-server started. Loading editor...');
+  } catch (e) {
+    addMsg('system', 'Failed: ' + e.message);
+  }
+  return true;
+}
       addMsg('system', '\u26a0 ' + resp.error);
       return true;
     }

@@ -1,5 +1,5 @@
 // ── Tab management ──
-// Vertical tab bar: Chat (permanent), Terminal tabs (multiple), VSCode (singleton)
+// Vertical tab bar: Chat (permanent), Terminal tabs (multiple), VSCode (one per relay)
 
 let _activeTab = 'chat';
 let _terminalCounter = 0;
@@ -92,10 +92,10 @@ function closeTerminalTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
-/** Add the VSCode tab (singleton). Returns the tab id. */
+/** Add a VSCode tab (one per relay). Returns the tab id. */
 function addVSCodeTab(relayId, iframeSrc) {
-  const tabId = 'vscode';
-  // If already exists, just switch to it
+  const tabId = 'vscode-' + relayId;
+  // If already exists for this relay, just switch to it
   if (document.getElementById('tabContent_' + tabId)) {
     switchTab(tabId);
     return tabId;
@@ -105,13 +105,13 @@ function addVSCodeTab(relayId, iframeSrc) {
   const btn = document.createElement('button');
   btn.className = 'tab-btn';
   btn.dataset.tab = tabId;
-  btn.title = 'VS Code';
+  btn.title = 'VS Code (' + relayId + ')';
   btn.onclick = (e) => {
     if (e.target.classList.contains('tab-close')) return;
     switchTab(tabId);
   };
   btn.innerHTML = '<span style="font-size:14px">\u2699</span>'
-    + '<span class="tab-close" onclick="closeVSCodeTab()">&times;</span>';
+    + '<span class="tab-close" onclick="closeVSCodeTab(\'' + tabId + '\')">&times;</span>';
 
   const spacer = document.querySelector('.tab-spacer');
   spacer.parentNode.insertBefore(btn, spacer);
@@ -134,9 +134,10 @@ function addVSCodeTab(relayId, iframeSrc) {
   return tabId;
 }
 
-/** Close the VSCode tab. */
-function closeVSCodeTab() {
-  const panel = document.getElementById('tabContent_vscode');
+/** Close a VSCode tab. */
+function closeVSCodeTab(tabId) {
+  if (!tabId) tabId = 'vscode';
+  const panel = document.getElementById('tabContent_' + tabId);
   if (panel) {
     const relayId = panel.dataset.relayId;
     if (relayId) {
@@ -147,9 +148,9 @@ function closeVSCodeTab() {
     }
     panel.remove();
   }
-  const btn = document.querySelector('.tab-btn[data-tab="vscode"]');
+  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
-  if (_activeTab === 'vscode') switchTab('chat');
+  if (_activeTab === tabId) switchTab('chat');
 }
 
 /** Toggle the action dropdown menu. */

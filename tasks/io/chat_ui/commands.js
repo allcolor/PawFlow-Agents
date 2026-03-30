@@ -166,7 +166,7 @@ const HELP_DATA = {
   '/code': {
     usage: '/code [relay_name] | /code close',
     short: 'Open VS Code (code-server) tab on a relay',
-    detail: 'Opens code-server in a tab. Only one VS Code instance at a time.\n\n'
+    detail: 'Opens code-server in a tab (one per relay).\n\n'
       + '  /code                  \u2014 Start on first connected relay\n'
       + '  /code my_relay         \u2014 Start on a specific relay\n'
       + '  /code close            \u2014 Close VS Code tab',

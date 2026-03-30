@@ -1,16 +1,16 @@
 // ── Agent commands ──────────────────────────────────────────────
-// /stop, /agent, /msg, /btw, /setname, /interrupt
+// /interrupt, /stop, /agent, /msg, /btw, /setname
 // Loaded before commands.js — all functions are global.
 
-function cmdStop(text, parts) {
-  const force = parts.includes('-f') || parts.includes('--force');
-  const targetParts = parts.slice(1).filter(p => p !== '-f' && p !== '--force');
-  const target = targetParts.length > 0 ? resolveAgentName(stripTarget(targetParts[0])) : (selectedAgent || 'ALL');
-  if (force) {
-    cancelAgent(target, true);
-  } else {
-    cmdAgentInterrupt(target);
-  }
+function cmdInterrupt(text, parts) {
+  const target = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
+  cmdAgentInterrupt(target);
+  return true;
+}
+
+function cmdForceStop(text, parts) {
+  const target = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
+  cancelAgent(target);
   return true;
 }
 
@@ -35,9 +35,6 @@ function cmdAgent(text, parts) {
     else if (!msgText) { addMsg('system', 'Usage: /agent msg ' + target + ' <message>'); }
     else if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(msgText); }
     else { cmdAgentMsg(target, msgText); }
-  } else if (sub === 'interrupt' || sub === 'int') {
-    const target = resolveAgentName(stripTarget(qargs[2] || ''));
-    cmdAgentInterrupt(target);
   } else if (sub === 'btw') {
     const target = resolveAgentName(stripTarget(qargs[2] || ''));
     const btwText = qargs.slice(3).join(' ');

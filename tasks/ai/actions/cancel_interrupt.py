@@ -33,39 +33,34 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             ToolRelayService.cancel_agent(conv_id, agent_name)
         except Exception:
             pass
-        # Force kill Claude Code subprocess
+        # Kill Claude Code subprocess
         if hasattr(self, '_active_claude_client'):
             client = self._active_claude_client.get(conv_id)
             if client and hasattr(client, 'cancel_claude_code'):
-                client.cancel_claude_code(force=body.get("force", False))
-        # Force mode: kill the thread and force UI cleanup
-        if body.get("force"):
-            # Kill agent threads for this conversation
-            _killed = 0
-            for t in threading.enumerate():
-                if t.name == f"agent-stream-{conv_id}" and t.is_alive():
-                    # Python can't kill threads, but we can set status + publish done
-                    # to force the UI to stop showing "thinking..."
-                    _killed += 1
-            store.set_status(conv_id, "idle")
-            from core.conversation_event_bus import ConversationEventBus
-            ConversationEventBus.instance().publish_event(
-                conv_id, "done", {
-                    "response": "[Force stopped by user]",
-                    "agent_name": agent_name or "",
-                    "force_stopped": True,
-                })
-            # Clear active tracking (conversations + interactions)
-            with self._active_lock:
-                self._active_conversations.pop(conv_id, None)
-                self._user_active_conversations.discard(conv_id)
-            with self._active_contexts_lock:
-                self._active_contexts.pop(conv_id, None)
-            logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
+                client.cancel_claude_code(force=True)
+        # Kill the thread and force UI cleanup
+        _killed = 0
+        for t in threading.enumerate():
+            if t.name == f"agent-stream-{conv_id}" and t.is_alive():
+                _killed += 1
+        store.set_status(conv_id, "idle")
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(
+            conv_id, "done", {
+                "response": "[Force stopped by user]",
+                "agent_name": agent_name or "",
+                "force_stopped": True,
+            })
+        # Clear active tracking
+        with self._active_lock:
+            self._active_conversations.pop(conv_id, None)
+            self._user_active_conversations.discard(conv_id)
+        with self._active_contexts_lock:
+            self._active_contexts.pop(conv_id, None)
+        logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
             "cancelled": True, "conversation_id": conv_id,
             "agent_name": agent_name or "all",
-            "force": bool(body.get("force")),
         }).encode())
         return [flowfile]
 

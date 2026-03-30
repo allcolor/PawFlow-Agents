@@ -143,6 +143,10 @@ async function interruptSingle(agentName) {
     });
   } catch(e) { console.warn('Interrupt failed:', e); }
 }
+function interruptCurrent() {
+  const target = typeof selectedAgent !== 'undefined' && selectedAgent ? selectedAgent : 'ALL';
+  cmdAgentInterrupt(target);
+}
 async function stopSingle(agentName) {
   if (!conversationId) return;
   try {

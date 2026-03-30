@@ -66,7 +66,7 @@ class ServeAssetsTask(BaseTask):
         if not requested_path:
             flowfile.set_content(b'{"error": "No path specified"}')
             flowfile.set_attribute("http.response.status", "400")
-            flowfile.set_attribute("http.response.content-type", "application/json")
+            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
         # Security: prevent path traversal
@@ -74,7 +74,7 @@ class ServeAssetsTask(BaseTask):
         if ".." in clean_path or clean_path.startswith("/"):
             flowfile.set_content(b'{"error": "Invalid path"}')
             flowfile.set_attribute("http.response.status", "403")
-            flowfile.set_attribute("http.response.content-type", "application/json")
+            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
         # Build the full asset path
@@ -90,7 +90,7 @@ class ServeAssetsTask(BaseTask):
         except FileNotFoundError:
             flowfile.set_content(b'{"error": "Not found"}')
             flowfile.set_attribute("http.response.status", "404")
-            flowfile.set_attribute("http.response.content-type", "application/json")
+            flowfile.set_attribute("http.response.header.Content-Type", "application/json")
             return [flowfile]
 
         # Determine MIME type
@@ -101,7 +101,7 @@ class ServeAssetsTask(BaseTask):
         # Set response
         flowfile.set_content(content)
         flowfile.set_attribute("http.response.status", "200")
-        flowfile.set_attribute("http.response.content-type", mime_type)
+        flowfile.set_attribute("http.response.header.Content-Type", mime_type)
 
         cache_control = self.config.get("cache_control", "public, max-age=3600")
         if cache_control:

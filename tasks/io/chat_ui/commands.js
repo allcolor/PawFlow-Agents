@@ -72,7 +72,7 @@ const HELP_DATA = {
       + '  /imgservice clear @<agent>         \u2014 Remove preference for one agent\n',
   },
   '/agent': {
-    usage: '/agent list | create | select | delete | msg | interrupt | btw | resume | setname',
+    usage: '/agent list | create | select | delete | msg | btw | resume | setname',
     short: 'Manage AI agents',
     detail: 'Create, list, select, message, or control AI agents.\n\n'
       + '  /agent list                       — List all agents (user + global)\n'
@@ -82,7 +82,6 @@ const HELP_DATA = {
       + '  /agent delete @<name>              — Delete an agent by name\n'
       + '  /agent msg @<name> <text>          — Send a message to a specific agent\n'
       + '  /agent msg @ALL <text>             — Broadcast to all agents in parallel\n'
-      + '  /agent interrupt @<name|ALL>       — Force agent to stop and respond immediately\n'
       + '  /agent btw @<name|ALL> <text>      — Side-channel question (no interruption)\n'
       + '  /agent resume @<name>              — Tell agent to continue from where it stopped\n'
       + '  /agent setname @<real> [nickname]  — Set or reset display name (omit to reset)\n\n'
@@ -210,14 +209,21 @@ const HELP_DATA = {
       + '  /llm @grok restore                   \u2014 Restore grok\'s default service\n\n'
       + 'The override is per-conversation and persists across restarts.',
   },
+  '/interrupt': {
+    usage: '/interrupt [@agent|ALL]',
+    short: 'Interrupt an agent — asks it to respond immediately',
+    detail: 'Asks the agent to wrap up and give its best answer now.\n\n'
+      + '  /interrupt           — Interrupt active agent (or all)\n'
+      + '  /interrupt @grok     — Interrupt only grok\n'
+      + '  /interrupt @ALL      — Interrupt all agents',
+  },
   '/stop': {
-    usage: '/stop [@agent|ALL] [-f]',
-    short: 'Stop an agent — asks it to respond immediately',
-    detail: 'Interrupts the agent and asks it to give its best answer now.\n\n'
-      + '  /stop @ALL          — Stop all agents (they respond with what they have)\n'
-      + '  /stop @grok         — Stop only grok\n'
-      + '  /stop @ALL -f       — Force stop all (immediate cancel, no response)\n'
-      + '  /stop @grok -f      — Force stop grok (immediate cancel)',
+    usage: '/stop [@agent|ALL]',
+    short: 'Force stop an agent — immediate cancel, no response',
+    detail: 'Immediately kills the agent with no response.\n\n'
+      + '  /stop               — Force stop active agent (or all)\n'
+      + '  /stop @grok         — Force stop only grok\n'
+      + '  /stop @ALL          — Force stop all agents',
   },
   '/restart_from': {
     usage: '/restart_from [@agent|ALL] [N]',
@@ -573,6 +579,7 @@ const _CMD_ALIASES = {
   '/list-secrets': '/secrets',
   '/list-variables': '/variables',
   '/vars': '/variables',
+  '/int': '/interrupt',
 };
 
 // ── Command dispatch table ──────────────────────────────────────
@@ -581,7 +588,8 @@ const _CMD_ALIASES = {
 // cmd_conversation.js, cmd_misc.js
 const _CMD_HANDLERS = {
   // Agent management (cmd_agent.js)
-  '/stop':        (text, parts, cmd) => cmdStop(text, parts),
+  '/interrupt':   (text, parts, cmd) => cmdInterrupt(text, parts),
+  '/stop':        (text, parts, cmd) => cmdForceStop(text, parts),
   '/agent':       (text, parts, cmd) => cmdAgent(text, parts),
   '/msg':         (text, parts, cmd) => cmdMsg(text),
   '/btw':         (text, parts, cmd) => cmdBtw(text),

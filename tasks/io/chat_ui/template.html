@@ -507,7 +507,7 @@ if (typeof hljs !== 'undefined') {
     <textarea id="input" placeholder="Type a message... (Enter to send, Shift+Enter for newline)"
               rows="1" onkeydown="handleKey(event)"></textarea>
     <button id="sendBtn" onclick="send()">Send</button>
-    <button id="stopBtn" onclick="cancelAgent()" style="display:none" title="Stop generation">&#9632;</button>
+    <button id="stopBtn" onclick="interruptCurrent()" style="display:none" title="Interrupt (force answer)">&#9632;</button>
   </div>
 </div>
 </div><!-- /tab-content chat -->

@@ -110,11 +110,16 @@ class ConversationWriter:
 
     def pause_for_context_op(self):
         """Pause message writing — context operation in progress."""
+        import traceback
         self._context_op_started = time.time()
         self._context_op_active = True
+        self._context_op_caller = ''.join(traceback.format_stack()[-4:-1])
+        logger.info("[conv-writer:%s] PAUSED by:\n%s", self._cid[:8], self._context_op_caller.strip())
 
     def resume_after_context_op(self):
         """Resume message writing — context operation done."""
+        elapsed = time.time() - getattr(self, '_context_op_started', time.time())
+        logger.info("[conv-writer:%s] RESUMED after %.1fs", self._cid[:8], elapsed)
         self._context_op_active = False
         self._resume_event.set()
 
@@ -130,10 +135,13 @@ class ConversationWriter:
 
         while not self._stop:
             # Wait for context op to finish (with timeout guard)
+            if self._context_op_active:
+                logger.warning("[conv-writer:%s] BLOCKED — waiting for context op (caller: %s)",
+                               self._cid[:8], getattr(self, '_context_op_caller', '?').strip().split('\n')[-1].strip())
             while self._context_op_active and not self._stop:
                 if time.time() - self._context_op_started > _CONTEXT_OP_TIMEOUT:
-                    logger.warning(
-                        "[conv-writer:%s] context op exceeded %ds timeout, force-unblocking",
+                    logger.error(
+                        "[conv-writer:%s] context op exceeded %ds timeout, force-unblocking!",
                         self._cid[:8], _CONTEXT_OP_TIMEOUT)
                     self._context_op_active = False
                     break

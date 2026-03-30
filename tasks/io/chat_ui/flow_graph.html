@@ -129,6 +129,7 @@ const FlowNode = memo(({ data }) => {
     jsxs('div', { className: 'node-stats', children: [
       jsxs('span', { children: ['\u2B07 ', data.stats_in] }),
       jsxs('span', { children: ['\u2B06 ', data.stats_out] }),
+      data.pending > 0 && jsxs('span', { style: { color: '#ffc107' }, children: ['\u23F3 ', data.pending] }),
       data.error_count > 0 && jsxs('span', { style: { color: '#e94560' }, children: ['\u26A0 ', data.error_count] }),
     ] }),
     data.error && jsx('div', { className: 'node-error', title: data.error, children: data.error }),
@@ -149,7 +150,7 @@ function toRFNodes(apiNodes) {
       label: id, taskType: n.type, state: n.state,
       stats_in: n.in, stats_out: n.out,
       error_count: n.error_count, error: n.error,
-      in_flight: n.in_flight,
+      in_flight: n.in_flight, pending: n.pending || 0,
     },
   }));
 }

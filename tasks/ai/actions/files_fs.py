@@ -153,6 +153,12 @@ def _handle_files_fs(self, action, body, store, user_id, flowfile):
                 except Exception:
                     pass
 
+            # Compute pending flowfiles per node (sum of incoming queue sizes)
+            for e in edges:
+                tgt = e["target"]
+                if tgt in nodes:
+                    nodes[tgt]["pending"] = nodes[tgt].get("pending", 0) + e["queue_size"]
+
             flowfile.set_content(json.dumps({
                 "flow_name": flow_name, "instance_id": instance_id,
                 "is_running": is_running, "nodes": nodes, "edges": edges,

@@ -386,6 +386,7 @@ class StreamEmitter(AgentEmitter):
         if _queued:
             for _qff in _queued:
                 # _qff is a FlowFile — extract user text
+                _parsed = {}
                 try:
                     # Prefer the preserved attribute (set before ack overwrites content)
                     _text = (_qff.get_attribute("_queued_user_text")
@@ -399,9 +400,10 @@ class StreamEmitter(AgentEmitter):
                 except Exception:
                     _text = ""
                     _uid = self._user_id
+                    _parsed = {}
                 if _text:
                     _qmid = (_qff.get_attribute("_user_msg_id")
-                             if hasattr(_qff, "get_attribute") else "") or _parsed.get("msg_id", "")
+                             if hasattr(_qff, "get_attribute") else "") or (_parsed.get("msg_id", "") if _parsed else "")
                     _msg = LLMMessage(
                         role="user", content=_text,
                         source={"type": "user", "name": _uid},

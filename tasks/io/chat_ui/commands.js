@@ -89,12 +89,15 @@ const HELP_DATA = {
       + 'The active agent shapes the AI\'s behavior for the conversation.',
   },
   '/skill': {
-    usage: '/skill list | add <name> <prompt> | del <name>',
+    usage: '/skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent',
     short: 'Manage skills (single-shot prompt templates)',
-    detail: 'Create, list, or delete skills.\n\n'
-      + '  /skill list              — List all skills with active status\n'
-      + '  /skill add <name> <prompt> — Create a skill with given prompt\n'
-      + '  /skill del <name>        — Delete a skill\n\n'
+    detail: 'Create, list, assign, or delete skills.\n\n'
+      + '  /skill list                     — List all skills with active status\n'
+      + '  /skill add @name <prompt>       — Create a skill with given prompt\n'
+      + '  /skill del @name                — Delete a skill\n'
+      + '  /skill assign @agent @skill     — Assign a skill to an agent\n'
+      + '  /skill unassign @agent @skill   — Remove a skill from an agent\n'
+      + '  /skill assigned @agent          — List skills assigned to an agent\n\n'
       + 'Skills are prompt-only resources injected into the system prompt when active.',
   },
   '/add-skill': {
@@ -169,6 +172,14 @@ const HELP_DATA = {
       + '  /code                  \u2014 Start on first connected relay\n'
       + '  /code my_relay         \u2014 Start on a specific relay\n'
       + '  /code close            \u2014 Close VS Code tab',
+  },
+  '/desktop': {
+    usage: '/desktop [relay_name] | /desktop close',
+    short: 'Open virtual desktop (VNC) on a relay',
+    detail: 'Opens noVNC in a tab connected to a virtual desktop on the relay.\n\n'
+      + '  /desktop              \u2014 Open on first connected relay\n'
+      + '  /desktop my_relay     \u2014 Open on a specific relay\n'
+      + '  /desktop close        \u2014 Close the active desktop tab',
   },
   '/port-forward': {
     usage: '/port-forward <add|remove|list|open> [relay_id] [port]',
@@ -675,6 +686,7 @@ const _CMD_HANDLERS = {
   '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),
   '/term':          (text, parts, cmd) => cmdTerminal(text, parts),
   '/code':          (text, parts, cmd) => cmdCode(text, parts),
+  '/desktop':       (text, parts, cmd) => cmdDesktop(text, parts),
   '/port-forward':  (text, parts, cmd) => cmdPortForward(text, parts),
   '/fwd':           (text, parts, cmd) => cmdPortForward(text, parts),
 };

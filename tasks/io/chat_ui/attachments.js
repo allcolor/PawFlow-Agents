@@ -418,6 +418,7 @@ async function cmdResourceAction(action, extra) {
     else if (data.activated) addMsg('system', `Activated ${data.type} "${data.name}" in this conversation`);
     else if (data.deactivated) addMsg('system', `Deactivated ${data.type} "${data.name}"`);
     else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
+    else if (data.message) addMsg('system', data.message);
     else addMsg('system', JSON.stringify(data, null, 2));
   } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }

@@ -220,6 +220,7 @@ class RelayThread:
             import uuid as _uuid
             self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
             ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
+            self._desktop_host_port = find_free_port()
             docker_cmd = _docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
@@ -231,6 +232,8 @@ class RelayThread:
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",
                 "-e", f"PAWFLOW_HOST_HELPER={_get_host_ip()}:{host_helper_port}",
+                "--publish", f"{self._desktop_host_port}:6080",
+                "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
                 self.docker_image,
                 "python3", "/opt/pawflow/pawflow_relay.py",
                 "--server", ws_url,

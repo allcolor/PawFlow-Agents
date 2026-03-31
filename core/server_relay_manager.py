@@ -127,6 +127,7 @@ class ServerRelayManager:
             self._cleanup_container(existing.get("container_id", ""), remove=True)
 
         port = _find_free_port()
+        desktop_host_port = _find_free_port()
         token = secrets.token_urlsafe(32)
         relay_id = _relay_id_for_conv(conv_id)
         path = f"/ws/relay/{relay_id}"
@@ -143,7 +144,10 @@ class ServerRelayManager:
 
         # Resolve tools/ dir to absolute path (relative to server CWD)
         import os as _os
+        from core.docker_utils import to_host_path, detect_exec_mode
         tools_abs = _os.path.abspath(relay_tools_dir)
+        # In DinD, translate container path to host path for Docker daemon
+        tools_host = to_host_path(tools_abs)
         # tools/ is mounted as /opt/pawflow/ — same location as in the image.
         # This means relay changes are live without rebuilding the image.
         _TOOLS_IN_CONTAINER = "/opt/pawflow"
@@ -164,7 +168,7 @@ class ServerRelayManager:
             "--detach",
             "--name", container_name,
             "--volume", f"{volume}:{relay_workspace}",
-            "--volume", f"{tools_abs}:{_TOOLS_IN_CONTAINER}:ro",
+            "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", relay_cpus,
             "--memory", relay_memory,
@@ -173,9 +177,32 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_ID={relay_id}",
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
+            "--publish", f"{desktop_host_port}:6080",
+            "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+        ]
+
+        # DinD: mount docker.sock so relay can spawn docker-* exec shells
+        exec_mode = detect_exec_mode()
+        if exec_mode == "docker" and _os.path.exists("/var/run/docker.sock"):
+            docker_run_args.extend([
+                "--volume", "/var/run/docker.sock:/var/run/docker.sock",
+            ])
+            # Propagate host path translation for nested container spawning
+            host_workdir = _os.environ.get("PAWFLOW_HOST_WORKDIR", "")
+            container_workdir = _os.environ.get("PAWFLOW_WORKDIR", "")
+            if host_workdir:
+                docker_run_args.extend([
+                    "--env", f"PAWFLOW_HOST_WORKDIR={host_workdir}",
+                ])
+            if container_workdir:
+                docker_run_args.extend([
+                    "--env", f"PAWFLOW_WORKDIR={container_workdir}",
+                ])
+
+        docker_run_args.extend([
             relay_image,
             "python3", _SCRIPT_IN_CONTAINER,
-        ]
+        ])
         cmd = _docker_cmd() + ["run"] + docker_run_args
         logger.info("Spawning server relay container: %s", container_name)
         result = subprocess.run(
@@ -201,6 +228,7 @@ class ServerRelayManager:
             "user_id": user_id,
             "ws_url": ws_url_for_container,
             "volume": volume,
+            "desktop_host_port": desktop_host_port,
         }
         store.set_extra(conv_id, "server_relay", metadata)
         logger.info("Server relay spawned for conv %s: %s", conv_id, relay_id)

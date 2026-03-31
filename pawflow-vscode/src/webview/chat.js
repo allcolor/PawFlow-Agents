@@ -377,9 +377,11 @@ function _toolSummary(name, args) {
 function _attachResult(tcEl, result) {
   var bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.className = 'tc-bullet done'; }
-  // Remove BG button (tool is done)
+  // Remove BG/KL buttons (tool is done)
   var bgBtn = tcEl.querySelector('.tc-bg-btn');
   if (bgBtn) bgBtn.remove();
+  var klBtn = tcEl.querySelector('.tc-kl-btn');
+  if (klBtn) klBtn.remove();
   var toolHint = tcEl.dataset.tool || '';
   var pathHint = tcEl.dataset.path || '';
   var rd = document.createElement('div');
@@ -391,13 +393,37 @@ function _attachResult(tcEl, result) {
 function backgroundTool(tcId) {
   if (!tcId) return;
   vscode.postMessage({ type: 'backgroundTool', tcId: tcId });
-  // Optimistic UI: mark bullet as bg, remove button
+  // Optimistic UI: mark bullet as bg, swap BG button for KL button
   var tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
   if (tcEl) {
     var btn = tcEl.querySelector('.tc-bg-btn');
     if (btn) btn.remove();
     var bullet = tcEl.querySelector('.tc-bullet');
     if (bullet) { bullet.style.color = '#f0ad4e'; bullet.title = 'Running in background'; }
+    // Add Kill button
+    var klBtn = document.createElement('button');
+    klBtn.className = 'tc-kl-btn';
+    klBtn.onclick = function() { killTool(tcId); };
+    klBtn.title = 'Kill background task';
+    klBtn.style.cssText = 'font-size:10px;padding:1px 6px;margin-left:8px;background:transparent;border:1px solid #e94560;color:#e94560;border-radius:3px;cursor:pointer;vertical-align:middle';
+    klBtn.textContent = '\u2717 KL';
+    // Insert KL button where BG button was (after summary text)
+    var preEl = tcEl.querySelector('pre');
+    if (preEl) tcEl.insertBefore(klBtn, preEl);
+    else tcEl.appendChild(klBtn);
+  }
+}
+
+function killTool(tcId) {
+  if (!tcId) return;
+  vscode.postMessage({ type: 'killTool', tcId: tcId });
+  // Optimistic UI: mark as cancelled
+  var tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+  if (tcEl) {
+    var btn = tcEl.querySelector('.tc-kl-btn');
+    if (btn) btn.remove();
+    var bullet = tcEl.querySelector('.tc-bullet');
+    if (bullet) { bullet.style.color = '#e94560'; bullet.title = 'Killed'; bullet.className = 'tc-bullet done'; }
   }
 }
 

@@ -83,12 +83,16 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                                           current_tokens: int,
                                           keep_recent: int = 6,
                                           chars_per_token: float = 3.5):
-        """Progressively shrink old tool results until under target_tokens.
+        """Deterministically shrink old tool results to maximize KV cache stability.
 
-        Strategy (oldest first, in passes):
-        - Pass 1: truncate tool results > 500 chars → 200 chars
-        - Pass 2: truncate tool results > 100 chars → 50 chars summary
-        - Pass 3: replace all old tool results with "[result cleared]"
+        All old tool results (outside keep_recent) are truncated to fixed sizes
+        regardless of current token count. This ensures the same prefix is produced
+        across calls, preserving the Anthropic KV cache.
+
+        Strategy (all old messages, deterministic):
+        - Tool results > 500 chars → truncate to 200 chars
+        - Tool results > 100 chars (after pass 1) → truncate to 50 chars if still over target
+        - All remaining old tool results > 20 chars → "[result cleared]" if still over target
 
         Never touches the last `keep_recent` messages.
         Returns the estimated new token count.
@@ -99,13 +103,12 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         safe_end = max(1, len(messages) - keep_recent)
 
         def _is_clear_ref(content):
-            """Don't re-truncate already-cleared results (they contain critical info)."""
+            """Don't re-truncate already-cleared results."""
             return "[result cleared]" in content or "[...truncated]" in content or "[...cleared]" in content
 
-        # Pass 1: truncate long tool results to 200 chars
+        # Pass 1: truncate ALL old tool results > 500 chars to 200 chars
+        # (deterministic — always applied regardless of token count)
         for i in range(1, safe_end):
-            if current_tokens <= target_tokens:
-                break
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
                 continue
@@ -119,10 +122,8 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         if current_tokens <= target_tokens:
             return current_tokens
 
-        # Pass 2: shrink to 50 chars (skip already-cleared refs)
+        # Pass 2: shrink ALL old tool results > 100 chars to 50 chars
         for i in range(1, safe_end):
-            if current_tokens <= target_tokens:
-                break
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
                 continue
@@ -136,10 +137,8 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         if current_tokens <= target_tokens:
             return current_tokens
 
-        # Pass 3: clear all old tool results
+        # Pass 3: clear ALL old tool results
         for i in range(1, safe_end):
-            if current_tokens <= target_tokens:
-                break
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
                 continue

@@ -157,8 +157,11 @@ class ToolRegistry:
             for hook in self._hooks.get(f"post:{name}", []) + self._hooks.get("post:*", []):
                 result = hook(name, args, result)
             # Safety cap: prevent oversized results from crashing any caller
+            # Skip cap for multimodal image markers — they are converted to
+            # image content blocks by the agent loop, not sent as text.
             _max = getattr(handler, '_tool_result_max_chars', 50000)
-            if isinstance(result, str) and len(result) > _max:
+            _has_image = isinstance(result, str) and "__image_data__:" in result
+            if isinstance(result, str) and len(result) > _max and not _has_image:
                 try:
                     from core.file_store import FileStore
                     _fid = FileStore.instance().store(

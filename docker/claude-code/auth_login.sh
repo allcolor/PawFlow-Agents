@@ -37,7 +37,7 @@ echo "[auth-login] Display and noVNC ready on port 6080"
 # Claude Code uses xdg-open or $BROWSER to open URLs
 cat > /usr/local/bin/open-browser <<'BROWSER_SCRIPT'
 #!/bin/bash
-exec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage \
+exec chromium --disable-gpu --disable-dev-shm-usage \
     --disable-software-rasterizer --window-size=1280,800 "$@"
 BROWSER_SCRIPT
 chmod +x /usr/local/bin/open-browser
@@ -54,8 +54,27 @@ MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
 DESKTOP
 export XDG_UTILS_DEBUG_LEVEL=0
 
+# Remove ALL possible stale credentials so claude auth login does a fresh OAuth flow
+echo "[auth-login] Clearing all credential files..."
+find / -name ".credentials.json" -type f 2>/dev/null | while read f; do
+  echo "[auth-login] Removing: $f"
+  rm -f "$f"
+done
+# Also clear any cached auth/session state
+rm -rf "$HOME/.claude/auth" "$HOME/.claude/statsig" "$HOME/.claude/projects" 2>/dev/null
+echo "[auth-login] Done clearing"
+
 # Launch claude auth login (it will use $BROWSER to open the auth URL)
 claude auth login || true
+
+# Find where claude wrote the new credentials
+echo "[auth-login] Searching for new credentials..."
+find / -name ".credentials.json" -type f -newer /proc/1/cmdline 2>/dev/null | while read f; do
+  echo "[auth-login] Found: $f"
+  # Copy to /workspace so the server can read it
+  cp "$f" /workspace/.credentials.json 2>/dev/null || true
+done
+ls -la /workspace/.credentials.json 2>/dev/null || echo "[auth-login] WARNING: no .credentials.json found anywhere!"
 
 echo "[auth-login] claude auth login completed"
 

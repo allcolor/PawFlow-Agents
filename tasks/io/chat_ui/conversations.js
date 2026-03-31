@@ -26,12 +26,13 @@ function renderConvList(convs) {
     const el = document.createElement('div');
     el.className = 'conv-item' + (c.conversation_id === conversationId ? ' active' : '');
     el.dataset.cid = c.conversation_id;
-    const preview = c.preview || 'Empty conversation';
+    const title = c.title || c.preview || 'New conversation';
     const date = new Date(c.updated_at * 1000);
     const timeStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
     const statusDot = c.status === 'active' ? '<span class="conv-status active" title="Working"></span>'
       : c.status === 'blocked' ? '<span class="conv-status blocked" title="Blocked"></span>' : '';
-    el.innerHTML = '<div class="conv-preview">' + statusDot + escapeHtml(preview) + '</div>'
+    el.innerHTML = '<div class="conv-preview" ondblclick="renameConvInline(event,\'' + c.conversation_id + '\')">'
+      + statusDot + escapeHtml(title) + '</div>'
       + '<div class="conv-meta">' + c.message_count + ' messages \u00b7 ' + timeStr + '</div>'
       + '<button class="conv-delete" title="Delete" onclick="deleteConv(event,\'' + c.conversation_id + '\')">\u00d7</button>';
     el.onclick = () => resumeConv(c.conversation_id);
@@ -47,6 +48,33 @@ function highlightConv(cid) {
   document.querySelectorAll('.conv-item').forEach(el => {
     el.classList.toggle('active', el.dataset.cid === cid);
   });
+}
+
+function renameConvInline(e, cid) {
+  e.stopPropagation();
+  const previewEl = e.target.closest('.conv-preview');
+  if (!previewEl) return;
+  const currentTitle = previewEl.textContent.trim();
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.value = currentTitle;
+  input.style.cssText = 'width:100%;background:#1a1a2e;color:#eee;border:1px solid #6c5ce7;border-radius:3px;padding:2px 4px;font-size:12px;';
+  previewEl.innerHTML = '';
+  previewEl.appendChild(input);
+  input.focus();
+  input.select();
+  const finish = () => {
+    const newTitle = input.value.trim();
+    if (newTitle && newTitle !== currentTitle) {
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'set_conv_title', conversation_id: cid, title: newTitle })
+      }).then(() => loadConversations()).catch(() => {});
+    } else {
+      loadConversations();
+    }
+  };
+  input.onblur = finish;
+  input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(); if (ev.key === 'Escape') loadConversations(); };
 }
 
 async function reloadConv() {

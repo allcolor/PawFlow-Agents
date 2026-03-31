@@ -96,6 +96,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .tc-bg-btn { font-size: 10px; padding: 1px 6px; margin-left: 8px; background: transparent;
              border: 1px solid #555; color: #888; border-radius: 3px; cursor: pointer; vertical-align: middle; }
 .tc-bg-btn:hover { border-color: #f0ad4e; color: #f0ad4e; }
+.tc-kl-btn { font-size: 10px; padding: 1px 6px; margin-left: 8px; background: transparent;
+             border: 1px solid #e94560; color: #e94560; border-radius: 3px; cursor: pointer; vertical-align: middle; }
+.tc-kl-btn:hover { border-color: #ff6b6b; color: #ff6b6b; }
 .tc-result { margin: 2px 0 0 16px; font-size: 11px; color: #8b949e; white-space: pre-wrap; word-break: break-word; }
 .tc-result details summary { cursor: pointer; }
 .tc-output { font-size: 11px; background: #0d1117; border-radius: 4px; padding: 6px 8px;
@@ -428,6 +431,10 @@ if (typeof hljs !== 'undefined') {
         <div class="action-menu-item" onclick="closeActionMenu();cmdCode('',[''])">
           <span class="ami-icon">&#x2699;</span>
           <div><div class="ami-label">VS Code</div><div class="ami-desc">Open code-server editor on relay</div></div>
+        </div>
+        <div class="action-menu-item" onclick="closeActionMenu();cmdDesktop('',[''])">
+          <span class="ami-icon">&#x1F5A5;</span>
+          <div><div class="ami-label">Desktop</div><div class="ami-desc">Open virtual desktop (VNC) on relay</div></div>
         </div>
         <div class="action-menu-sep"></div>
         <div class="action-menu-item" onclick="closeActionMenu();openExplorer()">

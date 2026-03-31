@@ -804,8 +804,21 @@ def resolve_agent_task(
     from core.expression import resolve_value
     llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=user_id) or ""
 
-    # Build system prompt with identity block
+    # Inject assigned skills into system prompt
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
+    _assigned_skills = agent_def.get("assigned_skills", [])
+    if _assigned_skills:
+        _skill_blocks = []
+        for _sk_name in _assigned_skills:
+            _sk_def = store.get_any("skill", _sk_name, user_id)
+            if _sk_def and _sk_def.get("prompt"):
+                _skill_blocks.append(
+                    f"## Skill: {_sk_name}\n"
+                    f"{_sk_def.get('description', '')}\n\n"
+                    f"{_sk_def['prompt']}"
+                )
+        if _skill_blocks:
+            _sys_prompt += "\n\n# Assigned Skills\n\n" + "\n\n".join(_skill_blocks)
     _nick = None
     if conversation_id:
         try:

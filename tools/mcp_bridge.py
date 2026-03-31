@@ -430,9 +430,29 @@ def main():
                 result = f"Error: unknown tool '{name}'"
 
             _log(f"RESULT {name}: {str(result)[:100]}")
+            # Convert __image_data__ markers to MCP image content blocks
+            result_str = str(result)
+            if "__image_data__:" in result_str:
+                content = []
+                for rline in result_str.split("\n"):
+                    if rline.startswith("__image_data__:"):
+                        parts = rline.split(":", 2)
+                        if len(parts) == 3:
+                            mime, b64 = parts[1], parts[2]
+                            content.append({
+                                "type": "image",
+                                "data": b64,
+                                "mimeType": mime,
+                            })
+                    elif rline.strip():
+                        content.append({"type": "text", "text": rline})
+                if not content:
+                    content = [{"type": "text", "text": result_str}]
+            else:
+                content = [{"type": "text", "text": result_str}]
             _respond(req_id, {
-                "content": [{"type": "text", "text": str(result)}],
-                "isError": str(result).startswith("Error:"),
+                "content": content,
+                "isError": result_str.startswith("Error:"),
             })
         else:
             _respond(req_id, None,

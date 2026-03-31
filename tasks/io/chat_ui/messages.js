@@ -392,9 +392,11 @@ function _renderToolOutput(text, toolHint, pathHint) {
 function _attachToolResult(tcEl, resultText) {
   const bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
-  // Remove BG button (tool is done)
+  // Remove BG/KL buttons (tool is done)
   const bgBtn = tcEl.querySelector('.tc-bg-btn');
   if (bgBtn) bgBtn.remove();
+  const klBtn = tcEl.querySelector('.tc-kl-btn');
+  if (klBtn) klBtn.remove();
   const toolHint = tcEl.dataset.tool || '';
   const pathHint = tcEl.dataset.path || '';
   const resultDiv = document.createElement('div');
@@ -430,9 +432,31 @@ function backgroundTool(tcId) {
         if (btn) btn.remove();
         const bullet = tcEl.querySelector('.tc-bullet');
         if (bullet) { bullet.classList.add('bg'); bullet.title = 'Running in background'; }
+        // Add Kill button
+        const klBtn = document.createElement('button');
+        klBtn.className = 'tc-kl-btn';
+        klBtn.onclick = () => killTool(tcId);
+        klBtn.title = 'Kill background task';
+        klBtn.textContent = '\u2717 KL';
+        const preEl = tcEl.querySelector('pre');
+        if (preEl) tcEl.insertBefore(klBtn, preEl);
+        else tcEl.appendChild(klBtn);
       }
     }
   }).catch(() => {});
+}
+
+function killTool(tcId) {
+  if (!conversationId || !tcId) return;
+  // Optimistic UI: mark as killed
+  const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
+  if (tcEl) {
+    const btn = tcEl.querySelector('.tc-kl-btn');
+    if (btn) btn.remove();
+    const bullet = tcEl.querySelector('.tc-bullet');
+    if (bullet) { bullet.classList.remove('bg', 'pending'); bullet.classList.add('done'); bullet.style.color = '#e94560'; bullet.title = 'Killed'; }
+  }
+  cancelBgTool(tcId);
 }
 
 function cancelBgTool(tcId) {

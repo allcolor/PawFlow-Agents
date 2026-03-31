@@ -223,6 +223,14 @@ class LLMClient(
     def reasoning_effort(self):
         return self._cfg("reasoning_effort", "")
 
+    @property
+    def prompt_cache_key(self):
+        return self._cfg("prompt_cache_key", "")
+
+    @property
+    def prompt_cache_retention(self):
+        return self._cfg("prompt_cache_retention", "")
+
     @staticmethod
     def _parse_retry_after(error_text: str) -> float:
         """Parse retry delay from error message. Returns seconds to wait (default 2.0)."""

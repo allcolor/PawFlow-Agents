@@ -271,31 +271,72 @@ function cmdImgservice(text, parts) {
   return true;
 }
 
+function _stripAt(s) { return s ? s.replace(/^@/, '') : ''; }
+
 function cmdSkill(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
     cmdSkillList();
   } else if (sub === 'add' || sub === 'create') {
-    const name = parts[2];
+    const name = _stripAt(parts[2]);
     const prompt = parts.slice(3).join(' ');
-    if (!name || !prompt) { addMsg('system', 'Usage: /skill add <name> <prompt>'); return true; }
+    if (!name || !prompt) { addMsg('system', 'Usage: /skill add @name <prompt>'); return true; }
     cmdResourceAction('create_skill', {name, prompt});
   } else if (sub === 'del' || sub === 'delete') {
-    const name = parts[2];
-    if (!name) { addMsg('system', 'Usage: /skill del <name>'); return true; }
+    const name = _stripAt(parts[2]);
+    if (!name) { addMsg('system', 'Usage: /skill del @name'); return true; }
     cmdResourceAction('delete_skill', {name});
+  } else if (sub === 'assign') {
+    const agent = _stripAt(parts[2]);
+    const skill = _stripAt(parts[3]);
+    if (!agent || !skill) { addMsg('system', 'Usage: /skill assign @agent @skill'); return true; }
+    cmdResourceAction('assign_skill', {agent_name: agent, skill_name: skill}).then(() => {
+      loadResources();
+    });
+  } else if (sub === 'unassign') {
+    const agent = _stripAt(parts[2]);
+    const skill = _stripAt(parts[3]);
+    if (!agent || !skill) { addMsg('system', 'Usage: /skill unassign @agent @skill'); return true; }
+    cmdResourceAction('unassign_skill', {agent_name: agent, skill_name: skill}).then(() => {
+      loadResources();
+    });
+  } else if (sub === 'assigned') {
+    const agent = _stripAt(parts[2]);
+    if (!agent) { addMsg('system', 'Usage: /skill assigned @agent'); return true; }
+    cmdSkillAssigned(agent);
   } else {
-    addMsg('system', 'Usage: /skill list | add <name> <prompt> | del <name>');
+    addMsg('system', 'Usage: /skill list | add @name <prompt> | del @name | assign @agent @skill | unassign @agent @skill | assigned @agent');
   }
   return true;
 }
 
 function cmdAddSkill(text, parts) {
-  const name = parts[1];
+  const name = _stripAt(parts[1]);
   const prompt = parts.slice(2).join(' ');
-  if (!name || !prompt) { addMsg('system', 'Usage: /add-skill <name> <prompt>'); return true; }
+  if (!name || !prompt) { addMsg('system', 'Usage: /add-skill @name <prompt>'); return true; }
   cmdResourceAction('create_skill', {name, prompt});
   return true;
+}
+
+async function cmdSkillAssigned(agentName) {
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_agent_skills', agent_name: agentName, conversation_id: conversationId }),
+    });
+    const data = await resp.json();
+    if (data.error) { addMsg('error', data.error); return; }
+    const skills = data.skills || [];
+    if (!skills.length) {
+      addMsg('system', `Agent **${agentName}** has no assigned skills.`);
+      return;
+    }
+    let msg = `Skills assigned to **${agentName}**:\n`;
+    skills.forEach(s => {
+      msg += `  • **${s.name}**` + (s.description ? ` — ${s.description}` : '') + '\n';
+    });
+    addMsg('system', msg);
+  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
 }
 
 function cmdResources() {

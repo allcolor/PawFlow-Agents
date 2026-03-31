@@ -153,6 +153,63 @@ function closeVSCodeTab(tabId) {
   if (_activeTab === tabId) switchTab('chat');
 }
 
+/** Add a Desktop tab (one per relay, iframe to noVNC). */
+function addDesktopTab(relayId, iframeSrc) {
+  const tabId = 'desktop-' + relayId;
+  if (document.getElementById('tabContent_' + tabId)) {
+    switchTab(tabId);
+    return tabId;
+  }
+
+  const btn = document.createElement('button');
+  btn.className = 'tab-btn';
+  btn.dataset.tab = tabId;
+  btn.title = 'Desktop (' + relayId + ')';
+  btn.onclick = (e) => {
+    if (e.target.classList.contains('tab-close')) return;
+    switchTab(tabId);
+  };
+  btn.innerHTML = '<span style="font-size:14px">\uD83D\uDDA5</span>'
+    + '<span class="tab-close" onclick="closeDesktopTab(\'' + tabId + '\')">\u00d7</span>';
+
+  const spacer = document.querySelector('.tab-spacer');
+  spacer.parentNode.insertBefore(btn, spacer);
+
+  const panel = document.createElement('div');
+  panel.className = 'tab-content';
+  panel.id = 'tabContent_' + tabId;
+  panel.dataset.tab = tabId;
+  panel.dataset.relayId = relayId;
+
+  const iframe = document.createElement('iframe');
+  iframe.src = iframeSrc;
+  iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
+  iframe.allow = 'clipboard-read; clipboard-write';
+  panel.appendChild(iframe);
+
+  document.querySelector('.main').appendChild(panel);
+  switchTab(tabId);
+  return tabId;
+}
+
+/** Close a Desktop tab. */
+function closeDesktopTab(tabId) {
+  const panel = document.getElementById('tabContent_' + tabId);
+  if (panel) {
+    const relayId = panel.dataset.relayId;
+    if (relayId) {
+      fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'close_desktop', relay_id: relayId }),
+      }).catch(() => {});
+    }
+    panel.remove();
+  }
+  const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
+  if (btn) btn.remove();
+  if (_activeTab === tabId) switchTab('chat');
+}
+
 /** Add a browser tab (iframe pointing to a URL). One per label. */
 function addBrowserTab(label, iframeSrc) {
   const tabId = 'browse-' + label.replace(/[^a-zA-Z0-9._-]/g, '_');

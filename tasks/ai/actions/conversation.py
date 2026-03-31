@@ -60,6 +60,16 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]
 
+    if action == "set_conv_title":
+        conv_id = body.get("conversation_id", "")
+        title = body.get("title", "").strip()
+        if not conv_id or not title:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or title"}).encode())
+            return [flowfile]
+        store.set_extra(conv_id, "title", title, user_id=user_id)
+        flowfile.set_content(json.dumps({"ok": True, "title": title}).encode())
+        return [flowfile]
+
     if action == "delete_conversation":
         conv_id = body.get("conversation_id", "")
         if not conv_id:
@@ -119,8 +129,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 conversation_id=conv_id,
             )
             sys_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
-            from datetime import datetime
-            sys_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+            # NO datetime in system prompt — breaks KV cache
             new_context = [
                 LLMMessage(role="system", content=sys_prompt),
                 LLMMessage(role="user",

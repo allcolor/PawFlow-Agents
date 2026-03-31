@@ -19,7 +19,7 @@ class LLMAnthropicMixin:
 
         system_text, api_messages = self._build_anthropic_messages(messages)
 
-        # Add cache_control to first user message for prompt caching
+        # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
 
         body = {
@@ -32,16 +32,19 @@ class LLMAnthropicMixin:
         if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+        _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
+        _cc = {"type": "ephemeral"}
+        if _cache_ttl > 0:
+            _cc["ttl"] = _cache_ttl
         if system_text:
-            body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+            body["system"] = [{"type": "text", "text": system_text, "cache_control": _cc}]
         if tools:
             _tool_list = [
                 {"name": t.name, "description": t.description, "input_schema": t.parameters}
                 for t in tools
             ]
-            # Cache breakpoint on last tool for prompt caching
             if _tool_list:
-                _tool_list[-1]["cache_control"] = {"type": "ephemeral"}
+                _tool_list[-1]["cache_control"] = _cc
             body["tools"] = _tool_list
 
         _base = self.base_url or "https://api.anthropic.com"
@@ -171,8 +174,14 @@ class LLMAnthropicMixin:
                         except (json.JSONDecodeError, KeyError):
                             pass
 
-            if cache_read_tokens > 0:
-                logger.debug("Anthropic cache: %d created, %d read", cache_creation_tokens, cache_read_tokens)
+            _cache_total = cache_creation_tokens + cache_read_tokens
+            if _cache_total > 0:
+                _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
+                logger.info("Anthropic KV cache: %d created, %d read (%.0f%% hit), %d uncached input",
+                            cache_creation_tokens, cache_read_tokens, _hit_pct,
+                            tokens_in - cache_read_tokens - cache_creation_tokens)
+            elif tokens_in > 0:
+                logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
             return LLMResponse(
                 content="".join(content_parts),
                 model=resp_model,
@@ -290,24 +299,60 @@ class LLMAnthropicMixin:
                     api_messages.append({"role": m.role, "content": m.content or ""})
         return system_text, api_messages
 
-    @staticmethod
-    def _apply_anthropic_cache_control(api_messages: List[Dict[str, Any]]) -> None:
-        """Add cache_control to the first user message for Anthropic prompt caching.
+    def _apply_anthropic_cache_control(self, api_messages: List[Dict[str, Any]]) -> None:
+        """Add cache_control breakpoints to maximize KV cache hits.
 
-        Modifies api_messages in-place. If the first user message content is a
-        plain string, converts it to a list with a single text block carrying
-        cache_control. If it's already a list, adds cache_control to the last block.
+        Anthropic caches the KV computation for all tokens up to a
+        cache_control breakpoint. On subsequent requests with the same
+        prefix, cached tokens are 10x cheaper and faster.
+
+        Strategy (up to 2 breakpoints in messages, 4 total with system+tools):
+        - Breakpoint A: the message just before the last user message
+          ("turn boundary") — caches the entire conversation history.
+        - Breakpoint B: for longer conversations (>10 messages), a second
+          breakpoint deeper in the history for partial cache hits even
+          after compaction changes recent messages.
         """
-        for msg in api_messages:
-            if msg.get("role") == "user":
-                content = msg["content"]
-                if isinstance(content, str):
-                    msg["content"] = [
-                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
-                    ]
-                elif isinstance(content, list) and content:
-                    content[-1]["cache_control"] = {"type": "ephemeral"}
+        if not api_messages:
+            return
+
+        _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
+        _cc: Dict[str, Any] = {"type": "ephemeral"}
+        if _cache_ttl > 0:
+            _cc["ttl"] = _cache_ttl
+
+        def _set_cache(msg: Dict[str, Any]) -> None:
+            content = msg["content"]
+            if isinstance(content, str):
+                msg["content"] = [
+                    {"type": "text", "text": content, "cache_control": _cc}
+                ]
+            elif isinstance(content, list) and content:
+                content[-1]["cache_control"] = _cc
+
+        # Find the last user message index (the new turn being sent)
+        last_user_idx = -1
+        for i in range(len(api_messages) - 1, -1, -1):
+            if api_messages[i].get("role") == "user":
+                last_user_idx = i
                 break
+
+        # Breakpoint A: message just before the last user message
+        # This caches the entire prefix (all history up to the current turn)
+        if last_user_idx > 0:
+            _set_cache(api_messages[last_user_idx - 1])
+        elif last_user_idx == 0:
+            # Only one user message — cache it (same as before)
+            _set_cache(api_messages[0])
+            return
+
+        # Breakpoint B: deeper in history for partial cache survival
+        # Place at ~40% of the conversation (rounded to a message boundary)
+        if len(api_messages) > 10 and last_user_idx > 4:
+            deep_idx = max(1, last_user_idx * 2 // 5)
+            # Don't place on the same message as breakpoint A
+            if deep_idx < last_user_idx - 1:
+                _set_cache(api_messages[deep_idx])
 
     def _complete_anthropic(self, messages, model, temperature, max_tokens, tools=None, thinking_budget: int = 0):
         """Send a non-streaming completion to the Anthropic API."""
@@ -315,15 +360,19 @@ class LLMAnthropicMixin:
 
         system_text, api_messages = self._build_anthropic_messages(messages)
 
-        # Add cache_control to first user message for prompt caching
+        # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
 
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
             body["temperature"] = 1  # Required by Anthropic when thinking is enabled
+        _cache_ttl = int(self._cfg("anthropic_cache_ttl", 0))
+        _cc = {"type": "ephemeral"}
+        if _cache_ttl > 0:
+            _cc["ttl"] = _cache_ttl
         if system_text:
-            body["system"] = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
+            body["system"] = [{"type": "text", "text": system_text, "cache_control": _cc}]
         if tools:
             _tool_list = [
                 {
@@ -334,7 +383,7 @@ class LLMAnthropicMixin:
                 for t in tools
             ]
             if _tool_list:
-                _tool_list[-1]["cache_control"] = {"type": "ephemeral"}
+                _tool_list[-1]["cache_control"] = _cc
             body["tools"] = _tool_list
 
         data = self._http_post(
@@ -366,16 +415,24 @@ class LLMAnthropicMixin:
                 ))
 
         usage = data.get("usage", {})
+        tokens_in = usage.get("input_tokens", 0)
         cache_creation_tokens = usage.get("cache_creation_input_tokens", 0) or 0
         cache_read_tokens = usage.get("cache_read_input_tokens", 0) or 0
-        if cache_read_tokens > 0:
-            logger.debug("Anthropic cache: %d created, %d read", cache_creation_tokens, cache_read_tokens)
+        _cache_total = cache_creation_tokens + cache_read_tokens
+        if _cache_total > 0:
+            _hit_pct = (cache_read_tokens / _cache_total * 100) if _cache_total else 0
+            logger.info("Anthropic KV cache: %d created, %d read (%.0f%% hit), %d uncached input",
+                        cache_creation_tokens, cache_read_tokens, _hit_pct,
+                        tokens_in - cache_read_tokens - cache_creation_tokens)
+        elif tokens_in > 0:
+            logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+        tokens_out = usage.get("output_tokens", 0)
         return LLMResponse(
             content=text,
             model=data.get("model", model),
-            tokens_in=usage.get("input_tokens", 0),
-            tokens_out=usage.get("output_tokens", 0),
-            total_tokens=usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+            tokens_in=tokens_in,
+            tokens_out=tokens_out,
+            total_tokens=tokens_in + tokens_out,
             finish_reason=data.get("stop_reason", ""),
             tool_calls=tool_calls,
             raw=data,

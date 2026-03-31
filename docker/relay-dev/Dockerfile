@@ -144,8 +144,75 @@ COPY pawflow.py /opt/pawflow/pawflow.py
 ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
 ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
 
+# ── Desktop user (non-root — required for Chromium & XFCE) ────────
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -s /bin/bash -G sudo pawflow \
+    && echo 'pawflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pawflow \
+    && chmod 440 /etc/sudoers.d/pawflow
+
+# ── Desktop environment (VNC) ───────────────────────────────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    xvfb xfce4 xfce4-goodies dbus-x11 \
+    x11vnc novnc websockify \
+    xdotool xclip xsel scrot wmctrl \
+    fonts-dejavu fonts-liberation fonts-noto-color-emoji \
+    libgtk-3-0 libnotify4 \
+    tesseract-ocr tesseract-ocr-fra \
+    && pip3 install --break-system-packages --no-cache-dir \
+       mss pyautogui pytesseract opencv-python-headless \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Desktop apps: image, video, audio, office, viewers ─────────────
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gimp gimp-plugin-registry inkscape imagemagick \
+    ffmpeg vlc audacity \
+    libreoffice-calc libreoffice-writer libreoffice-impress libreoffice-draw \
+    feh evince file-roller eog \
+    nmap net-tools iproute2 dnsutils tcpdump iputils-ping httpie \
+    tmux \
+    meld ncdu galculator mousepad \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── VS Code (desktop app) ────────────────────────────────────────
+RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor -o /usr/share/keyrings/microsoft.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft.gpg] https://packages.microsoft.com/repos/code stable main" \
+       > /etc/apt/sources.list.d/vscode.list \
+    && apt-get update && apt-get install -y --no-install-recommends code \
+    && rm -rf /var/lib/apt/lists/* \
+    # Wrapper: Docker containers can't use Electron's sandbox
+    && mv /usr/share/code/code /usr/share/code/code-real \
+    && printf '#!/bin/bash\nexec /usr/share/code/code-real --no-sandbox "$@"\n' \
+       > /usr/share/code/code \
+    && chmod +x /usr/share/code/code
+
+# ── Google Chrome (real deb — chromium-browser is snap stub on 24.04) ──
+RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+       -o /tmp/chrome.deb \
+    && apt-get update && apt-get install -y /tmp/chrome.deb \
+    && rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* \
+    # Wrapper: Docker containers can't use Chrome's sandbox
+    && mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real \
+    && printf '#!/bin/bash\nexec /opt/google/chrome/google-chrome-real --no-sandbox "$@"\n' \
+       > /opt/google/chrome/google-chrome \
+    && chmod +x /opt/google/chrome/google-chrome \
+    && ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser
+
+# ── Docker CLI (for DinD — exec shells via docker.sock) ────────────
+RUN curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg \
+    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu noble stable" \
+       > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && rm -rf /var/lib/apt/lists/*
+
 # ── Cleanup ─────────────────────────────────────────────────────────
 RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Refresh desktop menu cache so all .desktop files appear in XFCE
+RUN update-desktop-database /usr/share/applications 2>/dev/null || true
+
+# Give pawflow user ownership of workspace (volumes are root by default)
+RUN mkdir -p /workspace && chown pawflow:pawflow /workspace
 
 WORKDIR /workspace
 CMD ["bash"]

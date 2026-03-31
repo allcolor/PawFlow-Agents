@@ -148,6 +148,12 @@ class ToolRelayService(BaseService):
                                            user_id=user_id)
         elif method == "execute_tool":
             _raw_args = msg.get("arguments", {})
+            # Defensive: double-encoded JSON string
+            if isinstance(_raw_args, str):
+                try:
+                    _raw_args = json.loads(_raw_args)
+                except (json.JSONDecodeError, TypeError):
+                    pass
             _tool = msg.get("tool_name", "")
             if not _raw_args or _raw_args == {}:
                 logger.warning("[tool-relay] EMPTY ARGS received for %s (request=%s) raw msg keys: %s",
@@ -396,8 +402,17 @@ class ToolRelayService(BaseService):
     _cache_lock = threading.Lock()
 
     def _handle_execute(self, request_id: str, tool_name: str,
-                        arguments: dict, user_id: str,
+                        arguments, user_id: str,
                         conversation_id: str, agent_name: str) -> dict:
+        # Defensive: arguments may arrive as JSON string (double-encoded by LLM)
+        for _ in range(3):
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except (json.JSONDecodeError, TypeError):
+                    break
+            else:
+                break
         # Idempotent: if this request_id was already executed, return cached result
         with self._cache_lock:
             if request_id in self._result_cache:

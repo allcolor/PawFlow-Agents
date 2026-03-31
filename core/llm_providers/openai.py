@@ -37,6 +37,13 @@ class LLMOpenaiMixin:
                 {"type": "function", "function": {"name": t.name, "description": t.description, "parameters": t.parameters}}
                 for t in tools
             ]
+        # OpenAI-specific cache params (ignored by non-OpenAI servers)
+        _pck = self.prompt_cache_key or None
+        if _pck:
+            body["prompt_cache_key"] = _pck
+        _pcr = self.prompt_cache_retention or None
+        if _pcr:
+            body["prompt_cache_retention"] = _pcr
         # Request streaming usage stats (OpenAI official API only —
         # local servers may not support stream_options)
         if not self.base_url or "api.openai.com" in self.base_url:
@@ -165,6 +172,16 @@ class LLMOpenaiMixin:
             if not tokens_out:
                 tokens_out = len(content) // 4
 
+            # Cache logging (OpenAI returns cached_tokens in prompt_tokens_details)
+            _ptd = usage_data.get("prompt_tokens_details") or {}
+            cached_tokens = _ptd.get("cached_tokens", 0) or 0
+            if cached_tokens > 0:
+                _hit_pct = (cached_tokens / tokens_in * 100) if tokens_in else 0
+                logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
+                            cached_tokens, tokens_in, _hit_pct)
+            elif tokens_in > 1024:
+                logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", tokens_in)
+
             return LLMResponse(
                 content=content,
                 model=resp_model,
@@ -174,6 +191,7 @@ class LLMOpenaiMixin:
                 tokens_out=tokens_out,
                 total_tokens=total_tokens,
                 thinking=thinking,
+                cache_read_tokens=cached_tokens,
             )
         finally:
             conn.close()
@@ -300,6 +318,13 @@ class LLMOpenaiMixin:
                 }
                 for t in tools
             ]
+        # OpenAI-specific cache params (ignored by non-OpenAI servers)
+        _pck = self.prompt_cache_key or None
+        if _pck:
+            body["prompt_cache_key"] = _pck
+        _pcr = self.prompt_cache_retention or None
+        if _pcr:
+            body["prompt_cache_retention"] = _pcr
 
         data = self._http_post(
             "/v1/chat/completions",
@@ -335,14 +360,26 @@ class LLMOpenaiMixin:
                 f"message={json.dumps(message, default=str)[:500]}, "
                 f"usage={json.dumps(usage, default=str)}")
 
+        # Cache logging
+        _ptd = usage.get("prompt_tokens_details") or {}
+        cached_tokens = _ptd.get("cached_tokens", 0) or 0
+        _prompt_tokens = usage.get("prompt_tokens", 0)
+        if cached_tokens > 0:
+            _hit_pct = (cached_tokens / _prompt_tokens * 100) if _prompt_tokens else 0
+            logger.info("OpenAI prompt cache: %d cached of %d prompt tokens (%.0f%% hit)",
+                        cached_tokens, _prompt_tokens, _hit_pct)
+        elif _prompt_tokens > 1024:
+            logger.info("OpenAI prompt cache: MISS — %d prompt tokens, 0 cached", _prompt_tokens)
+
         return LLMResponse(
             content=_content,
             model=data.get("model", model),
-            tokens_in=usage.get("prompt_tokens", 0),
+            tokens_in=_prompt_tokens,
             tokens_out=usage.get("completion_tokens", 0),
             total_tokens=usage.get("total_tokens", 0),
             finish_reason=choice.get("finish_reason", ""),
             tool_calls=tool_calls,
             thinking=reasoning,
             raw=data,
+            cache_read_tokens=cached_tokens,
         )

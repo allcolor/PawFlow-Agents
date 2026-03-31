@@ -52,6 +52,7 @@ _DEFAULTS = {
         "timeout": 120,
         "description": "",
         "llm_service": "",
+        "assigned_skills": [],
     },
     "skill": {
         "description": "",

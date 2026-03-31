@@ -146,9 +146,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             ]
 
         system_prompt = self.config.get("system_prompt", "You are a helpful assistant.")
-        # Inject current date/time so the agent is always aware
+        # Date/time injected separately (NOT in system prompt — would break KV cache)
         from datetime import datetime
-        system_prompt += f"\n\nCurrent date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        _datetime_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         # Will be overridden below if a persona is selected (after conversation_id is known)
         _base_system_prompt = system_prompt
         # Resolution order: agent config > LLM service config > defaults
@@ -525,7 +525,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 # Denylist only: remove denied tools
                                 tool_defs = [td for td in tool_defs if td.name not in _deny]
 
-                        system_prompt += f"Current date and time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                        # Date/time NOT in system prompt (KV cache killer)
                         # List other available agents
                         all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
                         others = [a["name"] for a in all_agents if a["name"] != selected]
@@ -900,7 +900,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _ut = UseToolHandler(registry)
             registry.register(_gts)
             registry.register(_ut)
-            # Compact tool catalog: just names grouped by category (~200 tokens vs ~1800)
+            # Compact tool catalog: names + first-sentence descriptions by category (~400 tokens vs ~12K)
             _categories = {}
             for td in tool_defs:
                 cat = "other"
@@ -922,8 +922,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     cat = "memory"
                 elif "plan" in _n or "task" in _n:
                     cat = "planning"
-                _categories.setdefault(cat, []).append(td.name)
-            _cat_lines = [f"{cat}: {', '.join(names)}" for cat, names in _categories.items()]
+                _desc = (td.description or "").split(".")[0].strip()
+                _entry = f"{td.name}: {_desc}" if _desc else td.name
+                _categories.setdefault(cat, []).append(_entry)
+            _cat_lines = [f"{cat} — {'; '.join(entries)}" for cat, entries in _categories.items()]
             system_prompt += (
                 "\n\nTools: call get_tool_schema(name) to see parameters, "
                 "then use_tool(name, {args}) to execute. "
@@ -1030,6 +1032,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "_is_claude_code": _is_claude_code,
             "_claude_has_session": _claude_has_session,
             "_agent_md_content": _agent_md_content,
+            "_datetime_str": _datetime_str,
         }
 
 

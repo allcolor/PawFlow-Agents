@@ -199,6 +199,16 @@ class ClaudeCodeSessionMixin:
                 "Go to Admin → Services → claude_code_llm_service → Login "
                 "to authenticate with your Claude subscription.")
 
+        # Check expiry — warn early instead of getting a 401 mid-session
+        import time as _time
+        if expires_at:
+            _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
+            _remaining = _exp_s - _time.time()
+            if _remaining < 0:
+                raise LLMClientError(
+                    f"Claude Code OAuth token expired ({abs(_remaining)/3600:.0f}h ago). "
+                    "Use /cls to re-authenticate.")
+
         creds = {
             "claudeAiOauth": {
                 "accessToken": access_token,

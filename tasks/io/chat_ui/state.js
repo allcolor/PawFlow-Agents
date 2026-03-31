@@ -181,22 +181,23 @@ async function newChat() {
   // Show agent picker to pre-assign agents to the new conversation
   const agents = await _pickAgentsForNewConv();
   _doNewChat();
-  if (agents && agents.length > 0) {
-    try {
-      const resp = await fetch(API, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({action: 'create_conversation', agents})
-      });
-      const data = await resp.json();
-      if (data.conversation_id) {
-        conversationId = data.conversation_id;
-        connectSSE(conversationId);
-        loadResources();
-        loadPermissionMode();
-      }
-    } catch(e) { console.error('create_conversation failed', e); }
-  }
+  // Always create the conversation server-side (even without agents)
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({action: 'create_conversation', agents: agents || []})
+    });
+    const data = await resp.json();
+    if (data.conversation_id) {
+      conversationId = data.conversation_id;
+      connectSSE(conversationId);
+      loadResources();
+      loadPermissionMode();
+      loadConversations();  // Refresh sidebar to show new conversation
+      highlightConv(conversationId);
+    }
+  } catch(e) { console.error('create_conversation failed', e); }
 }
 
 // Show a dialog to pick 1+ agents from repo for a new conversation.

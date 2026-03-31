@@ -34,4 +34,5 @@ ENV CI=true
 COPY auth_login.sh /opt/pawflow/auth_login.sh
 RUN chmod +x /opt/pawflow/auth_login.sh
 
+USER pawflow
 ENTRYPOINT ["claude"]

@@ -231,6 +231,56 @@ async function cmdCode(text, parts) {
   return true;
 }
 
+/** /desktop command */
+async function cmdDesktop(text, parts) {
+  const sub = (parts[1] || '').toLowerCase();
+  if (sub === 'close') {
+    if (_activeTab && _activeTab.startsWith('desktop-')) {
+      closeDesktopTab(_activeTab);
+    } else {
+      const btn = document.querySelector('.tab-btn[data-tab^="desktop-"]');
+      if (btn) closeDesktopTab(btn.dataset.tab);
+    }
+    addMsg('system', 'Desktop closed.');
+    return true;
+  }
+
+  let relayId = parts[1] || '';
+  if (!relayId) {
+    try {
+      const relays = await _getRelays();
+      relayId = await _pickRelay(relays);
+      if (!relayId) {
+        addMsg('system', 'No connected relay found. Usage: /desktop <relay_name>');
+        return true;
+      }
+    } catch (e) {
+      addMsg('system', 'Failed to list relays: ' + e.message);
+      return true;
+    }
+  }
+
+  addMsg('system', 'Starting desktop on ' + relayId + '...');
+  try {
+    const resp = await fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'open_desktop', relay_id: relayId }),
+    }).then(r => r.json());
+
+    if (resp.error) {
+      addMsg('system', '\u26a0 ' + resp.error);
+      return true;
+    }
+
+    const _desktopSid = 'desktop_' + relayId;
+    addDesktopTab(relayId, resp.url || '/vnc/' + _desktopSid + '/vnc.html?autoconnect=true&resize=scale&path=vnc/' + _desktopSid + '/websockify');
+    addMsg('system', 'Desktop ready.');
+  } catch (e) {
+    addMsg('system', 'Failed: ' + e.message);
+  }
+  return true;
+}
+
 /** /port-forward command */
 async function cmdPortForward(text, parts) {
   const sub = (parts[1] || '').toLowerCase();

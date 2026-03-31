@@ -384,6 +384,8 @@ class ConversationStore:
                         c["agents"].add(a)
                 elif t == "extra":
                     c["extra_keys"].add(line.get("key", ""))
+                    if line.get("key") == "title":
+                        c["title"] = line.get("value", "")
                 elif t == "status":
                     c["status"] = line.get("status", c["status"])
                 c["updated_at"] = max(c["updated_at"], line.get("ts", 0))
@@ -877,6 +879,7 @@ class ConversationStore:
                     continue
                 result.append({
                     "conversation_id": cid,
+                    "title": c.get("title", ""),
                     "preview": c.get("preview", ""),
                     "message_count": c.get("msg_count", 0),
                     "status": c.get("status", "idle"),

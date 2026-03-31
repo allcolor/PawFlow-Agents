@@ -506,6 +506,19 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         if not service_id:
             flowfile.set_content(json.dumps({"error": "Missing service_id"}).encode())
             return [flowfile]
+        # Validate service exists and is a claude-code provider
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            sdef = GlobalServiceRegistry.get_instance().get_definition(service_id)
+            if not sdef:
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' not found"}).encode())
+                return [flowfile]
+            if sdef.config.get("provider") != "claude-code":
+                flowfile.set_content(json.dumps({"error": f"Service '{service_id}' is not a claude-code provider"}).encode())
+                return [flowfile]
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": f"Cannot verify service: {e}"}).encode())
+            return [flowfile]
 
         try:
             import uuid as _uuid
@@ -538,7 +551,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "run", "--rm", "--detach",
                     "--name", container_name,
                     "-p", f"{free_port}:6080",
-                    "-v", f"{volume_name}:/workspace",
+                    "--tmpfs", "/workspace:rw,size=64m",
                     "--entrypoint", "bash",
                     image,
                     "/opt/pawflow/auth_login.sh",
@@ -706,11 +719,28 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         refresh_token = oauth.get("refreshToken", "")
         expires_at = oauth.get("expiresAt", 0)
 
-        if access_token:
+        import time as _t
+        _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
+        _remaining = _exp_s - _t.time()
+        logger.info("[vnc-login] Credentials from container: token=%s...  expires=%s (%.1fh %s)",
+                    access_token[:20] if access_token else "EMPTY",
+                    expires_at, _remaining / 3600,
+                    "EXPIRED" if _remaining < 0 else "valid")
+
+        if access_token and _remaining > 0:
             try:
                 _store_claude_tokens(service_id, access_token, refresh_token, expires_at)
             except Exception as e:
                 logger.warning("Failed to save credentials: %s", e)
+        elif access_token and _remaining <= 0:
+            logger.error("[vnc-login] REFUSING to save EXPIRED token (expires_at=%s, %.1fh ago)",
+                         expires_at, abs(_remaining) / 3600)
+            flowfile.set_content(json.dumps({
+                "error": f"Login returned expired token ({abs(_remaining)/3600:.0f}h ago). Try again."
+            }).encode())
+            _sp.run(_docker_cmd() + ["rm", "-f", container], capture_output=True, timeout=10)
+            unregister_session(session_id)
+            return [flowfile]
 
         # Cleanup container (volume stays)
         try:
@@ -1292,6 +1322,74 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         ureg = UserServiceRegistry.get_instance()
         return ureg.get_live_instance(user_id, relay_id) if user_id else None
 
+    def _ensure_vnc_routes():
+        """Ensure /vnc/ HTTP+WS routes exist on the HTTP listener.
+
+        Same registration as claude_code_server_login — idempotent.
+        """
+        try:
+            from services.vnc_proxy import vnc_ws_proxy, vnc_http_proxy
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            _greg = GlobalServiceRegistry.get_instance()
+            for _sid2, _sdef in _greg.get_all_definitions().items():
+                if getattr(_sdef, "service_type", "") == "httpListener":
+                    _http_svc = _greg.get_live_instance(_sid2)
+                    if _http_svc:
+                        _vnc_owner = "_vnc_proxy"
+                        existing = [r for r in _http_svc.get_routes() if r.get("owner") == _vnc_owner]
+                        if not existing:
+                            _http_svc.register_route("GET", "/vnc/{session_id}/websockify",
+                                                     _vnc_owner, callback=lambda req: None,
+                                                     ws_handler=vnc_ws_proxy)
+                            _http_svc.register_route("GET", "/vnc/{session_id}/{path+}",
+                                                     _vnc_owner, callback=vnc_http_proxy)
+                        return
+        except Exception as e:
+            logger.warning("[vnc] Route registration failed: %s", e)
+
+    def _get_desktop_host_port(relay_id):
+        """Get the published host port for desktop noVNC.
+
+        Same pattern as Claude login: find the container, docker port 6080.
+        """
+        import subprocess
+        from core.docker_utils import docker_cmd as _dkr_cmd
+
+        # 1) Server relay: container name in conversation metadata
+        try:
+            from core.server_relay_manager import ServerRelayManager
+            for entry in ServerRelayManager.get_instance().list_all():
+                if entry.get("relay_id") == relay_id:
+                    # Stored at spawn time
+                    hp = entry.get("desktop_host_port", 0)
+                    if hp:
+                        return hp
+                    # Fallback: docker port on the container
+                    cname = entry.get("container_name", "")
+                    if cname:
+                        r = subprocess.run(
+                            _dkr_cmd() + ["port", cname, "6080"],
+                            capture_output=True, text=True, timeout=5)
+                        if r.returncode == 0:
+                            return int(r.stdout.strip().split(":")[-1])
+        except Exception:
+            pass
+
+        # 2) Any relay: get container_id from relay info, then docker port
+        svc = _find_relay_svc(relay_id)
+        if svc:
+            container_id = getattr(svc, '_relay_info', {}).get('container_id', '')
+            if container_id:
+                try:
+                    r = subprocess.run(
+                        _dkr_cmd() + ["port", container_id, "6080"],
+                        capture_output=True, text=True, timeout=5)
+                    if r.returncode == 0:
+                        return int(r.stdout.strip().split(":")[-1])
+                except Exception:
+                    pass
+        return 0
+
     if action == "open_terminal":
         relay_id = body.get("relay_id", "")
         cols = body.get("cols", 80)
@@ -1479,6 +1577,80 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 unregister_code_server(relay_id)
             except Exception:
                 pass
+            flowfile.set_content(json.dumps({"ok": True}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "open_desktop":
+        relay_id = body.get("relay_id", "")
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            svc = _find_relay_svc(relay_id)
+            if not svc:
+                flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
+                return [flowfile]
+
+            # Check if already running (idempotent)
+            status = svc._request("desktop_status")
+            if isinstance(status, dict) and status.get("running"):
+                # Already running — find the host port
+                _hp = _get_desktop_host_port(relay_id)
+                if _hp:
+                    _sid = f"desktop_{relay_id}"
+                    from services.vnc_proxy import register_session
+                    register_session(_sid, _hp)
+                    _ensure_vnc_routes()
+                    flowfile.set_content(json.dumps({
+                        "ok": True, "already_running": True,
+                        "relay_id": relay_id,
+                        "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
+                    }).encode())
+                    return [flowfile]
+
+            logger.info("[open_desktop] Starting desktop on relay %s", relay_id)
+            result = svc._request("start_desktop")
+            logger.debug("[open_desktop] start_desktop result: %s", result)
+            # _request() unwraps the relay response — result is the inner data dict directly
+            novnc_port = result.get("novnc_port") if isinstance(result, dict) else None
+            if not novnc_port:
+                flowfile.set_content(json.dumps({"error": "Failed to start desktop", "detail": str(result)}).encode())
+                return [flowfile]
+
+            # Get the published host port for this relay's noVNC
+            host_port = _get_desktop_host_port(relay_id)
+            if not host_port:
+                flowfile.set_content(json.dumps({"error": "Desktop started but host port not found"}).encode())
+                return [flowfile]
+
+            # Register with the VNC proxy + ensure HTTP routes exist
+            # (same pattern as claude_code_server_login)
+            session_id = f"desktop_{relay_id}"
+            from services.vnc_proxy import register_session
+            register_session(session_id, host_port)
+            _ensure_vnc_routes()
+
+            flowfile.set_content(json.dumps({
+                "ok": True, "relay_id": relay_id,
+                "url": f"/vnc/{session_id}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/websockify",
+            }).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "close_desktop":
+        relay_id = body.get("relay_id", "")
+        if not relay_id:
+            flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
+            return [flowfile]
+        try:
+            svc = _find_relay_svc(relay_id)
+            if svc:
+                svc._request("stop_desktop")
+            from services.vnc_proxy import unregister_session
+            unregister_session(f"desktop_{relay_id}")
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

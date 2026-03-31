@@ -55,6 +55,9 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
         case 'backgroundTool':
           this.handleBackgroundTool(msg.tcId);
           break;
+        case 'killTool':
+          this.handleKillTool(msg.tcId);
+          break;
         case 'reconnectRelay':
           vscode.commands.executeCommand('pawflow.toggleRelay');
           break;
@@ -540,6 +543,19 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       });
     } catch (e: any) {
       this.postMessage({ type: 'error', message: `Background tool failed: ${e.message}` });
+    }
+  }
+
+  private async handleKillTool(tcId: string): Promise<void> {
+    const api = this.getApi();
+    if (!api || !tcId) { return; }
+    try {
+      await api.sendAction('cancel_bg_tool', {
+        tc_id: tcId,
+        conversation_id: this.conversationId || '',
+      });
+    } catch (e: any) {
+      this.postMessage({ type: 'error', message: `Kill tool failed: ${e.message}` });
     }
   }
 

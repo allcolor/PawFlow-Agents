@@ -798,6 +798,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         "shells": list(_shells.keys()),
         "containerized": _is_containerized(),
         "docker_image": os.environ.get("PAWFLOW_DOCKER_IMAGE", ""),
+        "container_id": socket.gethostname() if _is_containerized() else "",
     }
 
     def _resolve(rel_path):
@@ -1209,6 +1210,316 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 sys.stderr.write("[FSRelay] code-server stopped\n")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
+
+        # ── Desktop VNC (singleton) ──────────────────────────────────────
+        if action == "start_desktop":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            # Idempotent: if already running, return existing info
+            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
+                _alive = all(p.poll() is None for p in _execute_command._desktop_procs)
+                if _alive:
+                    return {"ok": True, "data": {
+                        "vnc_port": _execute_command._desktop_vnc_port,
+                        "novnc_port": _execute_command._desktop_novnc_port,
+                        "display": _execute_command._desktop_display,
+                        "already_running": True
+                    }}
+                else:
+                    for p in _execute_command._desktop_procs:
+                        try: p.kill()
+                        except: pass
+                    _execute_command._desktop_procs = None
+
+            _resolution = msg.get("resolution", "1280x800")
+            _depth = msg.get("depth", 24)
+            _display_num = msg.get("display", 99)
+            _display = f":{_display_num}"
+            _vnc_port = msg.get("vnc_port", 0)
+            # Use fixed port from env (Docker published) or find a free one
+            _novnc_port = int(os.environ.get("PAWFLOW_DESKTOP_NOVNC_PORT", 0)) or msg.get("novnc_port", 0)
+            if not _vnc_port:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                    _s.bind(("", 0)); _vnc_port = _s.getsockname()[1]
+            if not _novnc_port:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                    _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
+            try:
+                import time as _time_mod
+                import pwd as _pwd_mod
+                _log_d = open("/tmp/desktop.log", "w")
+                _procs = []
+
+                # Detect desktop user (non-root preferred)
+                _desktop_user = "pawflow"
+                try:
+                    _pw = _pwd_mod.getpwnam(_desktop_user)
+                    _desktop_uid = _pw.pw_uid
+                    _desktop_gid = _pw.pw_gid
+                    _desktop_home = _pw.pw_dir
+                except KeyError:
+                    _desktop_user = None  # fall back to current user
+                    _desktop_uid = os.getuid()
+                    _desktop_gid = os.getgid()
+                    _desktop_home = os.environ.get("HOME", "/root")
+
+                def _as_user():
+                    """Pre-exec: switch to desktop user."""
+                    if _desktop_user:
+                        os.setgid(_desktop_gid)
+                        os.setuid(_desktop_uid)
+
+                _user_env = {
+                    **os.environ,
+                    "DISPLAY": _display,
+                    "HOME": _desktop_home,
+                    "USER": _desktop_user or "root",
+                    "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/dbus-desktop",
+                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user or 'root'}",
+                }
+                os.makedirs(_user_env["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
+                if _desktop_user:
+                    os.chown(_user_env["XDG_RUNTIME_DIR"], _desktop_uid, _desktop_gid)
+                    # Make workspace accessible to desktop user
+                    _ws = Path(root_dir)
+                    if _ws.exists() and _ws.stat().st_uid == 0:
+                        subprocess.run(["chown", "-R", f"{_desktop_user}:{_desktop_user}", str(_ws)],
+                                       timeout=30, capture_output=True)
+
+                # 1. Xvfb
+                _p_xvfb = subprocess.Popen(
+                    ["Xvfb", _display, "-screen", "0", f"{_resolution}x{_depth}",
+                     "-ac", "+extension", "GLX", "+render", "-noreset"],
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_xvfb)
+                os.environ["DISPLAY"] = _display
+                _time_mod.sleep(0.5)
+
+                # 2. D-Bus session (needed by XFCE)
+                _p_dbus = subprocess.Popen(
+                    ["dbus-daemon", "--session", "--nofork",
+                     f"--address=unix:path=/tmp/dbus-desktop"],
+                    env=_user_env, preexec_fn=_as_user,
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_dbus)
+                _time_mod.sleep(0.3)
+
+                # 3. XFCE desktop session (as non-root user)
+                _p_wm = subprocess.Popen(
+                    ["startxfce4"], env=_user_env, preexec_fn=_as_user,
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_wm)
+                _time_mod.sleep(1)
+
+                # 4. x11vnc
+                _p_vnc = subprocess.Popen(
+                    ["x11vnc", "-display", _display, "-forever", "-nopw",
+                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage"],
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_vnc)
+
+                # 5. websockify (noVNC)
+                _novnc_web = "/usr/share/novnc"
+                _p_novnc = subprocess.Popen(
+                    ["websockify", "--web", _novnc_web,
+                     str(_novnc_port), f"localhost:{_vnc_port}"],
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_novnc)
+                _execute_command._desktop_procs = _procs
+                _execute_command._desktop_vnc_port = _vnc_port
+                _execute_command._desktop_novnc_port = _novnc_port
+                _execute_command._desktop_display = _display
+                sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} res={_resolution}\n")
+                return {"ok": True, "data": {
+                    "vnc_port": _vnc_port, "novnc_port": _novnc_port,
+                    "display": _display, "resolution": _resolution
+                }}
+            except FileNotFoundError as e:
+                return {"ok": False, "error": f"Desktop dependency not installed: {e}"}
+            except Exception as e:
+                return {"ok": False, "error": f"Failed to start desktop: {e}"}
+
+        if action == "stop_desktop":
+            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
+                for p in _execute_command._desktop_procs:
+                    if p.poll() is None:
+                        p.terminate()
+                for p in _execute_command._desktop_procs:
+                    try: p.wait(timeout=5)
+                    except subprocess.TimeoutExpired: p.kill()
+                _execute_command._desktop_procs = None
+                _execute_command._desktop_vnc_port = None
+                _execute_command._desktop_novnc_port = None
+                _execute_command._desktop_display = None
+                if "DISPLAY" in os.environ:
+                    del os.environ["DISPLAY"]
+                sys.stderr.write("[FSRelay] Desktop stopped\n")
+                return {"ok": True}
+            return {"ok": True, "data": {"was_running": False}}
+
+        if action == "desktop_status":
+            _running = False
+            if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
+                _running = all(p.poll() is None for p in _execute_command._desktop_procs)
+            return {"ok": True, "data": {
+                "running": _running,
+                "display": getattr(_execute_command, '_desktop_display', None),
+                "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
+                "novnc_port": getattr(_execute_command, '_desktop_novnc_port', None),
+            }}
+
+        # ── Desktop VNC WS tunnel (same pattern as cs_ws_*) ────────────────
+        if action == "desktop_ws_open":
+            if not allow_exec:
+                return {"ok": False, "error": "Exec not allowed"}
+            _ws_sid = msg.get("session_id", "")
+            _ws_port = msg.get("port", 0)
+            _ws_path = msg.get("ws_path", "/")
+            _ws_headers = msg.get("headers", {})
+            if not _ws_sid or not _ws_port:
+                return {"ok": False, "error": "Missing session_id or port"}
+            try:
+                _ws_key = base64.b64encode(os.urandom(16)).decode()
+                _hdr_lines = [
+                    f"GET {_ws_path} HTTP/1.1",
+                    f"Host: 127.0.0.1:{_ws_port}",
+                    "Upgrade: websocket",
+                    "Connection: Upgrade",
+                    f"Sec-WebSocket-Key: {_ws_key}",
+                    "Sec-WebSocket-Version: 13",
+                ]
+                for _hk, _hv in _ws_headers.items():
+                    _hkl = _hk.lower()
+                    if _hkl not in ("host", "upgrade", "connection",
+                                    "sec-websocket-key", "sec-websocket-version"):
+                        _hdr_lines.append(f"{_hk}: {_hv}")
+                _handshake = "\r\n".join(_hdr_lines) + "\r\n\r\n"
+                sys.stderr.write(f"[FSRelay] desktop_ws_open connecting to 127.0.0.1:{_ws_port} path={_ws_path[:80]}\n")
+                _vnc_sock = socket.create_connection(("127.0.0.1", _ws_port), timeout=10)
+                _vnc_sock.sendall(_handshake.encode())
+                _resp = b""
+                while b"\r\n\r\n" not in _resp:
+                    _chunk = _vnc_sock.recv(4096)
+                    if not _chunk:
+                        raise ConnectionError("WS handshake failed")
+                    _resp += _chunk
+                _status_line = _resp.split(b"\r\n")[0]
+                if b"101" not in _status_line:
+                    sys.stderr.write(f"[FSRelay] desktop_ws_open handshake rejected: {_resp[:500]}\n")
+                    _vnc_sock.close()
+                    return {"ok": False, "error": f"WS handshake rejected: {_status_line.decode(errors='replace')}"}
+                if not hasattr(_execute_command, '_desktop_ws_sessions'):
+                    _execute_command._desktop_ws_sessions = {}
+                _execute_command._desktop_ws_sessions[_ws_sid] = {"sock": _vnc_sock}
+
+                def _desktop_ws_reader(_sock, _sid):
+                    sys.stderr.write(f"[FSRelay] desktop_ws_reader started for {_sid}\n")
+                    try:
+                        while True:
+                            _hdr2 = b""
+                            while len(_hdr2) < 2:
+                                _c = _sock.recv(2 - len(_hdr2))
+                                if not _c: break
+                                _hdr2 += _c
+                            if len(_hdr2) < 2: break
+                            _op = _hdr2[0] & 0x0F
+                            _masked = bool(_hdr2[1] & 0x80)
+                            _plen = _hdr2[1] & 0x7F
+                            if _plen == 126:
+                                _lb = b""
+                                while len(_lb) < 2:
+                                    _c = _sock.recv(2 - len(_lb))
+                                    if not _c: break
+                                    _lb += _c
+                                _plen = struct.unpack("!H", _lb)[0]
+                            elif _plen == 127:
+                                _lb = b""
+                                while len(_lb) < 8:
+                                    _c = _sock.recv(8 - len(_lb))
+                                    if not _c: break
+                                    _lb += _c
+                                _plen = struct.unpack("!Q", _lb)[0]
+                            if _masked:
+                                _mask = b""
+                                while len(_mask) < 4:
+                                    _c = _sock.recv(4 - len(_mask))
+                                    if not _c: break
+                                    _mask += _c
+                            _payload = b""
+                            while len(_payload) < _plen:
+                                _c = _sock.recv(min(65536, _plen - len(_payload)))
+                                if not _c: break
+                                _payload += _c
+                            if _masked:
+                                _payload = bytes(b ^ _mask[i % 4] for i, b in enumerate(_payload))
+                            if _op == 0x08: break
+                            if _op == 0x09:
+                                _pong = bytes([0x80 | 0x0A])
+                                if len(_payload) < 126:
+                                    _pong += bytes([len(_payload)])
+                                _pong += _payload
+                                try: _sock.sendall(_pong)
+                                except: break
+                                continue
+                            _fwd = json.dumps({
+                                "type": "desktop_ws_data",
+                                "session_id": _sid,
+                                "data": base64.b64encode(_payload).decode("ascii"),
+                                "opcode": _op,
+                            })
+                            with _send_lock:
+                                _ws_frame_send(ws_sock_ref[0], _fwd.encode("utf-8"))
+                    except Exception:
+                        pass
+                    finally:
+                        try: _sock.close()
+                        except: pass
+                        if hasattr(_execute_command, '_desktop_ws_sessions'):
+                            _execute_command._desktop_ws_sessions.pop(_sid, None)
+                        try:
+                            with _send_lock:
+                                _ws_frame_send(ws_sock_ref[0], json.dumps({"type": "desktop_ws_close", "session_id": _sid}).encode("utf-8"))
+                        except: pass
+
+                _t = _threading.Thread(target=_desktop_ws_reader, args=(_vnc_sock, _ws_sid), daemon=True)
+                _t.start()
+                _execute_command._desktop_ws_sessions[_ws_sid]["reader"] = _t
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": f"desktop_ws_open error: {e}"}
+
+        if action == "desktop_ws_send":
+            _ws_sid = msg.get("session_id", "")
+            _ws_data = msg.get("data", "")
+            _ws_op = msg.get("opcode", 2)  # binary by default for VNC
+            if not hasattr(_execute_command, '_desktop_ws_sessions'):
+                return {"ok": False, "error": "No desktop WS sessions"}
+            _ws_sess = _execute_command._desktop_ws_sessions.get(_ws_sid)
+            if not _ws_sess:
+                return {"ok": False, "error": f"Desktop WS session not found: {_ws_sid}"}
+            try:
+                _raw = base64.b64decode(_ws_data)
+                _frame = bytes([0x80 | _ws_op])
+                if len(_raw) < 126:
+                    _frame += bytes([0x80 | len(_raw)])
+                elif len(_raw) < 65536:
+                    _frame += bytes([0x80 | 126]) + struct.pack("!H", len(_raw))
+                else:
+                    _frame += bytes([0x80 | 127]) + struct.pack("!Q", len(_raw))
+                _frame += b"\x00\x00\x00\x00" + _raw
+                _ws_sess["sock"].sendall(_frame)
+                return {"ok": True}
+            except Exception as e:
+                return {"ok": False, "error": str(e)}
+
+        if action == "desktop_ws_close":
+            _ws_sid = msg.get("session_id", "")
+            if hasattr(_execute_command, '_desktop_ws_sessions'):
+                _ws_sess = _execute_command._desktop_ws_sessions.pop(_ws_sid, None)
+                if _ws_sess and _ws_sess.get("sock"):
+                    try: _ws_sess["sock"].close()
+                    except: pass
+            return {"ok": True}
 
         if action == "script_hash":
             # Return hash of current relay scripts for version check

@@ -35,8 +35,11 @@
     "prompt": "You are Claude, a helpful, harmless, and honest AI assistant made by Anthropic. You are thoughtful, nuanced, and thorough in your responses. You think step by step when needed, acknowledge uncertainty, and provide balanced perspectives. You are direct but kind.",
     "name": "claude",
     "created_at": 1710400000.0,
-    "updated_at": 1710400000.0,
-    "_scope": "global"
+    "updated_at": 1774907124.0438728,
+    "_scope": "global",
+    "assigned_skills": [
+      "screen_automation"
+    ]
   },
   "__global__:qwen": {
     "model": "",

@@ -265,6 +265,86 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "assign_skill":
+        agent_name = body.get("agent_name", "").strip()
+        skill_name = body.get("skill_name", "").strip()
+        if not agent_name or not skill_name:
+            flowfile.set_content(json.dumps({"error": "Missing agent_name or skill_name"}).encode())
+            return [flowfile]
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        uid = user_id or "anonymous"
+        agent_def = rs.get_any("agent", agent_name, uid)
+        if not agent_def:
+            flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
+            return [flowfile]
+        skill_def = rs.get_any("skill", skill_name, uid)
+        if not skill_def:
+            flowfile.set_content(json.dumps({"error": f"Skill '{skill_name}' not found"}).encode())
+            return [flowfile]
+        assigned = agent_def.get("assigned_skills", [])
+        if skill_name not in assigned:
+            assigned.append(skill_name)
+        # Update agent in the correct scope
+        _scope = agent_def.get("_scope", "user")
+        _uid = uid if _scope == "user" else "__global__"
+        rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        flowfile.set_content(json.dumps({
+            "assigned": True, "agent": agent_name, "skill": skill_name,
+            "message": f"Skill '{skill_name}' assigned to agent '{agent_name}'",
+        }).encode())
+        return [flowfile]
+
+    if action == "unassign_skill":
+        agent_name = body.get("agent_name", "").strip()
+        skill_name = body.get("skill_name", "").strip()
+        if not agent_name or not skill_name:
+            flowfile.set_content(json.dumps({"error": "Missing agent_name or skill_name"}).encode())
+            return [flowfile]
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        uid = user_id or "anonymous"
+        agent_def = rs.get_any("agent", agent_name, uid)
+        if not agent_def:
+            flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
+            return [flowfile]
+        assigned = agent_def.get("assigned_skills", [])
+        if skill_name in assigned:
+            assigned.remove(skill_name)
+        _scope = agent_def.get("_scope", "user")
+        _uid = uid if _scope == "user" else "__global__"
+        rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        flowfile.set_content(json.dumps({
+            "unassigned": True, "agent": agent_name, "skill": skill_name,
+            "message": f"Skill '{skill_name}' removed from agent '{agent_name}'",
+        }).encode())
+        return [flowfile]
+
+    if action == "list_agent_skills":
+        agent_name = body.get("agent_name", "").strip()
+        if not agent_name:
+            flowfile.set_content(json.dumps({"error": "Missing agent_name"}).encode())
+            return [flowfile]
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        uid = user_id or "anonymous"
+        agent_def = rs.get_any("agent", agent_name, uid)
+        if not agent_def:
+            flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
+            return [flowfile]
+        assigned = agent_def.get("assigned_skills", [])
+        skills_detail = []
+        for sn in assigned:
+            sd = rs.get_any("skill", sn, uid)
+            skills_detail.append({
+                "name": sn,
+                "description": sd.get("description", "") if sd else "(not found)",
+            })
+        flowfile.set_content(json.dumps({
+            "agent": agent_name, "skills": skills_detail,
+        }).encode())
+        return [flowfile]
+
     if action == "list_skills":
         from core.resource_store import ResourceStore
         uid = user_id or "anonymous"

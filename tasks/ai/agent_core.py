@@ -348,18 +348,30 @@ class AgentCoreMixin:
                     llm_context = self._apply_identity_suffix(
                         llm_context, ctx.get("_identity_suffix", ""))
 
-                    # Token budget note
+                    # Dynamic metadata — merged into the last user message
+                    # (AFTER cache breakpoints, so prefix is stable)
                     _max_ctx = ctx.get("max_context_size", 200000)
                     _est_used = self._estimate_tokens(
                         llm_context, tool_defs=tool_defs,
                         chars_per_token=ctx.get("chars_per_token", 0))
                     _remaining = max(0, _max_ctx - _est_used)
-                    if llm_context and llm_context[0].role == "system":
-                        llm_context[0] = LLMMessage(
-                            role="system",
-                            content=(llm_context[0].content or "") +
-                            f"\n\n[Context: ~{_est_used} of {_max_ctx} tokens used, ~{_remaining} remaining]",
-                        )
+                    _dt = ctx.get("_datetime_str", "")
+                    _meta_parts = []
+                    if _dt:
+                        _meta_parts.append(f"Current date/time: {_dt}")
+                    _meta_parts.append(f"Context: ~{_est_used}/{_max_ctx} tokens (~{_remaining} remaining)")
+                    _meta_note = "\n\n[System: " + ". ".join(_meta_parts) + "]"
+                    # Find last user message and append metadata to it
+                    for _mi in range(len(llm_context) - 1, -1, -1):
+                        if llm_context[_mi].role == "user":
+                            _um = llm_context[_mi]
+                            _uc = _um.content if isinstance(_um.content, str) else str(_um.content or "")
+                            llm_context[_mi] = LLMMessage(
+                                role="user", content=_uc + _meta_note,
+                                tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
+                                source=_um.source, msg_id=_um.msg_id,
+                            )
+                            break
 
                     emitter.check_cancelled()
 
@@ -973,15 +985,15 @@ class AgentCoreMixin:
                     all_msg_ids=all_assistant_msg_ids)
 
             # Final drain: pick up any messages that arrived during the last turn
-            # (race condition: user sends while Claude finishes → queued but never drained)
             _pre_drain = len(messages)
             emitter.drain_pending(messages, _append, iteration)
-            if len(messages) > _pre_drain:
-                # New messages arrived during cleanup — persist them so the
-                # next agent turn picks them up (they'll be the first user msg)
-                logger.info("[agent:%s] %d message(s) arrived during cleanup — persisted for next turn",
-                            conversation_id[:8], len(messages) - _pre_drain)
+            _new_user_msgs = [m for m in messages[_pre_drain:] if m.role == "user"]
+            if _new_user_msgs:
+                logger.info("[agent:%s] %d message(s) arrived during last turn — persisting + re-triggering",
+                            conversation_id[:8], len(_new_user_msgs))
                 _flush()
+                # Signal that a new turn should start after done
+                ctx["_retrigger_after_done"] = True
 
             # Unregister claude-code client BEFORE done (prevents stale preempt)
             _unreg_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id

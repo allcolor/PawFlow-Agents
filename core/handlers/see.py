@@ -22,6 +22,13 @@ _AUD_EXTS = frozenset({"mp3", "wav", "ogg", "flac", "m4a", "aac", "wma"})
 
 class SeeHandler(BaseFsHandler):
 
+    def __init__(self):
+        super().__init__()
+        # Images/video/audio produce large base64 output;
+        # tool_registry skips cap for __image_data__ markers anyway,
+        # but audio transcriptions can also be long.
+        self._tool_result_max_chars = 500_000
+
     @property
     def name(self):
         return "see"

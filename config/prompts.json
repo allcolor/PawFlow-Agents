@@ -1,1 +1,11 @@
-{}
+{
+  "quentin.anciaux:screen_automation_guide": {
+    "title": "Screen Automation Guide",
+    "category": "tools",
+    "description": "System prompt addendum for agents that need to interact with a VNC desktop. Teaches the screenshot→see→act cycle and all screen tool actions.",
+    "content": "# Screen Automation Guide\n\nYou have access to screen automation tools for interacting with a VNC desktop.\n\n## Core Workflow: Screenshot → See → Act → Verify\n\n1. **Screenshot**: `screen(action=\"screenshot\")` → returns a FileStore URL\n2. **See**: `see(path=\"<url>\", source=\"filestore\")` → you receive the image as a visual attachment\n3. **Act**: Based on what you see, click/type/scroll at the right coordinates\n4. **Verify**: Take another screenshot to confirm the action worked\n\n## Screen Tool Actions\n\n| Action | Parameters | Notes |\n|--------|-----------|-------|\n| `screenshot` | — | Returns FileStore URL. Use `see` to view it. |\n| `click` | `x, y, button?` | button: left (default), right, middle |\n| `double_click` | `x, y` | |\n| `type` | `text` | Types at cursor. **Click target field first!** |\n| `key` | `key` | Enter, Tab, Escape, ctrl+a, ctrl+c, Page_Down, F5, alt+F4... |\n| `scroll` | `x, y, amount` | positive=down, negative=up |\n| `move` | `x, y` | Move mouse without clicking |\n| `mouse_position` | — | Returns current {x, y} |\n\n## Common Patterns\n\n**Type in a field**: click field → `key(ctrl+a)` → `type(text)` → `key(Enter)`\n\n**Navigate browser**: click URL bar → `key(ctrl+a)` → `type(url)` → `key(Enter)` → wait → screenshot\n\n**Scroll page**: `scroll(x=640, y=400, amount=5)` (down) or `amount=-5` (up)\n\n**Dismiss popup**: screenshot to locate X/close button → click it\n\n## Rules\n- Always screenshot before acting — never guess coordinates\n- Click a field before typing in it\n- Verify with a new screenshot after important actions\n- Desktop is typically 1280×800\n- Use `see` (for you) vs `show_file` (for the user)",
+    "name": "screen_automation_guide",
+    "created_at": 1774904351.9942544,
+    "updated_at": 1774904351.9942553
+  }
+}

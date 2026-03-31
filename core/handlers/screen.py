@@ -91,10 +91,11 @@ class ScreenHandler(ToolHandler):
                 )
             return f"Error: screen action failed: {e}"
 
-        if not result.get("ok"):
+        # _request() unwraps the relay response — result IS the data directly
+        if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"
 
-        data = result.get("data", {})
+        data = result
 
         # Screenshot: store image in FileStore and return URL
         if action == "screenshot" and isinstance(data, str):

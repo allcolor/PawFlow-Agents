@@ -9,6 +9,7 @@ Used by:
 
 import json
 import logging
+import random
 import re
 import threading
 import time
@@ -232,8 +233,58 @@ class LLMClient(
         return self._cfg("prompt_cache_retention", "")
 
     @staticmethod
+    def _parse_context_overflow(error_text: str) -> Optional[int]:
+        """Parse context length overflow from error message.
+
+        Returns the number of tokens to reduce max_tokens by, or None if
+        the error is not a context overflow.
+
+        Matches patterns like:
+        - "input length and max_tokens exceed context limit"
+        - "context length exceeded"
+        - "maximum context length is 128000 tokens, however you requested 130000 tokens"
+        - Anthropic: "prompt is too long: 130000 tokens > 128000 maximum"
+        """
+        err = error_text.lower()
+        if not (("exceed" in err and "context" in err) or
+                ("exceed" in err and "length" in err) or
+                ("too long" in err and "token" in err) or
+                ("max_tokens" in err and "exceed" in err)):
+            return None
+
+        # Try to parse overflow amount from various patterns
+        # "requested X tokens ... maximum context length is Y"
+        import re
+        # Pattern: "requested N tokens" + "maximum ... is M tokens"
+        m_req = re.search(r'requested\s+([\d,]+)\s*tokens', error_text, re.IGNORECASE)
+        m_max = re.search(r'(?:maximum|limit|context)[^0-9]*([\d,]+)\s*tokens', error_text, re.IGNORECASE)
+        if m_req and m_max:
+            requested = int(m_req.group(1).replace(",", ""))
+            maximum = int(m_max.group(1).replace(",", ""))
+            if requested > maximum:
+                return requested - maximum
+
+        # Pattern: "N tokens > M maximum"
+        m = re.search(r'([\d,]+)\s*tokens?\s*>\s*([\d,]+)', error_text, re.IGNORECASE)
+        if m:
+            used = int(m.group(1).replace(",", ""))
+            limit = int(m.group(2).replace(",", ""))
+            if used > limit:
+                return used - limit
+
+        # Can't parse exact overflow — return a conservative estimate
+        return 4000
+
+    @staticmethod
     def _parse_retry_after(error_text: str) -> float:
-        """Parse retry delay from error message. Returns seconds to wait (default 2.0)."""
+        """Parse retry delay from error message. Returns seconds to wait (default 2.0).
+
+        Checks (in priority order):
+        1. "Please try again in N.NNNs" from Anthropic error bodies
+        2. "Retry-After: N" header value
+        3. "anthropic-ratelimit-unified-reset" ISO timestamp
+        4. Default 2.0s
+        """
         # "Please try again in 1.427s"
         m = re.search(r'try again in ([\d.]+)s', error_text, re.IGNORECASE)
         if m:
@@ -242,6 +293,18 @@ class LLMClient(
         m = re.search(r'retry[- ]after:?\s*([\d.]+)', error_text, re.IGNORECASE)
         if m:
             return float(m.group(1)) + 0.1
+        # "anthropic-ratelimit-unified-reset: 2025-03-30T12:00:00Z" ISO timestamp
+        m = re.search(r'anthropic-ratelimit-unified-reset:?\s*(\d{4}-\d{2}-\d{2}T[\d:.]+Z?)', error_text, re.IGNORECASE)
+        if m:
+            try:
+                from datetime import datetime, timezone
+                reset_time = datetime.fromisoformat(m.group(1).replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                delta = (reset_time - now).total_seconds()
+                if delta > 0:
+                    return delta + 0.1
+            except (ValueError, TypeError):
+                pass
         return 2.0  # default wait
 
     def _report_tokens(self, response, messages):
@@ -306,77 +369,115 @@ class LLMClient(
 
         model = model or self.default_model
 
+        def _do_complete(mdl):
+            start = time.time()
+            if self.provider == "openai":
+                result = self._complete_openai(messages, mdl, temperature, max_tokens, response_format, tools)
+            elif self.provider == "claude-code":
+                result = self._complete_claude_code(messages, mdl, temperature, max_tokens, tools)
+            elif self.provider == "gemini-cli":
+                result = self._complete_gemini_cli(messages, mdl, temperature, max_tokens, tools)
+            else:
+                result = self._complete_anthropic(messages, mdl, temperature, max_tokens, tools, thinking_budget=thinking_budget)
+            result.duration_ms = (time.time() - start) * 1000
+            if not result.tokens_in and messages:
+                result.tokens_in = sum(
+                    len(m.content) if isinstance(m.content, str) else
+                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                    else 0 for m in messages) // 4
+            if not result.tokens_out and result.content:
+                result.tokens_out = len(result.content) // 4
+            self._report_tokens(result, messages)
+            return result
+
         last_error = None
+        overloaded_attempts = 0
+        max_overloaded = 3  # hard cap for 529 overloaded errors
         for attempt in range(1, self.max_retries + 1):
             try:
-                start = time.time()
-                if self.provider == "openai":
-                    result = self._complete_openai(messages, model, temperature, max_tokens, response_format, tools)
-                elif self.provider == "claude-code":
-                    result = self._complete_claude_code(messages, model, temperature, max_tokens, tools)
-                elif self.provider == "gemini-cli":
-                    result = self._complete_gemini_cli(messages, model, temperature, max_tokens, tools)
-                else:
-                    result = self._complete_anthropic(messages, model, temperature, max_tokens, tools, thinking_budget=thinking_budget)
-                result.duration_ms = (time.time() - start) * 1000
-                # Estimate tokens if provider didn't return counts
-                if not result.tokens_in and messages:
-                    result.tokens_in = sum(
-                        len(m.content) if isinstance(m.content, str) else
-                        sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                        else 0 for m in messages) // 4
-                if not result.tokens_out and result.content:
-                    result.tokens_out = len(result.content) // 4
-                self._report_tokens(result, messages)
-                return result
-            except LLMClientError as e:
-                # Auto-retry on rate limit (429)
-                if "429" in str(e) or "rate_limit" in str(e).lower():
-                    wait = self._parse_retry_after(str(e))
+                return _do_complete(model)
+            except (LLMClientError, Exception) as e:
+                last_error = e
+                err_str = str(e)
+
+                # Context overflow auto-recovery: reduce max_tokens and retry once
+                overflow = self._parse_context_overflow(err_str)
+                if overflow is not None and max_tokens > 0:
+                    safety_buffer = 1000
+                    reduced = max_tokens - overflow - safety_buffer
+                    if reduced > 0:
+                        logger.warning(
+                            "Context overflow detected (overflow=%d tokens). "
+                            "Reducing max_tokens %d → %d and retrying.",
+                            overflow, max_tokens, reduced,
+                        )
+                        max_tokens = reduced
+                        try:
+                            return _do_complete(model)
+                        except Exception as retry_err:
+                            logger.error("Context overflow retry also failed: %s", retry_err)
+                            raise
+                    else:
+                        logger.error(
+                            "Context overflow detected (overflow=%d) but reduced max_tokens "
+                            "would be non-positive (%d). Cannot auto-recover.",
+                            overflow, reduced,
+                        )
+
+                is_429 = "429" in err_str or "rate_limit" in err_str.lower()
+                is_529 = "529" in err_str or "overloaded" in err_str.lower()
+
+                if is_529:
+                    overloaded_attempts += 1
+                    if overloaded_attempts >= max_overloaded:
+                        # 529 cap reached — try fallback model
+                        if self.fallback_model and self.fallback_model != model:
+                            logger.warning(
+                                "Overloaded (529): %d/%d attempts exhausted on '%s', trying fallback '%s'",
+                                overloaded_attempts, max_overloaded, model, self.fallback_model,
+                            )
+                            try:
+                                return _do_complete(self.fallback_model)
+                            except Exception as fb_err:
+                                logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
+                        raise LLMClientError(f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
+
+                if is_429 or is_529:
+                    # Prefer server-specified delay, fall back to exponential backoff with jitter
+                    server_delay = self._parse_retry_after(err_str)
+                    base_delay = 2.0
+                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
+                    # Use server delay if parsed (non-default), otherwise exponential backoff
+                    wait = server_delay if server_delay != 2.0 else exp_delay
+                    kind = "Rate limited (429)" if is_429 else "Overloaded (529)"
                     if attempt < self.max_retries:
-                        logger.warning(f"Rate limited, retrying in {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                        logger.warning(f"{kind}, waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                         time.sleep(wait)
                         continue
-                raise
-            except Exception as e:
-                last_error = e
-                # Check if transient/rate-limit
-                wait = self._parse_retry_after(str(e))
-                if attempt < self.max_retries:
-                    delay = max(wait, attempt * 0.5)
-                    logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying in {delay:.1f}s...")
-                    time.sleep(delay)
-                else:
-                    # All retries exhausted — try fallback model if configured
-                    if self.fallback_model and self.fallback_model != model:
-                        logger.warning(
-                            "Primary model '%s' failed after %d attempts, trying fallback '%s'",
-                            model, self.max_retries, self.fallback_model,
-                        )
-                        try:
-                            start = time.time()
-                            fb = self.fallback_model
-                            if self.provider == "openai":
-                                result = self._complete_openai(messages, fb, temperature, max_tokens, response_format, tools)
-                            elif self.provider == "claude-code":
-                                result = self._complete_claude_code(messages, fb, temperature, max_tokens, tools)
-                            elif self.provider == "gemini-cli":
-                                result = self._complete_gemini_cli(messages, fb, temperature, max_tokens, tools)
-                            else:
-                                result = self._complete_anthropic(messages, fb, temperature, max_tokens, tools, thinking_budget=thinking_budget)
-                            result.duration_ms = (time.time() - start) * 1000
-                            if not result.tokens_in and messages:
-                                result.tokens_in = sum(
-                                    len(m.content) if isinstance(m.content, str) else
-                                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                                    else 0 for m in messages) // 4
-                            if not result.tokens_out and result.content:
-                                result.tokens_out = len(result.content) // 4
-                            self._report_tokens(result, messages)
-                            return result
-                        except Exception as fallback_err:
-                            logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fallback_err)
-                    raise LLMClientError(f"LLM request failed after {self.max_retries} attempts: {last_error}")
+                    # Last attempt for 429 — fall through to fallback below
+
+                if not (is_429 or is_529):
+                    # Generic transient error
+                    if attempt < self.max_retries:
+                        base_delay = 2.0
+                        delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
+                        logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying in {delay:.1f}s...")
+                        time.sleep(delay)
+                        continue
+
+                # All retries exhausted — try fallback model if configured
+                if self.fallback_model and self.fallback_model != model:
+                    logger.warning(
+                        "Primary model '%s' failed after %d attempts, trying fallback '%s'",
+                        model, self.max_retries, self.fallback_model,
+                    )
+                    try:
+                        return _do_complete(self.fallback_model)
+                    except Exception as fallback_err:
+                        logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fallback_err)
+                if isinstance(last_error, LLMClientError):
+                    raise last_error
+                raise LLMClientError(f"LLM request failed after {self.max_retries} attempts: {last_error}")
 
     def abort(self):
         """Signal the current LLM call to abort (thread-safe)."""
@@ -414,34 +515,37 @@ class LLMClient(
 
         model = model or self.default_model
 
+        def _do_stream(mdl):
+            start = time.time()
+            if self.provider == "openai":
+                result = self._stream_openai(messages, mdl, temperature, max_tokens, tools, callback,
+                                              thinking_callback=thinking_callback)
+            elif self.provider == "claude-code":
+                result = self._stream_claude_code(messages, mdl, temperature, max_tokens, tools, callback,
+                                                  turn_callback=turn_callback)
+            elif self.provider == "gemini-cli":
+                result = self._stream_gemini_cli(messages, mdl, temperature, max_tokens, tools, callback)
+            elif self.provider == "anthropic":
+                result = self._stream_anthropic(messages, mdl, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
+            else:
+                raise LLMClientError(f"Unknown provider '{self.provider}'")
+            result.duration_ms = (time.time() - start) * 1000
+            if not result.tokens_in and messages:
+                result.tokens_in = sum(
+                    len(m.content) if isinstance(m.content, str) else
+                    sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
+                    else 0 for m in messages) // 4
+            if not result.tokens_out and result.content:
+                result.tokens_out = len(result.content) // 4
+            self._report_tokens(result, messages)
+            return result
+
         last_error = None
+        overloaded_attempts = 0
+        max_overloaded = 3
         for attempt in range(1, self.max_retries + 1):
             try:
-                start = time.time()
-
-                if self.provider == "openai":
-                    result = self._stream_openai(messages, model, temperature, max_tokens, tools, callback,
-                                                  thinking_callback=thinking_callback)
-                elif self.provider == "claude-code":
-                    result = self._stream_claude_code(messages, model, temperature, max_tokens, tools, callback,
-                                                      turn_callback=turn_callback)
-                elif self.provider == "gemini-cli":
-                    result = self._stream_gemini_cli(messages, model, temperature, max_tokens, tools, callback)
-                elif self.provider == "anthropic":
-                    result = self._stream_anthropic(messages, model, temperature, max_tokens, tools, callback, thinking_budget=thinking_budget, thinking_callback=thinking_callback)
-                else:
-                    raise LLMClientError(f"Unknown provider '{self.provider}'")
-
-                result.duration_ms = (time.time() - start) * 1000
-                if not result.tokens_in and messages:
-                    result.tokens_in = sum(
-                        len(m.content) if isinstance(m.content, str) else
-                        sum(len(str(p)) for p in m.content) if isinstance(m.content, list)
-                        else 0 for m in messages) // 4
-                if not result.tokens_out and result.content:
-                    result.tokens_out = len(result.content) // 4
-                self._report_tokens(result, messages)
-                return result
+                return _do_stream(model)
             except Exception as e:
                 # Don't retry on cancellation
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
@@ -449,25 +553,76 @@ class LLMClient(
                     raise
                 last_error = e
                 err_str = str(e)
-                # Retry on transient errors (429, 503, 502, connection reset)
-                retryable = any(code in err_str for code in ("429", "503", "502", "reset", "timeout"))
+
+                # Context overflow auto-recovery: reduce max_tokens and retry once
+                overflow = self._parse_context_overflow(err_str)
+                if overflow is not None and max_tokens > 0:
+                    safety_buffer = 1000
+                    reduced = max_tokens - overflow - safety_buffer
+                    if reduced > 0:
+                        logger.warning(
+                            "Context overflow detected in stream (overflow=%d tokens). "
+                            "Reducing max_tokens %d → %d and retrying.",
+                            overflow, max_tokens, reduced,
+                        )
+                        max_tokens = reduced
+                        try:
+                            return _do_stream(model)
+                        except Exception as retry_err:
+                            logger.error("Context overflow stream retry also failed: %s", retry_err)
+                            raise
+                    else:
+                        logger.error(
+                            "Context overflow in stream (overflow=%d) but reduced max_tokens "
+                            "would be non-positive (%d). Cannot auto-recover.",
+                            overflow, reduced,
+                        )
+
+                is_429 = "429" in err_str or "rate_limit" in err_str.lower()
+                is_529 = "529" in err_str or "overloaded" in err_str.lower()
+                retryable = is_429 or is_529 or any(
+                    code in err_str for code in ("503", "502", "reset", "timeout")
+                )
+
+                if is_529:
+                    overloaded_attempts += 1
+                    if overloaded_attempts >= max_overloaded:
+                        if self.fallback_model and self.fallback_model != model:
+                            logger.warning(
+                                "Overloaded (529): %d/%d attempts exhausted on '%s', trying fallback '%s'",
+                                overloaded_attempts, max_overloaded, model, self.fallback_model,
+                            )
+                            try:
+                                return _do_stream(self.fallback_model)
+                            except Exception as fb_err:
+                                logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
+                        raise LLMClientError(
+                            f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
+
                 if retryable and attempt < self.max_retries:
-                    wait = 2 ** attempt  # exponential backoff
-                    if "429" in err_str:
-                        wait = self._parse_retry_after(err_str)
-                    logger.warning(f"LLM stream attempt {attempt}/{self.max_retries} failed "
-                                   f"({type(e).__name__}), retrying in {wait:.0f}s")
+                    # Prefer server-specified delay, fall back to exponential backoff with jitter
+                    server_delay = self._parse_retry_after(err_str)
+                    base_delay = 2.0
+                    exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
+                    wait = server_delay if server_delay != 2.0 else exp_delay
+                    if is_429:
+                        logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                    elif is_529:
+                        logger.warning(f"Overloaded (529), attempt {overloaded_attempts}/{max_overloaded}, waiting {wait:.1f}s")
+                    else:
+                        logger.warning(f"LLM stream attempt {attempt}/{self.max_retries} failed "
+                                       f"({type(e).__name__}), retrying in {wait:.1f}s")
                     time.sleep(wait)
                     continue
+
                 # Final attempt failed — try fallback model
                 if self.fallback_model and self.fallback_model != model:
                     logger.warning("Streaming '%s' failed, trying fallback '%s'",
                                    model, self.fallback_model)
                     try:
-                        model = self.fallback_model
-                        continue  # retry with fallback model
-                    except Exception:
-                        pass
+                        return _do_stream(self.fallback_model)
+                    except Exception as fb_err:
+                        logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
                 raise LLMClientError(
                     f"LLM streaming failed after {attempt} attempt(s): "
                     f"{type(e).__name__}: {e or 'no details'}")

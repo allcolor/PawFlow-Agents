@@ -525,6 +525,10 @@ class ToolRelayService(BaseService):
             result_str = f"Error: {e}"
             logger.error("Tool relay execute '%s' failed: %s", tool_name, e)
 
+        # Sanitize tool result to strip invisible/malicious unicode
+        from core.sanitization import sanitize_unicode
+        result_str = sanitize_unicode(result_str)
+
         return {"type": "result", "request_id": request_id, "data": result_str}
 
 

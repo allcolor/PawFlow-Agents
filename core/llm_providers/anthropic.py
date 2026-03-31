@@ -7,11 +7,22 @@ import ssl
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
+from core.cache_diagnostics import CacheBreakDetector
+
 logger = logging.getLogger(__name__)
 
 
 class LLMAnthropicMixin:
     """Anthropic provider methods: complete, stream, message building."""
+
+    # Shared cache break detector (one per LLMClient instance via mixin)
+    _cache_detector: Optional[CacheBreakDetector] = None
+
+    def _get_cache_detector(self) -> CacheBreakDetector:
+        """Lazily create and return the cache break detector."""
+        if self._cache_detector is None:
+            self._cache_detector = CacheBreakDetector()
+        return self._cache_detector
 
     def _stream_anthropic(self, messages, model, temperature, max_tokens, tools, callback, thinking_budget: int = 0, thinking_callback=None):
         """Anthropic streaming: reads SSE events from the API."""
@@ -21,6 +32,11 @@ class LLMAnthropicMixin:
 
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
+
+        # Record pre-call state for cache break detection
+        detector = self._get_cache_detector()
+        tool_defs = [{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools] if tools else []
+        detector.record_pre_call(system_text, tool_defs, model)
 
         body = {
             "model": model,
@@ -182,6 +198,12 @@ class LLMAnthropicMixin:
                             tokens_in - cache_read_tokens - cache_creation_tokens)
             elif tokens_in > 0:
                 logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+
+            # Check for cache break
+            _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)
+            if _diag:
+                logger.warning("Anthropic cache diagnostics: %s", _diag)
+
             return LLMResponse(
                 content="".join(content_parts),
                 model=resp_model,
@@ -363,6 +385,11 @@ class LLMAnthropicMixin:
         # Add cache_control breakpoints for KV cache optimization
         self._apply_anthropic_cache_control(api_messages)
 
+        # Record pre-call state for cache break detection
+        detector = self._get_cache_detector()
+        tool_defs = [{"name": t.name, "description": t.description, "parameters": t.parameters} for t in tools] if tools else []
+        detector.record_pre_call(system_text, tool_defs, model)
+
         body: Dict[str, Any] = {"model": model, "messages": api_messages, "max_tokens": max_tokens if max_tokens > 0 else 64000, "temperature": temperature}
         if thinking_budget > 0:
             body["thinking"] = {"type": "enabled", "budget_tokens": thinking_budget}
@@ -426,6 +453,12 @@ class LLMAnthropicMixin:
                         tokens_in - cache_read_tokens - cache_creation_tokens)
         elif tokens_in > 0:
             logger.info("Anthropic KV cache: MISS — %d input tokens, 0 cached", tokens_in)
+
+        # Check for cache break
+        _diag = detector.check_post_call(cache_read_tokens, cache_creation_tokens)
+        if _diag:
+            logger.warning("Anthropic cache diagnostics: %s", _diag)
+
         tokens_out = usage.get("output_tokens", 0)
         return LLMResponse(
             content=text,

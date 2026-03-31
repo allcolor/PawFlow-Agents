@@ -209,6 +209,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     f'[Replying to {_reply_agent}: "{_reply_preview}"]\n\n{user_text}'
                 )
 
+        # Sanitize user message content (strip invisible/malicious unicode)
+        from core.sanitization import sanitize_unicode
+        user_text = sanitize_unicode(user_text)
+
         # Telegram multimodal: inject image from attributes
         tg_image = flowfile.get_attribute("telegram.image_base64") or ""
         if tg_image:
@@ -1022,6 +1026,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
+            "memory_llm_service": self._resolve_service_param("memory_llm_service", user_id),
             "resolved_svc": resolved_svc,
             "max_budget_usd": _max_budget,
             "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)

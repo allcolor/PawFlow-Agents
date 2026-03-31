@@ -20,6 +20,20 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 logger = logging.getLogger(__name__)
 
 
+def _estimate_content_tokens(content: str, default_cpt: float = 3.5) -> int:
+    """Estimate token count for a content string, aware of content type.
+
+    JSON content (starts with { or [) uses 2 chars/token — it's denser due to
+    brackets, quoted keys, and punctuation. Natural language uses the default
+    ~3.5 chars/token ratio. Matches Claude Code's approach.
+    """
+    if not isinstance(content, str) or not content:
+        return 0
+    stripped = content.lstrip()
+    if stripped.startswith('{') or stripped.startswith('['):
+        return int(len(content) / 2.0)
+    return int(len(content) / default_cpt)
+
 
 def _resolve_extra(store, conv_id: str, key: str, user_id: str = ""):
     """Read a conv extra and resolve ${...} expressions."""
@@ -187,6 +201,27 @@ class AgentUtilsMixin:
         if client:
             ctx_max = 0
             return client, ctx_max, svc_id
+        return None, 0, ""
+
+    def _get_memory_llm_client(self, user_id: str = ""):
+        """Resolve a dedicated LLM service for memory relevance filtering.
+
+        Same pattern as _get_summarizer_client. When configured, the recall
+        handler uses this LLM to select the most relevant memories instead
+        of returning all matches.
+
+        Returns (service_or_client, max_context_tokens, service_id) or (None, 0, "").
+        """
+        svc_id = self._resolve_service_param("memory_llm_service", user_id)
+        if not svc_id:
+            return None, 0, ""
+        logger.debug(f"[memory_llm] resolved to '{svc_id}'")
+        client, svc = self._resolve_llm_service(svc_id, user_id)
+        if svc and hasattr(svc, 'complete'):
+            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
+            return svc, ctx_max, svc_id
+        if client:
+            return client, 0, svc_id
         return None, 0, ""
 
     # ── Media service discovery (generic for image/video) ───────────
@@ -625,10 +660,13 @@ class AgentUtilsMixin:
                          chars_per_token: float = 0) -> int:
         """Estimate token count for messages + tool definitions.
 
-        *chars_per_token* controls the conversion ratio.  Default (0) uses
-        a conservative 2 chars/token.  Multilingual models or models with
-        byte-level tokenizers may need 1.0–1.5.  The service config key
-        ``chars_per_token`` can override this per-LLM.
+        Uses content-aware estimation: JSON content (starts with { or [)
+        uses 2 chars/token (denser due to brackets, keys, punctuation),
+        while natural language uses the default ~3.5 chars/token.
+
+        *chars_per_token* controls the default ratio for natural language.
+        Default (0) uses 3.5. The service config key ``chars_per_token``
+        can override this per-LLM.
         """
         # Precise counting via tiktoken — strip image data first
         try:
@@ -650,35 +688,42 @@ class AgentUtilsMixin:
         except Exception:
             pass
         # Fallback to character estimation
-        # Modern tokenizers average ~3.5 chars/token (was 2.0, too conservative)
+        # Modern tokenizers average ~3.5 chars/token for natural language.
+        # JSON is denser (brackets, keys, less natural language) — use 2 chars/token.
         cpt = chars_per_token if chars_per_token > 0 else 3.5
-        total_chars = 0
+        total_tokens = 0
         for m in messages:
-            total_chars += 12  # message overhead (role, separators)
+            total_tokens += int(12 / cpt)  # message overhead (role, separators)
             if isinstance(m.content, str):
-                total_chars += len(m.content)
+                total_tokens += _estimate_content_tokens(m.content, cpt)
             elif isinstance(m.content, list):
                 for part in m.content:
                     if part.get("type") == "text":
-                        total_chars += len(part.get("text", ""))
+                        total_tokens += _estimate_content_tokens(
+                            part.get("text", ""), cpt)
                     elif part.get("type") == "document":
-                        total_chars += len(part.get("text", ""))
+                        total_tokens += _estimate_content_tokens(
+                            part.get("text", ""), cpt)
                     elif part.get("type") == "image_url":
                         # Images are handled separately by the API (not counted as text tokens).
                         # Don't count them — they inflate the estimate and trigger unnecessary compaction.
-                        total_chars += 85  # ~85 tokens per image tile in OpenAI/Anthropic
+                        total_tokens += 85  # ~85 tokens per image tile in OpenAI/Anthropic
             if m.tool_calls:
                 for tc in m.tool_calls:
-                    total_chars += len(tc.name) + len(json.dumps(tc.arguments))
+                    # Tool call arguments are JSON — use 2 chars/token
+                    _tc_chars = len(tc.name) + len(json.dumps(tc.arguments))
+                    total_tokens += int(_tc_chars / 2.0)
         # Tool definitions (JSON schemas) are sent with every request
         if tool_defs:
             for td in tool_defs:
-                total_chars += len(getattr(td, 'name', '') or '')
-                total_chars += len(getattr(td, 'description', '') or '')
+                _td_chars = len(getattr(td, 'name', '') or '')
+                _td_chars += len(getattr(td, 'description', '') or '')
                 params = getattr(td, 'parameters', None)
                 if params:
-                    total_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
-        return int(total_chars / cpt)
+                    _td_chars += len(json.dumps(params) if isinstance(params, dict) else str(params))
+                # Tool defs are JSON schemas — use 2 chars/token
+                total_tokens += int(_td_chars / 2.0)
+        return total_tokens
 
 
     @staticmethod

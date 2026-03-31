@@ -227,6 +227,7 @@ class RecallHandler(ToolHandler):
         self._user_id = ""
         self._agent_name = ""
         self._conversation_id = ""
+        self._memory_llm_client = None  # LLM for relevance filtering
 
     @property
     def name(self) -> str:
@@ -266,6 +267,65 @@ class RecallHandler(ToolHandler):
     def set_conversation_id(self, cid: str):
         self._conversation_id = cid
 
+    def set_memory_llm_client(self, client):
+        """Set an LLM client for memory relevance filtering.
+
+        When set, recall will use this LLM to select the top 5 most relevant
+        memories from all matches, instead of returning all of them.
+        """
+        self._memory_llm_client = client
+
+    def _filter_by_relevance(self, entries, query: str, top_k: int = 5):
+        """Use memory_llm_client to select the most relevant memories.
+
+        Sends memory headers (id + text preview) to the LLM with the query,
+        asks it to pick the top_k most relevant ones.
+        Returns the filtered list, or the original list on failure.
+        """
+        if not self._memory_llm_client or len(entries) <= top_k:
+            return entries
+
+        # Build memory catalog for the LLM
+        catalog_lines = []
+        for i, e in enumerate(entries):
+            tag_str = ", ".join(e.tags) if e.tags else "none"
+            preview = e.text[:200] if len(e.text) > 200 else e.text
+            catalog_lines.append(f"{i}: [{e.id}] (tags: {tag_str}) {preview}")
+        catalog = "\n".join(catalog_lines)
+
+        prompt = (
+            f"Given the user's query: \"{query}\"\n\n"
+            f"Select the {top_k} most relevant memories from this list. "
+            f"Return ONLY the indices (0-based) as a JSON array, e.g. [0, 3, 5, 7, 12].\n\n"
+            f"Memories:\n{catalog}"
+        )
+
+        try:
+            from core.llm_client import LLMMessage
+            resp = self._memory_llm_client.complete(
+                messages=[LLMMessage(role="user", content=prompt)],
+                temperature=0,
+                max_tokens=200,
+            )
+            # Parse the response — expect a JSON array of indices
+            import re as _re
+            _match = _re.search(r'\[[\d,\s]+\]', resp.content or "")
+            if _match:
+                indices = json.loads(_match.group())
+                selected = []
+                for idx in indices[:top_k]:
+                    if 0 <= idx < len(entries):
+                        selected.append(entries[idx])
+                if selected:
+                    logger.info("[recall] LLM relevance filter: %d → %d memories",
+                               len(entries), len(selected))
+                    return selected
+        except Exception as e:
+            logger.warning("[recall] Memory LLM relevance filtering failed: %s", e)
+
+        # Fallback: return all entries
+        return entries
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         query = arguments.get("query", "")
         tags = arguments.get("tags")
@@ -282,6 +342,10 @@ class RecallHandler(ToolHandler):
             )
             if not entries:
                 return "No memories found matching your query."
+
+            # If memory_llm_service is configured, filter by relevance
+            if self._memory_llm_client and query:
+                entries = self._filter_by_relevance(entries, query, top_k=5)
 
             lines = []
             for e in entries:

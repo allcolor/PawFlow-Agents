@@ -430,6 +430,9 @@ def main():
                 result = f"Error: unknown tool '{name}'"
 
             _log(f"RESULT {name}: {str(result)[:100]}")
+            # Sanitize tool result (strip invisible/malicious unicode)
+            from core.sanitization import sanitize_unicode
+            result = sanitize_unicode(str(result)) if result else result
             # Convert __image_data__ markers to MCP image content blocks
             result_str = str(result)
             if "__image_data__:" in result_str:

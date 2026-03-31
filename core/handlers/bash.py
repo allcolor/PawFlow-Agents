@@ -1,11 +1,53 @@
 """bash — Execute a shell command via relay."""
 
 import logging
-from typing import Any, Dict
+import re
+from typing import Any, Dict, Optional
 
 from core.handlers._fs_base import BaseFsHandler, cap_binary_output
 
 logger = logging.getLogger(__name__)
+
+
+# ── Dangerous command patterns (defense-in-depth) ──────────────────────
+# The tool approval system is the primary defense. This is a safety net.
+
+_DANGEROUS_PATTERNS = [
+    # Recursive delete of root or home
+    (re.compile(r'\brm\s+.*-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+/\s*$'
+                r'|\brm\s+.*-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+/\s*$'
+                r'|\brm\s+.*-rf\s+~\s*$'
+                r'|\brm\s+.*-rf\s+~/\s*$'
+                r'|\brm\s+.*-rf\s+/\s',
+                re.MULTILINE),
+     "Blocked: recursive delete of root or home directory"),
+    # Disk overwrite via redirect
+    (re.compile(r'>\s*/dev/sd[a-z]|>\s*/dev/nvme|>\s*/dev/hd[a-z]'),
+     "Blocked: direct disk device overwrite"),
+    # Filesystem format
+    (re.compile(r'\bmkfs\b'),
+     "Blocked: filesystem format command"),
+    # Disk wipe via dd
+    (re.compile(r'\bdd\b.*\bof=/dev/'),
+     "Blocked: dd write to disk device"),
+    # Fork bomb
+    (re.compile(r':\(\)\s*\{\s*:\|:\s*&\s*\}\s*;\s*:'),
+     "Blocked: fork bomb detected"),
+]
+
+
+def _check_dangerous_command(command: str) -> Optional[str]:
+    """Check if a command matches known dangerous patterns.
+
+    Returns an error message if dangerous, None if safe.
+    This is defense-in-depth — the tool approval system is the primary defense.
+    """
+    for pattern, message in _DANGEROUS_PATTERNS:
+        if pattern.search(command):
+            logger.warning("[bash] Dangerous command blocked: %s — %s",
+                          command[:100], message)
+            return f"Error: {message}. This command was blocked as a safety measure."
+    return None
 
 
 class BashHandler(BaseFsHandler):
@@ -47,6 +89,11 @@ class BashHandler(BaseFsHandler):
         if not command:
             logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])
             return "(no command provided — ignored)"
+
+        # Defense-in-depth: block known dangerous patterns
+        danger = _check_dangerous_command(command)
+        if danger:
+            return danger
 
         relay = arguments.get("relay", "")
         svc, workdir = self._resolve(relay)

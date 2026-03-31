@@ -128,6 +128,14 @@ class AgentToolConfigMixin:
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
+                # Wire memory LLM service for relevance filtering (RecallHandler only)
+                if isinstance(h, RecallHandler) and hasattr(h, 'set_memory_llm_client'):
+                    try:
+                        _mem_client, _mem_max, _mem_svc = self._get_memory_llm_client(user_id)
+                        if _mem_client:
+                            h.set_memory_llm_client(_mem_client)
+                    except Exception:
+                        pass
             elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)

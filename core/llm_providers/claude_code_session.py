@@ -99,6 +99,53 @@ class ClaudeCodeSessionMixin:
             pass
         return {"access_token": "", "refresh_token": "", "expires_at": 0}
 
+    @staticmethod
+    def _refresh_oauth_token(refresh_token: str) -> dict:
+        """Refresh OAuth token via Anthropic's platform endpoint.
+
+        Returns {"access_token": ..., "refresh_token": ..., "expires_at": ... (ms)}
+        """
+        import http.client
+        import ssl
+        import time
+
+        body = json.dumps({
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+        }).encode("utf-8")
+
+        ctx = ssl.create_default_context()
+        conn = http.client.HTTPSConnection("platform.claude.com", 443,
+                                           context=ctx, timeout=15)
+        try:
+            conn.request("POST", "/v1/oauth/token", body=body, headers={
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            })
+            resp = conn.getresponse()
+            resp_body = resp.read().decode("utf-8")
+        finally:
+            conn.close()
+
+        if resp.status != 200:
+            raise RuntimeError(f"OAuth refresh failed ({resp.status}): {resp_body[:200]}")
+
+        data = json.loads(resp_body)
+        new_access = data.get("access_token", "")
+        new_refresh = data.get("refresh_token", "")
+        expires_in = data.get("expires_in", 0)
+        expires_at_ms = time.time() * 1000 + expires_in * 1000
+
+        if not new_access:
+            raise RuntimeError(f"OAuth refresh returned no access_token: {resp_body[:200]}")
+
+        return {
+            "access_token": new_access,
+            "refresh_token": new_refresh or refresh_token,
+            "expires_at": int(expires_at_ms),
+        }
+
     def _get_session_workdir(self, conversation_id: str,
                              agent_name: str = "") -> str:
         """Get or create a dedicated working directory for this session."""
@@ -199,15 +246,34 @@ class ClaudeCodeSessionMixin:
                 "Go to Admin → Services → claude_code_llm_service → Login "
                 "to authenticate with your Claude subscription.")
 
-        # Check expiry — warn early instead of getting a 401 mid-session
+        # Check expiry — refresh automatically if expired or near expiry (5min buffer)
         import time as _time
         if expires_at:
             _exp_s = int(expires_at) / 1000 if int(expires_at) > 1e12 else int(expires_at)
             _remaining = _exp_s - _time.time()
-            if _remaining < 0:
-                raise LLMClientError(
-                    f"Claude Code OAuth token expired ({abs(_remaining)/3600:.0f}h ago). "
-                    "Use /cls to re-authenticate.")
+            if _remaining < 300 and refresh_token:  # 5min buffer, same as CC
+                logger.info("OAuth token %s — attempting refresh",
+                            "expired" if _remaining < 0 else f"expiring in {_remaining:.0f}s")
+                try:
+                    new_tokens = self._refresh_oauth_token(refresh_token)
+                    access_token = new_tokens["access_token"]
+                    refresh_token = new_tokens.get("refresh_token", refresh_token)
+                    expires_at = new_tokens["expires_at"]
+                    # Persist refreshed tokens
+                    _svc_id = getattr(self, '_agent_service', '') or ''
+                    _persist_tokens_to_service(
+                        access_token, refresh_token, int(expires_at),
+                        service_id=_svc_id)
+                    logger.info("OAuth token refreshed — expires in %.1fh",
+                                (int(expires_at)/1000 - _time.time()) / 3600)
+                except Exception as e:
+                    if _remaining < 0:
+                        raise LLMClientError(
+                            f"OAuth token expired and refresh failed: {e}. "
+                            "Use /cls to re-authenticate.")
+                    else:
+                        logger.warning("OAuth refresh failed (token still valid for %.0fs): %s",
+                                       _remaining, e)
 
         creds = {
             "claudeAiOauth": {

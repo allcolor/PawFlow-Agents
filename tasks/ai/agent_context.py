@@ -384,8 +384,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         messages, conversation_id, _context_agent, _uid,
                         max_context=_max_ctx)
             else:
-                # No divergence — use messages as context
-                existing = store.load(conversation_id)
+                # No divergence — start from SHARED context (not transcript)
+                existing = store.load_context(conversation_id)
                 if existing:
                     try:
                         messages = self._deserialize_messages(existing)

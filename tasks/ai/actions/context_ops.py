@@ -188,12 +188,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
 
     def _ctx_save(conv_id, data, agent_name="", skip_merge=False):
         """Save context for an agent (or shared if no agent)."""
-        if agent_name and agent_name != "ALL":
-            store.save_agent_context(conv_id, agent_name, data,
-                                      skip_merge=skip_merge)
-        else:
-            store.save_agent_context(conv_id, "", data,
-                                      skip_merge=skip_merge)
+        # "shared" or "" both mean the shared context (agent="")
+        _name = "" if (not agent_name or agent_name == "shared") else agent_name
+        store.save_agent_context(conv_id, _name, data,
+                                  skip_merge=skip_merge)
         store.invalidate_claude_sessions(conv_id)
 
     def _resolve_agent_max_tokens(agent_name):
@@ -499,35 +497,40 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rb_msgs = store.load(conv_id, user_id=user_id)
-        # Filter out display-only sub-agent traces
         if _rb_msgs:
-            _rb_msgs = [m for m in _rb_msgs if not (isinstance(m, dict) and m.get("display_only"))]
+            # Filter: no display_only, no tool_calls, no tool results
+            # (context = conversation messages only, not tool plumbing)
+            _rb_msgs = [m for m in _rb_msgs
+                        if isinstance(m, dict)
+                        and not m.get("display_only")
+                        and not m.get("tool_calls")
+                        and m.get("role") != "tool"]
         if not _rb_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
-        # Resolve client for potential compaction
-        _summ_client, _, _ = self._get_summarizer_client(user_id)
-        _rb_client = _summ_client
-        if not _rb_client:
-            _rb_svc = self._resolve_service_param("llm_service", user_id) or "default"
-            _rb_client, _ = self._resolve_client(_rb_svc, user_id)
-        _rb_max = _ctx_max_tokens(_rb_agent)
 
         def _do_rebuild():
             # /rebuild = context = full conversation transcript. No compaction.
-            _ctx_save(conv_id, _rb_msgs, _rb_agent)
             deserialized = self._deserialize_messages(_rb_msgs)
             estimated = self._estimate_tokens(deserialized)
-            # If agent context == shared context after rebuild, remove the
-            # agent context (it'll fall back to shared automatically)
-            if _rb_agent and _rb_agent != "shared":
-                shared_ctx = store.load_context(conv_id)
-                if shared_ctx is not None and shared_ctx == _rb_msgs:
-                    # Identical — remove agent diverged context
-                    # (write empty replace that vacuum will clean)
-                    store.save_agent_context(conv_id, _rb_agent, shared_ctx)
-                    logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
+            if _rb_agent == "ALL":
+                # Rebuild ALL agent contexts + shared
+                agent_map = store.list_agent_contexts(conv_id)
+                for name in agent_map:
+                    if name == "*":
+                        store.save_context(conv_id, list(_rb_msgs))
+                    else:
+                        store.save_agent_context(conv_id, name, list(_rb_msgs))
+            else:
+                _ctx_save(conv_id, _rb_msgs, _rb_agent)
+                # If agent context == shared context after rebuild, remove the
+                # agent context (it'll fall back to shared automatically)
+                if _rb_agent and _rb_agent != "shared":
+                    shared_ctx = store.load_context(conv_id)
+                    if shared_ctx is not None and shared_ctx == _rb_msgs:
+                        store.save_agent_context(conv_id, _rb_agent, shared_ctx)
+                        logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
             # Manual context modification → invalidate claude-code sessions
             store.invalidate_claude_sessions(conv_id)
             return {"before": len(_rb_msgs), "after": len(_rb_msgs),
@@ -535,42 +538,6 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     "agent": _rb_agent or "shared"}
 
         return self._run_bg_context_op(conv_id, "rebuild", _do_rebuild, flowfile)
-
-    if action in ("rebuild_clean", "rebuild_full"):
-        conv_id = body.get("conversation_id", "")
-        _rf_agent = body.get("agent_name", "")
-        if not conv_id:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
-            flowfile.set_attribute("http.response.status", "400")
-            return [flowfile]
-        _rf_msgs = store.load(conv_id, user_id=user_id)
-        # Filter out display-only sub-agent traces
-        if _rf_msgs:
-            _rf_msgs = [m for m in _rf_msgs if not (isinstance(m, dict) and m.get("display_only"))]
-        if not _rf_msgs:
-            flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
-            flowfile.set_attribute("http.response.status", "404")
-            return [flowfile]
-
-        def _do_rebuild_full():
-            deserialized = self._deserialize_messages(_rf_msgs)
-            estimated = self._estimate_tokens(deserialized)
-            if _rf_agent == "ALL":
-                agent_map = store.list_agent_contexts(conv_id)
-                for name in agent_map:
-                    if name == "*":
-                        store.save_context(conv_id, list(_rf_msgs))
-                    else:
-                        store.save_agent_context(conv_id, name, list(_rf_msgs))
-            else:
-                _ctx_save(conv_id, list(_rf_msgs), _rf_agent)
-            # Manual context modification → invalidate claude-code sessions
-            store.invalidate_claude_sessions(conv_id)
-            return {"action": "full_restore", "before": len(_rf_msgs),
-                    "after": len(_rf_msgs), "tokens_after": estimated,
-                    "agent": _rf_agent or "shared"}
-
-        return self._run_bg_context_op(conv_id, "rebuild_full", _do_rebuild_full, flowfile)
 
     if action == "get_context":
         conv_id = body.get("conversation_id", "")
@@ -708,19 +675,23 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             except Exception as e:
                 flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]
+        # Task sub-conversation: delete the sub-conversation
+        if agent_name.startswith("task:"):
+            _tid = agent_name.split("(")[0].replace("task:", "").strip()
+            _sub_cid = f"{conv_id}::task::{_tid}"
+            try:
+                store.delete(_sub_cid)
+                flowfile.set_content(json.dumps({"ok": True}).encode())
+            except Exception as e:
+                flowfile.set_content(json.dumps({"error": str(e)}).encode())
+            return [flowfile]
         if not conv_id or not agent_name:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or agent_name"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from core.conversation_writer import ConversationWriter
-            writer = ConversationWriter.for_conversation(conv_id)
-            writer.pause_for_context_op()
-            try:
-                store.delete_agent_context(conv_id, agent_name)
-                store.invalidate_claude_sessions(conv_id)
-            finally:
-                writer.resume_after_context_op()
+            store.delete_agent_context(conv_id, agent_name)
+            store.invalidate_claude_sessions(conv_id)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -763,21 +734,15 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from core.conversation_writer import ConversationWriter
-            writer = ConversationWriter.for_conversation(conv_id)
-            writer.pause_for_context_op()
-            try:
-                context_data = _ctx_load(conv_id, _ctx_agent)
-                if context_data is None:
-                    context_data = store.load(conv_id, user_id=user_id) or []
-                # Remove indices in reverse order to preserve positions
-                for idx in sorted(indices, reverse=True):
-                    if 0 <= idx < len(context_data):
-                        context_data.pop(idx)
-                _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
-                store.invalidate_claude_sessions(conv_id)
-            finally:
-                writer.resume_after_context_op()
+            context_data = _ctx_load(conv_id, _ctx_agent)
+            if context_data is None:
+                context_data = store.load(conv_id, user_id=user_id) or []
+            # Remove indices in reverse order to preserve positions
+            for idx in sorted(indices, reverse=True):
+                if 0 <= idx < len(context_data):
+                    context_data.pop(idx)
+            _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
+            store.invalidate_claude_sessions(conv_id)
             deserialized = self._deserialize_messages(context_data)
             estimated = self._estimate_tokens(deserialized)
             flowfile.set_content(json.dumps({
@@ -893,9 +858,12 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         _rf_msgs = store.load(conv_id, user_id=user_id)
-        # Filter out display-only sub-agent traces
         if _rf_msgs:
-            _rf_msgs = [m for m in _rf_msgs if not (isinstance(m, dict) and m.get("display_only"))]
+            _rf_msgs = [m for m in _rf_msgs
+                        if isinstance(m, dict)
+                        and not m.get("display_only")
+                        and not m.get("tool_calls")
+                        and m.get("role") != "tool"]
         if not _rf_msgs:
             flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
             flowfile.set_attribute("http.response.status", "404")
@@ -928,16 +896,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         try:
-            from core.conversation_writer import ConversationWriter
-            writer = ConversationWriter.for_conversation(conv_id)
-            writer.pause_for_context_op()
-            try:
-                if len(msg_ids) == 1:
-                    deleted = 1 if store.delete_message(conv_id, msg_id=msg_ids[0], user_id=user_id) else 0
-                else:
-                    deleted = store.delete_messages(conv_id, msg_ids, user_id=user_id)
-            finally:
-                writer.resume_after_context_op()
+            if len(msg_ids) == 1:
+                deleted = 1 if store.delete_message(conv_id, msg_id=msg_ids[0], user_id=user_id) else 0
+            else:
+                deleted = store.delete_messages(conv_id, msg_ids, user_id=user_id)
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
             return [flowfile]

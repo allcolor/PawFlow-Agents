@@ -270,8 +270,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 scheduler.cancel(f"{conv_id}::task::{tid}")
             elif action == "resume_task":
                 task["status"] = "active"
+                from core.tool_registry import AssignTaskHandler as _ATH
                 scheduler.schedule_delay(
-                    conv_id, task.get("interval", 60),
+                    conv_id, _ATH._get_task_delay(task),
                     key=f"{conv_id}::task::{tid}",
                     reason=f"[agent_task:{tid}] resumed ({task.get('agent', '?')})",
                     user_id=user_id,

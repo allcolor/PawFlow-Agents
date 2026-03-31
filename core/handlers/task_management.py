@@ -397,6 +397,9 @@ class CompleteTaskHandler(ToolHandler):
             pass
 
         if done:
+            # Don't touch cancelled/paused tasks — user cancelled intentionally
+            if task.get("status") in ("cancelled", "paused"):
+                return f"Task {task_id} was {task['status']} — ignoring completion."
             verifier = task.get("verifier", "")
             if verifier:
                 task["status"] = "verifying"

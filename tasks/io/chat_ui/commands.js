@@ -280,19 +280,6 @@ const HELP_DATA = {
       + '  /rebuild @grok    \u2014 Rebuild grok\'s context\n'
       + '  /rebuild @ALL     \u2014 Rebuild all agents',
   },
-  '/rebuild_clean': {
-    usage: '/rebuild_clean',
-    short: 'Set context = full conversation (no compaction, deprecated — use /rebuild-full)',
-    detail: 'Deprecated. Use /rebuild-full instead.',
-  },
-  '/rebuild-full': {
-    usage: '/rebuild-full [@agent|ALL]',
-    short: 'Set context = full conversation (no compaction)',
-    detail: 'Copies the entire conversation history into the LLM context as-is, without any compaction or summarization. Use when you want the agent to see everything.\n\n'
-      + '  /rebuild-full          \u2014 Rebuild shared context\n'
-      + '  /rebuild-full @grok    \u2014 Rebuild grok\'s context\n'
-      + '  /rebuild-full @ALL     \u2014 Rebuild all agents\' contexts',
-  },
   '/context': {
     usage: '/context [@agent]',
     short: 'View the LLM context',
@@ -583,7 +570,6 @@ function parseQuotedArgs(text) {
 // ── Command aliases ─────────────────────────────────────────────
 const _CMD_ALIASES = {
   '/restart': '/restart_from',
-  '/rebuild-full': '/rebuild_clean',
   '/set_llm_service': '/llm',
   '/detach': '/clear-files',
   '/add-var': '/add-variable',
@@ -612,7 +598,6 @@ const _CMD_HANDLERS = {
   '/summary':      (text, parts, cmd) => cmdSummary(text, parts),
   '/compact':      (text, parts, cmd) => cmdCompactCmd(text, parts),
   '/rebuild':      (text, parts, cmd) => cmdRebuildCmd(text, parts),
-  '/rebuild_clean': (text, parts, cmd) => cmdRebuildFullCmd(text, parts),
   '/context':      (text, parts, cmd) => cmdContextCmd(text, parts),
 
   // Resources (cmd_resources.js)

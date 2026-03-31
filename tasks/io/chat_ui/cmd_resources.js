@@ -172,8 +172,9 @@ function cmdVidservice(text, parts) {
       }
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'select' && parts[2]) {
-    const serviceName = parts[2];
-    const agentName = parts[3] ? stripTarget(parts[3]) : '*';
+    const serviceName = stripTarget(parts[2]);
+    const agentName = parts[3] ? stripTarget(parts[3]) : '';
+    if (!agentName) { addMsg('system', 'Usage: /vidservice select @<service> @<agent|ALL>'); return true; }
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -182,7 +183,7 @@ function cmdVidservice(text, parts) {
       }),
     }).then(r => r.json()).then(data => {
       if (data.ok) {
-        const target = agentName === '*' ? 'all agents' : agentName;
+        const target = agentName === 'ALL' ? 'all agents' : agentName;
         addMsg('system', 'Video service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set video service');
@@ -232,8 +233,9 @@ function cmdImgservice(text, parts) {
       }
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'select' && parts[2]) {
-    const serviceName = parts[2];
-    const agentName = parts[3] ? stripTarget(parts[3]) : '*';
+    const serviceName = stripTarget(parts[2]);
+    const agentName = parts[3] ? stripTarget(parts[3]) : '';
+    if (!agentName) { addMsg('system', 'Usage: /imgservice select @<service> @<agent|ALL>'); return true; }
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify({
@@ -242,7 +244,7 @@ function cmdImgservice(text, parts) {
       }),
     }).then(r => r.json()).then(data => {
       if (data.ok) {
-        const target = agentName === '*' ? 'all agents' : agentName;
+        const target = agentName === 'ALL' ? 'all agents' : agentName;
         addMsg('system', 'Image service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set image service');
@@ -346,23 +348,23 @@ function cmdResources() {
 
 function cmdActivate(text, parts) {
   const rtype = parts[1];
-  const rname = parts[2];
-  if (!rtype || !rname) { addMsg('system', 'Usage: /activate <agent|skill|mcp> <name>'); return true; }
+  const rname = stripTarget(parts[2]);
+  if (!rtype || !rname) { addMsg('system', 'Usage: /activate <agent|skill|mcp> @<name>'); return true; }
   cmdResourceAction('activate_resource', {resource_type: rtype, name: rname});
   return true;
 }
 
 function cmdDeactivate(text, parts) {
   const rtype = parts[1];
-  const rname = parts[2];
-  if (!rtype || !rname) { addMsg('system', 'Usage: /deactivate <agent|skill|mcp> <name>'); return true; }
+  const rname = stripTarget(parts[2]);
+  if (!rtype || !rname) { addMsg('system', 'Usage: /deactivate <agent|skill|mcp> @<name>'); return true; }
   cmdResourceAction('deactivate_resource', {resource_type: rtype, name: rname});
   return true;
 }
 
 function cmdShare(text, parts) {
   const rtype = parts[1];
-  const rname = parts[2];
+  const rname = stripTarget(parts[2]);
   const targetConv = parts[3];
   if (!rtype || !rname || !targetConv) {
     addMsg('system', 'Usage: /share <agent|skill|mcp> <name> <conversation_id>');

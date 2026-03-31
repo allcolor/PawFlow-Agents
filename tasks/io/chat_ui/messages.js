@@ -177,10 +177,11 @@ function addMsg(role, text, extra) {
     const isLive = extra && extra.live;
     const bulletClass = isLive ? 'pending' : 'done';
     const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
+    const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
     if (toolName === 'edit' && args && args.path) {
-      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn;
+      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
     } else {
-      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn;
+      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
@@ -451,11 +452,16 @@ function killTool(tcId) {
   // Optimistic UI: mark as killed
   const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
   if (tcEl) {
-    const btn = tcEl.querySelector('.tc-kl-btn');
-    if (btn) btn.remove();
+    tcEl.querySelectorAll('.tc-kl-btn, .tc-bg-btn').forEach(b => b.remove());
     const bullet = tcEl.querySelector('.tc-bullet');
     if (bullet) { bullet.classList.remove('bg', 'pending'); bullet.classList.add('done'); bullet.style.color = '#e94560'; bullet.title = 'Killed'; }
   }
+  // Kill via tool relay (in-flight tools) AND background system
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({action: 'kill_tool', conversation_id: conversationId, tc_id: tcId}),
+    credentials: 'same-origin',
+  }).catch(() => {});
   cancelBgTool(tcId);
 }
 

@@ -55,6 +55,21 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
         return [flowfile]
 
+    if action == "kill_tool":
+        tc_id = body.get("tc_id", "")
+        conv_id = body.get("conversation_id", "")
+        if not tc_id:
+            flowfile.set_content(json.dumps({"error": "Missing tc_id"}).encode())
+            return [flowfile]
+        # Cancel in-flight tool via relay (sets cancel_event → tool returns [Interrupted])
+        from services.tool_relay_service import ToolRelayService
+        ToolRelayService.cancel_request(tc_id)
+        # Also try background tool cancel
+        import core.background_tool as _bg
+        _bg.cancel(tc_id)
+        flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
+        return [flowfile]
+
     if action == "cancel_bg_tool":
         tc_id = body.get("tc_id", "")
         if not tc_id:

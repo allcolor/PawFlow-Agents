@@ -1,5 +1,5 @@
 // ── Context commands ────────────────────────────────────────────
-// /compact, /rebuild, /rebuild_clean, /restart_from, /context, /summary, /resume
+// /compact, /rebuild, /restart_from, /context, /summary, /resume
 // Loaded before commands.js — all functions are global.
 
 function cmdRestartFrom(text, parts) {
@@ -74,24 +74,6 @@ function cmdRebuildCmd(text, parts) {
   return true;
 }
 
-function cmdRebuildFullCmd(text, parts) {
-  if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
-  const rfAgent = stripTarget(parts[1] || '');
-  if (!conversationId) { addMsg('system', t('noConv')); return true; }
-  contextOpInProgress = true;
-  const rfLabel = rfAgent ? 'Rebuilding full (' + rfAgent + ')' : 'Rebuilding full';
-  showContextOp(rfLabel);
-  const rfBody = { action: 'rebuild_full', conversation_id: conversationId };
-  if (rfAgent) rfBody.agent_name = rfAgent;
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(rfBody),
-  }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', 'Rebuild full failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
-  }).catch(e => { addMsg('error', 'Rebuild full failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
-  return true;
-}
-
 function cmdContextCmd(text, parts) {
   cmdShowContext(stripTarget(parts[1] || ''));
   return true;
@@ -136,16 +118,3 @@ function cmdRebuild(agentName) {
   }).catch(e => { addMsg('error', 'Rebuild failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
 }
 
-function cmdRebuildClean() {
-  if (!conversationId) { addMsg('system', t('noConv')); return; }
-  contextOpInProgress = true;
-  showContextOp('Rebuilding');
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'rebuild_clean', conversation_id: conversationId }),
-  }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', 'Rebuild clean failed: ' + data.error); return; }
-    addMsg('system', t('rebuiltClean', {messages: data.messages, tokens: data.token_estimate}));
-  }).catch(e => addMsg('error', 'Rebuild clean failed: ' + e.message))
-    .finally(() => { hideContextOp(); contextOpInProgress = false; });
-}

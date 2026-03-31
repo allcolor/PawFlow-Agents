@@ -454,9 +454,22 @@ class StreamEmitter(AgentEmitter):
         all_serialized = self.agent._serialize_messages(_persist, channel=self._channel)
 
         # Split: public (user + assistant text) vs private (tools)
-        public = [m for m in all_serialized
-                  if m.get("role") in ("user", "assistant") and not m.get("tool_calls")]
-        private = [m for m in all_serialized if m not in public]
+        # Exclude system messages disguised as user (e.g. "[System: ...]")
+        # and the system prompt itself — these are internal, not conversation
+        def _is_public(m):
+            role = m.get("role", "")
+            if role == "system":
+                return False
+            if role not in ("user", "assistant"):
+                return False
+            if m.get("tool_calls"):
+                return False
+            content = m.get("content", "")
+            if isinstance(content, str) and content.startswith("[System:"):
+                return False
+            return True
+        public = [m for m in all_serialized if _is_public(m)]
+        private = [m for m in all_serialized if m not in public and m.get("role") != "system"]
 
         _agent_n = self.ctx.get("active_agent_name") or ""
         from core.conversation_writer import ConversationWriter

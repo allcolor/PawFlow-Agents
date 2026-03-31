@@ -479,6 +479,9 @@ class ConversationStore:
             ops.append({"op": "ctx_append", "agent": agent_name, "data": all_agent})
 
         if ctx_public:
+            # Update shared context (source of truth for new agents)
+            ops.append({"op": "ctx_append", "agent": "", "data": ctx_public})
+            # Update all other agents' diverged contexts
             cache = self._load_cache(cid)
             for other in cache.get("agents", set()):
                 if other and other != agent_name:
@@ -519,6 +522,19 @@ class ConversationStore:
         ops = [{"op": "append", "lines": lines}]
         if status:
             ops.append({"op": "status", "status": status})
+
+        # Propagate non-private, non-tool messages to shared + all agent contexts
+        ctx_msgs = [m for m in new_messages
+                    if not m.get("private") and not m.get("display_only")
+                    and m.get("role") != "tool" and not m.get("tool_calls")]
+        if ctx_msgs:
+            ops.append({"op": "ctx_append", "agent": "", "data": ctx_msgs})
+            cache = self._load_cache(cid)
+            for agent in cache.get("agents", set()):
+                if agent:
+                    ops.append({"op": "ctx_append", "agent": agent,
+                                "data": ctx_msgs})
+
         self._commit(cid, ops)
 
     def _get_transcript_msg_ids(self, cid: str) -> set:
@@ -601,9 +617,17 @@ class ConversationStore:
                 return None
         def _scan(lines):
             msgs = []
+            patches = {}  # msg_id → patch dict
             for line in lines:
-                if line.get("t") != "msg" or line.get("private"):
+                if line.get("t") == "msg_patch":
+                    mid = line.get("msg_id", "")
+                    if mid:
+                        patches[mid] = {k: v for k, v in line.items()
+                                        if k not in ("t", "msg_id")}
                     continue
+                if line.get("t") != "msg":
+                    continue
+                # Transcript shows ALL messages (including tool calls/results)
                 msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
                 if "ts" in line:
                     msg["timestamp"] = line["ts"]
@@ -631,7 +655,7 @@ class ConversationStore:
                         patches[mid] = {k: v for k, v in line.items()
                                         if k not in ("t", "msg_id")}
                     continue
-                if line.get("t") != "msg" or line.get("private"):
+                if line.get("t") != "msg":
                     continue
                 msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
                 if "ts" in line:

@@ -333,6 +333,10 @@ class AgentCoreMixin:
                         _threshold = ctx.get("context_compact_threshold", 0.75)
                         _precompact = ctx.get("_precompact_snapshot")
 
+                        # Microcompaction: clear old tool results after idle gap
+                        if iteration == 1:
+                            self._microcompact_time_based(messages)
+
                         # Precompact at 40%: start background summarization
                         if (_est > _max_ctx * 0.4
                                 and not _precompact
@@ -555,7 +559,7 @@ class AgentCoreMixin:
                         ctx["_iteration"] = _cc_turn_count[0]
 
                         _bus = emitter.bus
-                        _cid = conversation_id
+                        _cid = ctx.get("_event_cid", conversation_id)
                         turn_msgs = []
                         _src = _agent_source()
                         _agent = _src.get("name", "")

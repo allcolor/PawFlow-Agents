@@ -127,8 +127,49 @@ async function syncActiveFromServer() {
     updateActivePanel();
     if (Object.keys(activeInteractions).length > 0) {
       if (!document.getElementById('typing')) showTyping();
+      // Auto-background: collapse streaming after 120s of activity
+      const AUTO_BG_MS = 120000;
+      for (const [key, info] of Object.entries(activeInteractions)) {
+        const elapsed = now - info.startedAt;
+        if (elapsed > AUTO_BG_MS && !info._backgrounded) {
+          info._backgrounded = true;
+          // Collapse all streaming elements for this agent
+          document.querySelectorAll('#messages .msg.streaming, #messages .msg.streaming-live').forEach(el => {
+            if (!el.classList.contains('auto-bg-collapsed')) {
+              el.classList.add('auto-bg-collapsed');
+              el.style.display = 'none';
+            }
+          });
+          // Show compact notification
+          const bgNote = document.createElement('div');
+          bgNote.className = 'msg system auto-bg-note';
+          bgNote.dataset.bgAgent = key;
+          bgNote.innerHTML = '\u23F3 <b>' + escapeHtml(displayAgentName(info.name)) + '</b> working in background ('
+            + info.totalTools + ' tools, iter ' + info.iteration + ')...';
+          bgNote.style.cssText = 'cursor:pointer;opacity:0.7;';
+          bgNote.title = 'Click to expand';
+          bgNote.onclick = () => {
+            document.querySelectorAll('.auto-bg-collapsed').forEach(e => {
+              e.classList.remove('auto-bg-collapsed');
+              e.style.display = '';
+            });
+            bgNote.remove();
+            info._backgrounded = false;
+          };
+          const container = document.getElementById('messages');
+          const typingEl = document.getElementById('typing');
+          if (typingEl) container.insertBefore(bgNote, typingEl);
+          else container.appendChild(bgNote);
+        }
+      }
     } else {
       hideTyping();
+      // Remove auto-bg notes when agent finishes
+      document.querySelectorAll('.auto-bg-note').forEach(n => n.remove());
+      document.querySelectorAll('.auto-bg-collapsed').forEach(e => {
+        e.classList.remove('auto-bg-collapsed');
+        e.style.display = '';
+      });
     }
   } catch(e) { /* silent — network may be down */ }
 }

@@ -78,6 +78,51 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
     _TOOL_TRUNC_LIMIT = 800
 
     @staticmethod
+    @staticmethod
+    def _microcompact_time_based(messages: List[LLMMessage],
+                                  keep_recent: int = 5,
+                                  gap_minutes: int = 60) -> int:
+        """Clear old tool results when conversation has been idle.
+
+        Like Claude Code's time-based microcompaction: after a gap of
+        `gap_minutes` since the last assistant message, replace old tool
+        results with "[Old tool result content cleared]". Keeps the
+        `keep_recent` most recent tool results intact.
+
+        Returns the number of tool results cleared.
+        """
+        # Find last assistant message timestamp
+        _last_assistant_ts = 0.0
+        for m in reversed(messages):
+            if m.role == "assistant" and hasattr(m, '_ts'):
+                _last_assistant_ts = m._ts
+                break
+        if not _last_assistant_ts:
+            return 0
+
+        gap_s = time.time() - _last_assistant_ts
+        if gap_s < gap_minutes * 60:
+            return 0
+
+        # Collect all tool result indices
+        tool_indices = [i for i, m in enumerate(messages)
+                        if m.role == "tool" and isinstance(m.content, str)
+                        and m.content != "[Old tool result content cleared]"]
+        if len(tool_indices) <= keep_recent:
+            return 0
+
+        # Clear all except the most recent keep_recent
+        to_clear = tool_indices[:-keep_recent] if keep_recent > 0 else tool_indices
+        cleared = 0
+        for i in to_clear:
+            if len(messages[i].content) > 50:
+                messages[i].content = "[Old tool result content cleared]"
+                cleared += 1
+        if cleared:
+            logger.info("[microcompact] Cleared %d old tool result(s) (gap=%.0fm, kept=%d recent)",
+                        cleared, gap_s / 60, keep_recent)
+        return cleared
+
     def _progressive_clear_tool_results(messages: List[LLMMessage],
                                           target_tokens: int,
                                           current_tokens: int,

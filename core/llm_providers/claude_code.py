@@ -551,6 +551,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     continue
 
                 etype = event.get("type", "")
+                _parent_tc_id = event.get("parent_tool_use_id") or ""
                 logger.info("[claude-code] %s %.200s", etype, json.dumps(event))
 
                 if etype == "system":
@@ -629,14 +630,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 logger.debug("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
                                              _tc_name, _block_id)
                                 continue
-                            _pub("tool_call", {
+                            _tc_event = {
                                 "tool": _tc_name,
                                 "arguments": _tc_args,
                                 "tc_id": _block_id,
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
-                            })
+                            }
+                            if _parent_tc_id:
+                                _tc_event["parent_tc_id"] = _parent_tc_id
+                            _pub("tool_call", _tc_event)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
                             if thinking:
@@ -678,14 +682,17 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     if _tr_name == "mcp__pawflow__use_tool":
                                         _tr_name = _tc.get("arguments", {}).get("tool_name", _tr_name)
                                     break
-                            _pub("tool_result", {
+                            _tr_event = {
                                 "tool": _tr_name,
                                 "result": result_str[:300],
                                 "tc_id": tc_id,
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
-                            })
+                            }
+                            if _parent_tc_id:
+                                _tr_event["parent_tc_id"] = _parent_tc_id
+                            _pub("tool_result", _tr_event)
 
                 elif etype == "content_block_delta":
                     delta = event.get("delta", {})

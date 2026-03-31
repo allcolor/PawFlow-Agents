@@ -317,7 +317,7 @@ function connectSSE(cid) {
     }
     trackAgentTool(tcAgent, data.tool);
     // Single rendering path: addMsg handles ALL tool_call rendering
-    addMsg('tool_call', data.tool, {
+    const tcExtra = {
       tool_name: data.tool,
       tool_args: data.arguments || {},
       tc_id: data.tc_id || '',
@@ -326,7 +326,23 @@ function connectSSE(cid) {
       llm_service: data.llm_service || '',
       ts: data.ts,
       live: true,
-    });
+    };
+    if (data.parent_tc_id) tcExtra.parent_tc_id = data.parent_tc_id;
+    const tcEl = addMsg('tool_call', data.tool, tcExtra);
+    // Group under parent agent tool_call if this is a sub-agent tool
+    if (data.parent_tc_id && tcEl) {
+      const parentEl = document.querySelector('[data-tc-id="' + data.parent_tc_id + '"]');
+      if (parentEl) {
+        let childContainer = parentEl.querySelector('.tc-children');
+        if (!childContainer) {
+          childContainer = document.createElement('div');
+          childContainer.className = 'tc-children';
+          childContainer.style.cssText = 'margin-left:16px;border-left:2px solid #333;padding-left:8px;';
+          parentEl.appendChild(childContainer);
+        }
+        childContainer.appendChild(tcEl);
+      }
+    }
     document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });
 

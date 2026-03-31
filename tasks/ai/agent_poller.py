@@ -344,6 +344,9 @@ class AgentPollerMixin:
                 # For task entries, use the sub-conversation ID so messages
                 # are persisted in the isolated task context
                 _loop_cid = entry_key if "::task::" in entry_key else cid
+                # But publish events on the parent conv so webchat sees them
+                if "::task::" in entry_key:
+                    ctx["_event_cid"] = cid
                 thread = threading.Thread(
                     target=self._streaming_agent_loop,
                     args=(ctx, _loop_cid, bus),

@@ -245,6 +245,19 @@ class RelayThread:
             try:
                 self._docker_proc = _sp.Popen(
                     docker_cmd, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                # Background thread to read relay logs from container stderr
+                def _read_relay_logs():
+                    try:
+                        for line in self._docker_proc.stderr:
+                            msg = line.decode("utf-8", errors="replace").rstrip()
+                            if msg and "[FSRelay]" in msg:
+                                # Show important relay events to user
+                                if any(k in msg for k in ("connect", "disconnect", "error", "Reconnect")):
+                                    sys.stderr.write(f"[Relay] {msg}\n")
+                    except Exception:
+                        pass
+                threading.Thread(target=_read_relay_logs, daemon=True,
+                                 name="relay-log-reader").start()
                 # Wait for container to exit or stop event
                 while not self._stop_event.is_set():
                     try:
@@ -344,13 +357,6 @@ class RelayThread:
             conn.sendall(resp.encode("utf-8"))
 
         # Direct mode: connect from this process
-        # Filter [FSRelay] lines from stderr
-        _real_write = sys.stderr.write
-        def _filtered_write(s):
-            if isinstance(s, str) and "[FSRelay]" in s:
-                return len(s)
-            return _real_write(s)
-        sys.stderr.write = _filtered_write
 
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:

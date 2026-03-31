@@ -316,7 +316,7 @@ class AgentPollerMixin:
                 _is_task = "::task::" in entry_key
                 ctx = self._build_poll_context(cid, messages_data,
                                                scheduled_reasons=[reason],
-                                               skip_agent_context=_is_task)
+                                               skip_agent_context=False)
                 # For task sub-conversations, override the conversation_id
                 # so messages are persisted in the sub-conv, not the parent
                 if _is_task and ctx:

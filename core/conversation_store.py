@@ -371,7 +371,7 @@ class ConversationStore:
                     c["status"] = line.get("status", "idle")
                     c["created_at"] = line.get("created_at", 0)
                     c["expires_at"] = line.get("expires_at", 0)
-                elif t == "msg" and not line.get("private"):
+                elif t == "msg":
                     c["msg_count"] += 1
                     # First user message = preview
                     if not c["preview"] and line.get("role") == "user":

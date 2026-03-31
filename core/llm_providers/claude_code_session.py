@@ -103,6 +103,8 @@ class ClaudeCodeSessionMixin:
                              agent_name: str = "") -> str:
         """Get or create a dedicated working directory for this session."""
         cid = conversation_id or "default"
+        # Sanitize: replace :: (used in sub-conv keys) with __ for safe paths
+        cid = cid.replace(":", "_")
         agent = agent_name or "default"
         workdir = os.path.join(_SESSIONS_BASE, cid, agent)
         os.makedirs(workdir, exist_ok=True)

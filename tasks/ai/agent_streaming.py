@@ -404,6 +404,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             result = self._run_agent_loop(ctx, emitter)
             _had_error = getattr(result, "finish_reason", "") == "error"
 
+            # If messages arrived during the last turn, re-trigger a new loop
+            if ctx.get("_retrigger_after_done") and not _had_error:
+                ctx.pop("_retrigger_after_done", None)
+                logger.info("[agent:%s] re-triggering loop for queued messages",
+                            conversation_id[:8])
+                result = self._run_agent_loop(ctx, emitter)
+                _had_error = getattr(result, "finish_reason", "") == "error"
+
             # Set idle status
             ConversationStore.instance().set_status(conversation_id, "idle")
 
@@ -482,13 +490,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 except Exception as e:
                     logger.warning(f"[agent] Failed to reschedule thought: {e}")
 
-            # Auto-reschedule active tasks
-            if not _was_cancelled and not _had_error:
+            # Auto-reschedule active tasks (even on error — with backoff)
+            if not _was_cancelled:
                 try:
                     _store = ConversationStore.instance()
                     from core.poll_scheduler import PollScheduler as _PS2
                     _all_tasks = _store.get_extra(conversation_id, "agent_tasks") or {}
                     _ag_name = ctx.get("active_agent_name") or ""
+                    _tasks_changed = False
                     for _tid, _task in _all_tasks.items():
                         if not isinstance(_task, dict) or _task.get("agent") != _ag_name:
                             continue
@@ -500,16 +509,37 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             _task["status"] = "failed"
                             _task["last_result"] = f"Auto-failed: {_iters}/{_max} iterations"
                             _all_tasks[_tid] = _task
-                            _store.set_extra(conversation_id, "agent_tasks", _all_tasks)
+                            _tasks_changed = True
                             continue
                         _key = f"{conversation_id}::task::{_tid}"
                         if _PS2.instance().get(_key):
                             continue
                         from core.tool_registry import AssignTaskHandler as _ATH
+                        _normal_delay = _ATH._get_task_delay(_task)
+                        if _had_error:
+                            # Backoff on error: double delay, cap at 5 min
+                            _err_count = _task.get("consecutive_errors", 0) + 1
+                            _task["consecutive_errors"] = _err_count
+                            _delay = min(_normal_delay * (2 ** _err_count), 300)
+                            _task["last_result"] = f"Error (attempt {_err_count}): provider failed"
+                            _all_tasks[_tid] = _task
+                            _tasks_changed = True
+                            logger.warning(
+                                "[agent] Task %s error #%d, retry in %ds",
+                                _tid, _err_count, _delay)
+                        else:
+                            _delay = _normal_delay
+                            # Reset error counter on success
+                            if _task.get("consecutive_errors"):
+                                _task["consecutive_errors"] = 0
+                                _all_tasks[_tid] = _task
+                                _tasks_changed = True
                         _PS2.instance().schedule_delay(
-                            conversation_id, _ATH._get_task_delay(_task),
+                            conversation_id, _delay,
                             key=_key,
                             reason=f"[agent_task:{_tid}] auto-reschedule ({_task.get('agent', _ag_name)})",
                             user_id=ctx.get("user_id", ""))
+                    if _tasks_changed:
+                        _store.set_extra(conversation_id, "agent_tasks", _all_tasks)
                 except Exception as e:
                     logger.warning(f"[agent] Failed to auto-reschedule tasks: {e}")

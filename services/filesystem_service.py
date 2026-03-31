@@ -432,7 +432,7 @@ class WSListener:
         except Exception as e:
             _err_str = str(e)
             if "0 bytes read" in _err_str:
-                logger.debug("Relay disconnected normally (%s)", tag)
+                logger.info("Relay disconnected: %s (connection closed by peer)", tag)
             else:
                 logger.error("Relay connection error (%s): %s", tag, e)
         finally:

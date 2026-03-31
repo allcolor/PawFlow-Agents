@@ -210,6 +210,11 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if user_id:
                     h.set_user_id(user_id)
+            elif hasattr(h, 'name') and h.name == 'read_parent_context':
+                if conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if user_id:
+                    h.set_user_id(user_id)
             elif isinstance(h, BaseFsHandler):
                 if user_id:
                     h.set_user_id(user_id)

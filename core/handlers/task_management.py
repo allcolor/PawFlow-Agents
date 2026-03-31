@@ -344,7 +344,12 @@ class CompleteTaskHandler(ToolHandler):
         agent = self._agent_name or "assistant"
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+        # Tasks are stored in the PARENT conversation's extras.
+        # Sub-conv IDs have format: parent_id::task::task_id
+        _parent_cid = self._conversation_id
+        if "::task::" in _parent_cid:
+            _parent_cid = _parent_cid.split("::task::")[0]
+        all_tasks = store.get_extra(_parent_cid, "agent_tasks") or {}
 
         # Find the task — by ID or by agent (if only one active)
         task = None
@@ -371,7 +376,7 @@ class CompleteTaskHandler(ToolHandler):
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
-                self._conversation_id, "task_progress", {
+                _parent_cid, "task_progress", {
                     "task_id": task_id, "agent": agent, "done": done,
                     "progress": progress, "result": result,
                     "iterations": task["iterations_done"],
@@ -383,7 +388,7 @@ class CompleteTaskHandler(ToolHandler):
         try:
             _log_type = "completed" if done else "progress"
             _log_detail = result[:200] if done else progress[:200]
-            _append_task_log(self._conversation_id, task_id, {
+            _append_task_log(_parent_cid, task_id, {
                 "type": _log_type,
                 "agent": agent,
                 "detail": _log_detail,
@@ -396,11 +401,11 @@ class CompleteTaskHandler(ToolHandler):
             if verifier:
                 task["status"] = "verifying"
                 all_tasks[task_id] = task
-                store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+                store.set_extra(_parent_cid, "agent_tasks", all_tasks)
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().schedule_delay(
-                    self._conversation_id, 0,
-                    key=f"{self._conversation_id}::task_verify::{task_id}",
+                    _parent_cid, 0,
+                    key=f"{_parent_cid}::task_verify::{task_id}",
                     reason=f"[task_verify:{task_id}] verify by {verifier} ({agent})",
                     user_id=task.get("assigned_by", ""),
                 )
@@ -408,21 +413,21 @@ class CompleteTaskHandler(ToolHandler):
             else:
                 # Remove completed task — trace is in chat history
                 all_tasks.pop(task_id, None)
-                store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+                store.set_extra(_parent_cid, "agent_tasks", all_tasks)
                 # Cancel any pending schedule
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(
-                    f"{self._conversation_id}::task::{task_id}")
+                    f"{_parent_cid}::task::{task_id}")
                 return f"Task {task_id} completed."
         else:
             task["status"] = "active"
             all_tasks[task_id] = task
-            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+            store.set_extra(_parent_cid, "agent_tasks", all_tasks)
             delay = AssignTaskHandler._get_task_delay(task)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().schedule_delay(
-                self._conversation_id, delay,
-                key=f"{self._conversation_id}::task::{task_id}",
+                _parent_cid, delay,
+                key=f"{_parent_cid}::task::{task_id}",
                 reason=f"[agent_task:{task_id}] continue ({task.get('agent', agent)})",
                 user_id=task.get("assigned_by", ""),
             )
@@ -485,7 +490,11 @@ class VerifyTaskHandler(ToolHandler):
 
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+        # Tasks are stored in the PARENT conv (sub-conv format: parent::task::tid)
+        _parent_cid = self._conversation_id
+        if "::task" in _parent_cid:
+            _parent_cid = _parent_cid.split("::task")[0]
+        all_tasks = store.get_extra(_parent_cid, "agent_tasks") or {}
         task = all_tasks.get(task_id)
         if not task:
             return f"Task '{task_id}' not found"
@@ -494,7 +503,7 @@ class VerifyTaskHandler(ToolHandler):
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
-                self._conversation_id, "task_progress", {
+                _parent_cid, "task_progress", {
                     "task_id": task_id, "agent": target_agent,
                     "verifier": self._agent_name,
                     "approved": approved, "reason": reason,
@@ -505,7 +514,7 @@ class VerifyTaskHandler(ToolHandler):
             pass
 
         try:
-            _append_task_log(self._conversation_id, task_id, {
+            _append_task_log(_parent_cid, task_id, {
                 "type": "verified",
                 "agent": target_agent,
                 "verifier": self._agent_name,
@@ -518,12 +527,12 @@ class VerifyTaskHandler(ToolHandler):
         if approved:
             # Remove completed task
             all_tasks.pop(task_id, None)
-            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+            store.set_extra(_parent_cid, "agent_tasks", all_tasks)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().cancel(
-                f"{self._conversation_id}::task::{task_id}")
+                f"{_parent_cid}::task::{task_id}")
             PollScheduler.instance().cancel(
-                f"{self._conversation_id}::task_verify::{task_id}")
+                f"{_parent_cid}::task_verify::{task_id}")
             return f"Task {task_id} approved and completed."
         else:
             task["status"] = "active"
@@ -531,11 +540,11 @@ class VerifyTaskHandler(ToolHandler):
                 "by": self._agent_name, "reason": reason, "at": _t.time(),
             }
             all_tasks[task_id] = task
-            store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
+            store.set_extra(_parent_cid, "agent_tasks", all_tasks)
             from core.poll_scheduler import PollScheduler
             PollScheduler.instance().schedule_delay(
-                self._conversation_id, 0,
-                key=f"{self._conversation_id}::task::{task_id}",
+                _parent_cid, 0,
+                key=f"{_parent_cid}::task::{task_id}",
                 reason=f"[agent_task:{task_id}] rejected: {reason[:80]} ({target_agent})",
                 user_id=task.get("assigned_by", ""),
             )

@@ -227,9 +227,12 @@ class AgentPollerMixin:
                     _task_id_tmp = entry_key.rsplit("::", 1)[-1]
                     _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
                     _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
-                    _task_prompt = _task_data_tmp.get("prompt", "") or reason
+                    _task_prompt = _task_data_tmp.get("task", "") or _task_data_tmp.get("prompt", "") or reason
                     # Create a minimal initial context for the task
+                    # Include a system placeholder so _prepare_agent_context
+                    # injects the full agent system prompt (identity, rules, etc.)
                     messages_data = [
+                        {"role": "system", "content": "(task sub-conversation)"},
                         {"role": "user", "content": _task_prompt},
                     ]
                     # Save as the initial sub-conversation

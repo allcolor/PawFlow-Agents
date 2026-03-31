@@ -145,6 +145,11 @@ class ReadParentContextHandler(ToolHandler):
     def set_parent_conversation_id(self, cid: str):
         self._parent_conversation_id = cid
 
+    def set_conversation_id(self, cid: str):
+        # Auto-detect parent from sub-conv ID (parent::task::tid)
+        if "::task" in cid:
+            self._parent_conversation_id = cid.split("::task")[0]
+
     def set_user_id(self, uid: str):
         self._user_id = uid
 

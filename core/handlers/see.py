@@ -106,8 +106,36 @@ class SeeHandler(BaseFsHandler):
     def _see_image(self, fname: str, data: bytes, ext: str) -> str:
         """Return image as multimodal marker."""
         import base64
+        import io
         import mimetypes
         mime = mimetypes.guess_type(fname)[0] or f"image/{ext}"
+
+        # Resize large images to save context tokens
+        _MAX_BYTES = 1_000_000  # 1 MB
+        _MAX_DIM = 2000
+        try:
+            from PIL import Image
+            img = Image.open(io.BytesIO(data))
+            w, h = img.size
+            if len(data) > _MAX_BYTES or max(w, h) > _MAX_DIM:
+                # Resize to fit within _MAX_DIM on longest edge
+                if max(w, h) > _MAX_DIM:
+                    scale = _MAX_DIM / max(w, h)
+                    img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+                # Convert to JPEG quality 85
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                buf = io.BytesIO()
+                img.save(buf, format="JPEG", quality=85)
+                data = buf.getvalue()
+                mime = "image/jpeg"
+                logger.info("[see] resized %s: %dx%d -> %dx%d (%d bytes)",
+                            fname, w, h, img.size[0], img.size[1], len(data))
+        except ImportError:
+            pass  # Pillow not available — send original
+        except Exception as e:
+            logger.warning("[see] image resize failed for %s: %s", fname, e)
+
         b64 = base64.b64encode(data).decode("ascii")
 
         # Store in FileStore for URL access

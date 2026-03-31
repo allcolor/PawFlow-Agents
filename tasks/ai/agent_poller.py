@@ -316,11 +316,13 @@ class AgentPollerMixin:
                 _is_task = "::task::" in entry_key
                 ctx = self._build_poll_context(cid, messages_data,
                                                scheduled_reasons=[reason],
-                                               skip_agent_context=False)
+                                               skip_agent_context=_is_task)
                 # For task sub-conversations, override the conversation_id
                 # so messages are persisted in the sub-conv, not the parent
                 if _is_task and ctx:
                     ctx["conversation_id"] = entry_key
+                    # Don't resume parent's Claude Code session
+                    ctx["_claude_has_session"] = False
                 if ctx is None:
                     with self._active_lock:
                         rc = self._active_conversations.get(cid, 1) - 1

@@ -34,7 +34,7 @@ class BashHandler(BaseFsHandler):
                 },
                 "timeout": {"type": "integer", "description": "Timeout in seconds (default: no limit)"},
                 "path": {"type": "string", "description": "Working directory for the command"},
-                "max_output": {"type": "integer", "description": "Max output chars (default: 50000)"},
+                "max_output": {"type": "integer", "description": "Max output chars (default: 30000, max: 150000)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit for default."},
             },
             "required": ["command"],
@@ -69,8 +69,9 @@ class BashHandler(BaseFsHandler):
         try:
             path = arguments.get("path", ".")
             shell = arguments.get("shell", "")
-            _cap = self._tool_result_max_chars
-            _max_out = min(int(arguments.get("max_output", _cap) or _cap), _cap)
+            _bash_default = 30000
+            _bash_max = 150000
+            _max_out = min(int(arguments.get("max_output", _bash_default) or _bash_default), _bash_max)
 
             _exec_kwargs = {"shell": shell}
             if "timeout" in arguments:

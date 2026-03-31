@@ -22,7 +22,7 @@ class GrepHandler(BaseFsHandler):
                 "pattern": {"type": "string", "description": "Regex pattern to search for"},
                 "path": {"type": "string", "description": "Directory or file to search in (default: root)"},
                 "recursive": {"type": "boolean", "description": "Search recursively (default: true)"},
-                "limit": {"type": "integer", "description": "Max results (default: 50)"},
+                "limit": {"type": "integer", "description": "Max results (default: 250)"},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
             },
             "required": ["pattern"],
@@ -36,7 +36,7 @@ class GrepHandler(BaseFsHandler):
             return "Error: 'pattern' is required"
         path = arguments.get("path", ".")
         recursive = arguments.get("recursive", True)
-        limit = int(arguments.get("limit", 50) or 50)
+        limit = int(arguments.get("limit", 250) or 250)
         source = arguments.get("source", "")
 
         _svc_name, path = self._parse_fs_url(path)

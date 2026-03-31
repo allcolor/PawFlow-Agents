@@ -230,7 +230,7 @@ class AgentCoreMixin:
                     from core.conversation_event_bus import ConversationEventBus
                     try:
                         ConversationEventBus.instance().publish_event(
-                            conversation_id, "message_meta", {
+                            ctx.get("_event_cid", conversation_id), "message_meta", {
                                 "msg_id": msg.msg_id,
                                 "source": _src,
                                 "model": _src.get("model", ""),
@@ -803,7 +803,7 @@ class AgentCoreMixin:
                         _spent = (total_tokens_in / 1_000_000 * _ci) + (total_tokens_out / 1_000_000 * _co)
                         if _spent >= _bud * 0.8:
                             ctx["_budget_warning_sent"] = True
-                            emitter.bus.publish_event(conversation_id, "budget_warning", {
+                            emitter.bus.publish_event(ctx.get("_event_cid", conversation_id), "budget_warning", {
                                 "spent_usd": round(_spent, 4),
                                 "budget_usd": _bud,
                                 "percent": round(_spent / _bud * 100, 1),
@@ -923,6 +923,32 @@ class AgentCoreMixin:
                             if _prev.endswith("[/TOOL OUTPUT]"):
                                 _prev = _prev[:-len("[/TOOL OUTPUT]")].rstrip("\n")
                         emitter.on_tool_result(tc, result_text, _prev)
+
+                    # Per-turn aggregate cap: if total tool results > 200K chars,
+                    # persist the largest to FileStore to avoid context bloat
+                    _AGG_CAP = 200_000
+                    _turn_tool_msgs = [m for m in messages if m.role == "tool"
+                                       and m in new_messages]
+                    _total_chars = sum(len(m.content) for m in _turn_tool_msgs
+                                       if isinstance(m.content, str))
+                    if _total_chars > _AGG_CAP:
+                        for m in sorted(_turn_tool_msgs,
+                                        key=lambda x: len(x.content or ''), reverse=True):
+                            if _total_chars <= _AGG_CAP:
+                                break
+                            if isinstance(m.content, str) and len(m.content) > 5000:
+                                from core.file_store import FileStore
+                                fid = FileStore.instance().store(
+                                    "tool_result.txt", m.content.encode(), "text/plain")
+                                _saved = len(m.content)
+                                m.content = (
+                                    f"[Result too large ({_saved:,} chars) — saved to "
+                                    f"FileStore: /files/{fid}/tool_result.txt. Use "
+                                    f"read(path='tool_result.txt', source='filestore', "
+                                    f"file_id='{fid}') to access.]")
+                                _total_chars -= _saved - len(m.content)
+                        logger.info("[agent:%s] aggregate cap: persisted large tool results to FileStore",
+                                    conversation_id[:8])
 
                     emitter.stop_heartbeat(_iter_hb)  # stop iteration heartbeat
                     emitter.on_iteration_end(
@@ -1113,7 +1139,7 @@ class AgentCoreMixin:
                     try:
                         from core.conversation_event_bus import ConversationEventBus
                         ConversationEventBus.instance().publish_event(
-                            conversation_id, "done", {
+                            ctx.get("_event_cid", conversation_id), "done", {
                                 "response": response_content or "",
                                 "agent_name": ctx.get("active_agent_name", ""),
                             })

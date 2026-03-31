@@ -135,7 +135,12 @@ function addMsg(role, text, extra) {
   // Timestamp — use provided timestamp or current time
   const _ts = extra && (extra.timestamp || extra.ts);
   const msgTime = _ts ? new Date(_ts * 1000) : new Date();
-  const timeStr = msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  const _today = new Date();
+  const _sameDay = msgTime.toDateString() === _today.toDateString();
+  const timeStr = _sameDay
+    ? msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+    : msgTime.toLocaleDateString([], {day: '2-digit', month: '2-digit'}) + ' '
+      + msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
   const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
 
   // Action buttons (copy + delete + reply) for all user-visible messages

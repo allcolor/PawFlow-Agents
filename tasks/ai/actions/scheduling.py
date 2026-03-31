@@ -262,11 +262,9 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         for tid, task in matched.items():
 
             if action == "cancel_task":
-                # Remove cancelled task from dict
-                all_tasks.pop(tid, None)
+                task["status"] = "cancelled"
                 scheduler.cancel(f"{conv_id}::task::{tid}")
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
-                continue  # skip the all_tasks[tid] = task below
             elif action == "pause_task":
                 task["status"] = "paused"
                 scheduler.cancel(f"{conv_id}::task::{tid}")

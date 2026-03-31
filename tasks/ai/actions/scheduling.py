@@ -35,6 +35,8 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         at_str = body.get("at", "")
         reason = body.get("reason", "manual schedule")
+        agent = body.get("agent", "")
+        loop_seconds = body.get("loop_seconds", 0)
         if not conv_id or not at_str:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id or at"}).encode())
             flowfile.set_attribute("http.response.status", "400")
@@ -49,16 +51,61 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Invalid date: {at_str}"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        PollScheduler.instance().schedule(conv_id, recheck_at, user_id, reason)
-        store.set_status(conv_id, "active")
-        flowfile.set_content(json.dumps({"scheduled": True, "at": recheck_at}).encode())
+        scheduler = PollScheduler.instance()
+        sched_reason = reason
+        if agent:
+            sched_reason = f"[@{agent}] {reason}"
+        if loop_seconds and int(loop_seconds) > 0:
+            loop_key = scheduler.schedule_loop(
+                conversation_id=conv_id,
+                interval_seconds=int(loop_seconds),
+                prompt=sched_reason,
+                user_id=user_id,
+            )
+            store.set_status(conv_id, "active")
+            flowfile.set_content(json.dumps({
+                "scheduled": True, "recurring": True,
+                "interval": int(loop_seconds), "key": loop_key,
+                "reason": sched_reason,
+            }).encode())
+        else:
+            scheduler.schedule(conv_id, recheck_at, user_id, sched_reason)
+            store.set_status(conv_id, "active")
+            flowfile.set_content(json.dumps({"scheduled": True, "at": recheck_at}).encode())
         return [flowfile]
 
     if action == "delete_schedule":
         conv_id = body.get("conversation_id", "")
+        key = body.get("key", "").strip()
         from core.poll_scheduler import PollScheduler
-        cancelled = PollScheduler.instance().cancel(conv_id)
-        flowfile.set_content(json.dumps({"cancelled": cancelled}).encode())
+        scheduler = PollScheduler.instance()
+        if key == "all":
+            # Delete all schedules for this conversation
+            all_scheds = scheduler.list_all()
+            count = 0
+            for s in all_scheds:
+                if s.get("conversation_id") == conv_id:
+                    scheduler.cancel(s.get("key", s.get("conversation_id", "")))
+                    count += 1
+            flowfile.set_content(json.dumps({"cancelled": count}).encode())
+        elif key:
+            # Delete by exact key
+            cancelled = scheduler.cancel(key)
+            if not cancelled:
+                # Try matching by index (1-based) from conversation's schedules
+                all_scheds = scheduler.list_all()
+                conv_scheds = [s for s in all_scheds if s.get("conversation_id") == conv_id]
+                try:
+                    idx = int(key) - 1
+                    if 0 <= idx < len(conv_scheds):
+                        actual_key = conv_scheds[idx].get("key", conv_scheds[idx].get("conversation_id", ""))
+                        cancelled = scheduler.cancel(actual_key)
+                except (ValueError, IndexError):
+                    pass
+            flowfile.set_content(json.dumps({"cancelled": cancelled}).encode())
+        else:
+            flowfile.set_content(json.dumps({"error": "Missing key. Use '/schedules del <key>' or '/schedules del all'"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
         return [flowfile]
 
     if action == "create_task_def":

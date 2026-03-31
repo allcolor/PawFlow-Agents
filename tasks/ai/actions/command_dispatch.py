@@ -388,10 +388,15 @@ HELP: Dict[str, Dict[str, str]] = {
     },
 
     # ── Scheduling ──
-    "/schedules": {
-        "usage": "/schedules [list | add | del]",
-        "short": "Manage scheduled wake-ups",
-        "detail": "Manage scheduled poll rechecks for agents.",
+     "/schedules": {
+         "usage": "/schedules list | add <datetime> [reason] [@agent] [--loop <seconds>] | del <key>",
+         "short": "Manage scheduled wake-ups",
+         "detail": "Manage scheduled poll rechecks for agents.\n\n"
+                   "  /schedules list                     — List pending schedules\n"
+                   "  /schedules add <YYYYMMDDHHmmss> [reason] [@agent] [--loop N]\n"
+                   "                                      — Add a schedule (optionally recurring every N seconds)\n"
+                   "  /schedules del <key>                — Delete a specific schedule by key\n"
+                   "  /schedules del all                  — Delete all schedules",
     },
     "/autoconv": {
         "usage": "/autoconv <agent> [on|off|status] [min] [max]",
@@ -1161,11 +1166,37 @@ def _parse_schedules_command(arg: str, base: dict) -> dict:
     if subcmd == "list":
         return {"action": "list_schedules", **base}
     if subcmd == "add":
-        return {"action": "add_schedule", "args": p[1] if len(p) > 1 else "",
-                **base}
+        rest = p[1] if len(p) > 1 else ""
+        # Parse: <datetime> [reason words...] [@agent] [--loop N]
+        parts = rest.split()
+        at_str = parts[0] if parts else ""
+        agent = ""
+        loop_seconds = 0
+        reason_parts = []
+        i = 1
+        while i < len(parts):
+            if parts[i].startswith("@"):
+                agent = parts[i][1:]  # strip @
+                i += 1
+            elif parts[i] == "--loop" and i + 1 < len(parts):
+                try:
+                    loop_seconds = int(parts[i + 1])
+                except ValueError:
+                    pass
+                i += 2
+            else:
+                reason_parts.append(parts[i])
+                i += 1
+        reason = " ".join(reason_parts) if reason_parts else "manual schedule"
+        result = {"action": "add_schedule", "at": at_str, "reason": reason, **base}
+        if agent:
+            result["agent"] = agent
+        if loop_seconds > 0:
+            result["loop_seconds"] = loop_seconds
+        return result
     if subcmd == "del":
-        return {"action": "delete_schedule", "key": p[1] if len(p) > 1 else "",
-                **base}
+        key = p[1].strip() if len(p) > 1 else ""
+        return {"action": "delete_schedule", "key": key, **base}
     return {"action": "list_schedules", **base}
 
 

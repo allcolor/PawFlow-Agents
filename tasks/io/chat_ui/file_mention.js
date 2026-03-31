@@ -31,6 +31,11 @@ function _onMentionInput(e) {
 
   if (atPos < 0) { _closeMention(); return; }
 
+  // Don't trigger file mention inside slash commands that use @name syntax
+  // e.g. /skill assign @agent @skill, /agent del @name, /msg @agent
+  const before = text.substring(0, atPos).trimStart();
+  if (/^\//.test(before)) { _closeMention(); return; }
+
   _mentionStart = atPos;
   _mentionQuery = text.substring(atPos + 1, pos);
 
@@ -177,5 +182,6 @@ async function _selectMention(idx) {
   } catch (e) { console.error('File mention read failed:', e); }
 }
 
-// Initialize when DOM is ready
-document.addEventListener('DOMContentLoaded', () => setTimeout(initFileMention, 100));
+// Disabled: @file autocomplete was too slow (5-6s latency) and interfered with typing.
+// To re-enable, uncomment the line below.
+// document.addEventListener('DOMContentLoaded', () => setTimeout(initFileMention, 100));

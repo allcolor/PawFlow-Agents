@@ -206,6 +206,10 @@ class ScheduleRecheckHandler(ToolHandler):
                     "type": "string",
                     "description": "Agent to wake up (e.g. 'grok', 'qwen'). Default: whichever agent is active.",
                 },
+                "recurring": {
+                    "type": "boolean",
+                    "description": "If true, the recheck repeats at the same interval automatically (requires delay_seconds). Default: false.",
+                },
             },
             "required": ["reason"],
         }
@@ -244,22 +248,37 @@ class ScheduleRecheckHandler(ToolHandler):
         else:
             return "Error: provide either 'delay_seconds' or 'at'"
 
+        recurring = arguments.get("recurring", False)
+
         # If agent specified, encode it in reason so poller wakes the right agent
         sched_reason = reason
         if agent:
             sched_reason = f"[scheduled:{agent}] {reason}"
 
-        scheduler.schedule(
-            conversation_id=self._conversation_id,
-            recheck_at=recheck_at,
-            user_id=self._user_id,
-            reason=sched_reason,
-        )
+        if recurring and delay and int(delay) > 0:
+            loop_key = scheduler.schedule_loop(
+                conversation_id=self._conversation_id,
+                interval_seconds=int(delay),
+                prompt=sched_reason,
+                user_id=self._user_id,
+            )
+            from datetime import datetime, timezone as tz
+            dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            agent_info = f" Agent: {agent}" if agent else ""
+            return (f"Recurring recheck scheduled every {int(delay)}s (first at {dt_str})."
+                    f"{agent_info} Loop key: {loop_key}. Reason: {reason}")
+        else:
+            scheduler.schedule(
+                conversation_id=self._conversation_id,
+                recheck_at=recheck_at,
+                user_id=self._user_id,
+                reason=sched_reason,
+            )
 
-        from datetime import datetime, timezone as tz
-        dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        agent_info = f" Agent: {agent}" if agent else ""
-        return f"Recheck scheduled for {dt_str}.{agent_info} Reason: {reason}"
+            from datetime import datetime, timezone as tz
+            dt_str = datetime.fromtimestamp(recheck_at, tz=tz.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+            agent_info = f" Agent: {agent}" if agent else ""
+            return f"Recheck scheduled for {dt_str}.{agent_info} Reason: {reason}"
 
 
 class LocalFilesHandler(ToolHandler):

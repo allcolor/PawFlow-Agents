@@ -573,16 +573,20 @@ class AgentPollerMixin:
             )
 
         if scheduled_reasons:
+            from datetime import datetime, timezone as _tz_checkin
+            _now_str = datetime.now(_tz_checkin.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
             reasons_text = "\n".join(f"- {r}" for r in scheduled_reasons)
             return (
-                "[System: Scheduled wake-up]\n"
+                f"[System: Scheduled wake-up — {_now_str}]\n"
                 f"You are being woken up because of scheduled reminder(s):\n"
                 f"{reasons_text}\n\n"
-                "Act on these scheduled reasons. Respond to the user accordingly.\n"
-                "If the reason is a reminder, remind the user.\n"
-                "If the reason is to continue work, continue using your tools.\n"
+                "IMPORTANT: This is a NEW wake-up. Any similar work you see in the "
+                "conversation history above was done in a PREVIOUS session. You must "
+                "execute the scheduled task(s) NOW, fresh — do not skip them because "
+                "they appear to have been done before.\n\n"
+                "Act on these scheduled reasons using your tools.\n"
                 "Do NOT respond with [NO_PENDING_WORK] unless you have fully "
-                "addressed all scheduled reasons above."
+                "addressed all scheduled reasons above IN THIS SESSION."
             )
 
         return (

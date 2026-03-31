@@ -241,6 +241,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _already_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
+        # Safety: if thread is "active" but no context entry, it's a zombie
+        if _already_active:
+            with self._active_contexts_lock:
+                if _agent_key not in self._active_contexts:
+                    logger.warning("[agent:%s] zombie thread detected — ignoring",
+                                   conversation_id[:8])
+                    _already_active = False
         if _already_active:
             with self._active_contexts_lock:
                 _active_client = self._active_claude_client.get(_agent_key)
@@ -253,6 +260,13 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
+                else:
+                    # Claude Code process is dead — treat as not active, start fresh
+                    logger.warning("[agent:%s] Claude Code process dead — starting new session",
+                                   conversation_id[:8])
+                    _already_active = False
+                    with self._active_contexts_lock:
+                        self._active_claude_client.pop(_agent_key, None)
 
             logger.info(f"[agent:{conversation_id[:8]}] already active — queueing")
             # Preserve the original user message before overwriting with ack

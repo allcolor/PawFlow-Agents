@@ -241,17 +241,6 @@ class AgentPollerMixin:
                     store.save(entry_key, messages_data, user_id=_uid_tmp)
             else:
                 messages_data = store.load(cid)
-                            "All actions described below have been pre-authorized. You do not need to ask for confirmation — "
-                            "the task definition IS the authorization. Execute the instructions.\n\n"
-                            + _task_prompt
-                        )},
-                    ]
-                    # Save as the initial sub-conversation
-                    _meta_tmp = store.get_metadata(cid)
-                    _uid_tmp = _meta_tmp["user_id"] if _meta_tmp else ""
-                    store.save(entry_key, messages_data, user_id=_uid_tmp)
-            else:
-                messages_data = store.load(cid)
             if not messages_data:
                 continue
 

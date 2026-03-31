@@ -221,19 +221,30 @@ class AgentPollerMixin:
             # For task sub-conversations, load from the sub-conv
             if "::task::" in entry_key:
                 messages_data = store.load(entry_key)
+                if messages_data:
+                    # Subsequent iteration — append "continue" as user message
+                    store.append_messages(entry_key, [{"role": "user", "content": "continue"}])
+                    messages_data = store.load(entry_key)
                 if not messages_data:
                     # First iteration — sub-conv doesn't exist yet.
-                    # Load only the task prompt from parent extras, NOT the full parent conv.
                     _task_id_tmp = entry_key.rsplit("::", 1)[-1]
                     _all_tasks_tmp = store.get_extra(cid, "agent_tasks") or {}
                     _task_data_tmp = _all_tasks_tmp.get(_task_id_tmp, {})
                     _task_prompt = _task_data_tmp.get("task", "") or _task_data_tmp.get("prompt", "") or reason
-                    # Create a minimal initial context for the task
-                    # Include a system placeholder so _prepare_agent_context
-                    # injects the full agent system prompt (identity, rules, etc.)
+                    # Inject task prompt as a normal user message
+                    # (as if the human owner sent it directly)
+                    _meta_tmp = store.get_metadata(cid)
+                    _uid_tmp = _meta_tmp["user_id"] if _meta_tmp else ""
                     messages_data = [
-                        {"role": "system", "content": "(task sub-conversation)"},
                         {"role": "user", "content": _task_prompt},
+                    ]
+                    store.save(entry_key, messages_data, user_id=_uid_tmp)
+            else:
+                messages_data = store.load(cid)
+                            "All actions described below have been pre-authorized. You do not need to ask for confirmation — "
+                            "the task definition IS the authorization. Execute the instructions.\n\n"
+                            + _task_prompt
+                        )},
                     ]
                     # Save as the initial sub-conversation
                     _meta_tmp = store.get_metadata(cid)

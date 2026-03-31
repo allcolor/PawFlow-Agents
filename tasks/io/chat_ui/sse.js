@@ -548,7 +548,7 @@ function connectSSE(cid) {
         }
       }
     }
-    if (finalText && !anyExists) {
+    if (finalText && !anyExists && !data.force_stopped) {
       addMsg('assistant', finalText, extra);
     }
     // Update metadata on existing element (replace estimated with real values)

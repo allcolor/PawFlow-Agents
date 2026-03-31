@@ -757,7 +757,16 @@ class AgentLoopTask(
                     })
                     return
 
-                # Repair orphan tool_calls before sending to LLM
+                # Repair orphan tool_calls and remove orphan tool results
+                _valid_tc_ids = set()
+                for m in messages:
+                    if m.role == "assistant" and m.tool_calls:
+                        for tc in m.tool_calls:
+                            _valid_tc_ids.add(tc.id)
+                # Remove tool results with no matching tool_call
+                messages = [m for m in messages
+                            if m.role != "tool" or m.tool_call_id in _valid_tc_ids]
+                # Add missing tool results for tool_calls
                 for i, m in enumerate(messages):
                     if m.role == "assistant" and m.tool_calls:
                         tc_ids = {tc.id for tc in m.tool_calls}

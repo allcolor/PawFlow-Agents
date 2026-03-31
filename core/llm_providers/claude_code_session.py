@@ -352,6 +352,9 @@ class ClaudeCodeSessionMixin:
             "--strict-mcp-config",
             "--disallowedTools", self._DISALLOWED_BUILTIN_TOOLS,
         ]
+        _effort = self._cfg("effort", "")
+        if _effort:
+            claude_args.extend(["--effort", _effort])
         if mcp_config_path:
             claude_args.extend(["--mcp-config", mcp_config_path])
         if session_id:

@@ -328,6 +328,11 @@ class LLMConnectionService(BaseService):
                 "type": "string", "default": "2g",
                 "description": "Memory limit for container (e.g. '2g')",
             },
+            "effort": {
+                "type": "select", "default": "medium",
+                "options": ["low", "medium", "high", "max"],
+                "description": "Claude Code effort level (thinking budget)",
+            },
         }
 
     def get_parameter_rules(self) -> list:
@@ -359,6 +364,7 @@ class LLMConnectionService(BaseService):
                     "docker_image":  {"visible": True},
                     "docker_cpu_limit": {"visible": True},
                     "docker_memory_limit": {"visible": True},
+                    "effort":        {"visible": True},
                 }
             },
             {

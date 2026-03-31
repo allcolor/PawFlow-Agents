@@ -608,36 +608,43 @@ class ConversationStore:
 
     # ── Transcript read ───────────────────────────────────────────────
 
+    def _scan_transcript(self, lines) -> List[Dict]:
+        """Scan JSONL lines into transcript messages (with patches applied)."""
+        msgs = []
+        patches = {}
+        for line in lines:
+            if line.get("t") == "msg_patch":
+                mid = line.get("msg_id", "")
+                if mid:
+                    patches[mid] = {k: v for k, v in line.items()
+                                    if k not in ("t", "msg_id")}
+                continue
+            if line.get("t") != "msg":
+                continue
+            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+            if "ts" in line:
+                msg["timestamp"] = line["ts"]
+            msgs.append(msg)
+        if patches:
+            for msg in msgs:
+                mid = msg.get("msg_id", "")
+                if mid and mid in patches:
+                    msg.update(patches[mid])
+        return msgs
+
     def load(self, cid: str, user_id: str = "") -> Optional[List[Dict]]:
+        """Load entire transcript (all messages)."""
         if not self.exists(cid):
             return None
         if user_id:
             cache = self._load_cache(cid)
             if cache["user_id"] and cache["user_id"] != user_id:
                 return None
-        def _scan(lines):
-            msgs = []
-            patches = {}  # msg_id → patch dict
-            for line in lines:
-                if line.get("t") == "msg_patch":
-                    mid = line.get("msg_id", "")
-                    if mid:
-                        patches[mid] = {k: v for k, v in line.items()
-                                        if k not in ("t", "msg_id")}
-                    continue
-                if line.get("t") != "msg":
-                    continue
-                # Transcript shows ALL messages (including tool calls/results)
-                msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-                if "ts" in line:
-                    msg["timestamp"] = line["ts"]
-                msgs.append(msg)
-            return msgs
-        return self._read(cid, _scan)
+        return self._read(cid, self._scan_transcript)
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "") -> Optional[Dict]:
-        """Stream transcript, count total, return only the requested page."""
+        """Load a paginated slice of the transcript."""
         if not self.exists(cid):
             return None
         if user_id:
@@ -645,28 +652,7 @@ class ConversationStore:
             if cache["user_id"] and cache["user_id"] != user_id:
                 return None
         def _scan(lines):
-            # Stream: collect only msg_ids/indices, then re-read page
-            msgs = []
-            patches = {}  # msg_id → patch dict
-            for line in lines:
-                if line.get("t") == "msg_patch":
-                    mid = line.get("msg_id", "")
-                    if mid:
-                        patches[mid] = {k: v for k, v in line.items()
-                                        if k not in ("t", "msg_id")}
-                    continue
-                if line.get("t") != "msg":
-                    continue
-                msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-                if "ts" in line:
-                    msg["timestamp"] = line["ts"]
-                msgs.append(msg)
-            # Apply patches
-            if patches:
-                for msg in msgs:
-                    mid = msg.get("msg_id", "")
-                    if mid and mid in patches:
-                        msg.update(patches[mid])
+            msgs = self._scan_transcript(lines)
             total = len(msgs)
             end = total - offset
             start = max(0, end - limit)

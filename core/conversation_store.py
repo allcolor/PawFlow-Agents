@@ -56,10 +56,10 @@ class ConversationStore:
         with cls._lock:
             cls._instance = None
 
-    def _get_conv_lock(self, cid: str) -> threading.Lock:
+    def _get_conv_lock(self, cid: str) -> threading.RLock:
         with self._conv_locks_lock:
             if cid not in self._conv_locks:
-                self._conv_locks[cid] = threading.Lock()
+                self._conv_locks[cid] = threading.RLock()
             return self._conv_locks[cid]
 
     def _conv_path(self, cid: str) -> Path:
@@ -72,14 +72,12 @@ class ConversationStore:
     # ══════════════════════════════════════════════════════════════════
 
     def _read(self, cid: str, read_fn: Callable):
-        """THE ONLY read method. Lock, stream file to read_fn, release.
-
-        read_fn receives an iterator of parsed lines (streamed, not all in RAM).
-        Returns whatever read_fn returns.
-        """
+        """THE ONLY read method. Lock, stream file to read_fn, release."""
         lock = self._get_conv_lock(cid)
         path = self._conv_path(cid)
+        logger.info("[convstore] _read WAIT %s fn=%s", cid[:8], read_fn.__name__ if hasattr(read_fn, '__name__') else '?')
         with lock:
+            logger.info("[convstore] _read GOT %s", cid[:8])
             if not path.exists():
                 return read_fn(iter([]))
             try:
@@ -119,8 +117,11 @@ class ConversationStore:
             return
         lock = self._get_conv_lock(cid)
         path = self._conv_path(cid)
+        _ops = [o.get("op", "?") for o in operations]
+        logger.info("[convstore] _commit LOCK %s ops=%s", cid[:8], _ops)
 
         with lock:
+            logger.info("[convstore] _commit GOT %s", cid[:8])
             # Classify: do we need a rewrite or just appends?
             needs_rewrite = any(
                 op.get("op") in ("ctx_replace", "ctx_delete", "rewrite_full")

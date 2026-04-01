@@ -187,10 +187,53 @@ def _get_vnc_target(session_id: str) -> tuple:
     return (entry.get("host", "127.0.0.1"), entry["port"])
 
 
+# noVNC local fallback directories (checked in order)
+_NOVNC_LOCAL_DIRS = [
+    "/usr/share/novnc",
+    "/usr/local/share/novnc",
+]
+
+_MIME_TYPES = {
+    ".html": "text/html",
+    ".js": "application/javascript",
+    ".css": "text/css",
+    ".png": "image/png",
+    ".svg": "image/svg+xml",
+    ".ico": "image/x-icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".json": "application/json",
+}
+
+
+def _serve_novnc_local(pending_req, sub_path: str) -> bool:
+    """Serve noVNC static file from local filesystem. Returns True if served."""
+    import os
+    safe_path = os.path.normpath(sub_path).lstrip(os.sep).lstrip("/")
+    if ".." in safe_path:
+        return False
+    for base_dir in _NOVNC_LOCAL_DIRS:
+        full_path = os.path.join(base_dir, safe_path)
+        if os.path.isfile(full_path):
+            try:
+                with open(full_path, "rb") as f:
+                    body = f.read()
+                ext = os.path.splitext(full_path)[1].lower()
+                content_type = _MIME_TYPES.get(ext, "application/octet-stream")
+                pending_req.complete(200, {"Content-Type": content_type}, body)
+                return True
+            except Exception:
+                return False
+    return False
+
+
 def vnc_http_proxy(pending_req):
     """HTTP proxy callback for noVNC static files.
 
-    Proxies GET requests to the Docker container's noVNC HTTP server.
+    Proxies GET requests to the backend noVNC HTTP server.
+    Falls back to serving from local noVNC files if the backend
+    returns 405 (websockify without --web) or is unreachable.
     Route pattern: /vnc/{session_id}/{path}
     """
     import urllib.request
@@ -214,9 +257,17 @@ def vnc_http_proxy(pending_req):
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
             pending_req.complete(200, {"Content-Type": content_type}, body)
     except urllib.error.HTTPError as e:
+        if e.code == 405:
+            # websockify without --web returns 405 for static files;
+            # fall back to serving from local noVNC installation
+            if _serve_novnc_local(pending_req, sub_path):
+                return
         pending_req.complete(e.code, {"Content-Type": "text/plain"},
                              e.read()[:500])
     except Exception as e:
+        # Backend unreachable — try local fallback
+        if _serve_novnc_local(pending_req, sub_path):
+            return
         pending_req.complete(502, {"Content-Type": "application/json"},
                              json.dumps({"error": str(e)}).encode())
 

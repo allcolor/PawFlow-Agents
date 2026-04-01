@@ -52,10 +52,18 @@ function action$(actionName, params = {}, opts = {}) {
       if (typeof LOGIN_URL !== 'undefined' && LOGIN_URL) {
         window.location.href = LOGIN_URL;
       }
+      return;
     }
+    // Read response body — if it's NOT {"status":"accepted"}, it's a sync result
+    return resp.json().then(data => {
+      if (data && data.status !== 'accepted') {
+        // Sync response (no conversation_id = server ran it inline)
+        _commandResult$.next({ action: actionName, result: JSON.stringify(data) });
+      }
+      // else: accepted → result will arrive via SSE command_result
+    });
   }).catch(err => {
     console.warn('[action$] fetch failed for', actionName, err);
-    // Push error into the stream so subscriber gets notified
     _commandResult$.next({ action: actionName, error: err.message || 'Network error' });
   });
 

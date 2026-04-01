@@ -105,34 +105,32 @@ class LLMCliSharedMixin:
             if m.role == "system":
                 system_parts.append(text)
             elif m.role == "user":
+                # Strip image placeholders and base64 artifacts
+                if isinstance(m.content, list):
+                    _parts = [p.get("text", "") for p in m.content
+                              if isinstance(p, dict) and p.get("type") == "text"]
+                    text = "\n".join(p for p in _parts if p.strip())
                 last_user_text = text
-                history_lines.append(f"<message role=\"user\">\n{text}\n</message>")
+                if text.strip():
+                    history_lines.append(f"<message role=\"user\">\n{text}\n</message>")
             elif m.role == "assistant":
-                # Include source/agent identity if available
+                # Skip tool-call-only messages (no text content)
+                assistant_text = text.strip()
+                if not assistant_text and m.tool_calls:
+                    continue  # tool dispatch message, no conversational content
+                if not assistant_text:
+                    continue
                 source = getattr(m, "source", None) or {}
                 agent_name = source.get("name", "") if isinstance(source, dict) else ""
-                svc = source.get("llm_service", "") if isinstance(source, dict) else ""
                 attr = ' role="assistant"'
                 if agent_name:
                     attr += f' agent="{agent_name}"'
-                if svc:
-                    attr += f' service="{svc}"'
-
-                assistant_text = text
-                if m.tool_calls:
-                    tc_strs = []
-                    for tc in m.tool_calls:
-                        tc_strs.append(
-                            f'<tool_call>{json.dumps({"name": tc.name, "arguments": tc.arguments})}</tool_call>'
-                        )
-                    assistant_text = (assistant_text + "\n" + "\n".join(tc_strs)).strip()
+                # Don't include tool_calls in serialized history — CC manages its own tools
                 history_lines.append(f"<message{attr}>\n{assistant_text}\n</message>")
                 has_history = True
             elif m.role == "tool":
-                name = m.tool_call_id or "unknown"
-                history_lines.append(
-                    f"<message role=\"tool\" name=\"{name}\">\n{text}\n</message>"
-                )
+                # Skip tool results entirely — CC reads tools via MCP, not prompt
+                continue
 
         # Build system prompt
         tool_prompt = self._build_tool_prompt(tools) if tools else ""

@@ -282,18 +282,24 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     @staticmethod
     def _extract_images(messages) -> list:
-        """Extract images from messages and return as Anthropic content blocks.
+        """Extract images from the LAST user message only.
 
-        Removes image blocks from messages (so they don't bloat the text
-        prompt) and returns them as content blocks for the stream-json
-        message. This enables native vision in Claude Code.
+        Removes image blocks from ALL messages (so they don't bloat the text
+        prompt). Only returns image blocks from the LAST user message as
+        content blocks for the stream-json message (native vision).
 
-        Returns list of {"type": "image", "source": {"type": "base64", ...}}
+        Older images are replaced with a placeholder text.
         """
         import base64 as _b64
         image_blocks = []
 
-        for m in messages:
+        # Find the last user message index
+        _last_user_idx = -1
+        for i, m in enumerate(messages):
+            if m.role == "user" and isinstance(m.content, list):
+                _last_user_idx = i
+
+        for idx, m in enumerate(messages):
             if not isinstance(m.content, list):
                 continue
             new_content = []
@@ -303,32 +309,39 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     continue
                 btype = block.get("type", "")
 
+                _is_last_user = (idx == _last_user_idx)
+
                 if btype == "image_url":
                     url = (block.get("image_url") or {}).get("url", "")
                     if url.startswith("data:"):
-                        try:
-                            header, data_b64 = url.split(",", 1)
-                            mime = header.split(":")[1].split(";")[0]
-                            image_blocks.append({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": mime,
-                                    "data": data_b64,
-                                },
-                            })
-                            logger.info("Extracted image for vision: %s (%d chars b64)",
-                                        mime, len(data_b64))
-                            continue
-                        except Exception as e:
-                            logger.warning("Failed to extract image: %s", e)
+                        if _is_last_user:
+                            try:
+                                header, data_b64 = url.split(",", 1)
+                                mime = header.split(":")[1].split(";")[0]
+                                image_blocks.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": data_b64,
+                                    },
+                                })
+                                logger.info("Extracted image for vision: %s (%d chars b64)",
+                                            mime, len(data_b64))
+                            except Exception as e:
+                                logger.warning("Failed to extract image: %s", e)
+                        # Replace with placeholder (both old and current — current goes to image_blocks)
+                        new_content.append({"type": "text", "text": "[image]"})
+                        continue
 
                 elif btype == "image":
                     source = block.get("source", {})
                     if source.get("type") == "base64":
-                        image_blocks.append(block)
-                        logger.info("Extracted image for vision: %s",
-                                    source.get("media_type", "?"))
+                        if _is_last_user:
+                            image_blocks.append(block)
+                            logger.info("Extracted image for vision: %s",
+                                        source.get("media_type", "?"))
+                        new_content.append({"type": "text", "text": "[image]"})
                         continue
 
                 new_content.append(block)

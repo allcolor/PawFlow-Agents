@@ -1,14 +1,22 @@
 // ── Context editor ────────────────────────────────────────────────
 let _ctxAgentFilter = 'transcript';
 
+let _ctxCurrentOffset = 0;
+let _ctxHasMore = false;
+let _ctxTotalCount = 0;
+
 function cmdShowContext(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
   if (agentName !== undefined) _ctxAgentFilter = agentName;
-  const body = {};
+  _ctxCurrentOffset = 0;
+  const body = { limit: 50, offset: 0 };
   if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
   action$('get_context', body).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     data._agent_filter = _ctxAgentFilter;
+    _ctxHasMore = data.has_more || false;
+    _ctxTotalCount = data.message_count || 0;
+    _ctxCurrentOffset = (data.context || []).length;
     showContextOverlay(data);
   });
 }
@@ -28,8 +36,14 @@ function ctxLoadFull() {
 
 function ctxRefresh() {
   _ctxFullData = null;
-  action$('get_context').subscribe(data => {
+  _ctxCurrentOffset = 0;
+  const body = { limit: 50, offset: 0 };
+  if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
+  action$('get_context', body).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
+    _ctxHasMore = data.has_more || false;
+    _ctxTotalCount = data.message_count || 0;
+    _ctxCurrentOffset = (data.context || []).length;
     showContextOverlay(data);
   });
 }
@@ -72,6 +86,47 @@ function _ctxMutate(body, successMsg) {
     });
   });
 }
+function ctxLoadMore() {
+  const btn = document.getElementById('ctxLoadMore');
+  if (btn) btn.innerHTML = '<span style="color:#888">Loading...</span>';
+  const body = { limit: 50, offset: _ctxCurrentOffset };
+  if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
+  action$('get_context', body).subscribe(data => {
+    if (data.error) return;
+    _ctxHasMore = data.has_more || false;
+    _ctxCurrentOffset += (data.context || []).length;
+    const list = document.getElementById('ctx-msg-list');
+    if (!list) return;
+    // Remove old load-more button
+    if (btn) btn.remove();
+    const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
+    // Append older messages (already in chronological order from server, reverse for display)
+    const reversed = [...(data.context || [])].reverse();
+    reversed.forEach((m, ri) => {
+      const i = data.context.length - 1 - ri;
+      const color = roleColors[m.role] || '#808090';
+      const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
+      const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
+      const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + (_ctxCurrentOffset - (data.context || []).length + i) + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const row = document.createElement('div');
+      row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
+      row.innerHTML = '<div style="display:flex;align-items:center">' + badge + tcTag + '<span style="margin-left:auto">' + delBtn + '</span></div>'
+        + '<div style="color:#c0c0d0;font-size:12px;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">' + content.slice(0,200) + '</div>';
+      list.appendChild(row);
+    });
+    // New load-more button
+    if (_ctxHasMore) {
+      const more = document.createElement('div');
+      more.id = 'ctxLoadMore';
+      more.style.cssText = 'text-align:center;padding:12px';
+      more.innerHTML = '<button onclick="ctxLoadMore()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:12px">'
+        + '\u25BC Load older (' + _ctxCurrentOffset + ' of ' + _ctxTotalCount + ')</button>';
+      list.appendChild(more);
+    }
+  });
+}
+
 function ctxClose() {
   const overlay = document.getElementById('contextOverlay');
   if (overlay) overlay.remove();
@@ -265,7 +320,10 @@ function showContextOverlay(data) {
   if (!data.context || data.context.length === 0) {
     msgsHtml = '<div style="color:#6c6c8a;text-align:center;padding:20px">' + t('noContext') + '</div>';
   } else {
-    data.context.forEach((m, i) => {
+    // Reverse: newest first
+    const reversed = [...data.context].reverse();
+    reversed.forEach((m, ri) => {
+      const i = data.context.length - 1 - ri;  // original index for edit/delete
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
@@ -280,6 +338,12 @@ function showContextOverlay(data) {
         + '<div class="ctx-full" style="display:none;color:#a0a0c0;font-size:12px;margin-top:4px;white-space:pre-wrap;word-break:break-word;max-height:300px;overflow-y:auto">' + content + '</div>'
         + '</div>';
     });
+    // "Load more" button if there are older messages
+    if (_ctxHasMore) {
+      msgsHtml += '<div id="ctxLoadMore" style="text-align:center;padding:12px">'
+        + '<button onclick="ctxLoadMore()" style="background:#1e3a5f;color:#4fc3f7;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:12px">'
+        + '\u25BC Load older (' + _ctxCurrentOffset + ' of ' + _ctxTotalCount + ')</button></div>';
+    }
   }
   overlay.innerHTML = '<div style="background:#1a1a2e;border:1px solid #333;border-radius:12px;padding:20px;max-width:700px;width:90%;max-height:80vh;display:flex;flex-direction:column">'
     + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">'

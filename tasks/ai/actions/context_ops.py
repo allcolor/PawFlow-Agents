@@ -542,27 +542,58 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
     if action == "get_context":
         conv_id = body.get("conversation_id", "")
         _ctx_agent = body.get("agent_name", "")
+        _limit = int(body.get("limit", 50))
+        _offset = int(body.get("offset", 0))
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        if _ctx_agent == "transcript":
-            context_data = store.load(conv_id, user_id=user_id) or []
+
+        # Load paginated context (tail-first like load_page)
+        if _ctx_agent == "transcript" or not _ctx_agent:
+            page = store.load_page(conv_id, limit=_limit, offset=_offset, user_id=user_id)
+            if page is None:
+                flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
+                return [flowfile]
+            context_data = page["messages"]
+            total_count = page["total_count"]
+            has_more = page["has_more"]
             diverged = False
         elif _ctx_agent.startswith("cc_session:"):
             _cc_agent = _ctx_agent[len("cc_session:"):]
             context_data = _load_cc_session_context(conv_id, _cc_agent, store)
+            total_count = len(context_data)
+            has_more = False
             diverged = True
         elif _ctx_agent.startswith("task:"):
             _sub_tid = _ctx_agent.split("(")[0].replace("task:", "").strip()
             _sub_cid = f"{conv_id}::task::{_sub_tid}"
-            context_data = store.load(_sub_cid) or []
+            page = store.load_page(_sub_cid, limit=_limit, offset=_offset)
+            if page is None:
+                context_data = []
+                total_count = 0
+                has_more = False
+            else:
+                context_data = page["messages"]
+                total_count = page["total_count"]
+                has_more = page["has_more"]
             diverged = True
         else:
             context_data = _ctx_load(conv_id, _ctx_agent)
             diverged = context_data is not None
             if context_data is None:
-                context_data = store.load(conv_id, user_id=user_id) or []
+                page = store.load_page(conv_id, limit=_limit, offset=_offset, user_id=user_id)
+                context_data = page["messages"] if page else []
+                total_count = page["total_count"] if page else 0
+                has_more = page["has_more"] if page else False
+            else:
+                total_count = len(context_data)
+                # Paginate in-memory
+                end = len(context_data) - _offset
+                start = max(0, end - _limit)
+                context_data = context_data[start:end]
+                has_more = start > 0
+
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         # Classify messages for display
@@ -581,33 +612,34 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 "source": m.get("source"),
                 "msg_id": m.get("msg_id", ""),
             })
-        # Include agent context status map
-        _agent_ctx_map = store.list_agent_contexts(conv_id)
-        # Include active Claude Code sessions
-        _extras = store.get_extras(conv_id, user_id=user_id) or {}
-        for ek, ev in _extras.items():
-            if ek.startswith("claude_session:") and ev:
-                _cc_agent = ek[len("claude_session:"):]
-                _agent_ctx_map[f"cc_session:{_cc_agent}"] = "cc-active"
-        # Include active sub-conversations (task contexts)
-        for ek in _extras:
-            if ek.startswith("task_log:"):
-                _tid = ek[9:]
-                _sub_cid = f"{conv_id}::task::{_tid}"
-                _sub_msgs = store.load(_sub_cid)
-                if _sub_msgs:
-                    # Find agent name from task data
-                    _tasks_data = _extras.get("agent_tasks", {})
-                    _t_entry = _tasks_data.get(_tid, {}) if isinstance(_tasks_data, dict) else {}
-                    _t_agent = _t_entry.get("agent", "?")
-                    _agent_ctx_map[f"task:{_tid} ({_t_agent})"] = "sub-conv"
+        # Include agent context status map (only on first page)
+        _agent_ctx_map = {}
+        if _offset == 0:
+            _agent_ctx_map = store.list_agent_contexts(conv_id)
+            _extras = store.get_extras(conv_id, user_id=user_id) or {}
+            for ek, ev in _extras.items():
+                if ek.startswith("claude_session:") and ev:
+                    _cc_agent = ek[len("claude_session:"):]
+                    _agent_ctx_map[f"cc_session:{_cc_agent}"] = "cc-active"
+            for ek in _extras:
+                if ek.startswith("task_log:"):
+                    _tid = ek[9:]
+                    _sub_cid = f"{conv_id}::task::{_tid}"
+                    if store.exists(_sub_cid):
+                        _tasks_data = _extras.get("agent_tasks", {})
+                        _t_entry = _tasks_data.get(_tid, {}) if isinstance(_tasks_data, dict) else {}
+                        _t_agent = _t_entry.get("agent", "?")
+                        _agent_ctx_map[f"task:{_tid} ({_t_agent})"] = "sub-conv"
         flowfile.set_content(json.dumps({
             "context": display_msgs,
-            "message_count": len(context_data),
+            "message_count": total_count,
             "token_estimate": estimated,
             "diverged": diverged,
             "agent_name": _ctx_agent or "",
             "agent_contexts": _agent_ctx_map,
+            "has_more": has_more,
+            "offset": _offset,
+            "limit": _limit,
         }, ensure_ascii=False).encode())
         return [flowfile]
 

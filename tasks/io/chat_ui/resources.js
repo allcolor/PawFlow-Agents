@@ -1,11 +1,6 @@
 // ── Resources (services, flows) ──────────────────────────────────
-async function cmdServiceList() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'service_list', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+function cmdServiceList() {
+  action$('service_list', {}).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     const svcs = data.services || [];
     if (!svcs.length) { addMsg('system', 'No services installed. Use /service install <type> <name> [key=val,...] to add one.'); return; }
@@ -20,33 +15,24 @@ async function cmdServiceList() {
       lines.push(`  ${icon} **${s.id}** (\`${s.type}\`)${tag} ${s.description || ''}`);
     });
     addMsg('system', lines.join('\n'));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }
 
-async function cmdServiceAction(action, extra) {
-  try {
-    const payload = { action, conversation_id: conversationId, ...extra };
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    if (data.installed) addMsg('system', `Service '${data.id}' installed (${data.type}).`);
-    else if (data.uninstalled) addMsg('system', `Service '${data.id}' uninstalled.`);
-    else if (data.enabled) addMsg('system', `Service '${data.id}' enabled.`);
-    else if (data.disabled) addMsg('system', `Service '${data.id}' disabled.`);
-    else addMsg('system', JSON.stringify(data, null, 2));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+function cmdServiceAction(action, extra) {
+  return rxjs.firstValueFrom(action$(action, { ...extra }).pipe(
+    rxjs.tap(data => {
+      if (data.error) { addMsg('error', data.error); return; }
+      if (data.installed) addMsg('system', `Service '${data.id}' installed (${data.type}).`);
+      else if (data.uninstalled) addMsg('system', `Service '${data.id}' uninstalled.`);
+      else if (data.enabled) addMsg('system', `Service '${data.id}' enabled.`);
+      else if (data.disabled) addMsg('system', `Service '${data.id}' disabled.`);
+      else addMsg('system', JSON.stringify(data, null, 2));
+    })
+  ));
 }
 
-async function cmdSkillList() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_skills', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+function cmdSkillList() {
+  action$('list_skills', {}).subscribe(data => {
     const skills = data.skills || [];
     if (!skills.length) { addMsg('system', 'No skills defined. Use /add-skill <name> <prompt>'); return; }
     let lines = ['**Your skills:**'];
@@ -55,16 +41,11 @@ async function cmdSkillList() {
       lines.push(`${mark} **${s.name}** — ${s.description || s.prompt}`);
     });
     addMsg('system', lines.join('\\n'));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }
 
-async function cmdListResources() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+function cmdListResources() {
+  action$('list_resources', {}).subscribe(data => {
     let lines = [];
     if (data.agents && data.agents.length) {
       lines.push('**Agents:**');
@@ -89,7 +70,7 @@ async function cmdListResources() {
     }
     if (!lines.length) lines.push('No resources defined. Use /agent create, /add-skill, etc.');
     addMsg('system', lines.join('\\n'));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }
 
 // ── Sidebar Resources ───────────────────────────────────────────
@@ -297,61 +278,52 @@ async function _renderResourcesData(data) {
       html += '<div style="color:#555;font-size:10px;margin-left:8px;">No deployed flows</div>';
     }
     html += _sectionFooter();
-    // Variables & Secrets (separate fetch)
-    try {
-      const psResp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_params_secrets', conversation_id: conversationId }),
-      });
-      const ps = await psResp.json();
+    // Variables & Secrets + Linked Accounts (async, appended when ready)
+    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
+    el.innerHTML = html;
+    // Async: load params/secrets and linked accounts, append to panel
+    action$('list_params_secrets', { conversation_id: conversationId }).subscribe(ps => {
+      let extra = '';
       if (ps.parameters && ps.parameters.length) {
-        html += _sectionHeader('Variables', '_param');
+        extra += _sectionHeader('Variables', '_param');
         ps.parameters.forEach(p => {
           const truncVal = p.value.length > 30 ? p.value.substring(0, 30) + '...' : p.value;
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
+          extra += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${p.key}','${p.scope}');return false;">
             ${_scopeBadge(p.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(p.key)}</b> = ${escapeHtml(truncVal)}</span>
           </div>`;
         });
-        html += _sectionFooter();
+        extra += _sectionFooter();
       }
       if (ps.secrets && ps.secrets.length) {
-        html += _sectionHeader('Secrets', '_secret');
+        extra += _sectionHeader('Secrets', '_secret');
         ps.secrets.forEach(s => {
-          html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
+          extra += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showParamMenu(event,'${s.key}','${s.scope}',true);return false;">
             ${_scopeBadge(s.scope)}<span style="color:#8888aa;font-size:11px;"><b>${escapeHtml(s.key)}</b> = ********</span>
           </div>`;
         });
-        html += _sectionFooter();
+        extra += _sectionFooter();
       }
-    } catch (_) {}
-
-    // Linked Accounts section
-    try {
-      const linksResp = await fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'list_linked_accounts', conversation_id: conversationId }),
-      });
-      const linksData = await linksResp.json();
+      if (extra) el.innerHTML += extra;
+    });
+    action$('list_linked_accounts', { conversation_id: conversationId }).subscribe(linksData => {
       const links = linksData.links || {};
       const linkKeys = Object.keys(links);
-      html += '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:#888;border-top:1px solid #222;">';
-      html += '<b>Linked Accounts</b>';
+      let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:#888;border-top:1px solid #222;">';
+      linksHtml += '<b>Linked Accounts</b>';
       if (linkKeys.length) {
         linkKeys.forEach(provider => {
-          html += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
+          linksHtml += `<div style="display:flex;align-items:center;gap:6px;margin:3px 0 3px 8px;">
             <span style="font-size:11px;color:#e0e0e0;">${escapeHtml(provider)}</span>
             <span style="font-size:10px;color:#666;">${escapeHtml(links[provider])}</span>
             <span style="cursor:pointer;font-size:10px;color:#e94560;" title="Unlink" onclick="cmdResourceAction('unlink_account',{provider:'${provider}'}).then(loadResources)">\u2715</span>
           </div>`;
         });
       } else {
-        html += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
+        linksHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
       }
-      html += '</div>';
-    } catch (_la) {}
-
-    if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
-    el.innerHTML = html;
+      linksHtml += '</div>';
+      el.innerHTML += linksHtml;
+    });
   } catch (e) {
     document.getElementById('resourcesContent').innerHTML = '';
   }
@@ -408,23 +380,19 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
     item('\u25B6 Select', () => cmdAgentSelect(name));
     if (autoconv) {
       item('\u23F9 Autoconv off', () => {
-        fetch(API, { method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'random_thought', sub: 'off', agent: name, conversation_id: conversationId }),
-        }).then(r => r.json()).then(d => {
+        action$('random_thought', { sub: 'off', agent: name }).subscribe(d => {
           addMsg('system', d.error || 'Autoconv disabled for ' + name);
           loadResources();
-        }).catch(e => addMsg('error', e.message));
+        });
       });
     } else {
       item('\u{1F504} Autoconv on...', () => {
         const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m');
         if (!freq) return;
-        fetch(API, { method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'random_thought', sub: 'on', agent: name, frequency: freq, conversation_id: conversationId }),
-        }).then(r => r.json()).then(d => {
+        action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => {
           addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')');
           loadResources();
-        }).catch(e => addMsg('error', e.message));
+        });
       });
     }
   }
@@ -448,26 +416,22 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
 }
 
 function _copyResource(rtype, name, targetScope) {
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'copy_resource_scope', resource_type: rtype,
-      name, target_scope: targetScope, conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  action$('copy_resource_scope', { resource_type: rtype,
+    name, target_scope: targetScope }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', `${rtype} '${name}' copied to ${targetScope}.`);
     loadResources();
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function _deleteResource(rtype, name, scope) {
   if (!confirm(`Delete ${rtype} '${name}' (${scope})?`)) return;
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'delete_resource', resource_type: rtype,
-      name, scope: scope || 'user', conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  action$('delete_resource', { resource_type: rtype,
+    name, scope: scope || 'user' }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', `${rtype} '${name}' deleted.`);
     loadResources();
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 // ── Deploy flow dialog ───────────────────────────────────────────
@@ -486,9 +450,7 @@ async function showDeployFlowDialog() {
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_available_flows' }) });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('list_available_flows', {}));
     const templates = data.templates || [];
     if (!templates.length) {
       panel.querySelector('div:last-child').innerHTML = '<div style="color:#888;font-size:12px;">No flow templates found in flows/ directory.</div>';
@@ -524,12 +486,10 @@ function _submitDeployFlow() {
   if (paramsText) {
     try { params = JSON.parse(paramsText); } catch { alert('Invalid JSON in parameters'); return; }
   }
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, parameters: params, conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  action$('deploy_flow', { template_id: templateId, scope, parameters: params }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `Flow deployed: ${d.instance_id} (${scope})`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 function _onDeployTemplateChange() {
   var sel = document.getElementById('deploy-template');
@@ -592,10 +552,7 @@ async function showResourceEditor(rtype, name, readonly) {
   // Fetch current data
   let data = {};
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_resource_detail', resource_type: rtype, name, conversation_id: conversationId }),
-    });
-    data = await resp.json();
+    data = await rxjs.firstValueFrom(action$('get_resource_detail', { resource_type: rtype, name }));
     if (data.error) { addMsg('error', data.error); return; }
   } catch (e) { addMsg('error', e.message); return; }
 
@@ -635,12 +592,10 @@ function _saveResourceEdit(rtype, name, scope) {
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
   }
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'update_resource', resource_type: rtype, name, scope, data }),
-  }).then(r => r.json()).then(d => {
+  action$('update_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `${rtype} '${name}' updated.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function showResourceCreator(rtype) {
@@ -677,12 +632,10 @@ function _saveResourceCreate(rtype) {
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
   }
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'create_resource', resource_type: rtype, name, scope, data }),
-  }).then(r => r.json()).then(d => {
+  action$('create_resource', { resource_type: rtype, name, scope, data }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', `${rtype} '${name}' created.`); document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function _removeAgentFromConv(name) {
@@ -712,11 +665,7 @@ async function showAddAgentToConvDialog() {
   document.body.appendChild(overlay);
   overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
   try {
-    var resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_repo_agents', conversation_id: conversationId }),
-    });
-    var data = await resp.json();
+    var data = await rxjs.firstValueFrom(action$('list_repo_agents', {}));
     var agents = data.agents || [];
     var available = agents.filter(function(a) { return !a.in_conversation; });
     var inConv = agents.filter(function(a) { return a.in_conversation; });
@@ -726,7 +675,7 @@ async function showAddAgentToConvDialog() {
     header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
     header.innerHTML = '<strong style="color:#e0e0e0;">Add Agent to Conversation</strong>';
     var closeBtn = document.createElement('button');
-    closeBtn.textContent = '×';
+    closeBtn.textContent = '\u00d7';
     closeBtn.style.cssText = 'background:none;border:none;color:#888;cursor:pointer;font-size:18px;';
     closeBtn.onclick = function() { overlay.remove(); };
     header.appendChild(closeBtn);
@@ -870,33 +819,30 @@ function _submitAssign(taskDefName) {
   const interval = (document.getElementById('assign-interval').value || '').trim();
   const varsText = (document.getElementById('assign-vars').value || '').trim();
   if (!agent) { alert('Agent is required'); return; }
-  const body = { action: 'assign_task', conversation_id: conversationId,
-    agent_name: agent, task_def_name: taskDefName };
-  if (context && context !== 'isolated') body.context = context;
-  if (interval) body.interval = interval;
+  const params = { agent_name: agent, task_def_name: taskDefName };
+  if (context && context !== 'isolated') params.context = context;
+  if (interval) params.interval = interval;
   if (varsText) {
     const variables = {};
     for (const line of varsText.split('\n')) {
       const eq = line.indexOf('=');
       if (eq > 0) variables[line.substring(0, eq).trim()] = line.substring(eq + 1).trim();
     }
-    if (Object.keys(variables).length) body.variables = variables;
+    if (Object.keys(variables).length) params.variables = variables;
   }
   const _bv = (document.getElementById('assign-budget') || {}).value || '';
   const _tv = (document.getElementById('assign-turn-time') || {}).value || '';
   const _ttv = (document.getElementById('assign-total-time') || {}).value || '';
   const _rv = (document.getElementById('assign-max-resched') || {}).value || '';
-  if (_bv.trim()) body.max_budget = _bv.trim();
-  if (_tv.trim()) body.max_turn_time = _tv.trim();
-  if (_ttv.trim()) body.max_total_time = _ttv.trim();
-  if (_rv.trim()) body.max_reschedules = parseInt(_rv) || 0;
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(body),
-  }).then(r => r.json()).then(d => {
+  if (_bv.trim()) params.max_budget = _bv.trim();
+  if (_tv.trim()) params.max_turn_time = _tv.trim();
+  if (_ttv.trim()) params.max_total_time = _ttv.trim();
+  if (_rv.trim()) params.max_reschedules = parseInt(_rv) || 0;
+  action$('assign_task', params).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { addMsg('system', d.result || 'Task assigned.'); loadResources(); }
     document.getElementById('resourceEditorOverlay').remove();
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 // ── Task instance context menu (Tasks section – management, not lifecycle) ──
@@ -918,37 +864,31 @@ function showTaskInstanceMenu(e, taskId, agent, status) {
     menu.appendChild(d);
   };
   const _taskAction = (action) => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: action + '_task', conversation_id: conversationId, task_id: taskId }),
-    }).then(r => r.json()).then(d => {
+    action$(action + '_task', { task_id: taskId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
       else addMsg('system', `Task ${taskId} ${action}d.`);
       loadResources();
-    }).catch(e => addMsg('error', e.message));
+    });
   };
   // View task log
   item('\u{1F4CB} View Log', () => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: taskId }),
-    }).then(r => r.json()).then(d => {
+    action$('task_log', { name: taskId }).subscribe(d => {
       const log = d.log || [];
       if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
       const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
       addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
-    }).catch(e => addMsg('error', e.message));
+    });
   });
   // View task details
   item('\u{1F441} View Details', () => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-    }).then(r => r.json()).then(d => {
+    action$('list_resources', {}).subscribe(d => {
       const task = (d.all_tasks || []).find(t => t.task_id === taskId);
       if (!task) { addMsg('system', 'Task not found: ' + taskId); return; }
       const info = [`Task: ${task.task_id}`, `Agent: ${task.agent}`, `Status: ${task.status}`,
         `Iterations: ${task.iterations}/${task.max_iterations}`, `Definition: ${task.task_def_name || '-'}`,
         `Prompt: ${task.task}`].join('\n');
       addMsg('system', info);
-    }).catch(e => addMsg('error', e.message));
+    });
   });
   // Delete
   const sep = document.createElement('div');
@@ -977,24 +917,20 @@ function showRunningTaskMenu(e, taskId, agent, status) {
     menu.appendChild(d);
   };
   const _taskAction = (action) => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: action + '_task', conversation_id: conversationId, task_id: taskId }),
-    }).then(r => r.json()).then(d => {
+    action$(action + '_task', { task_id: taskId }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
       else addMsg('system', `Task ${taskId} ${action}d.`);
       loadResources();
-    }).catch(e => addMsg('error', e.message));
+    });
   };
   // View task log
   item('\u{1F4CB} View Log', () => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: taskId }),
-    }).then(r => r.json()).then(d => {
+    action$('task_log', { name: taskId }).subscribe(d => {
       const log = d.log || [];
       if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
       const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
       addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
-    }).catch(e => addMsg('error', e.message));
+    });
   });
   // Edit limits
   item('\u270F Edit Limits', () => _showEditLimitsDialog(taskId));
@@ -1022,9 +958,7 @@ function showRunningTaskMenu(e, taskId, agent, status) {
 
 function _showEditLimitsDialog(taskId) {
   // Fetch current task data
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'task_status', conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  action$('task_status', {}).subscribe(d => {
     const task = (d.tasks || []).find(t => t.task_id === taskId);
     if (!task) { addMsg('error', 'Task not found: ' + taskId); return; }
     const overlay = document.createElement('div');
@@ -1045,33 +979,30 @@ function _showEditLimitsDialog(taskId) {
     overlay.appendChild(panel);
     document.body.appendChild(overlay);
     document.getElementById('el-save').onclick = () => {
-      const body = { action: 'edit_task', conversation_id: conversationId, task_id: taskId };
+      const params = { task_id: taskId };
       const bv = document.getElementById('el-budget').value.trim();
       const tv = document.getElementById('el-turn').value.trim();
       const ttv = document.getElementById('el-total').value.trim();
       const rv = document.getElementById('el-resched').value.trim();
       const mv = document.getElementById('el-maxiter').value.trim();
-      if (bv) body.max_budget = bv;
-      if (tv) body.max_turn_time = tv;
-      if (ttv) body.max_total_time = ttv;
-      if (rv) body.max_reschedules = parseInt(rv) || 0;
-      if (mv) body.max_iterations = parseInt(mv) || 0;
-      fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
-        .then(r => r.json()).then(data => {
-          if (data.error) addMsg('error', data.error);
-          else addMsg('system', 'Task limits updated: ' + (data.changed||[]).join(', '));
-          overlay.remove();
-          loadResources();
-        }).catch(e => addMsg('error', e.message));
+      if (bv) params.max_budget = bv;
+      if (tv) params.max_turn_time = tv;
+      if (ttv) params.max_total_time = ttv;
+      if (rv) params.max_reschedules = parseInt(rv) || 0;
+      if (mv) params.max_iterations = parseInt(mv) || 0;
+      action$('edit_task', params).subscribe(data => {
+        if (data.error) addMsg('error', data.error);
+        else addMsg('system', 'Task limits updated: ' + (data.changed||[]).join(', '));
+        overlay.remove();
+        loadResources();
+      });
     };
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function _showTaskDefLog(defName) {
   // Show all task instances for this definition, with their logs
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  action$('list_resources', {}).subscribe(d => {
     const instances = (d.all_tasks || []).filter(t => t.task_def_name === defName);
     if (!instances.length) { addMsg('system', 'No task instances for definition "' + defName + '"'); return; }
     let lines = instances.map(t => {
@@ -1081,17 +1012,15 @@ function _showTaskDefLog(defName) {
     addMsg('system', '\u{1F4DC} Instances of "' + defName + '":\n' + lines);
     // Also fetch logs for each instance
     for (const inst of instances) {
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: inst.task_id }),
-      }).then(r => r.json()).then(ld => {
+      action$('task_log', { name: inst.task_id }).subscribe(ld => {
         const log = ld.log || [];
         if (log.length) {
           const logLines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
           addMsg('system', '\u{1F4CB} Log ' + inst.task_id + ':\n' + logLines);
         }
-      }).catch(() => {});
+      });
     }
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function showServiceMenu(e, serviceId, scope, enabled) {
@@ -1116,12 +1045,10 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     item('\u270F Edit...', () => showServiceEditForm(serviceId, scope));
   }
   item(enabled ? '\u23F8 Disable' : '\u25B6 Enable', () => {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'toggle_service', service_id: serviceId, enabled: !enabled }),
-    }).then(r => r.json()).then(d => {
+    action$('toggle_service', { service_id: serviceId, enabled: !enabled }).subscribe(d => {
       if (d.error) addMsg('error', d.error);
       else loadResources();
-    }).catch(e => addMsg('error', e.message));
+    });
   });
   if (_canEditScope(scope)) {
     const sep = document.createElement('div');
@@ -1129,12 +1056,10 @@ function showServiceMenu(e, serviceId, scope, enabled) {
     menu.appendChild(sep);
     item('\u{1F5D1} Delete', () => {
       if (!confirm(`Delete service '${serviceId}'?`)) return;
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'delete_service', service_id: serviceId, scope }),
-    }).then(r => r.json()).then(d => {
-      if (d.error) addMsg('error', d.error);
-      else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
-    }).catch(e => addMsg('error', e.message));
+      action$('delete_service', { service_id: serviceId, scope }).subscribe(d => {
+        if (d.error) addMsg('error', d.error);
+        else { addMsg('system', `Service '${serviceId}' deleted.`); loadResources(); }
+      });
     }, true);
   }
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
@@ -1285,10 +1210,7 @@ function _renderServiceActions(actions, serviceId) {
 function cmdClaudeLoginServer(parts) {
   const serviceId = stripTarget(parts[1]);
   if (!serviceId) { addMsg('error', 'Usage: /claude-login-server <service_name>'); return true; }
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'claude_code_server_login', service_id: serviceId,
-      conversation_id: conversationId || '' })
-  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  fireAction('claude_code_server_login', { service_id: serviceId });
   return true;
 }
 
@@ -1303,9 +1225,7 @@ function cmdClaudeLoginRelay(parts) {
   }
 
   // No relay specified — list and auto-select if single
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'claude_code_list_relays', service_id: serviceId })
-  }).then(r => r.json()).then(resp => {
+  action$('claude_code_list_relays', { service_id: serviceId }).subscribe(resp => {
     const relays = resp.relays || [];
     if (relays.length === 0) { addMsg('error', 'No relay connected.'); return; }
     if (relays.length === 1) {
@@ -1314,7 +1234,7 @@ function cmdClaudeLoginRelay(parts) {
       addMsg('system', 'Multiple relays available. Specify one:\n'
         + relays.map(r => '  ' + r.relay_id + ' (' + r.platform + ')').join('\n'));
     }
-  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  });
   return true;
 }
 
@@ -1330,10 +1250,7 @@ function cmdClaudeLoginCredentials(text, parts) {
     addMsg('error', 'Invalid JSON: ' + e.message);
     return true;
   }
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'claude_code_login_code', service_id: serviceId,
-      credentials: credsJson, conversation_id: conversationId || '' })
-  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  fireAction('claude_code_login_code', { service_id: serviceId, credentials: credsJson });
   return true;
 }
 
@@ -1374,10 +1291,7 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
     }
     if (msg) addMsg('system', msg);
     // Tell server to cleanup the Docker container
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'claude_code_server_login_cleanup',
-        session_id: sessionId })
-    }).catch(() => {});
+    fireAction('claude_code_server_login_cleanup', { session_id: sessionId });
   }
 
   document.getElementById('vnc-dialog-close').onclick = () => closeDialog(null);
@@ -1386,10 +1300,8 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   // Poll for completion
   const pollInterval = setInterval(async () => {
     try {
-      const st = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'claude_code_server_login_status',
-          session_id: sessionId, service_id: serviceId })
-      }).then(r => r.json());
+      const st = await rxjs.firstValueFrom(action$('claude_code_server_login_status', {
+        session_id: sessionId, service_id: serviceId }));
       if (st.ok) { closeDialog(st.message || 'Claude Code login successful!'); }
       else if (st.error) { closeDialog('Login error: ' + st.error); }
       else if (st.status === 'starting') { status.textContent = 'Starting container...'; }
@@ -1400,10 +1312,7 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
 
 function _startRelayLogin(serviceId, relayId) {
   addMsg('system', 'Starting Claude Code login via relay — authorize in the browser...');
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'claude_code_relay_login', service_id: serviceId,
-      relay_id: relayId, conversation_id: conversationId || '' })
-  }).catch(e => addMsg('error', 'Relay login failed: ' + e.message));
+  fireAction('claude_code_relay_login', { service_id: serviceId, relay_id: relayId });
 }
 
 async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
@@ -1411,18 +1320,13 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   if (flow === 'claude_login_server') {
     try {
       if (btn) { btn.disabled = true; btn.textContent = 'Starting...'; }
-      await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction, service_id: serviceId,
-          conversation_id: conversationId || '' })
-      });
+      fireAction(serverAction, { service_id: serviceId });
       // Dialog opens when SSE vnc_login_ready arrives
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else if (flow === 'claude_login_relay') {
     try {
       // Step 1: list relays
-      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction, service_id: serviceId })
-      }).then(r => r.json());
+      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
       if (resp.error) { addMsg('error', resp.error); return; }
       const relays = resp.relays || [];
       if (relays.length === 0) {
@@ -1453,7 +1357,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         + '<div id="svc-relay-status" style="color:#aaa;font-size:11px;margin-top:4px;"></div>';
       container.appendChild(div);
 
-      document.getElementById('svc-relay-login-btn').addEventListener('click', async () => {
+      document.getElementById('svc-relay-login-btn').addEventListener('click', () => {
         const relayId = document.getElementById('svc-relay-select').value;
         const statusEl = document.getElementById('svc-relay-status');
         const loginBtn = document.getElementById('svc-relay-login-btn');
@@ -1461,30 +1365,18 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
         loginBtn.textContent = 'Waiting for authorization...';
         statusEl.textContent = 'A browser window should open on the relay machine. Authorize there.';
 
-        try {
-          await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-            body: JSON.stringify({
-              action: 'claude_code_relay_login',
-              service_id: serviceId,
-              relay_id: relayId,
-              conversation_id: conversationId || '',
-            })
-          });
-          statusEl.textContent = 'Authorize in the browser that opens on the relay...';
-          // Result arrives via SSE command_result
-        } catch (e) {
-          statusEl.innerHTML = '<span style="color:#e94560;">\u2718 ' + e.message + '</span>';
-          loginBtn.textContent = 'Start login';
-          loginBtn.disabled = false;
-        }
+        fireAction('claude_code_relay_login', {
+          service_id: serviceId,
+          relay_id: relayId,
+        });
+        statusEl.textContent = 'Authorize in the browser that opens on the relay...';
+        // Result arrives via SSE command_result
       });
     } catch (e) { addMsg('error', 'Action failed: ' + e.message); }
   } else if (flow === 'oauth_code') {
     try {
       // Step 1: get instructions
-      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction, service_id: serviceId })
-      }).then(r => r.json());
+      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
       if (resp.error) { addMsg('error', resp.error); return; }
 
       // Step 2: show instructions + textarea for credentials
@@ -1505,10 +1397,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
           submitBtn.textContent = '...';
           submitBtn.disabled = true;
           try {
-            const result = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-              body: JSON.stringify({ action: serverAction.replace('_url', '_code'),
-                                     service_id: serviceId, credentials: creds })
-            }).then(r => r.json());
+            const result = await rxjs.firstValueFrom(action$(serverAction.replace('_url', '_code'), { service_id: serviceId, credentials: creds }));
             if (result.ok) {
               loginDiv.innerHTML = '<span style="color:#2ecc71;font-size:12px;">\u2714 ' + (result.message || 'Saved!') + '</span>';
             } else {
@@ -1526,9 +1415,7 @@ async function _executeServiceAction(actionId, serviceId, flow, serverAction) {
   } else {
     if (flow === 'confirm' && !confirm('Execute ' + actionId + '?')) return;
     try {
-      const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: serverAction, service_id: serviceId })
-      }).then(r => r.json());
+      const resp = await rxjs.firstValueFrom(action$(serverAction, { service_id: serviceId }));
       addMsg('system', resp.message || resp.error || JSON.stringify(resp));
     } catch (e) { addMsg('error', e.message); }
   }
@@ -1542,10 +1429,7 @@ let _svcSchemaCache = {};
 async function _fetchServiceSchema(serviceType) {
   if (_svcSchemaCache[serviceType]) return _svcSchemaCache[serviceType];
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_service_schema', service_type: serviceType }),
-    });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('get_service_schema', { service_type: serviceType }));
     if (data.error) { addMsg('error', data.error); return {parameters: {}, rules: [], actions: []}; }
     _svcSchemaCache[serviceType] = {
       parameters: data.parameters || {},
@@ -1559,10 +1443,7 @@ async function _fetchServiceSchema(serviceType) {
 async function showServiceInstallForm() {
   let serviceTypes = [];
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_service_types', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('list_service_types', {}));
     if (data.error) { addMsg('error', data.error); return; }
     serviceTypes = data.service_types || [];
   } catch (e) { addMsg('error', e.message); return; }
@@ -1638,10 +1519,7 @@ async function _submitServiceInstall() {
   const btn = document.getElementById('svc-install-btn');
   btn.disabled = true; btn.textContent = 'Installing...';
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'service_install', service_name: name, service_type: svcType, description: desc, config, scope, conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('service_install', { service_name: name, service_type: svcType, description: desc, config, scope }));
     if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Install'; return; }
     addMsg('system', 'Service \'' + name + '\' installed successfully.');
     document.getElementById('resourceEditorOverlay').remove();
@@ -1651,10 +1529,7 @@ async function _submitServiceInstall() {
 
 async function showServiceEditForm(serviceId, scope, readonly) {
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_service_detail', service_id: serviceId, scope }),
-    });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('get_service_detail', { service_id: serviceId, scope }));
     if (data.error) { addMsg('error', data.error); return; }
 
     const svcType = data.service_type || '';
@@ -1737,10 +1612,7 @@ async function _submitServiceEdit(serviceId, scope) {
   const btn = document.getElementById('svc-save-btn');
   btn.disabled = true; btn.textContent = 'Saving...';
   try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'update_service', service_id: serviceId, scope, config, conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+    const data = await rxjs.firstValueFrom(action$('update_service', { service_id: serviceId, scope, config }));
     if (data.error) { addMsg('error', data.error); btn.disabled = false; btn.textContent = 'Save'; return; }
     addMsg('system', 'Service \'' + serviceId + '\' updated.');
     document.getElementById('resourceEditorOverlay').remove();

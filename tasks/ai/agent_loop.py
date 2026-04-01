@@ -679,9 +679,48 @@ class AgentLoopTask(
                 # the agent loop publishes 'done' normally.
                 return
             else:
-                # Stale client — process dead, clean up
+                # Stale client — process dead, clean up and finish
                 with self._active_contexts_lock:
                     self._active_claude_client.pop(_int_key, None)
+                logger.warning(f"[agent:{conversation_id[:8]}] CC process already dead — cleaning up")
+                self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+                # No synthesis for dead CC — just emit done
+                from core.conversation_event_bus import ConversationEventBus
+                ConversationEventBus.instance().publish_event(
+                    conversation_id, "done", {
+                        "response": "[Interrupted — agent process ended]",
+                        "agent_name": agent_name or "",
+                        "interrupted": True,
+                    })
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_status(conversation_id, "idle")
+                return
+
+        # Double-check: if the agent's provider is claude-code, skip synthesis
+        # (client may already be cleaned up but the agent is still CC)
+        try:
+            _meta = None
+            from core.conversation_store import ConversationStore as _CS_chk
+            _meta = _CS_chk.instance().get_metadata(conversation_id)
+            _uid = _meta.get("user_id", "") if _meta else ""
+            _, _svc_id, _ = self._resolve_agent_client(
+                agent_name or "assistant", _uid, conversation_id)
+            if _svc_id:
+                _c, _s = self._resolve_llm_service(_svc_id, _uid)
+                if _c and getattr(_c, 'provider', '') == 'claude-code':
+                    logger.info(f"[agent:{conversation_id[:8]}] agent is CC but client gone — skip synthesis")
+                    self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        conversation_id, "done", {
+                            "response": "[Interrupted — agent process ended]",
+                            "agent_name": agent_name or "",
+                            "interrupted": True,
+                        })
+                    _CS_chk.instance().set_status(conversation_id, "idle")
+                    return
+        except Exception:
+            pass
 
         # Non-claude-code: cancel the current run
         self.cancel_agent(conversation_id, agent_name=agent_name, silent=False)
@@ -736,21 +775,16 @@ class AgentLoopTask(
                 ))
 
                 # Resolve LLM for synthesis — NEVER use claude-code
-                # (would spawn a new subprocess + MCP). Use summarizer or default.
-                _summ = ctx.get("summarizer") if 'ctx' in dir() else None
-                client = (_summ[0] if _summ and _summ[0] else None) or \
-                         (ctx.get("default_client") if 'ctx' in dir() else None)
-                _agent_svc = ""
+                # (would spawn a new subprocess + MCP). Use summarizer.
+                _summ_client, _summ_max_ctx, _summ_svc_id = self._get_summarizer_client(user_id)
+                client = _summ_client
+                _agent_svc = _summ_svc_id
                 if not client:
-                    # Fallback: resolve agent client but check provider
+                    # No summarizer — try agent's own client if not claude-code
                     client, _agent_svc, _ = self._resolve_agent_client(
                         _agent, user_id, conversation_id)
                     if client and getattr(client, 'provider', '') == 'claude-code':
-                        # Can't use claude-code for synthesis — try default
-                        _def = self._get_default_client(user_id) if hasattr(self, '_get_default_client') else None
-                        if _def:
-                            client = _def
-                            _agent_svc = "default"
+                        client = None  # Can't use claude-code for synthesis
                 logger.info(f"[interrupt synthesis] LLM service: '{_agent_svc}', "
                             f"client: {getattr(client, 'provider', '?')}/{getattr(client, 'default_model', '?')}")
                 if not client:
@@ -784,9 +818,9 @@ class AgentLoopTask(
                                 role="tool", content="[Unavailable]", tool_call_id=tc_id))
 
                 # Compact + call LLM (stream tokens to user)
+                _max_ctx = _summ_max_ctx or 64000
                 compact_msgs = self._compact(
-                    messages, client,
-                    ctx.get("max_context_size", 64000) if 'ctx' in dir() else 64000,
+                    messages, client, _max_ctx,
                     threshold=0.6, conversation_id=conversation_id)
 
 

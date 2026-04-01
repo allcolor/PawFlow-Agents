@@ -196,6 +196,25 @@ class LLMOpenaiMixin:
         finally:
             conn.close()
 
+    @staticmethod
+    def _resolve_image_ref(block: dict) -> Optional[dict]:
+        """Resolve an image_ref block to an image_url block by loading from FileStore."""
+        try:
+            from core.file_store import FileStore
+            import base64 as _b64
+            entry = FileStore.instance().get(block["file_id"])
+            if entry:
+                _fname, _data, _ct = entry
+                _data_b64 = _b64.b64encode(_data).decode("ascii")
+                mime = block.get("mime_type", _ct) or "image/png"
+                return {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime};base64,{_data_b64}"},
+                }
+        except Exception as e:
+            logger.warning("Failed to resolve image_ref: %s", e)
+        return None
+
     def _build_openai_messages(self, messages) -> List[Dict[str, Any]]:
         """Convert LLMMessage list to OpenAI API message format."""
         # Log multipart content for debugging
@@ -203,10 +222,8 @@ class LLMOpenaiMixin:
         for m in messages:
             if isinstance(m.content, list):
                 for p in m.content:
-                    if p.get("type") == "image_url":
+                    if p.get("type") in ("image_url", "image_ref"):
                         _img_count += 1
-                        _url = (p.get("image_url", {}).get("url", "") or "")[:60]
-                        logger.debug("build_openai_messages: image_url part in %s msg: %s...", m.role, _url)
         if _img_count:
             logger.info("build_openai_messages: %d image part(s) in context", _img_count)
 
@@ -231,7 +248,14 @@ class LLMOpenaiMixin:
                 # OpenAI tool messages only support string content.
                 # If multimodal, inject a user message with image parts after the tool result.
                 if isinstance(m.content, list):
-                    img_parts = [p for p in m.content if p.get("type") == "image_url"]
+                    img_parts = []
+                    for p in m.content:
+                        if p.get("type") == "image_url":
+                            img_parts.append(p)
+                        elif p.get("type") == "image_ref":
+                            _r = self._resolve_image_ref(p)
+                            if _r:
+                                img_parts.append(_r)
                     if img_parts:
                         api_messages.append({
                             "role": "user",
@@ -257,14 +281,23 @@ class LLMOpenaiMixin:
             elif isinstance(m.content, list):
                 # Multi-part content (text + images)
                 # OpenAI format: [{"type": "text", "text": "..."}, {"type": "image_url", ...}]
-                # Convert unsupported types (document) to text
+                # Convert unsupported types (document, image_ref, file_ref) to native types
                 parts = []
                 for part in m.content:
-                    if part.get("type") == "document":
+                    pt = part.get("type", "")
+                    if pt == "document":
                         parts.append({
                             "type": "text",
                             "text": f"[Document: {part.get('filename', 'file')}]\n{part.get('text', '')}",
                         })
+                    elif pt == "image_ref":
+                        _resolved = self._resolve_image_ref(part)
+                        if _resolved:
+                            parts.append(_resolved)
+                        else:
+                            parts.append({"type": "text", "text": f"[image: {part.get('filename', '?')}]"})
+                    elif pt == "file_ref":
+                        parts.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     else:
                         parts.append(part)
                 api_messages.append({"role": m.role, "content": parts})

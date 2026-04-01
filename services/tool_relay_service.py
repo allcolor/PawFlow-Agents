@@ -581,9 +581,7 @@ class ToolRelayService(BaseService):
                 logger.warning("[tool-relay] failed to inject secrets: %s", _se)
 
         try:
-            logger.info("[tool-relay] execute %s(%s) [req=%s]",
-                        tool_name, json.dumps(arguments)[:300] if isinstance(arguments, dict) else str(arguments)[:300],
-                        request_id)
+            logger.debug("[tool-relay] execute %s [req=%s]", tool_name, request_id)
             result = registry.execute(tool_name, arguments)
             result_str = str(result) if result is not None else "(no output)"
         except Exception as e:

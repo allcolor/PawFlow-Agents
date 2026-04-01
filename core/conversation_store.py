@@ -75,9 +75,7 @@ class ConversationStore:
         """THE ONLY read method. Lock, stream file to read_fn, release."""
         lock = self._get_conv_lock(cid)
         path = self._conv_path(cid)
-        logger.info("[convstore] _read WAIT %s fn=%s", cid[:8], read_fn.__name__ if hasattr(read_fn, '__name__') else '?')
         with lock:
-            logger.info("[convstore] _read GOT %s", cid[:8])
             if not path.exists():
                 return read_fn(iter([]))
             try:
@@ -117,11 +115,7 @@ class ConversationStore:
             return
         lock = self._get_conv_lock(cid)
         path = self._conv_path(cid)
-        _ops = [o.get("op", "?") for o in operations]
-        logger.info("[convstore] _commit LOCK %s ops=%s", cid[:8], _ops)
-
         with lock:
-            logger.info("[convstore] _commit GOT %s", cid[:8])
             # Classify: do we need a rewrite or just appends?
             needs_rewrite = any(
                 op.get("op") in ("ctx_replace", "ctx_delete", "rewrite_full")

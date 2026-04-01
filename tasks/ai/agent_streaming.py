@@ -241,35 +241,30 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         _already_active = any(
             t.is_alive() and t.name == _thread_name
             for t in threading.enumerate())
-        logger.info("[STREAM:%s] L244 _already_active=%s key=%s", conversation_id[:8], _already_active, _agent_key)
         # Safety: if thread is "active" but no context entry, it's a zombie
         if _already_active:
-            logger.info("[STREAM:%s] L247 checking zombie", conversation_id[:8])
             with self._active_contexts_lock:
                 if _agent_key not in self._active_contexts:
-                    logger.warning("[STREAM:%s] zombie thread detected — ignoring", conversation_id[:8])
+                    logger.warning("[agent:%s] zombie thread detected — ignoring", conversation_id[:8])
                     _already_active = False
         if _already_active:
-            logger.info("[STREAM:%s] L253 already active path", conversation_id[:8])
             with self._active_contexts_lock:
                 _active_client = self._active_claude_client.get(_agent_key)
             if _active_client and hasattr(_active_client, 'send_user_message') and _user_text:
-                logger.info("[STREAM:%s] L256 trying preempt", conversation_id[:8])
                 _attachments = _body.get("attachments", [])
                 if _active_client.send_user_message(_user_text, attachments=_attachments):
-                    logger.info("[STREAM:%s] L258 preempt OK", conversation_id[:8])
+                    logger.debug("[agent:%s] preempted active CC session", conversation_id[:8])
                     ack = json.dumps({"status": "accepted", "conversation_id": conversation_id,
                                       "message_count": ConversationStore.instance().message_count(conversation_id)})
                     flowfile.set_content(ack.encode("utf-8"))
                     flowfile.set_attribute("agent.conversation_id", conversation_id)
                     return [flowfile]
                 else:
-                    logger.warning("[STREAM:%s] L265 process dead", conversation_id[:8])
+                    logger.warning("[agent:%s] CC process dead — restarting", conversation_id[:8])
                     _already_active = False
                     with self._active_contexts_lock:
                         self._active_claude_client.pop(_agent_key, None)
 
-            logger.info("[STREAM:%s] L273 queueing", conversation_id[:8])
             flowfile.set_attribute("_queued_user_text", _user_text)
             _queued_key = f"_queued_msgs:{_agent_key}"
             with self._active_lock:
@@ -281,27 +276,21 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             flowfile.set_attribute("agent.conversation_id", conversation_id)
             return [flowfile]
 
-        logger.info("[STREAM:%s] L286 mark active", conversation_id[:8])
         # Mark active
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
-        logger.info("[STREAM:%s] L291 set_status", conversation_id[:8])
         ConversationStore.instance().set_status(conversation_id, "active")
-        logger.info("[STREAM:%s] L293 status set", conversation_id[:8])
 
         if _target:
-            logger.info("[STREAM:%s] L295 publish thinking", conversation_id[:8])
             bus.publish_event(conversation_id, "thinking", {
                 "conversation_id": conversation_id, "agent_name": _target,
             })
 
-        logger.info("[STREAM:%s] L300 clone flowfile", conversation_id[:8])
         # Clone flowfile for background thread (main thread overwrites with ack)
         from core import FlowFile as _FF
         _bg_ff = _FF(content=flowfile.get_content(),
                       attributes=dict(flowfile.attributes))
-        logger.info("[STREAM:%s] L305 cloned OK", conversation_id[:8])
 
         # Background thread: prepare context (may compact), then run agent loop
         def _bg_streaming():

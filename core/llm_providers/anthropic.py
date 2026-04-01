@@ -249,6 +249,21 @@ class LLMAnthropicMixin:
                                 })
                             else:
                                 blocks.append({"type": "image", "source": {"type": "url", "url": url}})
+                        elif part.get("type") == "image_ref":
+                            try:
+                                from core.file_store import FileStore
+                                import base64 as _b64
+                                entry = FileStore.instance().get(part["file_id"])
+                                if entry:
+                                    _fname, _data, _ct = entry
+                                    _data_b64 = _b64.b64encode(_data).decode("ascii")
+                                    mime = part.get("mime_type", _ct) or "image/png"
+                                    blocks.append({
+                                        "type": "image",
+                                        "source": {"type": "base64", "media_type": mime, "data": _data_b64},
+                                    })
+                            except Exception:
+                                blocks.append({"type": "text", "text": f"[image: {part.get('filename', '?')}]"})
                     tool_content = blocks if blocks else m.text_content
                 api_messages.append({
                     "role": "user",
@@ -303,6 +318,26 @@ class LLMAnthropicMixin:
                                 "type": "image",
                                 "source": {"type": "url", "url": url},
                             })
+                    elif part.get("type") == "image_ref":
+                        # Resolve from FileStore
+                        try:
+                            from core.file_store import FileStore
+                            import base64 as _b64
+                            entry = FileStore.instance().get(part["file_id"])
+                            if entry:
+                                _fname, _data, _ct = entry
+                                _data_b64 = _b64.b64encode(_data).decode("ascii")
+                                mime = part.get("mime_type", _ct) or "image/png"
+                                content_blocks.append({
+                                    "type": "image",
+                                    "source": {"type": "base64", "media_type": mime, "data": _data_b64},
+                                })
+                            else:
+                                content_blocks.append({"type": "text", "text": f"[image: {part.get('filename', '?')}]"})
+                        except Exception:
+                            content_blocks.append({"type": "text", "text": f"[image: {part.get('filename', '?')}]"})
+                    elif part.get("type") == "file_ref":
+                        content_blocks.append({"type": "text", "text": f"[file: {part.get('filename', '?')}]"})
                     elif part.get("type") == "document":
                         # Document content -- inject as text block
                         content_blocks.append({

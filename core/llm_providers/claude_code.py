@@ -300,10 +300,6 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _last_user_idx = i
 
         for idx, m in enumerate(messages):
-            logger.info("[_extract_images] msg %d role=%s content_type=%s content_len=%s last_user=%s",
-                        idx, m.role, type(m.content).__name__,
-                        len(m.content) if isinstance(m.content, (str, list)) else '?',
-                        idx == _last_user_idx)
             if not isinstance(m.content, list):
                 continue
             new_content = []
@@ -412,9 +408,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
 
         initial_text = self._build_stdin_with_system(system_prompt, user_text)
-        logger.info("[claude-code] prompt size: system=%d user_text=%d initial=%d images=%d msgs=%d",
-                    len(system_prompt), len(user_text), len(initial_text),
-                    len(image_blocks), len(messages))
+        logger.debug("[claude-code] prompt: system=%d user=%d images=%d msgs=%d",
+                     len(system_prompt), len(user_text), len(image_blocks), len(messages))
 
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")

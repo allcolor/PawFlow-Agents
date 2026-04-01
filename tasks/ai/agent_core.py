@@ -173,6 +173,11 @@ class AgentCoreMixin:
             messages.append(msg)
             new_messages.append(msg)
             # Persist via conversation writer + publish SSE (single source of truth)
+            # Skip context-internal messages (compaction acks) — they stay in agent
+            # context but must never appear in transcript or SSE.
+            _src_type = (msg.source or {}).get("type") if isinstance(msg.source, dict) else None
+            if _src_type == "context":
+                return
             if use_conv_store and conversation_id and msg.role in ("assistant", "tool"):
                 try:
                     from core.conversation_writer import ConversationWriter

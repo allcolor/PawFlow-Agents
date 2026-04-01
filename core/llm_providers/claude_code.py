@@ -300,6 +300,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 _last_user_idx = i
 
         for idx, m in enumerate(messages):
+            logger.info("[_extract_images] msg %d role=%s content_type=%s content_len=%s last_user=%s",
+                        idx, m.role, type(m.content).__name__,
+                        len(m.content) if isinstance(m.content, (str, list)) else '?',
+                        idx == _last_user_idx)
             if not isinstance(m.content, list):
                 continue
             new_content = []

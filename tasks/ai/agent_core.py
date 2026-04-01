@@ -445,12 +445,21 @@ class AgentCoreMixin:
                     for _mi in range(len(llm_context) - 1, -1, -1):
                         if llm_context[_mi].role == "user":
                             _um = llm_context[_mi]
-                            _uc = _um.content if isinstance(_um.content, str) else str(_um.content or "")
-                            llm_context[_mi] = LLMMessage(
-                                role="user", content=_uc + _meta_note,
-                                tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
-                                source=_um.source, msg_id=_um.msg_id,
-                            )
+                            if isinstance(_um.content, list):
+                                # Multipart content (text + image_ref/file_ref) — append metadata as text block
+                                _new_content = list(_um.content) + [{"type": "text", "text": _meta_note}]
+                                llm_context[_mi] = LLMMessage(
+                                    role="user", content=_new_content,
+                                    tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
+                                    source=_um.source, msg_id=_um.msg_id,
+                                )
+                            else:
+                                _uc = _um.content or ""
+                                llm_context[_mi] = LLMMessage(
+                                    role="user", content=_uc + _meta_note,
+                                    tool_calls=_um.tool_calls, tool_call_id=_um.tool_call_id,
+                                    source=_um.source, msg_id=_um.msg_id,
+                                )
                             break
 
                     emitter.check_cancelled()

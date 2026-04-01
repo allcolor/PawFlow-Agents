@@ -79,7 +79,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
 
     @staticmethod
     @staticmethod
-    def _microcompact_time_based(messages: List[LLMMessage],
+    def _microcompact_time_based(self, messages: List[LLMMessage],
                                   keep_recent: int = 5,
                                   gap_minutes: int = 60) -> int:
         """Clear old tool results when conversation has been idle.
@@ -123,7 +123,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                         cleared, gap_s / 60, keep_recent)
         return cleared
 
-    def _progressive_clear_tool_results(messages: List[LLMMessage],
+    def _progressive_clear_tool_results(self, messages: List[LLMMessage],
                                           target_tokens: int,
                                           current_tokens: int,
                                           keep_recent: int = 6,
@@ -329,7 +329,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 role="user",
                 content=f"[{len(result) - keep_n - 1} earlier messages dropped to fit context limit]",
             ))
-            keep.append(LLMMessage(role="assistant", content="Understood, continuing."))
+            keep.append(LLMMessage(role="assistant", content="Understood, continuing.", source={"type": "context"}))
         keep.extend(result[-keep_n:])
         return keep
 
@@ -538,6 +538,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         compacted.append(LLMMessage(
             role="assistant",
             content="Understood. I have the summary and will continue from the recent messages.",
+            source={"type": "context"},
         ))
         compacted.extend(recent_messages)
 
@@ -614,7 +615,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 compacted.append(LLMMessage(role="user", content=(
                     f"[Conversation summary — earlier messages compacted]\n\n{summary}\n\n"
                     f"Use read_history tool to access older messages if needed.")))
-                compacted.append(LLMMessage(role="assistant", content="Understood."))
+                compacted.append(LLMMessage(role="assistant", content="Understood.", source={"type": "context"}))
                 compacted.extend(recent_messages)
                 self._truncate_tool_results(compacted)
                 new_estimate = self._estimate_tokens(compacted, tool_defs=tool_defs,

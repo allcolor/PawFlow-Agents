@@ -76,18 +76,65 @@ def _double_click(req):
 
 
 def _type(req):
-    pag = _get_pyautogui()
     text = req.get("text", "")
-    # pyautogui.write() uses keyboard events; on Windows it may fail
-    # for special chars. Try write first, fall back to press per char.
-    try:
-        pag.write(text, interval=0.02)
-    except Exception:
+    if sys.platform == "win32":
+        # Use Win32 SendInput with KEYEVENTF_UNICODE — reliable for all chars
+        import ctypes
+        from ctypes import wintypes
+        INPUT_KEYBOARD = 1
+        KEYEVENTF_UNICODE = 0x0004
+        KEYEVENTF_KEYUP = 0x0002
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [
+                ("wVk", wintypes.WORD),
+                ("wScan", wintypes.WORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        class MOUSEINPUT(ctypes.Structure):
+            _fields_ = [
+                ("dx", ctypes.c_long),
+                ("dy", ctypes.c_long),
+                ("mouseData", wintypes.DWORD),
+                ("dwFlags", wintypes.DWORD),
+                ("time", wintypes.DWORD),
+                ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+            ]
+
+        class HARDWAREINPUT(ctypes.Structure):
+            _fields_ = [
+                ("uMsg", wintypes.DWORD),
+                ("wParamL", wintypes.WORD),
+                ("wParamH", wintypes.WORD),
+            ]
+
+        class _INPUTunion(ctypes.Union):
+            _fields_ = [("ki", KEYBDINPUT), ("mi", MOUSEINPUT), ("hi", HARDWAREINPUT)]
+
+        class INPUT(ctypes.Structure):
+            _fields_ = [("type", wintypes.DWORD), ("u", _INPUTunion)]
+
+        SendInput = ctypes.windll.user32.SendInput
+        SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
+        SendInput.restype = wintypes.UINT
+
         for ch in text:
-            try:
-                pag.press(ch)
-            except Exception:
-                pass
+            inputs = (INPUT * 2)()
+            inputs[0].type = INPUT_KEYBOARD
+            inputs[0].u.ki.wVk = 0
+            inputs[0].u.ki.wScan = ord(ch)
+            inputs[0].u.ki.dwFlags = KEYEVENTF_UNICODE
+            inputs[1].type = INPUT_KEYBOARD
+            inputs[1].u.ki.wVk = 0
+            inputs[1].u.ki.wScan = ord(ch)
+            inputs[1].u.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP
+            SendInput(2, inputs, ctypes.sizeof(INPUT))
+    else:
+        pag = _get_pyautogui()
+        pag.write(text, interval=0.02)
     return {"typed": len(text)}
 
 

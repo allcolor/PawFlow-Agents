@@ -42,6 +42,7 @@ export class RelayManager implements vscode.Disposable {
   public getRootDir(): string { return this.rootDir; }
   private allowExec: boolean = true;
   private allowAutomation: boolean = false;
+  private allowLocalScreen: boolean = false;
   private readonly: boolean = false;
   private running = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -68,6 +69,7 @@ export class RelayManager implements vscode.Disposable {
     this.allowExec = allowExec;
     this.dockerImage = dockerImage;
     this.allowAutomation = vscode.workspace.getConfiguration('pawflow').get('allowAutomation', false);
+    this.allowLocalScreen = vscode.workspace.getConfiguration('pawflow').get('allowLocalScreen', false);
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
     this.port = await findFreePort();
@@ -132,6 +134,7 @@ export class RelayManager implements vscode.Disposable {
       '--relay-id', this.relayId,
       '--dir', '/workspace',
       '--allow-exec',
+      ...(this.allowAutomation ? ['--allow-automation'] : []),
     ];
 
     this.outputChannel.appendLine(`[Relay] Starting Docker container: ${containerName}`);
@@ -231,7 +234,16 @@ export class RelayManager implements vscode.Disposable {
           secret: this.wsToken,
           relay_type: 'relay',
           relay_id: this.relayId,
-          info: { platform: process.platform, root: this.rootDir, mode: 'readwrite', containerized: !!this.dockerImage, docker_image: this.dockerImage || '' },
+          info: {
+            platform: process.platform,
+            root: this.rootDir,
+            mode: 'readwrite',
+            containerized: !!this.dockerImage,
+            docker_image: this.dockerImage || '',
+            allow_exec: this.allowExec,
+            allow_automation: this.allowAutomation,
+            allow_local_screen: this.allowLocalScreen,
+          },
         });
         this._wsSend(socket, regMsg);
         this.reconnectDelay = 1000;

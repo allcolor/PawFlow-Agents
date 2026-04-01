@@ -116,7 +116,8 @@ class RelayThread:
 
     def __init__(self, server_url: str, session_token: str, username: str,
                  directory: str, allow_exec: bool = True,
-                 docker_image: str = "", gateway_cookie: str = ""):
+                 docker_image: str = "", gateway_cookie: str = "",
+                 allow_local_screen: bool = False):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
@@ -124,6 +125,7 @@ class RelayThread:
         self.allow_exec = allow_exec
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
+        self.allow_local_screen = allow_local_screen
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
@@ -361,13 +363,15 @@ class RelayThread:
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:
             _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                    self.directory, False, allow_exec=self.allow_exec)
+                                    self.directory, False, allow_exec=self.allow_exec,
+                                    allow_local_screen=self.allow_local_screen)
         except Exception:
             if self._stop_event.is_set():
                 return
             ws_url = f"ws://localhost:{self.port}/ws/relay"
             try:
                 _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                        self.directory, False, allow_exec=self.allow_exec)
+                                        self.directory, False, allow_exec=self.allow_exec,
+                                        allow_local_screen=self.allow_local_screen)
             except Exception:
                 pass

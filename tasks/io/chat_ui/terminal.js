@@ -246,6 +246,14 @@ async function cmdDesktop(text, parts) {
   }
 
   let relayId = parts[1] || '';
+  let localScreen = false;
+  if (sub === 'local') {
+    localScreen = true;
+    relayId = parts[2] || '';
+  } else if (sub === 'docker') {
+    relayId = parts[2] || '';
+  }
+
   if (!relayId) {
     try {
       const relays = await _getRelays();
@@ -260,11 +268,27 @@ async function cmdDesktop(text, parts) {
     }
   }
 
-  addMsg('system', 'Starting desktop on ' + relayId + '...');
+  // Check if the relay supports local screen and offer choice
+  if (!localScreen && sub !== 'docker') {
+    try {
+      const relays = await _getRelays();
+      const relay = relays.find(r => r.id === relayId);
+      const info = relay && relay.relay_info;
+      if (info && info.allow_local_screen) {
+        const choice = await _pickDesktopMode();
+        if (choice === null) return true;  // cancelled
+        localScreen = choice === 'local';
+      }
+    } catch (e) {
+      // Fall through to default (docker)
+    }
+  }
+
+  addMsg('system', 'Starting ' + (localScreen ? 'local screen' : 'desktop') + ' on ' + relayId + '...');
   try {
     const resp = await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'open_desktop', relay_id: relayId }),
+      body: JSON.stringify({ action: 'open_desktop', relay_id: relayId, local_screen: localScreen }),
     }).then(r => r.json());
 
     if (resp.error) {
@@ -272,13 +296,43 @@ async function cmdDesktop(text, parts) {
       return true;
     }
 
-    const _desktopSid = 'desktop_' + relayId;
-    addDesktopTab(relayId, resp.url || '/vnc/' + _desktopSid + '/vnc.html?autoconnect=true&resize=scale&path=vnc/' + _desktopSid + '/websockify');
-    addMsg('system', 'Desktop ready.');
+    const _prefix = localScreen ? 'local_desktop' : 'desktop';
+    const _desktopSid = _prefix + '_' + relayId;
+    const _tabLabel = localScreen ? relayId + ' (local)' : relayId;
+    addDesktopTab(_tabLabel, resp.url || '/vnc/' + _desktopSid + '/vnc.html?autoconnect=true&resize=scale&path=vnc/' + _desktopSid + '/websockify');
+    addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
   } catch (e) {
     addMsg('system', 'Failed: ' + e.message);
   }
   return true;
+}
+
+/** Pick between Docker desktop and local screen. */
+function _pickDesktopMode() {
+  return new Promise(resolve => {
+    const bg = document.createElement('div');
+    bg.className = 'dialog-bg';
+    bg.innerHTML = '<div class="dialog" style="max-width:340px">'
+      + '<div class="dialog-title">Choose desktop mode</div>'
+      + '<div class="dialog-body" id="_desktopPickList"></div>'
+      + '<div class="dialog-actions"><button onclick="this.closest(\'.dialog-bg\').remove()" class="btn">Cancel</button></div>'
+      + '</div>';
+    const list = bg.querySelector('#_desktopPickList');
+    const btnDocker = document.createElement('button');
+    btnDocker.className = 'btn btn-primary';
+    btnDocker.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
+    btnDocker.textContent = 'Docker Desktop (virtual screen in container)';
+    btnDocker.onclick = () => { bg.remove(); resolve('docker'); };
+    list.appendChild(btnDocker);
+    const btnLocal = document.createElement('button');
+    btnLocal.className = 'btn btn-primary';
+    btnLocal.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
+    btnLocal.textContent = 'Local Screen (user\'s display)';
+    btnLocal.onclick = () => { bg.remove(); resolve('local'); };
+    list.appendChild(btnLocal);
+    bg.querySelector('.dialog-actions button').onclick = () => { bg.remove(); resolve(null); };
+    document.body.appendChild(bg);
+  });
 }
 
 /** /port-forward command */

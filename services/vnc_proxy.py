@@ -33,18 +33,18 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 4000, "Missing session_id")
         return
 
-    # Look up the Docker port for this session
-    target_port = _get_vnc_port(session_id)
+    # Look up the target host:port for this session
+    target_host, target_port = _get_vnc_target(session_id)
     if not target_port:
         _ws_close(client_sock, 4001, "Unknown session")
         return
 
-    # Connect to Docker noVNC websockify
+    # Connect to noVNC websockify (Docker container or local relay)
     try:
-        backend_sock = socket.create_connection(("127.0.0.1", target_port))
+        backend_sock = socket.create_connection((target_host, target_port))
         # No timeout on the socket — VNC relay needs to stay open indefinitely
     except Exception as e:
-        logger.warning("VNC proxy: cannot connect to Docker port %d: %s", target_port, e)
+        logger.warning("VNC proxy: cannot connect to %s:%d: %s", target_host, target_port, e)
         _ws_close(client_sock, 4002, "Backend unavailable")
         return
 
@@ -53,7 +53,7 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
     ws_key = base64.b64encode(os.urandom(16)).decode()
     handshake = (
         f"GET /websockify HTTP/1.1\r\n"
-        f"Host: 127.0.0.1:{target_port}\r\n"
+        f"Host: {target_host}:{target_port}\r\n"
         f"Upgrade: websocket\r\n"
         f"Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {ws_key}\r\n"
@@ -178,6 +178,15 @@ def _get_vnc_port(session_id: str) -> int:
     return entry["port"] if entry else 0
 
 
+def _get_vnc_target(session_id: str) -> tuple:
+    """Return (host, port) for a session. Host defaults to 127.0.0.1."""
+    with _lock:
+        entry = _sessions.get(session_id)
+    if not entry:
+        return ("127.0.0.1", 0)
+    return (entry.get("host", "127.0.0.1"), entry["port"])
+
+
 def vnc_http_proxy(pending_req):
     """HTTP proxy callback for noVNC static files.
 
@@ -190,14 +199,14 @@ def vnc_http_proxy(pending_req):
     session_id = pending_req.path_params.get("session_id", "")
     sub_path = pending_req.path_params.get("path", "")
 
-    port = _get_vnc_port(session_id)
+    host, port = _get_vnc_target(session_id)
     if not port:
         pending_req.complete(404, {"Content-Type": "application/json"},
                              b'{"error": "Unknown VNC session"}')
         return
 
-    # Proxy to Docker container
-    target = f"http://127.0.0.1:{port}/{sub_path}"
+    # Proxy to backend (Docker container or local relay)
+    target = f"http://{host}:{port}/{sub_path}"
     try:
         req = urllib.request.Request(target, method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:

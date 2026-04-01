@@ -167,6 +167,11 @@
           "default": false,
           "description": "Allow screen automation (screenshot, click, type) via relay. Requires pyautogui + mss installed."
         },
+        "pawflow.allowLocalScreen": {
+          "type": "boolean",
+          "default": false,
+          "description": "Allow local screen access — when enabled, gives the choice between Docker virtual screen and your machine's display. When disabled, only Docker is available."
+        },
         "pawflow.gatewayKey": {
           "type": "string",
           "default": "",

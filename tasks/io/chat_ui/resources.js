@@ -243,8 +243,22 @@ async function loadResources() {
         <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
       </div>`;
     });
+    // All task instances (assigned tasks, any status)
+    (data.all_tasks || []).forEach(t => {
+      const statusColors = {active:'#4ecdc4', paused:'#f0ad4e', cancelled:'#888', failed:'#e74c3c', completed:'#2ecc71'};
+      const statusIcons = {active:'\u25B6', paused:'\u23F8', cancelled:'\u2716', failed:'\u274C', completed:'\u2705'};
+      const sc = statusColors[t.status] || '#666';
+      const si = statusIcons[t.status] || '\u2022';
+      const label = t.task_id + ' ' + t.agent + ': ' + (t.task_def_name || t.task.substring(0, 40));
+      const ivSpec = typeof t.interval === 'object' ? (t.interval.spec || '') : '';
+      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
+        <span style="color:${sc};font-size:11px;">${si}</span>
+        <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
+        <span style="color:#555;font-size:10px;">[${t.status}, iter ${t.iterations}/${t.max_iterations}${ivSpec ? ', '+ivSpec : ''}]</span>
+      </div>`;
+    });
     html += _sectionFooter();
-    // Running task instances
+    // Running task instances (active/paused)
     if (data.running_tasks && data.running_tasks.length) {
       html += _sectionHeader('Running Tasks', '_running');
       data.running_tasks.forEach(t => {
@@ -911,11 +925,20 @@ function showRunningTaskMenu(e, taskId, agent, status) {
     item('\u23F8 Pause', () => _taskAction('pause'));
   } else if (status === 'paused') {
     item('\u25B6 Resume', () => _taskAction('resume'));
+  } else if (status === 'cancelled' || status === 'failed') {
+    item('\u25B6 Restart', () => _taskAction('resume'));
   }
-  const sep = document.createElement('div');
-  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
-  menu.appendChild(sep);
-  item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
+  if (status === 'active' || status === 'paused') {
+    const sep = document.createElement('div');
+    sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+    menu.appendChild(sep);
+    item('\u{1F5D1} Cancel', () => _taskAction('cancel'), true);
+  }
+  // Delete: remove task instance entirely
+  const sep2 = document.createElement('div');
+  sep2.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  menu.appendChild(sep2);
+  item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 

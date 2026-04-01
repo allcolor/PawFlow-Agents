@@ -1584,6 +1584,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "open_desktop":
         relay_id = body.get("relay_id", "")
+        local_screen = body.get("local_screen", False)
         if not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
             return [flowfile]
@@ -1593,47 +1594,73 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
 
+            _action_start = "start_local_desktop" if local_screen else "start_desktop"
+            _action_status_key = "local_screen_running" if local_screen else "running"
+            _session_prefix = "local_desktop" if local_screen else "desktop"
+
             # Check if already running (idempotent)
             status = svc._request("desktop_status")
-            if isinstance(status, dict) and status.get("running"):
-                # Already running — find the host port
-                _hp = _get_desktop_host_port(relay_id)
-                if _hp:
-                    _sid = f"desktop_{relay_id}"
-                    from services.vnc_proxy import register_session
-                    register_session(_sid, _hp)
-                    _ensure_vnc_routes()
-                    flowfile.set_content(json.dumps({
-                        "ok": True, "already_running": True,
-                        "relay_id": relay_id,
-                        "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
-                    }).encode())
-                    return [flowfile]
+            if isinstance(status, dict) and status.get(_action_status_key):
+                if local_screen:
+                    _novnc_port = status.get("local_screen_novnc_port")
+                    if _novnc_port:
+                        _sid = f"{_session_prefix}_{relay_id}"
+                        from services.vnc_proxy import register_session
+                        register_session(_sid, _novnc_port)
+                        _ensure_vnc_routes()
+                        flowfile.set_content(json.dumps({
+                            "ok": True, "already_running": True, "local_screen": True,
+                            "relay_id": relay_id,
+                            "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
+                        }).encode())
+                        return [flowfile]
+                else:
+                    _hp = _get_desktop_host_port(relay_id)
+                    if _hp:
+                        _sid = f"{_session_prefix}_{relay_id}"
+                        from services.vnc_proxy import register_session
+                        register_session(_sid, _hp)
+                        _ensure_vnc_routes()
+                        flowfile.set_content(json.dumps({
+                            "ok": True, "already_running": True,
+                            "relay_id": relay_id,
+                            "url": f"/vnc/{_sid}/vnc.html?autoconnect=true&resize=scale&path=vnc/{_sid}/websockify",
+                        }).encode())
+                        return [flowfile]
 
-            logger.info("[open_desktop] Starting desktop on relay %s", relay_id)
-            result = svc._request("start_desktop")
-            logger.debug("[open_desktop] start_desktop result: %s", result)
+            logger.info("[open_desktop] Starting %s on relay %s", _action_start, relay_id)
+            result = svc._request(_action_start)
+            logger.debug("[open_desktop] %s result: %s", _action_start, result)
             # _request() unwraps the relay response — result is the inner data dict directly
             novnc_port = result.get("novnc_port") if isinstance(result, dict) else None
             if not novnc_port:
-                flowfile.set_content(json.dumps({"error": "Failed to start desktop", "detail": str(result)}).encode())
+                flowfile.set_content(json.dumps({"error": f"Failed to start {_action_start}", "detail": str(result)}).encode())
                 return [flowfile]
 
-            # Get the published host port for this relay's noVNC
-            host_port = _get_desktop_host_port(relay_id)
-            if not host_port:
-                flowfile.set_content(json.dumps({"error": "Desktop started but host port not found"}).encode())
-                return [flowfile]
+            if local_screen:
+                # Local screen: the relay runs VNC+websockify on its own machine.
+                # The novnc_port is directly on the relay's host (not in Docker).
+                # Use the relay's address to proxy.
+                _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
+                host_port = novnc_port
+                # For local relays connecting from the same machine, use the port directly
+                session_id = f"{_session_prefix}_{relay_id}"
+                from services.vnc_proxy import register_session
+                register_session(session_id, host_port, host=_relay_addr)
+            else:
+                # Docker: get the published host port
+                host_port = _get_desktop_host_port(relay_id)
+                if not host_port:
+                    flowfile.set_content(json.dumps({"error": "Desktop started but host port not found"}).encode())
+                    return [flowfile]
+                session_id = f"{_session_prefix}_{relay_id}"
+                from services.vnc_proxy import register_session
+                register_session(session_id, host_port)
 
-            # Register with the VNC proxy + ensure HTTP routes exist
-            # (same pattern as claude_code_server_login)
-            session_id = f"desktop_{relay_id}"
-            from services.vnc_proxy import register_session
-            register_session(session_id, host_port)
             _ensure_vnc_routes()
 
             flowfile.set_content(json.dumps({
-                "ok": True, "relay_id": relay_id,
+                "ok": True, "relay_id": relay_id, "local_screen": local_screen,
                 "url": f"/vnc/{session_id}/vnc.html?autoconnect=true&resize=scale&path=vnc/{session_id}/websockify",
             }).encode())
         except Exception as e:
@@ -1642,15 +1669,17 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "close_desktop":
         relay_id = body.get("relay_id", "")
+        local_screen = body.get("local_screen", False)
         if not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
             return [flowfile]
         try:
             svc = _find_relay_svc(relay_id)
             if svc:
-                svc._request("stop_desktop")
+                svc._request("stop_local_desktop" if local_screen else "stop_desktop")
             from services.vnc_proxy import unregister_session
-            unregister_session(f"desktop_{relay_id}")
+            _prefix = "local_desktop" if local_screen else "desktop"
+            unregister_session(f"{_prefix}_{relay_id}")
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())

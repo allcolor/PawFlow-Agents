@@ -196,9 +196,10 @@ class FSRelayHandler(BaseHTTPRequestHandler):
             self._send_json(False, error="Operation not allowed in readonly mode")
             return
         # Automation check
-        if action.startswith("screen_") and not getattr(self, 'allow_automation', False):
+        _can_automate = getattr(self, 'allow_automation', False) or getattr(self, 'allow_local_screen', False)
+        if action.startswith("screen_") and not _can_automate:
             self._log_op(action, rel_path, False, "automation not allowed")
-            self._send_json(False, error="Screen automation not allowed. Start relay with --allow-automation")
+            self._send_json(False, error="Screen automation not allowed. Start relay with --allow-automation or --allow-local-screen")
             return
 
         # Resolve path
@@ -753,7 +754,8 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
 # ── Main ──────────────────────────────────────────────────────────
 
 def _make_handler_class(root_dir: str, secret: str, readonly: bool,
-                        allow_exec: bool = False, allow_automation: bool = False):
+                        allow_exec: bool = False, allow_automation: bool = False,
+                        allow_local_screen: bool = False):
     """Create a handler class with bound config (avoids lambda issues)."""
 
     class ConfiguredHandler(FSRelayHandler):
@@ -764,12 +766,14 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
     ConfiguredHandler.readonly = readonly
     ConfiguredHandler.allow_exec = allow_exec
     ConfiguredHandler.allow_automation = allow_automation
+    ConfiguredHandler.allow_local_screen = allow_local_screen
     return ConfiguredHandler
 
 
 # ── WS Reverse client ─────────────────────────────────────────────
 
-def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False):
+def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
+                allow_automation=False, allow_local_screen=False):
     """Connect to the PawFlow server via WebSocket and process filesystem commands."""
     import ssl
     import base64 as b64
@@ -799,6 +803,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         "containerized": _is_containerized(),
         "docker_image": os.environ.get("PAWFLOW_DOCKER_IMAGE", ""),
         "container_id": socket.gethostname() if _is_containerized() else "",
+        "allow_exec": allow_exec,
+        "allow_automation": allow_automation,
+        "allow_local_screen": allow_local_screen,
     }
 
     def _resolve(rel_path):
@@ -816,6 +823,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.secret = secret
     MockHandler.readonly = readonly
     MockHandler.allow_exec = allow_exec
+    MockHandler.allow_automation = allow_automation
+    MockHandler.allow_local_screen = allow_local_screen
     mock = MockHandler()
 
     def _ws_frame_send(sock, data_bytes, opcode=0x01):
@@ -1361,12 +1370,195 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _running = False
             if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
                 _running = all(p.poll() is None for p in _execute_command._desktop_procs)
+            _local_running = False
+            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
+                _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)
             return {"ok": True, "data": {
                 "running": _running,
                 "display": getattr(_execute_command, '_desktop_display', None),
                 "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
                 "novnc_port": getattr(_execute_command, '_desktop_novnc_port', None),
+                "local_screen_running": _local_running,
+                "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
             }}
+
+        if action == "start_local_desktop":
+            # Share the local screen via VNC — requires allow_local_screen
+            if not allow_local_screen:
+                return {"ok": False, "error": "Local screen not allowed. Start relay with --allow-local-screen"}
+            # Idempotent
+            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
+                _alive = all(p.poll() is None for p in _execute_command._local_desktop_procs)
+                if _alive:
+                    return {"ok": True, "data": {
+                        "novnc_port": _execute_command._local_desktop_novnc_port,
+                        "already_running": True
+                    }}
+                else:
+                    for p in _execute_command._local_desktop_procs:
+                        try: p.kill()
+                        except: pass
+                    _execute_command._local_desktop_procs = None
+
+            # Detect available VNC server
+            _vnc_cmd = None
+            _platform = sys.platform
+            _vnc_port = 0
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                _s.bind(("", 0)); _vnc_port = _s.getsockname()[1]
+            _novnc_port = int(msg.get("novnc_port", 0))
+            if not _novnc_port:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as _s:
+                    _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
+
+            try:
+                import shutil
+                _procs = []
+                _log_d = open("/tmp/local_desktop.log", "w") if _platform != "win32" else open(os.path.join(os.environ.get("TEMP", "."), "local_desktop.log"), "w")
+
+                if _platform == "linux":
+                    # Linux: use x11vnc to share the real display :0
+                    _display = os.environ.get("DISPLAY", ":0")
+                    if not shutil.which("x11vnc"):
+                        return {"ok": False, "error": "x11vnc not installed. Install with: apt install x11vnc"}
+                    if not shutil.which("websockify"):
+                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
+                    _p_vnc = subprocess.Popen(
+                        ["x11vnc", "-display", _display, "-forever", "-nopw",
+                         "-rfbport", str(_vnc_port), "-shared", "-noxdamage"],
+                        stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_vnc)
+
+                elif _platform == "win32":
+                    # Windows: use TightVNC or UltraVNC via WinVNC if available,
+                    # else try built-in Windows VNC (Remote Desktop) — but for noVNC we need a VNC server.
+                    # Check for common VNC servers
+                    _winvnc = None
+                    for _candidate in [
+                        r"C:\Program Files\TightVNC\tvnserver.exe",
+                        r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
+                        r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
+                    ]:
+                        if os.path.exists(_candidate):
+                            _winvnc = _candidate
+                            break
+                    if not _winvnc:
+                        _winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
+                    if not _winvnc:
+                        return {"ok": False, "error": "No VNC server found on Windows. Install TightVNC or UltraVNC."}
+                    _websockify = shutil.which("websockify")
+                    if not _websockify:
+                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
+                    # Start VNC server on the specified port
+                    _p_vnc = subprocess.Popen(
+                        [_winvnc, "-rfbport", str(_vnc_port), "-localhost"],
+                        stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_vnc)
+
+                elif _platform == "darwin":
+                    # macOS: built-in VNC server (Screen Sharing)
+                    # Enable via: System Preferences → Sharing → Screen Sharing
+                    # Or start with: /System/Library/CoreServices/RemoteManagement/ARDAgent.app/...
+                    if not shutil.which("websockify"):
+                        return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
+                    # macOS VNC server usually runs on port 5900
+                    _vnc_port = 5900
+                    # Just check it's accessible
+                    try:
+                        _test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                        _test.settimeout(2)
+                        _test.connect(("localhost", 5900))
+                        _test.close()
+                    except Exception:
+                        return {"ok": False, "error": "macOS Screen Sharing not enabled. Enable in System Preferences → Sharing → Screen Sharing."}
+
+                else:
+                    return {"ok": False, "error": f"Unsupported platform for local screen: {_platform}"}
+
+                # Start websockify (noVNC)
+                import time as _time_mod
+                _time_mod.sleep(0.5)
+                _novnc_web = "/usr/share/novnc"
+                if _platform == "win32":
+                    _novnc_web = os.path.join(os.environ.get("PROGRAMFILES", "C:\\Program Files"), "noVNC")
+                    if not os.path.isdir(_novnc_web):
+                        _novnc_web = ""
+                elif _platform == "darwin":
+                    _novnc_web = "/usr/local/share/novnc"
+                    if not os.path.isdir(_novnc_web):
+                        _novnc_web = ""
+
+                _ws_args = ["websockify", str(_novnc_port), f"localhost:{_vnc_port}"]
+                if _novnc_web and os.path.isdir(_novnc_web):
+                    _ws_args = ["websockify", "--web", _novnc_web, str(_novnc_port), f"localhost:{_vnc_port}"]
+                _p_novnc = subprocess.Popen(_ws_args, stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_novnc)
+
+                _execute_command._local_desktop_procs = _procs
+                _execute_command._local_desktop_vnc_port = _vnc_port
+                _execute_command._local_desktop_novnc_port = _novnc_port
+                sys.stderr.write(f"[FSRelay] Local desktop started: vnc={_vnc_port} novnc={_novnc_port} platform={_platform}\n")
+                return {"ok": True, "data": {
+                    "vnc_port": _vnc_port, "novnc_port": _novnc_port,
+                    "platform": _platform, "local_screen": True
+                }}
+            except FileNotFoundError as e:
+                return {"ok": False, "error": f"Local desktop dependency not installed: {e}"}
+            except Exception as e:
+                return {"ok": False, "error": f"Failed to start local desktop: {e}"}
+
+        if action == "stop_local_desktop":
+            if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
+                for p in _execute_command._local_desktop_procs:
+                    if p.poll() is None:
+                        p.terminate()
+                for p in _execute_command._local_desktop_procs:
+                    try: p.wait(timeout=5)
+                    except subprocess.TimeoutExpired: p.kill()
+                _execute_command._local_desktop_procs = None
+                _execute_command._local_desktop_vnc_port = None
+                _execute_command._local_desktop_novnc_port = None
+                sys.stderr.write("[FSRelay] Local desktop stopped\n")
+                return {"ok": True}
+            return {"ok": True, "data": {"was_running": False}}
+
+        if action == "local_screen_check":
+            # Check if local screen VNC dependencies are available
+            import shutil
+            _checks = {}
+            _platform = sys.platform
+            _checks["platform"] = _platform
+            _checks["allow_local_screen"] = allow_local_screen
+            if _platform == "linux":
+                _checks["x11vnc"] = bool(shutil.which("x11vnc"))
+                _checks["websockify"] = bool(shutil.which("websockify"))
+                _checks["display"] = os.environ.get("DISPLAY", "")
+                _checks["ready"] = _checks["x11vnc"] and _checks["websockify"] and bool(_checks["display"])
+            elif _platform == "win32":
+                _has_vnc = False
+                for _c in [r"C:\Program Files\TightVNC\tvnserver.exe",
+                           r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
+                           r"C:\Program Files (x86)\TightVNC\tvnserver.exe"]:
+                    if os.path.exists(_c):
+                        _has_vnc = True; break
+                _has_vnc = _has_vnc or bool(shutil.which("tvnserver")) or bool(shutil.which("winvnc"))
+                _checks["vnc_server"] = _has_vnc
+                _checks["websockify"] = bool(shutil.which("websockify"))
+                _checks["ready"] = _has_vnc and _checks["websockify"]
+            elif _platform == "darwin":
+                _checks["websockify"] = bool(shutil.which("websockify"))
+                try:
+                    _test = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _test.settimeout(2)
+                    _test.connect(("localhost", 5900))
+                    _test.close()
+                    _checks["screen_sharing"] = True
+                except Exception:
+                    _checks["screen_sharing"] = False
+                _checks["ready"] = _checks["websockify"] and _checks["screen_sharing"]
+            else:
+                _checks["ready"] = False
+            return {"ok": True, "data": _checks}
 
         # ── Desktop VNC WS tunnel (same pattern as cs_ws_*) ────────────────
         if action == "desktop_ws_open":
@@ -1561,6 +1753,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             sys.stderr.write(f"[FSRelay] Scripts updated: {_updated} hash={_new_hash}"
                              f"{' (restart needed)' if _needs_restart else ''}\n")
             return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}
+
+        # Screen automation gate
+        _can_automate = allow_automation or allow_local_screen
+        if action.startswith("screen_") and not _can_automate:
+            return {"ok": False, "error": "Screen automation not allowed. Start relay with --allow-automation or --allow-local-screen"}
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)
@@ -1810,7 +2007,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                     else:
                                         _child_container = None
                                 _ws_connect(_url, _tok, _sec, _rid, _root,
-                                            readonly=readonly, allow_exec=allow_exec)
+                                            readonly=readonly, allow_exec=allow_exec,
+                                            allow_automation=allow_automation,
+                                            allow_local_screen=allow_local_screen)
                             except Exception as _ce:
                                 sys.stderr.write(f"[FSRelay] Child {_rid} died: {_ce}\n")
                             finally:
@@ -2183,6 +2382,8 @@ def main():
                         help="Allow shell command execution (disabled by default)")
     parser.add_argument("--allow-automation", action="store_true",
                         help="Allow screen automation (screenshot, click, type — disabled by default)")
+    parser.add_argument("--allow-local-screen", action="store_true",
+                        help="Allow local screen access — actions execute on this machine's display (disabled by default)")
     # Auto-registration params
     parser.add_argument("--login-url", default="http://localhost:9090",
                         help="PawFlow chat UI URL for OAuth login (default: http://localhost:9090)")
@@ -2235,6 +2436,7 @@ def main():
         f"  Mode:      {mode}\n"
         f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
         f"  Automation:{'enabled' if args.allow_automation else 'disabled'}\n"
+        f"  Local scr: {'enabled' if args.allow_local_screen else 'disabled'}\n"
         f"  Token:     {masked}\n"
         f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n"
         f"  Gateway:   {'key provided' if args.gateway_key else 'none'}\n\n"
@@ -2313,6 +2515,8 @@ def main():
         docker_cmd = _docker_cmd() + ["run"] + docker_run_args
         if args.allow_exec:
             docker_cmd.append("--allow-exec")
+        if args.allow_automation:
+            docker_cmd.append("--allow-automation")
         if args.readonly:
             docker_cmd.append("--readonly")
 
@@ -2340,7 +2544,9 @@ def main():
         # Direct mode: connect to server from this process
         try:
             _ws_connect(ws_url, token, token, args.relay_id,
-                         root_dir, args.readonly, allow_exec=args.allow_exec)
+                         root_dir, args.readonly, allow_exec=args.allow_exec,
+                         allow_automation=args.allow_automation,
+                         allow_local_screen=args.allow_local_screen)
         finally:
             _cleanup()
 

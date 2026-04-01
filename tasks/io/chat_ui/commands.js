@@ -174,11 +174,13 @@ const HELP_DATA = {
       + '  /code close            \u2014 Close VS Code tab',
   },
   '/desktop': {
-    usage: '/desktop [relay_name] | /desktop close',
+    usage: '/desktop [relay_name] | /desktop local [relay] | /desktop docker [relay] | /desktop close',
     short: 'Open virtual desktop (VNC) on a relay',
     detail: 'Opens noVNC in a tab connected to a virtual desktop on the relay.\n\n'
-      + '  /desktop              \u2014 Open on first connected relay\n'
+      + '  /desktop              \u2014 Open on first relay (choose mode if local screen available)\n'
       + '  /desktop my_relay     \u2014 Open on a specific relay\n'
+      + '  /desktop local        \u2014 Open user\'s local screen via VNC\n'
+      + '  /desktop docker       \u2014 Open Docker virtual desktop\n'
       + '  /desktop close        \u2014 Close the active desktop tab',
   },
   '/port-forward': {

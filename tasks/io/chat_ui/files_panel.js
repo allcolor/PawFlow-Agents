@@ -19,22 +19,16 @@ function closeFileMenu() {
   if (m) m.remove();
 }
 
-async function deleteFile(fileId) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_file', file_id: fileId, conversation_id: conversationId }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
-    if (data.ok) {
+function deleteFile(fileId) {
+  action$('delete_file', { file_id: fileId }).subscribe(data => {
+    if (data.error) {
+      addMsg('system', 'Delete failed: ' + (data.error || 'unknown'));
+    } else if (data.ok) {
       loadConvFiles();
     } else {
-      addMsg('system', 'Delete failed: ' + (data.error || 'unknown'));
+      addMsg('system', 'Delete failed: unknown');
     }
-  } catch (e) {
-    addMsg('system', 'Delete failed: ' + e.message);
-  }
+  });
 }
 
 // ── Flow context menu ──────────────────────────────────────────
@@ -61,28 +55,19 @@ function closeFlowMenu() {
   if (m) m.remove();
 }
 
-async function flowAction(flowId, action) {
+function flowAction(flowId, action) {
   closeFlowMenu();
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'manage_conv_flow',
-        conversation_id: conversationId,
-        flow_id: flowId,
-        flow_action: action,
-      }),
-    });
-    const data = await resp.json();
+  action$('manage_conv_flow', {
+    flow_id: flowId,
+    flow_action: action,
+  }).subscribe(data => {
     if (data.error) {
-      addMsg('system', '\\u274C ' + data.error);
+      addMsg('system', '\u274C ' + data.error);
     } else {
-      addMsg('system', '\\u2705 ' + (data.message || action + ' done'));
+      addMsg('system', '\u2705 ' + (data.message || action + ' done'));
     }
-    await loadResources();
-  } catch (e) {
-    addMsg('error', 'Flow action failed: ' + e.message);
-  }
+    loadResources();
+  });
 }
 
 // ── Scheduled Tasks panel ──────────────────────────────────────
@@ -96,16 +81,15 @@ async function toggleSchedsPanel() {
   }
 }
 
-async function loadConvScheds() {
+function loadConvScheds() {
   if (!conversationId) return;
   const list = document.getElementById('schedsList');
   list.innerHTML = '<span style="color:#808090;font-size:12px">Loading...</span>';
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_schedules', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  action$('list_schedules').subscribe(data => {
+    if (data.error) {
+      list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load schedules</span>';
+      return;
+    }
     const scheds = data.schedules || [];
     if (scheds.length === 0) {
       list.innerHTML = '<span style="color:#808090;font-size:12px">No scheduled tasks.</span>';
@@ -124,9 +108,7 @@ async function loadConvScheds() {
         ' <span style="color:#808090;font-size:11px">(' + timeStr + ', ' + relative + ')</span>' +
         '</span>';
     }).join('');
-  } catch (e) {
-    list.innerHTML = '<span style="color:#e94560;font-size:12px">Failed to load schedules</span>';
-  }
+  });
 }
 
 function formatRelative(ms) {
@@ -152,18 +134,13 @@ function handleFiles(fileList) {
     // .py files → offer to install as dynamic tool
     if (file.name.endsWith('.py')) {
       const textReader = new FileReader();
-      textReader.onload = async (e) => {
+      textReader.onload = (e) => {
         const source = e.target.result;
         addMsg('system', `Installing tool from ${file.name}...`);
-        try {
-          const resp = await fetch(API, {
-            method: 'POST', headers: getAuthHeaders(),
-            body: JSON.stringify({ action: 'install_tool', filename: file.name, source }),
-          });
-          const data = await resp.json();
+        action$('install_tool', { filename: file.name, source }).subscribe(data => {
           if (data.error) { addMsg('error', 'Install failed: ' + data.error); }
           else { addMsg('system', `Tool **${data.tool_name}** installed: ${data.description}`); }
-        } catch (err) { addMsg('error', 'Install failed: ' + err.message); }
+        });
       };
       textReader.readAsText(file);
       continue;

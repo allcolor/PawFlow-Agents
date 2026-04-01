@@ -44,25 +44,16 @@ function _onMentionInput(e) {
   _mentionDebounce = setTimeout(() => _searchFiles(_mentionQuery), 200);
 }
 
-async function _searchFiles(query) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'fs_search',
-        conversation_id: conversationId,
-        pattern: query ? '*' + query + '*' : '*',
-        path: '.',
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+function _searchFiles(query) {
+  action$('fs_search', {
+    pattern: query ? '*' + query + '*' : '*',
+    path: '.',
+  }).subscribe(data => {
     if (data.error) { _closeMention(); return; }
     _mentionResults = (data.results || []).slice(0, 15);
     _mentionSelected = 0;
     _showMentionDropdown();
-  } catch (e) { _closeMention(); }
+  });
 }
 
 function _showMentionDropdown() {
@@ -135,7 +126,7 @@ function _onMentionKeydown(e) {
   }
 }
 
-async function _selectMention(idx) {
+function _selectMention(idx) {
   const file = _mentionResults[idx];
   if (!file) return;
 
@@ -154,18 +145,7 @@ async function _selectMention(idx) {
   input.focus();
 
   // Read file content and add as attachment
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'fs_read_file',
-        conversation_id: conversationId,
-        path: file,
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+  action$('fs_read_file', { path: file }).subscribe(data => {
     if (data.error) {
       console.error('File mention read error:', data.error);
       return;
@@ -179,7 +159,7 @@ async function _selectMention(idx) {
       });
       renderAttachments();
     }
-  } catch (e) { console.error('File mention read failed:', e); }
+  });
 }
 
 // Disabled: @file autocomplete was too slow (5-6s latency) and interfered with typing.

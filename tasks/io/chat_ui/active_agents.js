@@ -87,16 +87,10 @@ function startActiveSync() {
 function stopActiveSync() {
   if (_syncActiveTimer) { clearInterval(_syncActiveTimer); _syncActiveTimer = null; }
 }
-async function syncActiveFromServer() {
+function syncActiveFromServer() {
   if (!conversationId) return;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_active', conversation_id: conversationId }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) return;
-    const data = await resp.json();
+  action$('list_active').subscribe(data => {
+    if (data.error) return;  // silent — network may be down
     const serverActive = data.active || [];
     const serverKeys = new Set(serverActive.map(a => a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name)));
 
@@ -131,38 +125,26 @@ async function syncActiveFromServer() {
     } else {
       hideTyping();
     }
-  } catch(e) { /* silent — network may be down */ }
+  });
 }
 
-async function interruptSingle(agentName, taskId) {
+function interruptSingle(agentName, taskId) {
   if (!conversationId) return;
-  try {
-    const body = { action: 'interrupt', conversation_id: conversationId, agent_name: agentName };
-    if (taskId) body.task_id = taskId;
-    await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-      credentials: 'same-origin',
-    });
-  } catch(e) { console.warn('Interrupt failed:', e); }
+  const body = { agent_name: agentName };
+  if (taskId) body.task_id = taskId;
+  fireAction('interrupt', body);
 }
 function interruptCurrent() {
   const target = typeof selectedAgent !== 'undefined' && selectedAgent ? selectedAgent : 'ALL';
   cmdAgentInterrupt(target);
 }
-async function stopSingle(agentName, taskId) {
+function stopSingle(agentName, taskId) {
   if (!conversationId) return;
-  try {
-    const body = { action: 'cancel', conversation_id: conversationId, agent_name: agentName, force: true };
-    if (taskId) body.task_id = taskId;
-    await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-      credentials: 'same-origin',
-    });
-    // Optimistic removal — server will confirm on next poll
-    const key = taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
-    delete activeInteractions[key];
-    updateActivePanel();
-  } catch(e) { console.warn('Stop failed:', e); }
+  const body = { agent_name: agentName, force: true };
+  if (taskId) body.task_id = taskId;
+  fireAction('cancel', body);
+  // Optimistic removal — server will confirm on next poll
+  const key = taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
+  delete activeInteractions[key];
+  updateActivePanel();
 }

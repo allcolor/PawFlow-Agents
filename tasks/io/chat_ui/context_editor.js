@@ -1,47 +1,37 @@
 // ── Context editor ────────────────────────────────────────────────
 let _ctxAgentFilter = 'transcript';
 
-async function cmdShowContext(agentName) {
+function cmdShowContext(agentName) {
   if (!conversationId) { addMsg('system', t('noConv')); return; }
   if (agentName !== undefined) _ctxAgentFilter = agentName;
-  try {
-    const body = { action: 'get_context', conversation_id: conversationId };
-    if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
+  const body = {};
+  if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
+  action$('get_context', body).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     data._agent_filter = _ctxAgentFilter;
     showContextOverlay(data);
-  } catch (e) { addMsg('error', 'Failed to load context: ' + e.message); }
+  });
 }
 
 let _ctxFullData = null;
 
-async function ctxLoadFull() {
-  const body = { action: 'get_context_full', conversation_id: conversationId };
+function ctxLoadFull() {
+  const body = {};
   if (_ctxAgentFilter) body.agent_name = _ctxAgentFilter;
-  const resp = await fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(body),
+  return new Promise(resolve => {
+    action$('get_context_full', body).subscribe(data => {
+      _ctxFullData = data;
+      resolve(_ctxFullData);
+    });
   });
-  _ctxFullData = await resp.json();
-  return _ctxFullData;
 }
 
-async function ctxRefresh() {
+function ctxRefresh() {
   _ctxFullData = null;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_context', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+  action$('get_context').subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     showContextOverlay(data);
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }
 
 async function ctxEditMessage(index) {
@@ -68,20 +58,17 @@ async function ctxEditMessage(index) {
 }
 
 let _ctxDirty = false;
-async function _ctxMutate(body, successMsg) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({conversation_id: conversationId, ...body}),
+function _ctxMutate(body, successMsg) {
+  return new Promise(resolve => {
+    action$(body.action, {...body, action: undefined}).subscribe(data => {
+      if (data.error) { addMsg('error', data.error); resolve(false); return; }
+      if (successMsg) addMsg('system', typeof successMsg === 'function' ? successMsg(data) : successMsg);
+      _ctxFullData = null;
+      _ctxDirty = true;
+      ctxRefresh();
+      resolve(true);
     });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return false; }
-    if (successMsg) addMsg('system', typeof successMsg === 'function' ? successMsg(data) : successMsg);
-    _ctxFullData = null;
-    _ctxDirty = true;
-    await ctxRefresh();
-    return true;
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); return false; }
+  });
 }
 function ctxClose() {
   const overlay = document.getElementById('contextOverlay');

@@ -754,22 +754,17 @@ async function handleSlashCommand(text) {
  * Fallback: send raw /command text to the server-side unified parser.
  * New commands added server-side auto-work without client changes.
  */
-async function tryServerCommand(text) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'command', text,
-        conversation_id: conversationId || '',
-        agent_name: selectedAgent || '',
-      }),
-    });
-    const data = await resp.json();
+function tryServerCommand(text) {
+  action$('command', {
+    text,
+    conversation_id: conversationId || '',
+    agent_name: selectedAgent || '',
+  }).subscribe(data => {
     if (data.client_only) {
       addMsg('system', 'Unknown command: ' + text.split(/\s+/)[0] + '. Type /help for available commands.');
-      return true;
+      return;
     }
-    if (data.help) { addMsg('system', data.help); return true; }
+    if (data.help) { addMsg('system', data.help); return; }
     if (data.message) { addMsg('system', data.message); }
     if (data.error) { addMsg('system', '\u26a0 ' + data.error); }
     if (data.conversation_id && data.ok && data.source) {
@@ -781,9 +776,6 @@ async function tryServerCommand(text) {
     if (data.checkpoints && !data.error) {
       // Rewind checkpoint list — already rendered via data.message
     }
-    return true;
-  } catch (e) {
-    addMsg('system', 'Command failed: ' + e.message);
-    return true;
-  }
+  });
+  return true;
 }

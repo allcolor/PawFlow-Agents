@@ -29,19 +29,15 @@ from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
 
-# Actions that run in background (can be slow)
-_BG_ACTIONS = frozenset({
-    "service_install", "service_uninstall", "update_service",
-    "toggle_service", "delete_service",
-    "deploy_flow", "undeploy_flow", "start_flow", "stop_flow",
-    "update_flow_params", "promote_flow",
-    "relay_connect", "relay_disconnect",
-    "claude_code_login_url", "claude_code_login_code", "claude_code_auth",
-    "claude_code_server_login", "claude_code_server_login_cleanup",
-    "claude_code_server_login_status",
-    "claude_code_relay_login", "claude_code_set_credentials",
-    "create_server_workspace", "destroy_server_workspace",
-    "start_code_server",
+# Queries that return data synchronously (pure memory, no IO, no relay).
+# Everything else runs in background → result via SSE command_result.
+_SYNC_QUERIES = frozenset({
+    "list_conversations", "list_repo_agents", "list_service_types",
+    "get_permission_mode", "get_cost",
+    "create_conversation",
+    "tool_approval_result",
+    # cancel/interrupt must be sync (immediate effect)
+    "cancel", "interrupt", "cancel_task",
 })
 
 _ACTION_HANDLERS = [
@@ -106,19 +102,20 @@ class AgentActionsMixin:
                 else:
                     return result
 
-        # Actions that may be slow → run in background, ack immediately
         conversation_id = body.get("conversation_id", "")
-        if action in _BG_ACTIONS and conversation_id:
-            return self._run_action_bg(
-                action, body, store, user_id, flowfile, conversation_id)
 
-        # Dispatch to action handlers (sync — fast commands)
-        for handler in _ACTION_HANDLERS:
-            result = handler(self, action, body, store, user_id, flowfile)
-            if result is not None:
-                return result
+        # Sync queries: fast, pure memory, return data directly
+        if action in _SYNC_QUERIES or not conversation_id:
+            for handler in _ACTION_HANDLERS:
+                result = handler(self, action, body, store, user_id, flowfile)
+                if result is not None:
+                    return result
+            return None
 
-        return None
+        # Everything else: background → ack immediately, result via SSE
+        return self._run_action_bg(
+            action, body, store, user_id, flowfile, conversation_id)
+
 
     def _run_action_bg(self, action, body, store, user_id, flowfile, conversation_id):
         """Run an action in background. Return ack immediately, result via SSE."""

@@ -869,11 +869,23 @@ function connectSSE(cid) {
   eventSource.addEventListener('command_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (data.error) { addMsg('error', data.error); }
-    else {
+    const action = data.action || '';
+    // Hide initial loading overlay
+    const _loadingEl = document.getElementById('initialLoading');
+    if (_loadingEl) _loadingEl.remove();
+
+    if (data.error) { addMsg('error', data.error); return; }
+
+    // Dispatch to renderer based on action
+    let parsed = null;
+    try { parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result; } catch {}
+
+    if (parsed && _dispatchCommandResult(action, parsed)) return;
+    // Fallback: show as system message
+    if (data.result) {
       try {
-        const parsed = JSON.parse(data.result);
-        addMsg('system', parsed.error ? parsed.error : (parsed.message || data.result));
+        const p = JSON.parse(data.result);
+        addMsg('system', p.error ? p.error : (p.message || data.result));
       } catch { addMsg('system', data.result); }
     }
   });
@@ -994,6 +1006,80 @@ function connectSSE(cid) {
       syncActiveFromServer();
     }
   };
+}
+
+// ── Command result dispatchers ──────────────────────────────────
+function _dispatchCommandResult(action, parsed) {
+  if (!parsed) return false;
+  // load_history → render conversation
+  if (action === 'load_history' && parsed.messages) {
+    _renderLoadedHistory(parsed);
+    return true;
+  }
+  // list_resources / service_list / get_tool_schemas → update resources panel
+  if ((action === 'list_resources' || action === 'service_list' || action === 'get_tool_schemas')
+      && (parsed.agents || parsed.services || parsed.tools)) {
+    if (typeof _renderResourcesFromSSE === 'function') _renderResourcesFromSSE(parsed);
+    return true;
+  }
+  // set_permission_mode
+  if (action === 'set_permission_mode' && parsed.permission_mode) {
+    if (typeof updatePermissionBadge === 'function') updatePermissionBadge(parsed.permission_mode);
+    addMsg('system', 'Permission mode: ' + parsed.permission_mode);
+    return true;
+  }
+  // open_desktop / close_desktop
+  if ((action === 'open_desktop' || action === 'close_desktop') && (parsed.ok || parsed.url)) {
+    if (parsed.url && typeof addDesktopTab === 'function') {
+      const prefix = parsed.local_screen ? 'local_desktop' : 'desktop';
+      addDesktopTab(prefix + '_' + (parsed.relay_id || ''), parsed.url);
+    }
+    addMsg('system', parsed.url ? 'Desktop ready.' : 'Desktop closed.');
+    return true;
+  }
+  // Generic: message / status / error
+  if (parsed.message) { addMsg('system', parsed.message); return true; }
+  if (parsed.status === 'ok') { addMsg('system', action + ': OK'); return true; }
+  if (parsed.error) { addMsg('error', parsed.error); return true; }
+  return false;
+}
+
+function _renderLoadedHistory(data) {
+  // Called from SSE command_result for load_history
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  const cid = data.conversation_id || conversationId;
+  conversationId = cid;
+  clearAllStreams();
+  sending = false;
+  document.getElementById('sendBtn').disabled = false;
+  _expectingClear = true;
+  document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  nicknameMap = data.nicknames || {};
+  for (const m of (data.messages || [])) {
+    let content = m.content || '';
+    if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+      content = content.replace(/^\[[^\]]+\]\:\s*/, '');
+    }
+    addMsg(m.type || m.role, content, m);
+  }
+  serverMsgCount = data.message_count || 0;
+  currentOffset = data.raw_count || (data.messages || []).length;
+  hasMoreMessages = data.has_more || false;
+  _updateLoadMoreBanner();
+  selectedAgent = data.active_agent || '';
+  updateActiveAgentBadge();
+  highlightConv(cid);
+  connectSSE(cid);
+  startPollTimer();
+  updateDeleteBtn();
+  loadResources();
+  loadPermissionMode();
+  document.getElementById('status').textContent = t('ready');
+  document.getElementById('sidebar').classList.add('collapsed');
+  scrollBottom(true);
+  document.getElementById('input').focus();
 }
 
 function _scheduleSSEReconnect(cid) {

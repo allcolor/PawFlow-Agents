@@ -131,27 +131,27 @@ function _sectionFooter() { return '</div>'; }
 async function loadResources() {
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
-  try {
-    const resp = await fetch(API, {
+  // Fire-and-forget: result arrives via SSE command_result → _renderResourcesFromSSE
+  fetch(API, {
+    method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+  }).catch(() => {});
+  // Load tool schemas (async, fire-and-forget)
+  if (!window._cachedTools) {
+    fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-    });
-    const data = await resp.json();
-    if (data.error) { console.warn('[loadResources] error:', data.error); return; }
-    // Store user role for permission checks (admin can edit globals)
-    window._userRole = data.user_role || 'viewer';
-    // Load tool schemas (async, don't block rendering)
-    if (!window._cachedTools) {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'get_tool_schemas', conversation_id: conversationId }),
-      }).then(r => r.json()).then(d => {
-        window._cachedTools = d.tools || [];
-        // Re-render to show tools
-        const toolSection = document.querySelector('[data-section="_tool"]');
-        if (toolSection) loadResources();
-      }).catch(() => {});
-    }
+      body: JSON.stringify({ action: 'get_tool_schemas', conversation_id: conversationId }),
+    }).catch(() => {});
+  }
+}
+function _renderResourcesFromSSE(data) {
+  if (!data) return;
+  if (data.user_role) window._userRole = data.user_role;
+  if (data.tools) { window._cachedTools = data.tools; return; }  // tool schemas response
+  _renderResourcesData(data);
+}
+async function _renderResourcesData(data) {
+  try {
     const el = document.getElementById('resourcesContent');
     let html = '';
     // Agents (conversation members)

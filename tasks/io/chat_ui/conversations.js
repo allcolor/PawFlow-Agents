@@ -84,96 +84,29 @@ async function reloadConv() {
 async function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: cid, limit: displayWindow, offset: 0 }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) {
-      addMsg('error', t('loadError'));
-      return;
-    }
-    const data = await resp.json();
-    if (data.error) {
-      addMsg('error', data.error);
-      return;
-    }
-    // Switch to this conversation (previous agent thread keeps running server-side)
-    if (eventSource) { eventSource.close(); eventSource = null; }
-    conversationId = cid;
-    clearAllStreams();
-    sending = false;
-    document.getElementById('sendBtn').disabled = false;
-    _expectingClear = true;
-    document.getElementById('messages').innerHTML = '';
-    _expectingClear = false;
-    _seenMsgIds.clear();
-    nicknameMap = data.nicknames || {};
-    const _histTaskBlocks = {};  // task_id → details element
-    for (const m of (data.messages || [])) {
-      let content = m.content || '';
-      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-        content = content.replace(/^\[[^\]]+\]:\s*/, '');
-      }
-      const _tid = m.source && m.source.task_id;
-      const el = addMsg(m.type || m.role, content, m);
-      // Group task messages into collapsible blocks
-      if (_tid && el) {
-        if (!_histTaskBlocks[_tid]) {
-          const details = document.createElement('details');
-          details.className = 'msg task-block';
-          details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
-          const summary = document.createElement('summary');
-          summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';
-          const agentName = (m.source && m.source.name) || '';
-          summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(_tid) + '</span>'
-            + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + ')</span>' : '')
-            + ' <span style="margin-left:auto;font-size:11px;color:#4ecdc4">\u2713</span>';
-          details.appendChild(summary);
-          const contentDiv = document.createElement('div');
-          contentDiv.style.cssText = 'padding:4px 12px 8px;max-height:500px;overflow-y:auto;';
-          details.appendChild(contentDiv);
-          // Insert where el currently is
-          el.parentNode.insertBefore(details, el);
-          _histTaskBlocks[_tid] = contentDiv;
-        }
-        _histTaskBlocks[_tid].appendChild(el);
-      }
-    }
-    serverMsgCount = data.message_count || 0;
-    currentOffset = data.raw_count || (data.messages || []).length;
-    hasMoreMessages = data.has_more || false;
-    _updateLoadMoreBanner();
-    selectedAgent = data.active_agent || '';
-    // Apply per-conversation custom CSS theme
-    let themeEl = document.getElementById('custom-theme');
-    if (data.custom_css) {
-      if (!themeEl) {
-        themeEl = document.createElement('style');
-        themeEl.id = 'custom-theme';
-        document.head.appendChild(themeEl);
-      }
-      themeEl.textContent = data.custom_css;
-    } else if (themeEl) {
-      themeEl.textContent = '';
-    }
-    updateActiveAgentBadge();
-    highlightConv(cid);
-    connectSSE(cid);  // subscribe to SSE — will pick up events if agent is still running
-    startPollTimer();
-    updateDeleteBtn();
-    loadResources();
-    loadPermissionMode();
-    document.getElementById('status').textContent = t('ready');
-    document.getElementById('sidebar').classList.add('collapsed');
-    scrollBottom(true);
-    document.getElementById('input').focus();
-  } catch (e) {
-    addMsg('error', t('connError', {msg: e.message}));
-    document.getElementById('status').textContent = t('error');
-  }
+  // Prepare UI for new conversation
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  conversationId = cid;
+  clearAllStreams();
+  sending = false;
+  document.getElementById('sendBtn').disabled = false;
+  _expectingClear = true;
+  document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  highlightConv(cid);
+  // Connect SSE first — load_history result will arrive via command_result
+  connectSSE(cid);
+  startPollTimer();
+  updateDeleteBtn();
+  document.getElementById('sidebar').classList.add('collapsed');
+  // Fire-and-forget: server runs in background, result via SSE command_result → _renderLoadedHistory
+  fetch(API, {
+    method: 'POST',
+    headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'load_history', conversation_id: cid, limit: displayWindow, offset: 0 }),
+    credentials: 'same-origin',
+  }).catch(e => addMsg('error', t('connError', {msg: e.message})));
 }
 
 function _updateLoadMoreBanner() {

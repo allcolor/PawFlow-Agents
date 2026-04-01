@@ -431,3 +431,71 @@ async function cmdPortForward(text, parts) {
   addMsg('system', 'Usage: /port-forward <add|remove|list|open> [relay_id] [port] [ext_port]');
   return true;
 }
+
+
+/** /vm command — list and manage Docker containers */
+function cmdVm(text, parts) {
+  const sub = (parts[1] || 'list').toLowerCase();
+
+  if (sub === 'list' || sub === 'ls') {
+    action$('list_vms', {}).subscribe(data => {
+      const vms = data.vms || [];
+      if (vms.length === 0) {
+        addMsg('system', 'No active Docker containers.');
+        return;
+      }
+      let lines = ['**Docker Containers** (' + vms.length + '):\n'];
+      for (const vm of vms) {
+        const ownerBadge = vm.owner === 'server'
+          ? '\u{1F5A5} server'
+          : '\u{1F4BB} client';
+        lines.push(
+          '  `' + vm.id.slice(0, 12) + '` '
+          + '**' + vm.name + '** '
+          + '(' + ownerBadge + ') '
+          + vm.status + ' '
+          + '*' + vm.image + '*'
+        );
+      }
+      lines.push('\nUse `/vm kill <id>` to stop a container.');
+      addMsg('system', lines.join('\n'));
+    });
+    return true;
+  }
+
+  if (sub === 'kill' || sub === 'rm' || sub === 'stop') {
+    const target = parts[2] || '';
+    if (!target) {
+      addMsg('system', 'Usage: /vm kill <container_id or name>');
+      return true;
+    }
+    action$('kill_vm', { container_id: target }).subscribe(data => {
+      if (data.error) addMsg('error', data.error);
+      else addMsg('system', '\u2705 Container killed: ' + (data.killed || target));
+    });
+    return true;
+  }
+
+  if (sub === 'killall') {
+    action$('list_vms', {}).subscribe(data => {
+      const vms = data.vms || [];
+      if (vms.length === 0) {
+        addMsg('system', 'No containers to kill.');
+        return;
+      }
+      let killed = 0;
+      for (const vm of vms) {
+        fireAction('kill_vm', { container_id: vm.id });
+        killed++;
+      }
+      addMsg('system', '\u2705 Killing ' + killed + ' container(s)...');
+    });
+    return true;
+  }
+
+  addMsg('system', 'Usage: /vm <list|kill|killall> [container_id]\n'
+    + '  /vm list              \u2014 List all PawFlow Docker containers\n'
+    + '  /vm kill <id>         \u2014 Kill a specific container\n'
+    + '  /vm killall           \u2014 Kill all PawFlow containers');
+  return true;
+}

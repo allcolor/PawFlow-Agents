@@ -684,6 +684,9 @@ const _CMD_HANDLERS = {
   '/desktop':       (text, parts, cmd) => cmdDesktop(text, parts),
   '/port-forward':  (text, parts, cmd) => cmdPortForward(text, parts),
   '/fwd':           (text, parts, cmd) => cmdPortForward(text, parts),
+
+  // VM management
+  '/vm':            (text, parts, cmd) => cmdVm(text, parts),
 };
 
 /**

@@ -1776,6 +1776,36 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    # ── Docker VM management ──────────────────────────────────────
+
+    if action == "list_vms":
+        from core.docker_utils import list_containers, get_server_id
+        owner = body.get("owner", "")  # empty = all pf-* containers
+        containers = list_containers(owner)
+        _srv_id = get_server_id()
+        # Enrich with ownership info
+        for c in containers:
+            name = c.get("name", "")
+            if _srv_id and f"pf-{_srv_id[:12]}" in name.replace(".", "-").replace("_", "-"):
+                c["owner"] = "server"
+            else:
+                c["owner"] = "client"
+        flowfile.set_content(json.dumps({"vms": containers}).encode())
+        return [flowfile]
+
+    if action == "kill_vm":
+        container_id = body.get("container_id", "")
+        if not container_id:
+            flowfile.set_content(json.dumps({"error": "Missing container_id"}).encode())
+            return [flowfile]
+        from core.docker_utils import docker_rm
+        try:
+            docker_rm(container_id, force=True)
+            flowfile.set_content(json.dumps({"ok": True, "killed": container_id}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     return None
 
 

@@ -188,7 +188,9 @@ def _get_vnc_target(session_id: str) -> tuple:
 
 
 # noVNC local fallback directories (checked in order)
+import os as _os
 _NOVNC_LOCAL_DIRS = [
+    _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "static", "novnc"),
     "/usr/share/novnc",
     "/usr/local/share/novnc",
 ]
@@ -257,16 +259,19 @@ def vnc_http_proxy(pending_req):
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
             pending_req.complete(200, {"Content-Type": content_type}, body)
     except urllib.error.HTTPError as e:
+        logger.warning("VNC http proxy: backend returned %d for %s (session=%s)", e.code, sub_path, session_id)
         if e.code == 405:
-            # websockify without --web returns 405 for static files;
-            # fall back to serving from local noVNC installation
             if _serve_novnc_local(pending_req, sub_path):
+                logger.info("VNC http proxy: served %s from local noVNC", sub_path)
                 return
+            else:
+                logger.warning("VNC http proxy: local fallback failed for %s", sub_path)
         pending_req.complete(e.code, {"Content-Type": "text/plain"},
                              e.read()[:500])
     except Exception as e:
-        # Backend unreachable — try local fallback
+        logger.warning("VNC http proxy: backend error for %s: %s", sub_path, e)
         if _serve_novnc_local(pending_req, sub_path):
+            logger.info("VNC http proxy: served %s from local noVNC (after error)", sub_path)
             return
         pending_req.complete(502, {"Content-Type": "application/json"},
                              json.dumps({"error": str(e)}).encode())

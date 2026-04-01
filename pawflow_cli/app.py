@@ -915,6 +915,14 @@ def main():
                         help="Output format for -p mode (default: text)")
     parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
                         help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
+    parser.add_argument("--input-format", choices=["text", "stream-json"], default="text",
+                        help="Input format (stream-json for Claude Code compatible NDJSON)")
+    parser.add_argument("--output-format", choices=["text", "stream-json"], default="text",
+                        help="Output format (stream-json for Claude Code compatible NDJSON)")
+    parser.add_argument("--session-id", default="",
+                        help="Resume session by ID")
+    parser.add_argument("--resume", default="",
+                        help="Resume session (alias for --session-id)")
     args = parser.parse_args()
 
     # Acquire gateway cookie if key provided
@@ -926,6 +934,20 @@ def main():
             print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
         else:
             print("[PawCode] Warning: gateway POST returned no cookie.", file=sys.stderr)
+
+    # Stream-json mode: Claude Code compatible NDJSON protocol
+    if args.input_format == "stream-json" and args.output_format == "stream-json":
+        from pawflow_cli.stream_json import StreamJsonMode
+        mode = StreamJsonMode(
+            server_url=args.server,
+            directory=args.dir,
+            gateway_cookie=gateway_cookie,
+            docker_image=args.docker_image,
+            allow_exec=not args.no_exec,
+        )
+        if args.session_id or args.resume:
+            mode.conversation_id = args.session_id or args.resume
+        sys.exit(mode.run())
 
     cli = PawCode(
         server_url=args.server,

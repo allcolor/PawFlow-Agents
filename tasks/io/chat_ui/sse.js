@@ -881,13 +881,13 @@ function connectSSE(cid) {
     try { parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result; } catch {}
 
     if (parsed && _dispatchCommandResult(action, parsed)) return;
-    // Fallback: show as system message
-    if (data.result) {
-      try {
-        const p = JSON.parse(data.result);
-        addMsg('system', p.error ? p.error : (p.message || data.result));
-      } catch { addMsg('system', data.result); }
+    // Fallback: only show if there's an explicit message or error — never dump raw JSON
+    if (parsed) {
+      if (parsed.error) { addMsg('error', parsed.error); return; }
+      if (parsed.message) { addMsg('system', parsed.message); return; }
     }
+    // Silent: data-loading results (list_active, list_params_secrets, etc.) are consumed
+    // by their dispatchers. If no dispatcher matched, it's a background result — ignore.
   });
 
   eventSource.addEventListener('vnc_login_ready', (e) => {
@@ -1022,6 +1022,26 @@ function _dispatchCommandResult(action, parsed) {
     if (typeof _renderResourcesFromSSE === 'function') _renderResourcesFromSSE(parsed);
     return true;
   }
+  // Silent data actions — consumed by panels/internal, never shown as messages
+  const _silentActions = new Set([
+    'list_active', 'list_params_secrets', 'list_links',
+    'get_permission_mode', 'list_conversations', 'port_forward_list',
+    'list_agents', 'list_tools', 'list_skills', 'list_agent_skills',
+    'list_secrets', 'list_variables', 'list_schedules',
+    'list_memories', 'list_prompts', 'list_repo_agents',
+    'list_available_flows', 'list_conv_flows', 'list_conv_files',
+    'list_image_services', 'list_video_services', 'list_linked_accounts',
+    'list_bg_tools', 'get_context', 'get_context_full',
+    'get_resource_detail', 'get_service_detail', 'get_service_schema',
+    'get_tool_permissions', 'get_tool_schemas', 'get_plan', 'get_plans',
+    'get_prompt', 'get_cost', 'get_usage', 'get_flow_instance',
+    'get_plan_mode', 'task_status', 'task_log', 'stats', 'insights',
+    'flow_runtime_graph', 'server_workspace_status', 'check_files',
+    'private_gateway_status', 'private_gateway_list_bans',
+    'claude_code_list_relays', 'fs_list_dir', 'fs_list_services',
+    'poll', 'ping',
+  ]);
+  if (_silentActions.has(action)) return true;
   // set_permission_mode
   if (action === 'set_permission_mode' && parsed.permission_mode) {
     if (typeof updatePermissionBadge === 'function') updatePermissionBadge(parsed.permission_mode);

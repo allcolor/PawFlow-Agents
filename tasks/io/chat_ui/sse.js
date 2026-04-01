@@ -490,7 +490,6 @@ function connectSSE(cid) {
       showContextOp((data.detail || data.stage) + '...');
     } else if (data.stage === 'done') {
       hideContextOp();
-      contextOpInProgress = false;
       const agent = data.agent || 'shared';
       const before = data.before !== undefined ? data.before : '?';
       const after = data.after !== undefined ? data.after : '?';
@@ -498,7 +497,6 @@ function connectSSE(cid) {
       addMsg('system', agent + ': ' + before + ' messages \u2192 ' + after + ' messages (~' + tokAfter + ' tokens)');
     } else if (data.stage === 'error') {
       hideContextOp();
-      contextOpInProgress = false;
       addMsg('error', 'Context operation failed: ' + data.error);
     }
   });

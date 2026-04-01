@@ -180,11 +180,6 @@ async function send() {
   const text = input.value.trim();
   if (!text && pendingFiles.length === 0) return;
 
-  // Block sends while context operation is in progress
-  if (contextOpInProgress) {
-    addMsg('system', t('contextOpBusy'));
-    return;
-  }
 
   // Save to message history (before slash command intercept so commands are in history too)
   if (text) {

@@ -269,7 +269,6 @@ function hideTyping() {
 
 let contextOpInterval = null;
 function showContextOp(label) {
-  contextOpInProgress = true;
   hideContextOp();
   const el = document.createElement('div');
   el.className = 'typing';

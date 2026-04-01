@@ -4,7 +4,7 @@ const _seenMsgIds = new Set();  // dedup msg_ids across SSE + poll + replay
 const _selectedMsgIds = new Set();  // multiselect for batch delete
 let conversationId = null;
 let sending = false;
-let contextOpInProgress = false;  // true while rebuild/resume/compact/restart_from is running
+// contextOpInProgress removed — all ops are async, nothing blocks UI
 let eventSource = null;
 let pendingAgent = null;  // agent to select when first message creates a conversation
 let selectedAgent = '';   // currently active agent ('' = default)

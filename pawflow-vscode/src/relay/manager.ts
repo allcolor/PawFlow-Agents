@@ -69,19 +69,8 @@ export class RelayManager implements vscode.Disposable {
     const config = vscode.workspace.getConfiguration('pawflow');
     this.dockerCpus = config.get<string>('dockerCpus', '2');
     this.dockerMemory = config.get<string>('dockerMemory', '4g');
-    // Kill previous container if exists + cleanup orphans
-    if (this.dockerContainer) {
-      try { cp.execSync(`docker rm -f ${this.dockerContainer}`, { timeout: 10000 }); } catch {}
-      this.dockerContainer = '';
-    }
-    try {
-      const orphans = cp.execSync('docker ps -a --filter "name=pawflow-vscode-relay-" --format "{{.ID}}"',
-                                   { encoding: 'utf-8', timeout: 10000 }).trim();
-      for (const cid of orphans.split('\n').filter(s => s.trim())) {
-        try { cp.execSync(`docker rm -f ${cid}`, { timeout: 10000 }); } catch {}
-        this.outputChannel.appendLine(`[Relay] Cleaned up orphan: ${cid}`);
-      }
-    } catch {}
+    // Kill previous container from THIS relay if exists
+    this._killDocker();
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
     this.port = await findFreePort();
@@ -158,6 +147,16 @@ export class RelayManager implements vscode.Disposable {
     }
   }
 
+  private _killDocker(): void {
+    if (this.dockerContainer) {
+      try {
+        cp.execSync(`docker rm -f ${this.dockerContainer}`, { timeout: 10000 });
+        this.outputChannel.appendLine(`[Relay] Killed container: ${this.dockerContainer}`);
+      } catch {}
+      this.dockerContainer = '';
+    }
+  }
+
   async stop(api: AgentAPIClient): Promise<void> {
     this.running = false;
     if (this.reconnectTimer) {
@@ -168,14 +167,7 @@ export class RelayManager implements vscode.Disposable {
       this.socket.destroy();
       this.socket = null;
     }
-    // Stop Docker container
-    if (this.dockerContainer) {
-      try {
-        cp.execSync(`docker rm -f ${this.dockerContainer}`, { timeout: 10000 });
-        this.outputChannel.appendLine(`[Relay] Container removed: ${this.dockerContainer}`);
-      } catch {}
-      this.dockerContainer = '';
-    }
+    this._killDocker();
     if (this.relayId) {
       try { await api.sendAction('service_uninstall', { service_id: this.relayId }); } catch {}
       this.outputChannel.appendLine('[Relay] Service deleted');

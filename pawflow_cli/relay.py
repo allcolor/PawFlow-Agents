@@ -136,17 +136,8 @@ class RelayThread:
 
     def start(self):
         """Register the service and start the relay thread."""
-        # Kill any previous Docker container from this relay
-        if self._docker_container:
-            import subprocess as _sp
-            try:
-                _sp.run(_docker_cmd() + ["rm", "-f", self._docker_container],
-                        capture_output=True, timeout=10)
-            except Exception:
-                pass
-            self._docker_container = None
-        # Cleanup orphan relay containers from previous runs
-        self._cleanup_orphan_containers()
+        # Kill previous Docker container from THIS relay only
+        self._kill_docker()
 
         self.port = find_free_port()
         self.ws_token = secrets.token_urlsafe(32)
@@ -192,15 +183,19 @@ class RelayThread:
             except Exception:
                 pass
             self._registered = False
+        self._kill_docker()
+
+    def _kill_docker(self):
+        """Kill this relay's Docker container if running."""
         if self._docker_container:
             import subprocess as _sp
             try:
                 _sp.run(_docker_cmd() + ["rm", "-f", self._docker_container],
                         capture_output=True, timeout=10)
+                sys.stderr.write(f"[Relay] Killed container: {self._docker_container}\n")
             except Exception:
                 pass
             self._docker_container = None
-        # Kill Docker Popen to prevent WinError 6 on GC
         if hasattr(self, '_docker_proc') and self._docker_proc:
             try:
                 self._docker_proc.kill()
@@ -211,24 +206,6 @@ class RelayThread:
             except Exception:
                 pass
             self._docker_proc = None
-
-    @staticmethod
-    def _cleanup_orphan_containers():
-        """Kill any orphan pawflow-relay containers from previous runs."""
-        import subprocess as _sp
-        try:
-            result = _sp.run(
-                _docker_cmd() + ["ps", "-a", "--filter", "name=pawflow-relay-",
-                                  "--format", "{{.ID}}"],
-                capture_output=True, text=True, timeout=10)
-            for cid in result.stdout.strip().split("\n"):
-                cid = cid.strip()
-                if cid:
-                    _sp.run(_docker_cmd() + ["rm", "-f", cid],
-                            capture_output=True, timeout=10)
-                    sys.stderr.write(f"[Relay] Cleaned up orphan container: {cid}\n")
-        except Exception:
-            pass
 
     def _run_relay(self):
         """Run the WS relay connection loop (stderr suppressed)."""

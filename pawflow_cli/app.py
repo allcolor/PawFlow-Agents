@@ -86,19 +86,26 @@ class PawCode:
         # Wire status callback for bottom toolbar
         self.renderer.set_status_callback(self._update_status)
 
-        # Authenticate
+        # Check auth — don't auto-open browser, let user /login manually
         self.renderer.print_banner(self.directory)
 
-        auth = authenticate(self.server_url)
-        self.session_token = auth["token"]
-        self.username = auth["username"]
-
-        self.renderer.print_system(f"Authenticated as {self.username}")
+        from pawflow_cli.auth import check_session
+        auth = check_session(self.server_url)
+        if auth:
+            self.session_token = auth["token"]
+            self.username = auth["username"]
+            self.renderer.print_system(f"Authenticated as {self.username}")
+        else:
+            self.session_token = ""
+            self.username = ""
+            self.renderer.print_system(
+                "Not logged in. Use /login to authenticate.")
 
         # API client
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
-        self.connect_relay(self.directory)
+        if self.session_token:
+            self.connect_relay(self.directory)
 
         # Cleanup on exit
         atexit.register(self._cleanup)

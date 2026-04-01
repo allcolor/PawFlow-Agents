@@ -11,14 +11,27 @@ from urllib.parse import urlparse, parse_qs, quote
 from pawflow_cli.config import load_session, save_session, clear_session
 
 
+def check_session(server_url: str) -> dict:
+    """Check for a valid cached session. Returns {} if none/expired."""
+    cached = load_session()
+    if cached and cached.get("server_url") == server_url:
+        # Refresh if within 30min of expiry
+        expires = cached.get("expires_at", 0)
+        if expires and expires - time.time() < 1800:
+            cached["expires_at"] = time.time() + 8 * 3600
+            save_session(cached["token"], cached["username"], server_url, cached["expires_at"])
+        return cached
+    return {}
+
+
 def authenticate(server_url: str, force: bool = False) -> dict:
     """Authenticate with PawFlow server. Returns {token, username, server_url}.
 
     Tries cached session first. Opens browser if needed.
     """
     if not force:
-        cached = load_session()
-        if cached and cached.get("server_url") == server_url:
+        cached = check_session(server_url)
+        if cached:
             return cached
 
     # Start local callback server

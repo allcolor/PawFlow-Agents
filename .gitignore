@@ -62,3 +62,6 @@ _test_path.py
 test_flow.py
 test_gui.py
 test_input/
+data/claude_sessions/
+data/gateway_bans.json
+*.log

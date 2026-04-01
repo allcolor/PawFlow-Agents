@@ -9,35 +9,15 @@ import io
 import sys
 
 _BUTTON_MAP = {"left": "left", "right": "right", "middle": "middle"}
-_dpi_scale = None
 
-
-def _get_dpi_scale():
-    """Get DPI scale factor (physical pixels / logical pixels)."""
-    global _dpi_scale
-    if _dpi_scale is not None:
-        return _dpi_scale
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            # Make process DPI-aware to get correct coordinates
-            ctypes.windll.user32.SetProcessDPIAware()
-            # Get system DPI (96 = 100%, 120 = 125%, 144 = 150%)
-            dc = ctypes.windll.user32.GetDC(0)
-            dpi = ctypes.windll.gdi32.GetDeviceCaps(dc, 88)  # LOGPIXELSX
-            ctypes.windll.user32.ReleaseDC(0, dc)
-            _dpi_scale = dpi / 96.0
-        except Exception:
-            _dpi_scale = 1.0
-    else:
-        _dpi_scale = 1.0
-    return _dpi_scale
-
-
-def _scale_coords(x, y):
-    """Convert screenshot pixel coords to pyautogui logical coords."""
-    s = _get_dpi_scale()
-    return int(x / s), int(y / s)
+# Make process DPI-aware on Windows so pyautogui uses physical pixels
+# (matching screenshot coordinates)
+if sys.platform == "win32":
+    try:
+        import ctypes
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 
 def _get_pyautogui():
@@ -82,7 +62,7 @@ def _screenshot(req):
 
 def _click(req):
     pag = _get_pyautogui()
-    x, y = _scale_coords(int(req.get("x", 0)), int(req.get("y", 0)))
+    x, y = int(req.get("x", 0)), int(req.get("y", 0))
     button = _BUTTON_MAP.get(req.get("button", "left"), "left")
     pag.click(x, y, button=button)
     return {"clicked": True, "x": x, "y": y}
@@ -90,7 +70,7 @@ def _click(req):
 
 def _double_click(req):
     pag = _get_pyautogui()
-    x, y = _scale_coords(int(req.get("x", 0)), int(req.get("y", 0)))
+    x, y = int(req.get("x", 0)), int(req.get("y", 0))
     pag.doubleClick(x, y)
     return {"double_clicked": True, "x": x, "y": y}
 
@@ -125,14 +105,14 @@ def _key(req):
 
 def _move(req):
     pag = _get_pyautogui()
-    x, y = _scale_coords(int(req.get("x", 0)), int(req.get("y", 0)))
+    x, y = int(req.get("x", 0)), int(req.get("y", 0))
     pag.moveTo(x, y)
     return {"moved": True, "x": x, "y": y}
 
 
 def _scroll(req):
     pag = _get_pyautogui()
-    x, y = _scale_coords(int(req.get("x", 0)), int(req.get("y", 0)))
+    x, y = int(req.get("x", 0)), int(req.get("y", 0))
     amount = int(req.get("amount", 3))
     pag.scroll(-amount, x=x, y=y)  # pyautogui: negative = down
     return {"scrolled": amount}

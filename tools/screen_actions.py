@@ -67,33 +67,41 @@ def _double_click(req):
 
 
 def _type(req):
-    pag = _get_pyautogui()
     text = req.get("text", "")
     import sys
     if sys.platform == "win32":
-        # Use Win32 clipboard API + Ctrl+V — reliable across sessions
+        # Use Win32 SendInput with UNICODE flag — works regardless of focus/session
         import ctypes
-        CF_UNICODETEXT = 13
-        GMEM_MOVEABLE = 0x0002
-        u32 = ctypes.windll.user32
-        k32 = ctypes.windll.kernel32
-        k32.GlobalAlloc.restype = ctypes.c_void_p
-        k32.GlobalLock.restype = ctypes.c_void_p
-        k32.GlobalLock.argtypes = [ctypes.c_void_p]
-        k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
-        u32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
-        data = text.encode("utf-16-le") + b"\x00\x00"
-        if u32.OpenClipboard(0):
-            u32.EmptyClipboard()
-            h = k32.GlobalAlloc(GMEM_MOVEABLE, len(data))
-            if h:
-                p = k32.GlobalLock(h)
-                ctypes.memmove(p, data, len(data))
-                k32.GlobalUnlock(h)
-                u32.SetClipboardData(CF_UNICODETEXT, h)
-            u32.CloseClipboard()
-        pag.hotkey("ctrl", "v")
+        from ctypes import wintypes
+        INPUT_KEYBOARD = 1
+        KEYEVENTF_UNICODE = 0x0004
+        KEYEVENTF_KEYUP = 0x0002
+
+        class KEYBDINPUT(ctypes.Structure):
+            _fields_ = [("wVk", wintypes.WORD), ("wScan", wintypes.WORD),
+                        ("dwFlags", wintypes.DWORD), ("time", wintypes.DWORD),
+                        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong))]
+
+        class INPUT(ctypes.Structure):
+            class _U(ctypes.Union):
+                _fields_ = [("ki", KEYBDINPUT)]
+            _fields_ = [("type", wintypes.DWORD), ("u", _U)]
+
+        inputs = []
+        for ch in text:
+            code = ord(ch)
+            down = INPUT(type=INPUT_KEYBOARD)
+            down.u.ki = KEYBDINPUT(wVk=0, wScan=code,
+                                    dwFlags=KEYEVENTF_UNICODE, time=0, dwExtraInfo=None)
+            up = INPUT(type=INPUT_KEYBOARD)
+            up.u.ki = KEYBDINPUT(wVk=0, wScan=code,
+                                  dwFlags=KEYEVENTF_UNICODE | KEYEVENTF_KEYUP, time=0, dwExtraInfo=None)
+            inputs.extend([down, up])
+
+        arr = (INPUT * len(inputs))(*inputs)
+        ctypes.windll.user32.SendInput(len(inputs), arr, ctypes.sizeof(INPUT))
     else:
+        pag = _get_pyautogui()
         pag.typewrite(text, interval=0.02) if text.isascii() else pag.write(text)
     return {"typed": len(text)}
 

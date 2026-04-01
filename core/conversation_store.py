@@ -648,23 +648,141 @@ class ConversationStore:
 
     def load_page(self, cid: str, limit: int = 50, offset: int = 0,
                   user_id: str = "") -> Optional[Dict]:
-        """Load a paginated slice of the transcript."""
+        """Load a paginated slice of the transcript.
+
+        Reads from the END of the JSONL file — only parses the lines needed.
+        For a 2000-message conversation with limit=50, offset=0, this reads
+        ~50 lines from the tail instead of scanning all 2000.
+        """
         if not self.exists(cid):
             return None
         if user_id:
             cache = self._load_cache(cid)
             if cache["user_id"] and cache["user_id"] != user_id:
                 return None
-        def _scan(lines):
-            msgs = self._scan_transcript(lines)
-            total = len(msgs)
-            end = total - offset
+        total = self.message_count(cid)
+        path = self._conv_path(cid)
+        lock = self._get_conv_lock(cid)
+        with lock:
+            if not path.exists():
+                return {"messages": [], "total_count": 0, "offset": 0,
+                        "limit": limit, "has_more": False}
+            try:
+                result = self._read_tail(path, total, limit, offset)
+                return result
+            except Exception as e:
+                logger.error("[convstore] load_page failed %s: %s", cid, e)
+                return {"messages": [], "total_count": total, "offset": offset,
+                        "limit": limit, "has_more": False}
+
+    def _read_tail(self, path: Path, total_msgs: int, limit: int, offset: int) -> Dict:
+        """Read the last (offset + limit) msg lines from the JSONL, return the page.
+
+        Algorithm:
+        1. Seek to end of file
+        2. Read backwards in chunks to collect enough lines
+        3. Parse only msg and msg_patch records
+        4. Slice to the requested page
+        """
+        need = offset + limit + 20  # extra margin for msg_patch records + tool alignment
+        _CHUNK = 8192
+
+        with open(path, "rb") as f:
+            f.seek(0, 2)  # end
+            file_size = f.tell()
+            if file_size == 0:
+                return {"messages": [], "total_count": 0, "offset": offset,
+                        "limit": limit, "has_more": False}
+
+            # Read backwards in chunks, collect raw lines
+            raw_lines = []
+            pos = file_size
+            remainder = b""
+            msg_count = 0
+
+            while pos > 0 and msg_count < need * 3:
+                chunk_size = min(_CHUNK, pos)
+                pos -= chunk_size
+                f.seek(pos)
+                chunk = f.read(chunk_size) + remainder
+                remainder = b""
+
+                parts = chunk.split(b"\n")
+                # First part may be incomplete (mid-line) — save as remainder
+                if pos > 0:
+                    remainder = parts[0]
+                    parts = parts[1:]
+
+                # Process lines in reverse (they came from the tail)
+                for raw in reversed(parts):
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        line = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    t = line.get("t", "")
+                    if t == "msg":
+                        msg_count += 1
+                    if t in ("msg", "msg_patch"):
+                        raw_lines.append(line)
+
+                if msg_count >= need * 2:
+                    break
+
+            # If we still have a remainder from the very start of file
+            if remainder:
+                raw = remainder.strip()
+                if raw:
+                    try:
+                        line = json.loads(raw)
+                        t = line.get("t", "")
+                        if t in ("msg", "msg_patch"):
+                            raw_lines.append(line)
+                            if t == "msg":
+                                msg_count += 1
+                    except json.JSONDecodeError:
+                        pass
+
+            # raw_lines is in reverse order (newest first) — reverse to chronological
+            raw_lines.reverse()
+
+            # Apply scan_transcript logic (separate msgs from patches)
+            msgs = []
+            patches = {}
+            for line in raw_lines:
+                if line.get("t") == "msg_patch":
+                    mid = line.get("msg_id", "")
+                    if mid:
+                        patches[mid] = {k: v for k, v in line.items()
+                                        if k not in ("t", "msg_id")}
+                    continue
+                if line.get("t") != "msg":
+                    continue
+                msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
+                if "ts" in line:
+                    msg["timestamp"] = line["ts"]
+                msgs.append(msg)
+
+            if patches:
+                for msg in msgs:
+                    mid = msg.get("msg_id", "")
+                    if mid and mid in patches:
+                        msg.update(patches[mid])
+
+            # Slice: msgs is chronological, we want the last `limit` before `offset`
+            total_tail = len(msgs)
+            end = total_tail - offset
             start = max(0, end - limit)
+            # Don't split a tool_call from its tool results
             while start > 0 and msgs[start].get("role") == "tool":
                 start -= 1
-            return {"messages": msgs[start:end], "total_count": total,
-                    "offset": offset, "limit": limit, "has_more": start > 0}
-        return self._read(cid, _scan)
+            page = msgs[start:end] if end > 0 else []
+            has_more = (total_msgs - offset - len(page)) > 0
+
+            return {"messages": page, "total_count": total_msgs,
+                    "offset": offset, "limit": limit, "has_more": has_more}
 
     def patch_message(self, cid: str, msg_id: str, **fields) -> None:
         """Patch attributes on an existing message (appends a msg_patch record)."""

@@ -13,6 +13,7 @@ build/
 .ruff_cache/
 .vscode/
 .idea/
+.claude/settings.local.json
 *.swp
 *.swo
 .coverage

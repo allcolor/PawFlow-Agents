@@ -161,7 +161,10 @@ class AgentUtilsMixin:
                 pass
         # 3. Task default
         if not svc_id:
-            svc_id = self._resolve_service_param("llm_service", user_id) or "default"
+            svc_id = self._resolve_service_param("llm_service", user_id)
+            if not svc_id:
+                raise RuntimeError(
+                    "No llm_service resolved. Check agent config, flow params, or global parameters.")
         client, svc = self._resolve_llm_service(svc_id, user_id)
         return client, svc_id, svc
 

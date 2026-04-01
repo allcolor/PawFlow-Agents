@@ -62,7 +62,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
         task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
         if not task_llm_service:
-            task_llm_service = "default"
+            _agent_hint = _target_agent or "(unknown agent)"
+            raise RuntimeError(
+                f"No llm_service configured for agent '{_agent_hint}'. "
+                f"Set llm_service in the agent definition or flow config.")
         client, resolved_svc = self._resolve_client(
             task_llm_service, _user_id_for_svc,
             raise_on_missing=True, default_model=model,

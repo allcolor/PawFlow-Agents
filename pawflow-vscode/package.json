@@ -152,25 +152,10 @@
           "default": true,
           "description": "Automatically start filesystem relay"
         },
-        "pawflow.allowExec": {
-          "type": "boolean",
-          "default": true,
-          "description": "Allow shell execution via relay"
-        },
         "pawflow.dockerImage": {
           "type": "string",
           "default": "",
           "description": "Docker image to use for the filesystem relay (e.g. pawflow-relay-dev:latest). Leave empty for direct (native) mode."
-        },
-        "pawflow.allowAutomation": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow screen automation (screenshot, click, type) via relay. Requires pyautogui + mss installed."
-        },
-        "pawflow.allowLocalScreen": {
-          "type": "boolean",
-          "default": false,
-          "description": "Allow local screen access — when enabled, gives the choice between Docker virtual screen and your machine's display. When disabled, only Docker is available."
         },
         "pawflow.gatewayKey": {
           "type": "string",

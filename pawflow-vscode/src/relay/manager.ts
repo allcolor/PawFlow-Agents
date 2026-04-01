@@ -40,9 +40,6 @@ export class RelayManager implements vscode.Disposable {
   private wsToken: string = '';
   private rootDir: string = '';
   public getRootDir(): string { return this.rootDir; }
-  private allowExec: boolean = true;
-  private allowAutomation: boolean = false;
-  private allowLocalScreen: boolean = false;
   private readonly: boolean = false;
   private running = false;
   private reconnectTimer: NodeJS.Timeout | null = null;
@@ -62,14 +59,11 @@ export class RelayManager implements vscode.Disposable {
   get isRunning(): boolean { return this.running; }
   getRelayId(): string { return this.relayId; }
 
-  async start(api: AgentAPIClient, username: string, workspaceDir: string, allowExec: boolean, dockerImage: string = ''): Promise<void> {
+  async start(api: AgentAPIClient, username: string, workspaceDir: string, dockerImage: string = ''): Promise<void> {
     if (this.running) { await this.stop(api); }
 
     this.rootDir = workspaceDir;
-    this.allowExec = allowExec;
     this.dockerImage = dockerImage;
-    this.allowAutomation = vscode.workspace.getConfiguration('pawflow').get('allowAutomation', false);
-    this.allowLocalScreen = vscode.workspace.getConfiguration('pawflow').get('allowLocalScreen', false);
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
     this.port = await findFreePort();
@@ -134,7 +128,8 @@ export class RelayManager implements vscode.Disposable {
       '--relay-id', this.relayId,
       '--dir', '/workspace',
       '--allow-exec',
-      ...(this.allowAutomation ? ['--allow-automation'] : []),
+      '--allow-automation',
+      '--allow-local-screen',
     ];
 
     this.outputChannel.appendLine(`[Relay] Starting Docker container: ${containerName}`);
@@ -240,9 +235,9 @@ export class RelayManager implements vscode.Disposable {
             mode: 'readwrite',
             containerized: !!this.dockerImage,
             docker_image: this.dockerImage || '',
-            allow_exec: this.allowExec,
-            allow_automation: this.allowAutomation,
-            allow_local_screen: this.allowLocalScreen,
+            allow_exec: true,
+            allow_automation: true,
+            allow_local_screen: true,
           },
         });
         this._wsSend(socket, regMsg);

@@ -195,12 +195,8 @@ class FSRelayHandler(BaseHTTPRequestHandler):
             self._log_op(action, rel_path, False, "readonly mode")
             self._send_json(False, error="Operation not allowed in readonly mode")
             return
-        # Automation check
-        _can_automate = getattr(self, 'allow_automation', False) or getattr(self, 'allow_local_screen', False)
-        if action.startswith("screen_") and not _can_automate:
-            self._log_op(action, rel_path, False, "automation not allowed")
-            self._send_json(False, error="Screen automation not allowed. Start relay with --allow-automation or --allow-local-screen")
-            return
+        # Note: permission checks are enforced server-side by ToolApprovalGate.
+        # The relay is a transport — it executes whatever the server sends.
 
         # Resolve path
         abs_path = self._resolve(rel_path)
@@ -1383,9 +1379,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             }}
 
         if action == "start_local_desktop":
-            # Share the local screen via VNC — requires allow_local_screen
-            if not allow_local_screen:
-                return {"ok": False, "error": "Local screen not allowed. Start relay with --allow-local-screen"}
             # Idempotent
             if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
                 _alive = all(p.poll() is None for p in _execute_command._local_desktop_procs)
@@ -1754,10 +1747,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                              f"{' (restart needed)' if _needs_restart else ''}\n")
             return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}
 
-        # Screen automation gate
-        _can_automate = allow_automation or allow_local_screen
-        if action.startswith("screen_") and not _can_automate:
-            return {"ok": False, "error": "Screen automation not allowed. Start relay with --allow-automation or --allow-local-screen"}
+        # Note: permission checks are enforced server-side by ToolApprovalGate.
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)

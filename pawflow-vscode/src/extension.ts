@@ -69,7 +69,6 @@ export async function activate(context: vscode.ExtensionContext) {
         if (workspaceDir) {
           try {
             await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<boolean>('allowExec', true),
                               config.get<string>('dockerImage', ''));
           } catch (e: any) {
             vscode.window.showWarningMessage(`PawFlow relay failed: ${e.message}`);
@@ -112,7 +111,6 @@ export async function activate(context: vscode.ExtensionContext) {
           const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
           if (workspaceDir && apiClient) {
             await relay.start(apiClient, session.username, workspaceDir,
-                              config.get<boolean>('allowExec', true),
                               config.get<string>('dockerImage', ''));
           }
         }

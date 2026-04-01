@@ -54,15 +54,12 @@ _completer = WordCompleter(_COMMANDS, sentence=True) if HAS_PROMPT_TOOLKIT else 
 class PawCode:
     """Main CLI application."""
 
-    def __init__(self, server_url: str, directory: str, allow_exec: bool = True,
-                 docker_image: str = "", gateway_cookie: str = "",
-                 allow_local_screen: bool = False):
+    def __init__(self, server_url: str, directory: str,
+                 docker_image: str = "", gateway_cookie: str = ""):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
-        self.allow_exec = allow_exec
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
-        self.allow_local_screen = allow_local_screen
 
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
@@ -756,9 +753,8 @@ class PawCode:
         # Start relay
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
-            self.directory, self.allow_exec,
+            self.directory,
             docker_image=self.docker_image,
-            allow_local_screen=self.allow_local_screen,
         )
         self.relay.start()
 
@@ -874,10 +870,9 @@ class PawCode:
         self.renderer.print_system(f"Mounting {directory} as filesystem relay...")
         self.relay = RelayThread(
             self.server_url, self.session_token, self.username,
-            directory, self.allow_exec,
+            directory,
             docker_image=self.docker_image,
             gateway_cookie=self.gateway_cookie,
-            allow_local_screen=self.allow_local_screen,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
@@ -901,14 +896,10 @@ def main():
                         help=f"PawFlow server URL (env: PAWFLOW_SERVER, default: {default_server})")
     parser.add_argument("--dir", default=".",
                         help="Directory to mount as filesystem (default: current directory)")
-    parser.add_argument("--no-exec", action="store_true",
-                        help="Disable shell execution on the mounted directory")
     parser.add_argument("--no-relay", action="store_true",
                         help="Don't mount filesystem relay (chat only)")
     parser.add_argument("--docker-image", default="",
                         help="Run relay inside this Docker image (e.g. pawflow-relay-dev:latest)")
-    parser.add_argument("--allow-local-screen", action="store_true",
-                        help="Allow local screen access (screen actions on your display)")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
@@ -949,7 +940,6 @@ def main():
             directory=args.dir,
             gateway_cookie=gateway_cookie,
             docker_image=args.docker_image,
-            allow_exec=not args.no_exec,
         )
         if args.session_id or args.resume:
             mode.conversation_id = args.session_id or args.resume
@@ -958,10 +948,8 @@ def main():
     cli = PawCode(
         server_url=args.server,
         directory=args.dir,
-        allow_exec=not args.no_exec,
         docker_image=args.docker_image,
         gateway_cookie=gateway_cookie,
-        allow_local_screen=args.allow_local_screen,
     )
 
     if args.login:

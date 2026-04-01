@@ -115,17 +115,14 @@ class RelayThread:
     """Manages a background filesystem relay connection."""
 
     def __init__(self, server_url: str, session_token: str, username: str,
-                 directory: str, allow_exec: bool = True,
-                 docker_image: str = "", gateway_cookie: str = "",
-                 allow_local_screen: bool = False):
+                 directory: str, docker_image: str = "",
+                 gateway_cookie: str = ""):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
         self.directory = str(Path(directory).resolve())
-        self.allow_exec = allow_exec
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
-        self.allow_local_screen = allow_local_screen
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
@@ -243,6 +240,8 @@ class RelayThread:
                 "--relay-id", self.relay_id,
                 "--dir", "/workspace",
                 "--allow-exec",
+                "--allow-automation",
+                "--allow-local-screen",
             ]
             try:
                 self._docker_proc = _sp.Popen(
@@ -363,15 +362,15 @@ class RelayThread:
         ws_url = f"wss://localhost:{self.port}/ws/relay"
         try:
             _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                    self.directory, False, allow_exec=self.allow_exec,
-                                    allow_local_screen=self.allow_local_screen)
+                                    self.directory, False, allow_exec=True,
+                                    allow_automation=True, allow_local_screen=True)
         except Exception:
             if self._stop_event.is_set():
                 return
             ws_url = f"ws://localhost:{self.port}/ws/relay"
             try:
                 _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                        self.directory, False, allow_exec=self.allow_exec,
-                                        allow_local_screen=self.allow_local_screen)
+                                        self.directory, False, allow_exec=True,
+                                        allow_automation=True, allow_local_screen=True)
             except Exception:
                 pass

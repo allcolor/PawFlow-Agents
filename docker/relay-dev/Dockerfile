@@ -134,14 +134,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ── code-server (VS Code in browser) ──────────────────────────────
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
-# ── PawFlow relay + SDK (for containerized mode) ────────────────────
-COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
-COPY fs_actions.py /opt/pawflow/fs_actions.py
-COPY fs_exec.py /opt/pawflow/fs_exec.py
-COPY fs_screen.py /opt/pawflow/fs_screen.py
-COPY fs_mcp.py /opt/pawflow/fs_mcp.py
-COPY pawflow.py /opt/pawflow/pawflow.py
-ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
 ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
 
 # ── Desktop user (non-root — required for Chromium & XFCE) ────────
@@ -213,6 +205,15 @@ RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 
 # Give pawflow user ownership of workspace (volumes are root by default)
 RUN mkdir -p /workspace && chown pawflow:pawflow /workspace
+
+# ── PawFlow relay + SDK (LAST — changes often, don't bust cache) ──
+COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
+COPY fs_actions.py /opt/pawflow/fs_actions.py
+COPY fs_exec.py /opt/pawflow/fs_exec.py
+COPY fs_screen.py /opt/pawflow/fs_screen.py
+COPY fs_mcp.py /opt/pawflow/fs_mcp.py
+COPY pawflow.py /opt/pawflow/pawflow.py
+ENV PYTHONPATH="/opt/pawflow"
 
 WORKDIR /workspace
 CMD ["bash"]

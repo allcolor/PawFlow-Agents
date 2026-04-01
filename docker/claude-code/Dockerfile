@@ -9,11 +9,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Install Claude Code CLI
 RUN npm install -g @anthropic-ai/claude-code
 
-# MCP bridge + PawFlow SDK (copied from host at build time)
-COPY mcp_bridge.py /opt/pawflow/mcp_bridge.py
-COPY pawflow.py /opt/pawflow/pawflow.py
-ENV PYTHONPATH="/opt/pawflow:${PYTHONPATH}"
-
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
 # GID/UID 1000 may already exist (node image) — use existing or create
 RUN (getent group 1000 || groupadd -g 1000 pawflow) && \
@@ -33,6 +28,11 @@ ENV CI=true
 # Auth login entrypoint (used for server-side OAuth login)
 COPY auth_login.sh /opt/pawflow/auth_login.sh
 RUN chmod +x /opt/pawflow/auth_login.sh
+
+# MCP bridge + PawFlow SDK (LAST — changes often, don't bust cache)
+COPY mcp_bridge.py /opt/pawflow/mcp_bridge.py
+COPY pawflow.py /opt/pawflow/pawflow.py
+ENV PYTHONPATH="/opt/pawflow"
 
 USER pawflow
 ENTRYPOINT ["claude"]

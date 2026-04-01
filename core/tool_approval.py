@@ -3,6 +3,12 @@
 Claude Code-like approval for all tools. The user can approve once,
 for the session (conversation), or always.
 
+Permission modes (set per conversation via /permission command):
+  - auto:          all tools auto-approved, no dialogs
+  - default:       EXEMPT tools auto-approved, others ask (session-based)
+  - approve_edits: same as default
+  - read_only:     write tools blocked entirely
+
 Thread-safe. Uses ConversationStore.extra for persistence.
 """
 
@@ -17,20 +23,46 @@ logger = logging.getLogger(__name__)
 class ToolApprovalGate:
     """Universal tool approval gate. Checks per-conversation permissions."""
 
-    # Tools that never need approval (read-only, informational)
+    # ── Tool classifications ─────────────────────────────────────────
+
+    # EXEMPT: never need approval (read-only, informational, no side effects)
     EXEMPT_TOOLS = frozenset({
-        "recall", "semantic_recall", "pawflow_help", "list_secrets",
-        "get_agent_results", "show_file", "manage_resource",
-        "remember", "forget", "notify_user", "web_search",
+        # Memory (read)
+        "recall", "semantic_recall",
+        # Info / help
+        "pawflow_help", "list_secrets", "get_agent_results",
+        # File read
+        "read", "list_dir", "stat", "exists", "glob", "grep",
+        # Display / media info
+        "show_file", "get_image_model_info",
+        # Web / search
+        "web_search",
+        # History / context
+        "read_history", "read_parent_context",
+        # User interaction (no data modification)
+        "notify_user", "ask_user",
+        # Meta / internal
+        "get_tool_schema", "compact_result", "share_file", "create_file",
+        "use_skill",
     })
 
-    # Tools that always need approval (dangerous operations)
+    # ALWAYS_ASK: always need approval (dangerous, irreversible, sensitive)
     ALWAYS_ASK = frozenset({
-        "remote_exec", "execute_script", "browser_action",
+        # Code execution
+        "remote_exec", "execute_script", "bash",
+        # Screen / browser access
+        "screen", "browser_action", "browser",
+        # Security sensitive
+        "store_secret", "link_identity",
+        # Creates executable code
+        "create_tool", "manage_resource",
     })
 
-    # Filesystem: read-only actions are exempt, write actions ask once,
-    # dangerous actions always ask
+    # DEFAULT: everything else — ask once per session (write, edit, plans, etc.)
+    # Not listed explicitly — anything not in EXEMPT or ALWAYS_ASK.
+
+    # ── Filesystem action sub-classifications ─────────────────────────
+
     _FS_EXEMPT = frozenset({
         "list_dir", "read_file", "stat", "exists", "search", "grep",
         "git_status", "git_log", "git_diff",
@@ -38,8 +70,12 @@ class ToolApprovalGate:
     _FS_ALWAYS_ASK = frozenset({
         "exec", "git_push", "git_checkout",
     })
-    # Everything else (write_file, edit, mkdir, delete_file, find_replace,
-    # git_commit) = ask once, allow "session" option
+
+    # ── See tool: file read is exempt, screenshot needs approval ──────
+
+    _SEE_SCREEN_PATHS = frozenset({"screen", "screenshot"})
+
+    # ── State ─────────────────────────────────────────────────────────
 
     _lock = threading.Lock()
     _pending: Dict[str, threading.Event] = {}
@@ -54,7 +90,7 @@ class ToolApprovalGate:
         """Check if tool execution is approved.
 
         Returns "approved" or "denied" or "timeout".
-        For filesystem tool, the action field determines the approval level.
+        For filesystem/see tools, arguments determine the approval level.
         Users can always override with "always_allow" — even for dangerous tools.
         """
         # Determine effective approval level
@@ -77,12 +113,28 @@ class ToolApprovalGate:
                 needs_ask = True
                 is_exempt = False
 
+        # See: file read is exempt, screenshot needs approval
+        if tool_name == "see" and arguments:
+            _path = (arguments.get("path", "") or "").lower().strip()
+            if _path in cls._SEE_SCREEN_PATHS:
+                effective_name = "see.screenshot"
+                needs_ask = True
+                is_exempt = False
+            else:
+                is_exempt = True
+                needs_ask = False
+
+        # Memory write: not dangerous but has side effects — ask once
+        if tool_name in ("remember", "forget"):
+            is_exempt = False
+            needs_ask = True
+
         if is_exempt:
             return "approved"
 
         # Check conversation-level permissions (user can override anything)
         perms = cls._get_permissions(conversation_id)
-        # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:filesystem.localFS)
+        # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:screen)
         if tool_name == "filesystem" and arguments:
             svc_name = arguments.get("service", "")
             if svc_name and perms.get(f"_allow_all:filesystem.{svc_name}") == "always_allow":
@@ -187,10 +239,7 @@ class ToolApprovalGate:
 
     @classmethod
     def allow_all(cls, conversation_id: str, scope: str):
-        """Auto-approve all operations for a scope (e.g. 'filesystem.localFS' or 'filesystem').
-
-        Used by /allow-all command. Can be revoked with deny_all().
-        """
+        """Auto-approve all operations for a scope (e.g. 'filesystem' or 'screen')."""
         cls._set_permission(conversation_id, f"_allow_all:{scope}", "always_allow")
 
     @classmethod
@@ -213,36 +262,18 @@ class ToolApprovalGate:
             logger.warning("Failed to set tool permission: %s", e)
 
     @classmethod
-    def is_enabled(cls, conversation_id: str) -> bool:
-        """Check if tool approval is enabled for a conversation."""
+    def get_mode(cls, conversation_id: str) -> str:
+        """Get the permission mode for a conversation.
+
+        Returns: 'auto', 'default', 'approve_edits', 'read_only'.
+        The tool relay and agent loop both use this to decide gating.
+        """
         if not conversation_id:
-            return False
+            return "default"
         try:
             from core.conversation_store import ConversationStore
-            return bool(ConversationStore.instance().get_extra(
-                conversation_id, "tool_approval_enabled"
-            ))
+            return ConversationStore.instance().get_extra(
+                conversation_id, "permission_mode"
+            ) or "default"
         except Exception:
-            return False
-
-    @classmethod
-    def enable(cls, conversation_id: str):
-        """Enable tool approval for a conversation."""
-        try:
-            from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_extra(
-                conversation_id, "tool_approval_enabled", True
-            )
-        except Exception:
-            pass
-
-    @classmethod
-    def disable(cls, conversation_id: str):
-        """Disable tool approval for a conversation."""
-        try:
-            from core.conversation_store import ConversationStore
-            ConversationStore.instance().set_extra(
-                conversation_id, "tool_approval_enabled", False
-            )
-        except Exception:
-            pass
+            return "default"

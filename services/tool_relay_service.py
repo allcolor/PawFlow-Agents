@@ -258,8 +258,8 @@ class ToolRelayService(BaseService):
                 if available:
                     for h in _fs_handlers:
                         h._available_services = available
-                    logger.info("Filesystem services for user '%s': %s",
-                                user_id, [s["id"] for s in available])
+                    logger.debug("Filesystem services for user '%s': %s",
+                                 user_id, [s["id"] for s in available])
             except Exception as e:
                 logger.error("Failed to enumerate filesystem services: %s", e)
 
@@ -500,18 +500,58 @@ class ToolRelayService(BaseService):
                     user_id, conversation_id, agent_name):
         registry = self._get_registry(user_id, conversation_id, agent_name)
 
-        # Tool Approval Gate
+        # Tool Approval Gate — reads permission_mode from conversation
         try:
-            from core.tool_approval import ToolApprovalGate
-            if ToolApprovalGate.is_enabled(conversation_id):
+            _perm_mode = "default"
+            _tool_perm = ""
+            if conversation_id:
+                from core.conversation_store import ConversationStore
+                _cs = ConversationStore.instance()
+                _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
+                _tperms = _cs.get_extra(conversation_id, "tool_permissions") or {}
+                _tool_perm = _tperms.get(tool_name, "")
+
+            # Per-tool override
+            if _tool_perm == "deny":
+                return {"type": "result", "request_id": request_id,
+                        "data": f"Error: Tool '{tool_name}' is denied by permission settings."}
+            elif _tool_perm == "allow":
+                pass  # explicitly allowed — skip further checks
+            elif _tool_perm == "confirm":
+                from core.tool_approval import ToolApprovalGate
                 _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
                 action_summary = f"{tool_name}({_path})" if _path else tool_name
                 approval = ToolApprovalGate.check(
-                    tool_name, action_summary, conversation_id, user_id, arguments
-                )
+                    tool_name, action_summary, conversation_id, user_id, arguments)
                 if approval != "approved":
                     return {"type": "result", "request_id": request_id,
-                            "data": f"Error: Tool execution denied ({approval}): {action_summary}"}
+                            "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
+            elif _perm_mode == "auto":
+                pass  # auto-approve everything
+            elif _perm_mode == "read_only":
+                _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
+                                "delete", "mkdir", "bash", "notebook_edit", "execute_script"}
+                _fs_write_actions = {"write_file", "edit", "batch_edit", "apply_patch",
+                                     "find_replace", "delete_file", "mkdir", "exec",
+                                     "git_commit", "git_push", "git_checkout"}
+                if tool_name in _write_tools:
+                    return {"type": "result", "request_id": request_id,
+                            "data": "Error: write operations blocked (read-only mode)."}
+                if tool_name == "filesystem" and isinstance(arguments, dict):
+                    fs_action = arguments.get("action", "")
+                    if fs_action in _fs_write_actions:
+                        return {"type": "result", "request_id": request_id,
+                                "data": "Error: write operations blocked (read-only mode)."}
+            else:
+                # default / approve_edits — use approval gate
+                from core.tool_approval import ToolApprovalGate
+                _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
+                action_summary = f"{tool_name}({_path})" if _path else tool_name
+                approval = ToolApprovalGate.check(
+                    tool_name, action_summary, conversation_id, user_id, arguments)
+                if approval != "approved":
+                    return {"type": "result", "request_id": request_id,
+                            "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
         except Exception as e:
             logger.warning("Tool approval check failed: %s", e)
 

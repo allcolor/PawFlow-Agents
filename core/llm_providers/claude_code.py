@@ -466,9 +466,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # SSE publisher for webchat visibility
         # For task sub-conversations, publish to parent conv so webchat sees them
         _event_cid = getattr(self, '_event_cid', '') or conv_id
+        # Extract task_id from sub-conv ID so frontend can group task events
+        _task_id = ''
+        if '::task::' in conv_id:
+            _task_id = conv_id.split('::task::')[-1].split('::')[0]
         def _pub(event_type, data):
             if not _event_cid:
                 return
+            if _task_id:
+                data['task_id'] = _task_id
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -720,9 +726,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         if "authentication" in _err_text.lower() or "401" in _err_text:
                             raise LLMClientError(f"Claude Code auth failed: {_err_text[:300]}")
                         if event.get("subtype") == "error_during_execution":
+                            # Include the error code/text so LLMClient retry loop can match it
                             raise LLMClientError(f"Claude Code error: {_err_text[:300]}")
-                        # Other errors: log but continue (may have partial results)
-                        logger.warning("[claude-code] result has is_error=True: %s", _err_text[:200])
+                        # is_error without error_during_execution: API error (500, 429, etc.)
+                        # Raise so it reaches the retry loop in LLMClient
+                        if _err_text:
+                            raise LLMClientError(f"Claude Code API error: {_err_text[:300]}")
+                        logger.warning("[claude-code] result has is_error=True but no details")
                     result_text = event.get("result", "")
                     if not turn_callback and result_text and not content_parts:
                         content_parts.append(result_text)

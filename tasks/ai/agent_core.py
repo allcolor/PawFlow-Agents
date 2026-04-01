@@ -765,10 +765,45 @@ class AgentCoreMixin:
                                 _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
                                 break
                         else:
-                            logger.error(f"LLM call failed (iter {iteration}): {llm_err}")
-                            emitter.on_fatal_error(f"LLM call failed: {llm_err}")
-                            _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {llm_err}"
-                            break
+                            # Transient errors (500, 503, 529, timeout) — the LLMClient
+                            # already retried max_retries times. At the agent level, we
+                            # retry once more with a fresh call (new process for claude-code).
+                            _transient = any(p in err_str for p in (
+                                "500", "503", "502", "529", "overloaded", "timeout",
+                                "Internal server error", "api_error", "server_error",
+                                "rate_limit", "429"))
+                            if _transient and not ctx.get("_agent_transient_retried"):
+                                ctx["_agent_transient_retried"] = True
+                                logger.warning("[agent:%s] transient LLM error, retrying: %s",
+                                               conversation_id[:8], err_str[:150])
+                                # For claude-code: invalidate session so retry starts fresh
+                                if _is_claude_code and ctx.get("_claude_has_session"):
+                                    try:
+                                        from core.conversation_store import ConversationStore
+                                        _an = ctx.get("active_agent_name", "") or "default"
+                                        ConversationStore.instance().set_extra(
+                                            conversation_id, f"claude_session:{_an}", "")
+                                    except Exception:
+                                        pass
+                                    ctx["_claude_has_session"] = False
+                                    llm_context = self._prepare_cc_file_context(list(messages))
+                                time.sleep(5)
+                                try:
+                                    _check_budget(ctx, total_tokens_in, total_tokens_out)
+                                    response = _llm_call(llm_context)
+                                except AgentCancelled:
+                                    raise
+                                except Exception as retry_err:
+                                    logger.error("[agent:%s] transient retry also failed: %s",
+                                                 conversation_id[:8], retry_err)
+                                    emitter.on_fatal_error(f"LLM call failed after retry: {retry_err}")
+                                    _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
+                                    break
+                            else:
+                                logger.error(f"LLM call failed (iter {iteration}): {llm_err}")
+                                emitter.on_fatal_error(f"LLM call failed: {llm_err}")
+                                _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {llm_err}"
+                                break
                     finally:
                         pass  # heartbeat stopped at iteration end
 

@@ -192,7 +192,7 @@ class LLMClient(
 
     @property
     def max_retries(self):
-        return int(self._cfg("max_retries", 2))
+        return int(self._cfg("max_retries", 5))
 
     @property
     def claude_binary(self):
@@ -428,6 +428,7 @@ class LLMClient(
 
                 is_429 = "429" in err_str or "rate_limit" in err_str.lower()
                 is_529 = "529" in err_str or "overloaded" in err_str.lower()
+                is_500 = "500" in err_str or "Internal server error" in err_str
 
                 if is_529:
                     overloaded_attempts += 1
@@ -444,28 +445,25 @@ class LLMClient(
                                 logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
                         raise LLMClientError(f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
 
-                if is_429 or is_529:
-                    # Prefer server-specified delay, fall back to exponential backoff with jitter
+                retryable = is_429 or is_529 or is_500 or any(
+                    code in err_str for code in ("503", "502", "reset", "timeout",
+                                                  "api_error", "server_error")
+                )
+                if retryable and attempt < self.max_retries:
                     server_delay = self._parse_retry_after(err_str)
                     base_delay = 2.0
                     exp_delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
-                    # Use server delay if parsed (non-default), otherwise exponential backoff
                     wait = server_delay if server_delay != 2.0 else exp_delay
-                    kind = "Rate limited (429)" if is_429 else "Overloaded (529)"
-                    if attempt < self.max_retries:
-                        logger.warning(f"{kind}, waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
-                        time.sleep(wait)
-                        continue
-                    # Last attempt for 429 — fall through to fallback below
-
-                if not (is_429 or is_529):
-                    # Generic transient error
-                    if attempt < self.max_retries:
-                        base_delay = 2.0
-                        delay = base_delay * (2 ** (attempt - 1)) * (0.75 + random.random() * 0.5)
-                        logger.warning(f"LLM request attempt {attempt} failed: {e}, retrying in {delay:.1f}s...")
-                        time.sleep(delay)
-                        continue
+                    if is_429:
+                        logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                    elif is_529:
+                        logger.warning(f"Overloaded (529), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                    elif is_500:
+                        logger.warning(f"Server error (500), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
+                    else:
+                        logger.warning(f"LLM request attempt {attempt}/{self.max_retries} failed: {e}, retrying in {wait:.1f}s...")
+                    time.sleep(wait)
+                    continue
 
                 # All retries exhausted — try fallback model if configured
                 if self.fallback_model and self.fallback_model != model:
@@ -582,8 +580,10 @@ class LLMClient(
 
                 is_429 = "429" in err_str or "rate_limit" in err_str.lower()
                 is_529 = "529" in err_str or "overloaded" in err_str.lower()
-                retryable = is_429 or is_529 or any(
-                    code in err_str for code in ("503", "502", "reset", "timeout")
+                is_500 = "500" in err_str or "Internal server error" in err_str
+                retryable = is_429 or is_529 or is_500 or any(
+                    code in err_str for code in ("503", "502", "reset", "timeout",
+                                                  "api_error", "server_error")
                 )
 
                 if is_529:
@@ -611,6 +611,8 @@ class LLMClient(
                         logger.warning(f"Rate limited (429), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     elif is_529:
                         logger.warning(f"Overloaded (529), attempt {overloaded_attempts}/{max_overloaded}, waiting {wait:.1f}s")
+                    elif is_500:
+                        logger.warning(f"Server error (500), waiting {wait:.1f}s (attempt {attempt}/{self.max_retries})")
                     else:
                         logger.warning(f"LLM stream attempt {attempt}/{self.max_retries} failed "
                                        f"({type(e).__name__}), retrying in {wait:.1f}s")

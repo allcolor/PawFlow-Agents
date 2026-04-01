@@ -89,40 +89,26 @@ function cmdAgent(text, parts) {
       cmdAgentSetname(realName, nickname || realName);
     }
   } else if (sub === 'disable' && parts[2]) {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'manage_resource', resource_type: 'agent', name: stripTarget(parts[2]),
-        data: {}, conversation_id: conversationId, _action: 'disable' }),
-    }).then(() =>
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'agent_disable', agent_name: stripTarget(parts[2]), conversation_id: conversationId }),
-      })
-    ).then(r => r.json()).then(data => {
-      addMsg('system', data.result || data.error || 'Agent disabled.');
-    }).catch(e => addMsg('error', e.message));
+    fireAction('manage_resource', { resource_type: 'agent', name: stripTarget(parts[2]),
+      data: {}, _action: 'disable' });
+    fireAction('agent_disable', { agent_name: stripTarget(parts[2]) });
+    addMsg('system', 'Agent disabled.');
   } else if (sub === 'enable' && parts[2]) {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'agent_enable', agent_name: stripTarget(parts[2]), conversation_id: conversationId }),
-    }).then(r => r.json()).then(data => {
+    action$('agent_enable', { agent_name: stripTarget(parts[2]) }).subscribe(data => {
       addMsg('system', data.result || data.error || 'Agent enabled.');
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'promote' && parts[2] && parts[3]) {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'agent_promote', agent_name: stripTarget(parts[2]), target_scope: parts[3],
-        conversation_id: conversationId }),
-    }).then(r => r.json()).then(data => {
+    action$('agent_promote', { agent_name: stripTarget(parts[2]), target_scope: parts[3] }).subscribe(data => {
       addMsg('system', data.result || data.error || 'Agent promoted.');
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'create-conv') {
     const qargs2 = parseQuotedArgs(text);
     const cname = stripTarget(qargs2[2] || '');
     const cprompt = qargs2[3] || '';
     if (!cname || !cprompt) { addMsg('system', 'Usage: /agent create-conv @<name> "<prompt>"'); return true; }
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'create_agent', conversation_id: conversationId,
-        name: cname, prompt: cprompt, scope: 'conversation' }),
-    }).then(r => r.json()).then(data => {
+    action$('create_agent', { name: cname, prompt: cprompt, scope: 'conversation' }).subscribe(data => {
       addMsg('system', data.result || data.error || 'Agent created.');
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /agent list | create | create-conv | select | delete | msg | disable | enable | promote | setname');
   }
@@ -185,10 +171,7 @@ function cmdSetname(text) {
 
 function cmdAgentList() {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
-  }).then(r => r.json()).then(data => {
+  action$('list_agents').subscribe(data => {
     const agents = data.agents || {};
     const selected = data.selected || '';
     const names = Object.keys(agents);
@@ -205,7 +188,7 @@ function cmdAgentList() {
       });
       addMsg('system', 'Agents (' + (selected ? 'active: ' + selected : 'none selected') + '):\n' + lines.join('\n'));
     }
-  }).catch(e => addMsg('error', 'Failed to list agents: ' + e.message));
+  });
 }
 
 function cmdAgentCreate() {
@@ -236,49 +219,31 @@ function cmdAgentSelect(name) {
     addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected (will activate on first message).`);
     return;
   }
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'select_agent', conversation_id: conversationId,
-      name: isDefault ? '' : name,
-    }),
-  }).then(r => r.json()).then(data => {
+  action$('select_agent', { name: isDefault ? '' : name }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     selectedAgent = isDefault ? '' : name;
     updateActiveAgentBadge();
     addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected. Messages now go to ${name}.`);
     loadResources();
-  }).catch(e => addMsg('error', 'Failed to select agent: ' + e.message));
+  });
 }
 
 function cmdAgentDelete(name) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'delete_agent', conversation_id: conversationId,
-      name: name,
-    }),
-  }).then(r => r.json()).then(data => {
+  action$('delete_agent', { name: name }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     addMsg('system', data.deleted ? `Agent '${name}' deleted.` : `Agent '${name}' not found.`);
     loadResources();
-  }).catch(e => addMsg('error', 'Failed to delete agent: ' + e.message));
+  });
 }
 
 function cmdAgentSetname(realName, nickname) {
   if (!conversationId) { addMsg('system', 'No active conversation'); return; }
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'set_agent_nickname', conversation_id: conversationId,
-      agent_name: realName, nickname: nickname,
-    }),
-  }).then(r => r.json()).then(data => {
+  action$('set_agent_nickname', { agent_name: realName, nickname: nickname }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     nicknameMap[realName] = nickname;
     addMsg('system', t('agentRenamed', { real: realName, nick: nickname }));
-  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  });
 }
 
 function cmdAgentMsg(agentName, text) {
@@ -332,19 +297,8 @@ function cmdAgentMsgAll(text) {
   lastSSEActivity = Date.now();
   document.getElementById('status').textContent = 'Broadcasting...';
 
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'broadcast_agents',
-      conversation_id: conversationId,
-      message: text,
-    }),
-    credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
+  action$('broadcast_agents', { message: text }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); sending = false; }
-  }).catch(e => {
-    addMsg('error', 'Broadcast failed: ' + e.message);
-    sending = false;
   });
 }
 
@@ -353,22 +307,14 @@ function cmdAgentInterrupt(target) {
   const isAll = target.toUpperCase() === 'ALL';
   addMsg('system', isAll ? 'Interrupting all agents...' : ('Interrupting ' + (target || 'agent') + '...'));
   if (isAll) {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: '' }),
-    }).catch(e => addMsg('error', 'Interrupt failed: ' + e.message));
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_agents', conversation_id: conversationId }),
-    }).then(r => r.json()).then(data => {
+    fireAction('interrupt', { agent_name: '' });
+    action$('list_agents').subscribe(data => {
       for (const name of Object.keys(data.agents || {})) {
-        fetch(API, { method: 'POST', headers: getAuthHeaders(),
-          body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: name }),
-        }).catch(() => {});
+        fireAction('interrupt', { agent_name: name });
       }
-    }).catch(() => {});
+    });
   } else {
-    fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: target || '' }),
-    }).catch(e => addMsg('error', 'Interrupt failed: ' + e.message));
+    fireAction('interrupt', { agent_name: target || '' });
   }
 }
 
@@ -377,10 +323,5 @@ function cmdAgentBtw(target, question) {
   const agent = target || '';
   const isAll = agent.toUpperCase() === 'ALL';
   addMsg('user', question, { source: { type: 'user', name: '', target_agent: agent || '', btw: true } });
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'btw', conversation_id: conversationId,
-      agent_name: isAll ? 'ALL' : agent, message: question,
-    }),
-  }).catch(e => addMsg('error', 'BTW failed: ' + e.message));
+  fireAction('btw', { agent_name: isAll ? 'ALL' : agent, message: question });
 }

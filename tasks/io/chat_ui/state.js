@@ -63,28 +63,19 @@ let permissionMode = 'default';  // current tool permission mode
 
 function setPermissionMode(mode) {
   permissionMode = mode;
-  fetch(API, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({action: 'set_permission_mode', conversation_id: conversationId, mode}),
-    credentials: 'same-origin'
-  }).catch(e => console.error('setPermissionMode failed', e));
+  fireAction('set_permission_mode', { conversation_id: conversationId, mode });
   updatePermissionBadge();
 }
 
 function loadPermissionMode() {
   if (!conversationId) { updatePermissionBadge(); return; }
-  fetch(API, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({action: 'get_permission_mode', conversation_id: conversationId}),
-    credentials: 'same-origin'
-  }).then(r => r.json()).then(d => {
-    permissionMode = d.permission_mode || 'default';
-    const sel = document.getElementById('permissionMode');
-    if (sel) sel.value = permissionMode;
-    updatePermissionBadge();
-  }).catch(() => {});
+  action$('get_permission_mode', { conversation_id: conversationId })
+    .subscribe(d => {
+      permissionMode = d.permission_mode || 'default';
+      const sel = document.getElementById('permissionMode');
+      if (sel) sel.value = permissionMode;
+      updatePermissionBadge();
+    });
 }
 
 function updatePermissionBadge() {
@@ -187,13 +178,7 @@ async function newChat() {
   const agents = await _pickAgentsForNewConv();
   if (!agents || agents.length === 0) return;  // cancelled
   _doNewChat();
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({action: 'create_conversation', agents: agents})
-    });
-    const data = await resp.json();
+  action$('create_conversation', { agents: agents }).subscribe(data => {
     if (data.conversation_id) {
       conversationId = data.conversation_id;
       connectSSE(conversationId);
@@ -204,25 +189,21 @@ async function newChat() {
     } else {
       addMsg('error', data.error || 'Failed to create conversation');
     }
-  } catch(e) { console.error('create_conversation failed', e); }
+  });
 }
 
 // Show a dialog to pick 1+ agents from repo for a new conversation.
 // Returns array of agent names, or null if skipped/cancelled.
 async function _pickAgentsForNewConv() {
-  return new Promise(async (resolve) => {
-    let repoAgents = [];
-    try {
-      const r = await fetch(API, {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify({action: 'list_repo_agents', conversation_id: ''})
-      });
-      const d = await r.json();
-      repoAgents = d.agents || [];
-    } catch(e) { console.error(e); }
-
-    if (repoAgents.length === 0) { resolve(null); return; }
+  return new Promise((resolve) => {
+    action$('list_repo_agents', { conversation_id: '' }).subscribe(d => {
+      const repoAgents = d.agents || [];
+      if (repoAgents.length === 0) { resolve(null); return; }
+      _showAgentPickerDialog(repoAgents, resolve);
+    });
+  });
+}
+function _showAgentPickerDialog(repoAgents, resolve) {
 
     const overlay = document.createElement('div');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
@@ -262,7 +243,6 @@ async function _pickAgentsForNewConv() {
       cleanup(checked.length > 0 ? checked : null);
     };
     overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null); });
-  });
 }
 
 function updateDeleteBtn() {

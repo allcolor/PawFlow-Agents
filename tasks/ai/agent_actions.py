@@ -29,16 +29,6 @@ from tasks.ai.actions.command_dispatch import _handle_command_dispatch
 
 logger = logging.getLogger(__name__)
 
-# Queries that return data synchronously (pure memory, no IO, no relay).
-# Everything else runs in background → result via SSE command_result.
-_SYNC_QUERIES = frozenset({
-    "list_conversations", "list_repo_agents", "list_service_types",
-    "get_permission_mode", "get_cost",
-    "create_conversation",
-    "tool_approval_result",
-    # cancel/interrupt must be sync (immediate effect)
-    "cancel", "interrupt", "cancel_task",
-})
 
 _ACTION_HANDLERS = [
     _handle_conversation,
@@ -104,15 +94,15 @@ class AgentActionsMixin:
 
         conversation_id = body.get("conversation_id", "")
 
-        # Sync queries: fast, pure memory, return data directly
-        if action in _SYNC_QUERIES or not conversation_id:
+        # ALL actions run in background — ack immediately, result via SSE.
+        # If no conversation_id, run sync (no SSE channel to publish to).
+        if not conversation_id:
             for handler in _ACTION_HANDLERS:
                 result = handler(self, action, body, store, user_id, flowfile)
                 if result is not None:
                     return result
             return None
 
-        # Everything else: background → ack immediately, result via SSE
         return self._run_action_bg(
             action, body, store, user_id, flowfile, conversation_id)
 

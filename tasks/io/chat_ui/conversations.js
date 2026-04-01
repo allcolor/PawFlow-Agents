@@ -1,20 +1,13 @@
 
-// Conversation sidebar
-async function loadConversations() {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_conversations' }),
-      credentials: 'same-origin',
-    });
-    if (resp.status === 401 || resp.status === 403) return [];
-    if (!resp.ok) return [];
-    const data = await resp.json();
+// ── Conversation sidebar & history ──────────────────────────────
+// All server calls use action$() from rxbus.js (fire-and-forget + SSE result).
+
+function loadConversations() {
+  // list_conversations has no conversation_id — server runs sync for these
+  action$('list_conversations', {}).subscribe(data => {
     const convs = data.conversations || [];
     renderConvList(convs);
-    return convs;
-  } catch (e) { return []; }
+  });
 }
 
 function renderConvList(convs) {
@@ -67,24 +60,22 @@ function renameConvInline(e, cid) {
   const finish = () => {
     const newTitle = input.value.trim();
     if (newTitle && newTitle !== currentTitle) {
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'set_conv_title', conversation_id: cid, title: newTitle })
-      }).then(() => loadConversations()).catch(() => {});
-    } else {
-      loadConversations();
+      fireAction('set_conv_title', { conversation_id: cid, title: newTitle });
     }
+    loadConversations();
   };
   input.onblur = finish;
   input.onkeydown = (ev) => { if (ev.key === 'Enter') finish(); if (ev.key === 'Escape') loadConversations(); };
 }
 
-async function reloadConv() {
+function reloadConv() {
   if (conversationId) resumeConv(conversationId, true);
 }
-async function resumeConv(cid, force) {
+
+function resumeConv(cid, force) {
   if (cid === conversationId && !force) return;
   document.getElementById('status').textContent = t('loading');
-  // Prepare UI for new conversation
+  // Prepare UI
   if (eventSource) { eventSource.close(); eventSource = null; }
   conversationId = cid;
   clearAllStreams();
@@ -95,18 +86,47 @@ async function resumeConv(cid, force) {
   _expectingClear = false;
   _seenMsgIds.clear();
   highlightConv(cid);
-  // Connect SSE first — load_history result will arrive via command_result
+  // Connect SSE first
   connectSSE(cid);
   startPollTimer();
   updateDeleteBtn();
   document.getElementById('sidebar').classList.add('collapsed');
-  // Fire-and-forget: server runs in background, result via SSE command_result → _renderLoadedHistory
-  fetch(API, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'load_history', conversation_id: cid, limit: displayWindow, offset: 0 }),
-    credentials: 'same-origin',
-  }).catch(e => addMsg('error', t('connError', {msg: e.message})));
+  // Load history via action$ — result renders when it arrives
+  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+    .subscribe(data => _renderHistory(data));
+}
+
+function _renderHistory(data) {
+  if (!data || data.error) {
+    addMsg('error', (data && data.error) || t('loadError'));
+    document.getElementById('status').textContent = t('error');
+    return;
+  }
+  nicknameMap = data.nicknames || {};
+  for (const m of (data.messages || [])) {
+    let content = m.content || '';
+    if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+      content = content.replace(/^\[[^\]]+\]:\s*/, '');
+    }
+    addMsg(m.type || m.role, content, m);
+  }
+  serverMsgCount = data.message_count || 0;
+  currentOffset = data.raw_count || (data.messages || []).length;
+  hasMoreMessages = data.has_more || false;
+  _updateLoadMoreBanner();
+  selectedAgent = data.active_agent || '';
+  // Custom CSS theme
+  let themeEl = document.getElementById('custom-theme');
+  if (data.custom_css) {
+    if (!themeEl) { themeEl = document.createElement('style'); themeEl.id = 'custom-theme'; document.head.appendChild(themeEl); }
+    themeEl.textContent = data.custom_css;
+  } else if (themeEl) { themeEl.textContent = ''; }
+  updateActiveAgentBadge();
+  loadResources();
+  loadPermissionMode();
+  document.getElementById('status').textContent = t('ready');
+  scrollBottom(true);
+  document.getElementById('input').focus();
 }
 
 function _updateLoadMoreBanner() {
@@ -128,277 +148,171 @@ function _updateLoadMoreBanner() {
   }
 }
 
-async function loadMoreMessages() {
+function loadMoreMessages() {
   if (loadingMore || !conversationId || !hasMoreMessages) return;
   loadingMore = true;
   const container = document.getElementById('messages');
   const banner = document.getElementById('loadMoreBanner');
   if (banner) banner.innerHTML = 'Loading...';
-
-  // Save scroll state
   const prevHeight = container.scrollHeight;
-
-  // Offset = total transcript messages already loaded (not DOM count)
   const nextOffset = currentOffset;
 
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'load_history',
-        conversation_id: conversationId,
-        limit: displayWindow,
-        offset: nextOffset,
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
-    if (data.error) { loadingMore = false; return; }
-
-    hasMoreMessages = data.has_more || false;
-    currentOffset += data.raw_count || (data.messages || []).length;
-
-    // Prepend older messages before existing ones (after banner)
-    const insertPoint = banner ? banner.nextSibling : container.firstChild;
-    const beforeCount = container.children.length;
-    for (const m of (data.messages || [])) {
-      let content = m.content || '';
-      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: nextOffset })
+    .subscribe(data => {
+      if (data.error) { loadingMore = false; return; }
+      hasMoreMessages = data.has_more || false;
+      currentOffset += data.raw_count || (data.messages || []).length;
+      const insertPoint = banner ? banner.nextSibling : container.firstChild;
+      const beforeCount = container.children.length;
+      for (const m of (data.messages || [])) {
+        let content = m.content || '';
+        if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+          content = content.replace(/^\[[^\]]+\]:\s*/, '');
+        }
+        addMsg(m.type || m.role, content, m);
       }
-      addMsg(m.type || m.role, content, m);
-    }
-    // Move newly added elements (appended at end) to before insertPoint
-    const newElements = [];
-    while (container.children.length > beforeCount) {
-      newElements.push(container.lastChild);
-      container.removeChild(container.lastChild);
-    }
-    // Insert in correct order (they were collected in reverse)
-    for (let i = newElements.length - 1; i >= 0; i--) {
-      container.insertBefore(newElements[i], insertPoint);
-    }
-
-    // Preserve scroll position
-    container.scrollTop = container.scrollHeight - prevHeight;
-
-    _updateLoadMoreBanner();
-  } catch (e) {
-    console.error('Load more failed:', e);
-  }
-  loadingMore = false;
+      const newElements = [];
+      while (container.children.length > beforeCount) {
+        newElements.push(container.lastChild);
+        container.removeChild(container.lastChild);
+      }
+      for (let i = newElements.length - 1; i >= 0; i--) {
+        container.insertBefore(newElements[i], insertPoint);
+      }
+      container.scrollTop = container.scrollHeight - prevHeight;
+      _updateLoadMoreBanner();
+      loadingMore = false;
+    });
 }
 
-async function _recoverConversation(cid) {
-  // After SSE reconnect or poll, check for new messages via efficient poll action.
-  try {
-    if (cid !== conversationId) return;  // conversation changed during recovery
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'poll',
-        conversation_id: cid,
-        last_count: serverMsgCount,
-      }),
-      credentials: 'same-origin',
+function _recoverConversation(cid) {
+  if (cid !== conversationId) return;
+  action$('poll', { conversation_id: cid, last_count: serverMsgCount })
+    .subscribe(data => {
+      if (data.error) return;
+      const newMsgs = data.new_messages || [];
+      if (newMsgs.length === 0) return;
+      console.log('[poll] recovering', newMsgs.length, 'new messages');
+      serverMsgCount = data.message_count || serverMsgCount;
+      const _anyAgentActive = Object.keys(activeInteractions || {}).length > 0;
+      const msgContainer = document.getElementById('messages');
+      for (const m of newMsgs) {
+        const mType = m.type || m.role;
+        if (mType === 'tool_call' || mType === 'tool_result' || mType === 'thinking') continue;
+        if (_anyAgentActive && mType === 'assistant') continue;
+        if (mType === 'user') {
+          const existing = msgContainer.querySelectorAll('.msg.user');
+          const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
+          if (lastUserEl) {
+            const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
+            const stripDeflated = (s) => s
+              .replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '')
+              .replace(/\n?\[\d+ image\(s\) — saved to FileStore:[\s\S]*?Use show_file to view again\]/g, '')
+              .replace(/\n?\[images deflated\]/g, '').trim();
+            const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
+            const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
+            if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) continue;
+          }
+        }
+        if (mType === 'assistant') {
+          if (m.source && m.source.btw) continue;
+          const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
+          const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
+          if (lastEl && lastEl.dataset.rawText) {
+            const newText = (m.content || '').replace(/^\[[^\]]+\]:\s*/, '').substring(0, 500);
+            if (lastEl.dataset.rawText === newText) continue;
+          }
+        }
+        let pollContent = m.content || '';
+        if (mType === 'assistant' && typeof pollContent === 'string') {
+          pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
+        }
+        addMsg(mType, pollContent, m);
+      }
+      const last = newMsgs[newMsgs.length - 1];
+      const lastType = last ? (last.type || last.role) : '';
+      if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
+        document.getElementById('status').textContent = t('thinking');
+      } else {
+        sending = false;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('status').textContent = t('ready');
+      }
+      scrollBottom();
     });
-    if (!resp.ok) return;
-    const data = await resp.json();
-    const newMsgs = data.new_messages || [];
-    if (newMsgs.length === 0) return;
-
-    console.log('[poll] recovering', newMsgs.length, 'new messages');
-    serverMsgCount = data.message_count || serverMsgCount;
-
-    // Do NOT clearAllStreams — agents may be actively streaming.
-    // Only clear streams that have no active chunks being appended.
-
-    // Display the new messages, skipping messages already shown locally
-    // Skip ALL assistant messages while an agent is actively streaming
-    // (SSE handles display, poll would create duplicates)
-    const _anyAgentActive = Object.keys(activeInteractions || {}).length > 0;
-    const msgContainer = document.getElementById('messages');
-    for (const m of newMsgs) {
-      const mType = m.type || m.role;
-      // Skip display_only messages (tool_call, tool_result, thinking) —
-      // these are rendered by SSE in real-time, transcript has them for reload only.
-      // Also skip assistant messages during active streaming.
-      if (mType === 'tool_call' || mType === 'tool_result' || mType === 'thinking') {
-        continue;
-      }
-      if (_anyAgentActive && mType === 'assistant') {
-        continue;
-      }
-      if (mType === 'user') {
-        // Check if this user message is already displayed (sent locally by send())
-        const existing = msgContainer.querySelectorAll('.msg.user');
-        const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
-        if (lastUserEl) {
-          const stripPrefix = (s) => s.replace(/^\[(?:btw\s*)?(?:\u2192\s+\w+)?\]\s*/, '');
-          const stripDeflated = (s) => s
-            .replace(/\n?\[\d+ image\(s\) were shown[^\]]*\]/g, '')
-            .replace(/\n?\[\d+ image\(s\) — saved to FileStore:[\s\S]*?Use show_file to view again\]/g, '')
-            .replace(/\n?\[images deflated\]/g, '')
-            .trim();
-          const localRaw = stripPrefix(stripDeflated(lastUserEl.dataset.rawText || lastUserEl.textContent.trim()));
-          const serverRaw = stripPrefix(stripDeflated((m.content || '').trim()));
-          if (localRaw === serverRaw || localRaw.startsWith(serverRaw) || serverRaw.startsWith(localRaw)) {
-            console.log('[poll] skipping duplicate user message (dedup match)');
-            continue;
-          }
-        }
-      }
-      if (mType === 'assistant') {
-        // Skip btw messages that were already shown via btw_done SSE event
-        if (m.source && m.source.btw) {
-          console.log('[poll] skipping btw message (already shown via btw_done)');
-          continue;
-        }
-        // Check if this assistant message was already shown via SSE done event
-        const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
-        const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
-        if (lastEl && lastEl.dataset.rawText) {
-          const newText = (m.content || '').replace(/^\[[^\]]+\]:\s*/, '').substring(0, 500);
-          if (lastEl.dataset.rawText === newText) {
-            console.log('[poll] skipping duplicate assistant message');
-            continue;
-          }
-        }
-      }
-      let pollContent = m.content || '';
-      // Strip identity prefixes (same as history replay)
-      if (mType === 'assistant' && typeof pollContent === 'string') {
-        pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
-      }
-      addMsg(mType, pollContent, m);
-    }
-
-    // Check if agent is still working
-    const last = newMsgs[newMsgs.length - 1];
-    const lastType = last ? (last.type || last.role) : '';
-    if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {
-      document.getElementById('status').textContent = t('thinking');
-    } else {
-      sending = false;
-      document.getElementById('sendBtn').disabled = false;
-      document.getElementById('status').textContent = t('ready');
-    }
-    scrollBottom();
-  } catch (e) {
-    console.warn('[poll] recovery failed:', e);
-  }
 }
 
-async function deleteConv(event, cid) {
+function deleteConv(event, cid) {
   event.stopPropagation();
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'delete_conversation', conversation_id: cid }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) { console.error('Delete failed:', resp.status); return; }
-    if (cid === conversationId) newChat();
-    loadConversations();
-  } catch (e) { console.error('Delete error:', e); }
+  fireAction('delete_conversation', { conversation_id: cid });
+  if (cid === conversationId) newChat();
+  loadConversations();
 }
 
-async function deleteCurrentConv() {
+function deleteCurrentConv() {
   if (!conversationId) return;
   if (!confirm(t('confirmDelete'))) return;
-  const cid = conversationId;
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'delete_conversation', conversation_id: cid }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) { console.error('Delete failed:', resp.status); return; }
-    newChat();
-    loadConversations();
-  } catch (e) { console.error('Delete error:', e); }
+  fireAction('delete_conversation', { conversation_id: conversationId });
+  newChat();
+  loadConversations();
 }
 
-async function exportConversation() {
+function exportConversation() {
   if (!conversationId) return;
   document.getElementById('status').textContent = t('exporting');
-  try {
-    // Fetch conversation messages
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: conversationId }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) { addMsg('error', 'Export failed'); return; }
-    const data = await resp.json();
-    const messages = data.messages || [];
-
-    // Collect file URLs from messages
-    const fileUrls = [];
-    const fileUrlRe = /(https?:\/\/[^\s<"']*\/files\/[a-f0-9]+\/([^\s<"')]+))/g;
-    for (const m of messages) {
-      const content = m.content || '';
-      let match;
-      while ((match = fileUrlRe.exec(content)) !== null) {
-        fileUrls.push({ url: match[1], name: match[2] });
-      }
-      fileUrlRe.lastIndex = 0;
-    }
-
-    // Check if we have images — if so, create a ZIP
-    const hasImages = fileUrls.some(f => isImageFile(f.name));
-
-    // Build HTML
-    const htmlContent = buildExportHtml(messages, data.nicknames || {}, fileUrls);
-
-    if (hasImages) {
-      // Use JSZip-like approach: simple ZIP with stored entries
-      addMsg('system', t('exportingWithImages'));
-      const files = [{ name: 'conversation.html', content: new TextEncoder().encode(htmlContent) }];
-      // Fetch images
-      const token = getToken();
-      const headers = {};
-      if (token) headers['Authorization'] = 'Bearer ' + token;
-      for (const f of fileUrls) {
-        if (isImageFile(f.name)) {
-          try {
-            const imgResp = await fetch(f.url, { headers, credentials: 'same-origin' });
-            if (imgResp.ok) {
-              const blob = await imgResp.blob();
-              const buf = await blob.arrayBuffer();
-              files.push({ name: 'images/' + f.name, content: new Uint8Array(buf) });
-            }
-          } catch(e) { console.warn('Failed to fetch image for export:', f.name); }
+  // Export needs the full history — subscribe to load_history result
+  action$('load_history', { conversation_id: conversationId, limit: 99999, offset: 0 })
+    .subscribe(async data => {
+      try {
+        const messages = data.messages || [];
+        const fileUrls = [];
+        const fileUrlRe = /(https?:\/\/[^\s<"']*\/files\/[a-f0-9]+\/([^\s<"')]+))/g;
+        for (const m of messages) {
+          const content = m.content || '';
+          let match;
+          while ((match = fileUrlRe.exec(content)) !== null) fileUrls.push({ url: match[1], name: match[2] });
+          fileUrlRe.lastIndex = 0;
         }
+        const hasImages = fileUrls.some(f => isImageFile(f.name));
+        const htmlContent = buildExportHtml(messages, data.nicknames || {}, fileUrls);
+        if (hasImages) {
+          addMsg('system', t('exportingWithImages'));
+          const files = [{ name: 'conversation.html', content: new TextEncoder().encode(htmlContent) }];
+          const token = getToken();
+          const headers = {};
+          if (token) headers['Authorization'] = 'Bearer ' + token;
+          for (const f of fileUrls) {
+            if (isImageFile(f.name)) {
+              try {
+                const imgResp = await fetch(f.url, { headers, credentials: 'same-origin' });
+                if (imgResp.ok) {
+                  const blob = await imgResp.blob();
+                  const buf = await blob.arrayBuffer();
+                  files.push({ name: 'images/' + f.name, content: new Uint8Array(buf) });
+                }
+              } catch(e) { console.warn('Failed to fetch image for export:', f.name); }
+            }
+          }
+          const zipBlob = buildSimpleZip(files);
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(zipBlob);
+          a.download = 'conversation_' + conversationId.substring(0, 8) + '.zip';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } else {
+          const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'conversation_' + conversationId.substring(0, 8) + '.html';
+          a.click();
+          URL.revokeObjectURL(a.href);
+        }
+        addMsg('system', t('exported'));
+      } catch (e) {
+        addMsg('error', 'Export failed: ' + e.message);
       }
-      // Build a simple ZIP (store method, no compression)
-      const zipBlob = buildSimpleZip(files);
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(zipBlob);
-      a.download = 'conversation_' + conversationId.substring(0, 8) + '.zip';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    } else {
-      // Plain HTML download
-      const blob = new Blob([htmlContent], { type: 'text/html;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'conversation_' + conversationId.substring(0, 8) + '.html';
-      a.click();
-      URL.revokeObjectURL(a.href);
-    }
-    addMsg('system', t('exported'));
-    document.getElementById('status').textContent = t('ready');
-  } catch (e) {
-    console.error('Export error:', e);
-    addMsg('error', 'Export failed: ' + e.message);
-    document.getElementById('status').textContent = t('ready');
-  }
+      document.getElementById('status').textContent = t('ready');
+    });
 }
 
 function buildExportHtml(messages, nicknames, fileUrls) {
@@ -423,14 +337,10 @@ function buildExportHtml(messages, nicknames, fileUrls) {
         const hue = Math.abs(h) % 360;
         badge = '<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:8px;margin-right:4px;font-weight:600;background:hsl(' + hue + ',60%,25%);color:hsl(' + hue + ',80%,80%)">' + escapeHtml(srcName) + '</span>';
       }
-      if (type === 'assistant' && src.type === 'agent' && src.name) {
-        cssClass = 'subagent';
-      }
-      // Strip identity prefix
+      if (type === 'assistant' && src.type === 'agent' && src.name) cssClass = 'subagent';
       content = content.replace(/^\[[^\]]+\]:\s*/, '');
     }
     if (type === 'tool_call' || type === 'tool_result') cssClass = 'tool';
-    // Convert markdown-like formatting
     let html = escapeHtml(content);
     html = html.replace(/```(\w*)\n([\s\S]*?)```/g, function(_, lang, code) {
       var cls = lang ? ' class="language-' + lang + '"' : '';
@@ -439,7 +349,6 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
     html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
-    // Replace file URLs with image tags or links
     for (const f of fileUrls) {
       if (isImageFile(f.name)) {
         html = html.split(escapeHtml(f.url)).join('<br><img src="images/' + f.name + '" style="max-width:512px;max-height:512px;border-radius:8px;"><br>');
@@ -464,76 +373,53 @@ function buildExportHtml(messages, nicknames, fileUrls) {
     + '</style></head><body>'
     + '<h1 style="color:#e94560;margin-bottom:20px;">PawFlow Conversation Export</h1>'
     + '<p style="color:#6c6c8a;margin-bottom:20px;">Exported: ' + new Date().toLocaleString() + '</p>'
-    + body
-    + '</body></html>';
+    + body + '</body></html>';
 }
 
 function buildSimpleZip(files) {
-  // Minimal ZIP builder (Store method, no compression)
   const parts = [];
   const directory = [];
   let offset = 0;
   for (const f of files) {
     const nameBytes = new TextEncoder().encode(f.name);
     const data = f.content;
-    // Local file header (30 bytes + name)
     const header = new Uint8Array(30 + nameBytes.length);
     const hv = new DataView(header.buffer);
-    hv.setUint32(0, 0x04034b50, true); // signature
-    hv.setUint16(4, 20, true);  // version needed
-    hv.setUint16(6, 0, true);   // flags
-    hv.setUint16(8, 0, true);   // compression (store)
-    hv.setUint16(10, 0, true);  // mod time
-    hv.setUint16(12, 0, true);  // mod date
-    // CRC-32
+    hv.setUint32(0, 0x04034b50, true);
+    hv.setUint16(4, 20, true);
+    hv.setUint16(8, 0, true);
     const crc = crc32(data);
     hv.setUint32(14, crc, true);
-    hv.setUint32(18, data.length, true);  // compressed size
-    hv.setUint32(22, data.length, true);  // uncompressed size
+    hv.setUint32(18, data.length, true);
+    hv.setUint32(22, data.length, true);
     hv.setUint16(26, nameBytes.length, true);
-    hv.setUint16(28, 0, true);  // extra field length
     header.set(nameBytes, 30);
     parts.push(header);
     parts.push(data);
-    // Central directory entry
     const cdEntry = new Uint8Array(46 + nameBytes.length);
     const cv = new DataView(cdEntry.buffer);
     cv.setUint32(0, 0x02014b50, true);
     cv.setUint16(4, 20, true);
     cv.setUint16(6, 20, true);
-    cv.setUint16(8, 0, true);
-    cv.setUint16(10, 0, true);
-    cv.setUint16(12, 0, true);
-    cv.setUint16(14, 0, true);
     cv.setUint32(16, crc, true);
     cv.setUint32(20, data.length, true);
     cv.setUint32(24, data.length, true);
     cv.setUint16(28, nameBytes.length, true);
-    cv.setUint16(30, 0, true);
-    cv.setUint16(32, 0, true);
-    cv.setUint16(34, 0, true);
-    cv.setUint16(36, 0, true);
-    cv.setUint32(38, 0, true);
     cv.setUint32(42, offset, true);
     cdEntry.set(nameBytes, 46);
     directory.push(cdEntry);
     offset += header.length + data.length;
   }
-  // Central directory
   const cdOffset = offset;
   let cdSize = 0;
   for (const d of directory) { parts.push(d); cdSize += d.length; }
-  // End of central directory (22 bytes)
   const eocd = new Uint8Array(22);
   const ev = new DataView(eocd.buffer);
   ev.setUint32(0, 0x06054b50, true);
-  ev.setUint16(4, 0, true);
-  ev.setUint16(6, 0, true);
   ev.setUint16(8, files.length, true);
   ev.setUint16(10, files.length, true);
   ev.setUint32(12, cdSize, true);
   ev.setUint32(16, cdOffset, true);
-  ev.setUint16(20, 0, true);
   parts.push(eocd);
   return new Blob(parts, { type: 'application/zip' });
 }
@@ -542,55 +428,44 @@ function crc32(data) {
   let crc = 0xFFFFFFFF;
   for (let i = 0; i < data.length; i++) {
     crc ^= data[i];
-    for (let j = 0; j < 8; j++) {
-      crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
-    }
+    for (let j = 0; j < 8; j++) crc = (crc >>> 1) ^ (crc & 1 ? 0xEDB88320 : 0);
   }
   return (crc ^ 0xFFFFFFFF) >>> 0;
 }
 
-async function refreshCurrentConv() {
+function refreshCurrentConv() {
   if (!conversationId) return;
-  const cid = conversationId;
   document.getElementById('status').textContent = t('loading');
-  try {
-    const resp = await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'load_history', conversation_id: cid }),
-      credentials: 'same-origin',
-    });
-    if (!resp.ok) { document.getElementById('status').textContent = t('error'); return; }
-    const data = await resp.json();
-    if (data.error) { document.getElementById('status').textContent = t('error'); return; }
-    // Clear and replay
-    _expectingClear = true;
-    document.getElementById('messages').innerHTML = '';
-    _expectingClear = false;
-    _seenMsgIds.clear();
-    clearAllStreams();
-    for (const m of (data.messages || [])) {
-      let content = m.content || '';
-      if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-        content = content.replace(/^\[[^\]]+\]:\s*/, '');
+  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
+    .subscribe(data => {
+      if (data.error) { document.getElementById('status').textContent = t('error'); return; }
+      _expectingClear = true;
+      document.getElementById('messages').innerHTML = '';
+      _expectingClear = false;
+      _seenMsgIds.clear();
+      clearAllStreams();
+      for (const m of (data.messages || [])) {
+        let content = m.content || '';
+        if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
+          content = content.replace(/^\[[^\]]+\]:\s*/, '');
+        }
+        addMsg(m.type || m.role, content, m);
       }
-      addMsg(m.type || m.role, content, m);
-    }
-    serverMsgCount = data.message_count || 0;
-    scrollBottom();
-    // Check if agent is still working (last msg is not assistant → still processing)
-    const msgs = data.messages || [];
-    const lastRole = msgs.length > 0 ? (msgs[msgs.length - 1].type || msgs[msgs.length - 1].role) : '';
-    if (lastRole !== 'assistant' && lastRole !== 'user') {
-      sending = true;
-      document.getElementById('status').textContent = t('thinking');
-    } else {
-      sending = false;
-      document.getElementById('sendBtn').disabled = false;
-      document.getElementById('status').textContent = t('ready');
-    }
-    loadConversations();
-  } catch (e) {
-    document.getElementById('status').textContent = t('error');
-  }
+      serverMsgCount = data.message_count || 0;
+      hasMoreMessages = data.has_more || false;
+      currentOffset = data.raw_count || (data.messages || []).length;
+      _updateLoadMoreBanner();
+      scrollBottom();
+      const msgs = data.messages || [];
+      const lastRole = msgs.length > 0 ? (msgs[msgs.length - 1].type || msgs[msgs.length - 1].role) : '';
+      if (lastRole !== 'assistant' && lastRole !== 'user') {
+        sending = true;
+        document.getElementById('status').textContent = t('thinking');
+      } else {
+        sending = false;
+        document.getElementById('sendBtn').disabled = false;
+        document.getElementById('status').textContent = t('ready');
+      }
+      loadConversations();
+    });
 }

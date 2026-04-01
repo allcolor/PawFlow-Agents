@@ -869,25 +869,8 @@ function connectSSE(cid) {
   eventSource.addEventListener('command_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    const action = data.action || '';
-    // Hide initial loading overlay
-    const _loadingEl = document.getElementById('initialLoading');
-    if (_loadingEl) _loadingEl.remove();
-
-    if (data.error) { addMsg('error', data.error); return; }
-
-    // Dispatch to renderer based on action
-    let parsed = null;
-    try { parsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result; } catch {}
-
-    if (parsed && _dispatchCommandResult(action, parsed)) return;
-    // Fallback: only show if there's an explicit message or error — never dump raw JSON
-    if (parsed) {
-      if (parsed.error) { addMsg('error', parsed.error); return; }
-      if (parsed.message) { addMsg('system', parsed.message); return; }
-    }
-    // Silent: data-loading results (list_active, list_params_secrets, etc.) are consumed
-    // by their dispatchers. If no dispatcher matched, it's a background result — ignore.
+    // Feed into RxJS bus — all subscribers (action$) will receive this
+    if (typeof _pushCommandResult === 'function') _pushCommandResult(data);
   });
 
   eventSource.addEventListener('vnc_login_ready', (e) => {
@@ -1009,98 +992,8 @@ function connectSSE(cid) {
 }
 
 // ── Command result dispatchers ──────────────────────────────────
-function _dispatchCommandResult(action, parsed) {
-  if (!parsed) return false;
-  // load_history → render conversation
-  if (action === 'load_history' && parsed.messages) {
-    _renderLoadedHistory(parsed);
-    return true;
-  }
-  // list_resources / service_list / get_tool_schemas → update resources panel
-  if ((action === 'list_resources' || action === 'service_list' || action === 'get_tool_schemas')
-      && (parsed.agents || parsed.services || parsed.tools)) {
-    if (typeof _renderResourcesFromSSE === 'function') _renderResourcesFromSSE(parsed);
-    return true;
-  }
-  // Silent data actions — consumed by panels/internal, never shown as messages
-  const _silentActions = new Set([
-    'list_active', 'list_params_secrets', 'list_links',
-    'get_permission_mode', 'list_conversations', 'port_forward_list',
-    'list_agents', 'list_tools', 'list_skills', 'list_agent_skills',
-    'list_secrets', 'list_variables', 'list_schedules',
-    'list_memories', 'list_prompts', 'list_repo_agents',
-    'list_available_flows', 'list_conv_flows', 'list_conv_files',
-    'list_image_services', 'list_video_services', 'list_linked_accounts',
-    'list_bg_tools', 'get_context', 'get_context_full',
-    'get_resource_detail', 'get_service_detail', 'get_service_schema',
-    'get_tool_permissions', 'get_tool_schemas', 'get_plan', 'get_plans',
-    'get_prompt', 'get_cost', 'get_usage', 'get_flow_instance',
-    'get_plan_mode', 'task_status', 'task_log', 'stats', 'insights',
-    'flow_runtime_graph', 'server_workspace_status', 'check_files',
-    'private_gateway_status', 'private_gateway_list_bans',
-    'claude_code_list_relays', 'fs_list_dir', 'fs_list_services',
-    'poll', 'ping',
-  ]);
-  if (_silentActions.has(action)) return true;
-  // set_permission_mode
-  if (action === 'set_permission_mode' && parsed.permission_mode) {
-    if (typeof updatePermissionBadge === 'function') updatePermissionBadge(parsed.permission_mode);
-    addMsg('system', 'Permission mode: ' + parsed.permission_mode);
-    return true;
-  }
-  // open_desktop / close_desktop
-  if ((action === 'open_desktop' || action === 'close_desktop') && (parsed.ok || parsed.url)) {
-    if (parsed.url && typeof addDesktopTab === 'function') {
-      const prefix = parsed.local_screen ? 'local_desktop' : 'desktop';
-      addDesktopTab(prefix + '_' + (parsed.relay_id || ''), parsed.url);
-    }
-    addMsg('system', parsed.url ? 'Desktop ready.' : 'Desktop closed.');
-    return true;
-  }
-  // Generic: message / status / error
-  if (parsed.message) { addMsg('system', parsed.message); return true; }
-  if (parsed.status === 'ok') { addMsg('system', action + ': OK'); return true; }
-  if (parsed.error) { addMsg('error', parsed.error); return true; }
-  return false;
-}
-
-function _renderLoadedHistory(data) {
-  // Called from SSE command_result for load_history
-  if (eventSource) { eventSource.close(); eventSource = null; }
-  const cid = data.conversation_id || conversationId;
-  conversationId = cid;
-  clearAllStreams();
-  sending = false;
-  document.getElementById('sendBtn').disabled = false;
-  _expectingClear = true;
-  document.getElementById('messages').innerHTML = '';
-  _expectingClear = false;
-  _seenMsgIds.clear();
-  nicknameMap = data.nicknames || {};
-  for (const m of (data.messages || [])) {
-    let content = m.content || '';
-    if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
-      content = content.replace(/^\[[^\]]+\]\:\s*/, '');
-    }
-    addMsg(m.type || m.role, content, m);
-  }
-  serverMsgCount = data.message_count || 0;
-  currentOffset = data.raw_count || (data.messages || []).length;
-  hasMoreMessages = data.has_more || false;
-  _updateLoadMoreBanner();
-  selectedAgent = data.active_agent || '';
-  updateActiveAgentBadge();
-  highlightConv(cid);
-  connectSSE(cid);
-  startPollTimer();
-  updateDeleteBtn();
-  loadResources();
-  loadPermissionMode();
-  document.getElementById('status').textContent = t('ready');
-  document.getElementById('sidebar').classList.add('collapsed');
-  scrollBottom(true);
-  document.getElementById('input').focus();
-}
+// Old _dispatchCommandResult and _renderLoadedHistory removed —
+// all dispatch is now via RxJS action$ subscriptions in each module.
 
 function _scheduleSSEReconnect(cid) {
   if (sseReconnectTimer) clearTimeout(sseReconnectTimer);

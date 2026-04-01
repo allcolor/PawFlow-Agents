@@ -14,16 +14,12 @@ function cmdRestartFrom(text, parts) {
   if (contextOpInProgress) { addMsg('system', t('contextOpBusy')); return true; }
   contextOpInProgress = true;
   showContextOp('Restarting');
-  const restartBody = { action: 'restart_from', conversation_id: conversationId, keep_last: restartN };
-  if (restartAgent) restartBody.agent_name = restartAgent;
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(restartBody),
-    credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
-  }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; })
-    .finally(() => { hideContextOp(); contextOpInProgress = false; });
+  const restartParams = { keep_last: restartN };
+  if (restartAgent) restartParams.agent_name = restartAgent;
+  action$('restart_from', restartParams).subscribe(data => {
+    if (data.error) { addMsg('error', data.error); }
+    hideContextOp(); contextOpInProgress = false;
+  });
   return true;
 }
 
@@ -50,15 +46,11 @@ function cmdSummary(text, parts) {
   contextOpInProgress = true;
   const label = summaryAgent ? 'Summarizing (' + summaryAgent + ')' : 'Summarizing';
   showContextOp(label);
-  const summaryBody = { action: 'resume_conversation', conversation_id: conversationId, max_tokens: summaryTokens };
-  if (summaryAgent) summaryBody.agent_name = summaryAgent;
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(summaryBody),
-    credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
+  const summaryParams = { max_tokens: summaryTokens };
+  if (summaryAgent) summaryParams.agent_name = summaryAgent;
+  action$('resume_conversation', summaryParams).subscribe(data => {
     if (data.error) { addMsg('error', data.error); hideContextOp(); contextOpInProgress = false; }
-  }).catch(e => { addMsg('error', e.message); hideContextOp(); contextOpInProgress = false; });
+  });
   return true;
 }
 
@@ -85,20 +77,14 @@ function cmdCompact(agentName) {
   const _compactLabel = agentName || selectedAgent || '';
   const label = _compactLabel ? 'Compacting (' + _compactLabel + ')' : 'Compacting';
   showContextOp(label);
-  const body = { action: 'compact', conversation_id: conversationId };
+  const params = {};
   const _compactAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
-  if (_compactAgent) body.agent_name = _compactAgent;
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(body),
-  }).then(r => r.json()).then(data => {
+  if (_compactAgent) params.agent_name = _compactAgent;
+  action$('compact', params).subscribe(data => {
     if (data.error) {
       addMsg('error', 'Compaction failed: ' + data.error);
       hideContextOp(); contextOpInProgress = false;
     }
-  }).catch(e => {
-    addMsg('error', 'Compaction failed: ' + e.message);
-    hideContextOp(); contextOpInProgress = false;
   });
 }
 
@@ -107,14 +93,10 @@ function cmdRebuild(agentName) {
   contextOpInProgress = true;
   const label = agentName ? 'Rebuilding (' + agentName + ')' : 'Rebuilding';
   showContextOp(label);
-  const body = { action: 'rebuild', conversation_id: conversationId };
+  const params = {};
   const _rebuildAgent = (agentName && agentName.toLowerCase() === 'shared') ? '' : (agentName || selectedAgent || '');
-  if (_rebuildAgent) body.agent_name = _rebuildAgent;
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify(body),
-  }).then(r => r.json()).then(data => {
+  if (_rebuildAgent) params.agent_name = _rebuildAgent;
+  action$('rebuild', params).subscribe(data => {
     if (data.error) { addMsg('error', 'Rebuild failed: ' + data.error); hideContextOp(); contextOpInProgress = false; }
-  }).catch(e => { addMsg('error', 'Rebuild failed: ' + e.message); hideContextOp(); contextOpInProgress = false; });
+  });
 }
-

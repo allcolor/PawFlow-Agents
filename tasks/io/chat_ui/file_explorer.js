@@ -1,11 +1,6 @@
 // ── File Explorer ──────────────────────────────────────────────────
 let _fe={overlay:null,svc:'',path:'.',entries:[],clip:null,sel:new Set(),svcs:[],ctx:null,preview:null,sort:{col:'name',asc:true}};
 
-async function _feApi(action,params={}){
-  try{const r=await fetch(API,{method:'POST',headers:getAuthHeaders(),body:JSON.stringify({action,...params,conversation_id:conversationId}),credentials:'same-origin'});
-  return await r.json();}catch(e){return {error:e.message};}
-}
-
 function openExplorer(){
   if(_fe.overlay)return;
   const o=document.createElement('div');o.className='fe-overlay';
@@ -31,24 +26,26 @@ function closeExplorer(){
   document.removeEventListener('keydown',_feKeys);
 }
 
-async function _feLoadSvcs(){
-  const d=await _feApi('fs_list_services');
-  _fe.svcs=d.services||[];
-  const sel=document.getElementById('feSvcSel');if(!sel)return;
-  sel.innerHTML=_fe.svcs.map(s=>`<option value="${s.id}">${s.id} (${s.type})</option>`).join('');
-  if(_fe.svcs.length>0){_fe.svc=_fe.svcs[0].id;_feNav('.');}
-  else{document.getElementById('feTbody').innerHTML='<tr><td colspan=4 class="fe-empty">No filesystem services available</td></tr>';}
+function _feLoadSvcs(){
+  action$('fs_list_services').subscribe(d => {
+    _fe.svcs=d.services||[];
+    const sel=document.getElementById('feSvcSel');if(!sel)return;
+    sel.innerHTML=_fe.svcs.map(s=>`<option value="${s.id}">${s.id} (${s.type})</option>`).join('');
+    if(_fe.svcs.length>0){_fe.svc=_fe.svcs[0].id;_feNav('.');}
+    else{document.getElementById('feTbody').innerHTML='<tr><td colspan=4 class="fe-empty">No filesystem services available</td></tr>';}
+  });
 }
 
 function _feSelSvc(id){_fe.svc=id;_feNav('.');}
 
-async function _feNav(path){
+function _feNav(path){
   _fe.path=path;_fe.sel.clear();
   const tb=document.getElementById('feTbody');
   tb.innerHTML='<tr><td colspan=4 class="fe-loading">Loading...</td></tr>';
-  const d=await _feApi('fs_list_dir',{service:_fe.svc,path});
-  if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;_feBc();return;}
-  _fe.entries=d.entries||[];_feRender();_feBc();
+  action$('fs_list_dir',{service:_fe.svc,path}).subscribe(d => {
+    if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;_feBc();return;}
+    _fe.entries=d.entries||[];_feRender();_feBc();
+  });
 }
 
 function _feRender(){
@@ -162,40 +159,59 @@ function _feCutSelected(){
 function _feCopy(name){_fe.sel.clear();_fe.sel.add(name);_feCopySelected();}
 function _feCut(name){_fe.sel.clear();_fe.sel.add(name);_feCutSelected();}
 
-async function _fePaste(){
+function _fePaste(){
   if(!_fe.clip||!_fe.clip.items.length)return;
-  for(const item of _fe.clip.items){
+  let idx = 0;
+  const pasteNext = () => {
+    if (idx >= _fe.clip.items.length) {
+      if(_fe.clip.action==='cut')_fe.clip=null;
+      _feNav(_fe.path);
+      return;
+    }
+    const item = _fe.clip.items[idx];
     let destName=item.name;
-    // Same folder? Auto-rename to avoid overwrite
     if(_fe.clip.service===_fe.svc&&_fe.clip.basePath===_fe.path&&_fe.clip.action==='copy'){
       const dot=destName.lastIndexOf('.');
       destName=dot>0?destName.slice(0,dot)+' (copy)'+destName.slice(dot):destName+' (copy)';
     }
     const dest=_fePath(destName);
-    // Server-side copy (no client round-trip for file content)
-    const d=await _feApi('fs_copy',{source_service:_fe.clip.service,source_path:item.path,dest_service:_fe.svc,dest_path:dest});
-    if(d.error){addMsg('error','Paste failed: '+d.error);return;}
-    if(_fe.clip.action==='cut'){
-      await _feApi('fs_delete',{service:_fe.clip.service,path:item.path});
-    }
-  }
-  if(_fe.clip.action==='cut')_fe.clip=null;
-  _feNav(_fe.path);
+    action$('fs_copy',{source_service:_fe.clip.service,source_path:item.path,dest_service:_fe.svc,dest_path:dest}).subscribe(d => {
+      if(d.error){addMsg('error','Paste failed: '+d.error);return;}
+      if(_fe.clip.action==='cut'){
+        action$('fs_delete',{service:_fe.clip.service,path:item.path}).subscribe(() => {
+          idx++;
+          pasteNext();
+        });
+      } else {
+        idx++;
+        pasteNext();
+      }
+    });
+  };
+  pasteNext();
 }
 
-async function _feDel(name){
+function _feDel(name){
   if(!confirm('Delete "'+name+'"? This cannot be undone.'))return;
-  await _feApi('fs_delete',{service:_fe.svc,path:_fePath(name)});
-  _feNav(_fe.path);
+  action$('fs_delete',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
+    _feNav(_fe.path);
+  });
 }
 
-async function _feDelSelected(){
+function _feDelSelected(){
   const names=[..._fe.sel];
   if(!names.length)return;
   const label=names.length===1?'"'+names[0]+'"':names.length+' items';
   if(!confirm('Delete '+label+'? This cannot be undone.'))return;
-  for(const n of names)await _feApi('fs_delete',{service:_fe.svc,path:_fePath(n)});
-  _feNav(_fe.path);
+  let idx = 0;
+  const delNext = () => {
+    if (idx >= names.length) { _feNav(_fe.path); return; }
+    action$('fs_delete',{service:_fe.svc,path:_fePath(names[idx])}).subscribe(() => {
+      idx++;
+      delNext();
+    });
+  };
+  delNext();
 }
 
 function _feRenameStart(name){
@@ -203,38 +219,44 @@ function _feRenameStart(name){
   if(!row)return;
   const inp=document.createElement('input');inp.className='fe-inline';inp.value=name;
   row.innerHTML='';row.appendChild(inp);inp.focus();inp.select();
-  const finish=async()=>{
+  const finish=()=>{
     const nv=inp.value.trim();
     if(nv&&nv!==name){
       const oldP=_fePath(name),newP=_fePath(nv);
-      await _feApi('fs_rename',{service:_fe.svc,old_path:oldP,new_path:newP});
+      action$('fs_rename',{service:_fe.svc,old_path:oldP,new_path:newP}).subscribe(() => {
+        _feNav(_fe.path);
+      });
+    } else {
+      _feNav(_fe.path);
     }
-    _feNav(_fe.path);
   };
   inp.onblur=finish;inp.onkeydown=e=>{if(e.key==='Enter')finish();if(e.key==='Escape')_feNav(_fe.path);};
 }
 
-async function _feNewFile(){
+function _feNewFile(){
   const name=prompt('New file name:');if(!name)return;
-  await _feApi('fs_write_file',{service:_fe.svc,path:_fePath(name),content:'',encoding:'utf-8'});
-  _feNav(_fe.path);
+  action$('fs_write_file',{service:_fe.svc,path:_fePath(name),content:'',encoding:'utf-8'}).subscribe(() => {
+    _feNav(_fe.path);
+  });
 }
 
-async function _feNewDir(){
+function _feNewDir(){
   const name=prompt('New folder name:');if(!name)return;
-  await _feApi('fs_mkdir',{service:_fe.svc,path:_fePath(name)});
-  _feNav(_fe.path);
+  action$('fs_mkdir',{service:_fe.svc,path:_fePath(name)}).subscribe(() => {
+    _feNav(_fe.path);
+  });
 }
 
-async function _feDl(name){
-  const d=await _feApi('fs_read_file',{service:_fe.svc,path:_fePath(name)});
-  if(d.error){alert('Error: '+d.error);return;}
-  let blob;
-  if(d.encoding==='base64'){
-    const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
-    blob=new Blob([arr]);
-  } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
-  const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
+function _feDl(name){
+  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+    if(d.error){alert('Error: '+d.error);return;}
+    let blob;
+    if(d.encoding==='base64'){
+      const bin=atob(d.content);const arr=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);
+      blob=new Blob([arr]);
+    } else {blob=new Blob([d.content],{type:'text/plain;charset=utf-8'});}
+    const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);
+  });
 }
 
 function _feUpload(){
@@ -243,68 +265,81 @@ function _feUpload(){
   inp.click();
 }
 
-async function _feUploadFiles(files){
+function _feUploadFiles(files){
   const count=files.length;
   const status=document.getElementById('feCount');
   let done=0;
-  for(const f of files){
+  let idx=0;
+  const uploadNext = () => {
+    if (idx >= count) { _feNav(_fe.path); return; }
+    const f = files[idx];
     if(status)status.textContent=`Uploading ${++done}/${count}: ${f.name}`;
-    const b64=await new Promise(r=>{const rd=new FileReader();rd.onload=()=>r(rd.result.split(',')[1]);rd.readAsDataURL(f);});
-    await _feApi('fs_write_file',{service:_fe.svc,path:_fePath(f.name),content:b64,encoding:'base64'});
-  }
-  _feNav(_fe.path);
+    const rd=new FileReader();
+    rd.onload=()=>{
+      const b64=rd.result.split(',')[1];
+      action$('fs_write_file',{service:_fe.svc,path:_fePath(f.name),content:b64,encoding:'base64'}).subscribe(() => {
+        idx++;
+        uploadNext();
+      });
+    };
+    rd.readAsDataURL(f);
+  };
+  uploadNext();
 }
 
-async function _feCopyToStore(name){
-  const d=await _feApi('fs_copy_to_store',{service:_fe.svc,path:_fePath(name)});
-  if(d.error){alert('Error: '+d.error);return;}
-  alert('Stored as: '+d.filename+'\nURL: '+d.url);
+function _feCopyToStore(name){
+  action$('fs_copy_to_store',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+    if(d.error){alert('Error: '+d.error);return;}
+    alert('Stored as: '+d.filename+'\nURL: '+d.url);
+  });
 }
 
-async function _feZipDir(name){
+function _feZipDir(name){
   const dirPath=_fePath(name);
   const btn=event&&event.target;
   if(btn)btn.textContent='Zipping...';
-  const d=await _feApi('fs_zip_dir',{service:_fe.svc,path:dirPath});
-  if(btn)btn.textContent='\u{1F4E6} Download as zip';
-  if(d.error){alert('Zip error: '+d.error);return;}
-  // Trigger download via temporary anchor
-  const a=document.createElement('a');
-  a.href=d.url;
-  a.download=d.filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  action$('fs_zip_dir',{service:_fe.svc,path:dirPath}).subscribe(d => {
+    if(btn)btn.textContent='\u{1F4E6} Download as zip';
+    if(d.error){alert('Zip error: '+d.error);return;}
+    const a=document.createElement('a');
+    a.href=d.url;
+    a.download=d.filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  });
 }
 
-async function _fePreview(name){
+function _fePreview(name){
   if(_fe.preview){_fe.preview.remove();_fe.preview=null;}
   const p=document.createElement('div');p.className='fe-preview-pane';
   p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><div class="fe-loading">Loading...</div>`;
   document.body.appendChild(p);_fe.preview=p;
-  const d=await _feApi('fs_read_file',{service:_fe.svc,path:_fePath(name)});
-  if(d.error){p.querySelector('.fe-loading').textContent='Error: '+d.error;return;}
-  const ext=name.split('.').pop().toLowerCase();
-  const imgExts=['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
-  if(imgExts.includes(ext)&&d.encoding==='base64'){
-    const mime=ext==='svg'?'image/svg+xml':'image/'+ext.replace('jpg','jpeg');
-    p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><img src="data:${mime};base64,${d.content}">`;
-  } else {
-    const text=d.encoding==='base64'?atob(d.content):d.content;
-    p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)} (${_feFmtSz(d.size)})</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><pre>${_feEsc(text.substring(0,50000))}</pre>`;
-  }
+  action$('fs_read_file',{service:_fe.svc,path:_fePath(name)}).subscribe(d => {
+    if(d.error){p.querySelector('.fe-loading').textContent='Error: '+d.error;return;}
+    const ext=name.split('.').pop().toLowerCase();
+    const imgExts=['png','jpg','jpeg','gif','webp','svg','bmp','ico'];
+    if(imgExts.includes(ext)&&d.encoding==='base64'){
+      const mime=ext==='svg'?'image/svg+xml':'image/'+ext.replace('jpg','jpeg');
+      p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)}</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><img src="data:${mime};base64,${d.content}">`;
+    } else {
+      const text=d.encoding==='base64'?atob(d.content):d.content;
+      p.innerHTML=`<div class="fe-ph"><span>${_feEsc(name)} (${_feFmtSz(d.size)})</span><button class="btn" onclick="this.closest('.fe-preview-pane').remove();_fe.preview=null;">&#x2715;</button></div><pre>${_feEsc(text.substring(0,50000))}</pre>`;
+    }
+  });
 }
 
-async function _feSearch(q){
+function _feSearch(q){
   if(!q){_feNav(_fe.path);return;}
   const tb=document.getElementById('feTbody');
   tb.innerHTML='<tr><td colspan=4 class="fe-loading">Searching...</td></tr>';
-  const d=await _feApi('fs_search',{service:_fe.svc,path:_fe.path,pattern:'*'+q+'*'});
-  if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;return;}
-  const results=(d.results||[]).slice(0,100);
-  if(results.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">No matches</td></tr>';return;}
-  tb.innerHTML=results.map(r=>`<tr class="fe-row" ondblclick="_feNavToFile('${_feEsc(r)}')"><td>&#128196;</td><td>${_feEsc(r)}</td><td></td><td></td></tr>`).join('');
-  document.getElementById('feCount').textContent=results.length+' results';
+  action$('fs_search',{service:_fe.svc,path:_fe.path,pattern:'*'+q+'*'}).subscribe(d => {
+    if(d.error){tb.innerHTML=`<tr><td colspan=4 class="fe-empty">Error: ${d.error}</td></tr>`;return;}
+    const results=(d.results||[]).slice(0,100);
+    if(results.length===0){tb.innerHTML='<tr><td colspan=4 class="fe-empty">No matches</td></tr>';return;}
+    tb.innerHTML=results.map(r=>`<tr class="fe-row" ondblclick="_feNavToFile('${_feEsc(r)}')"><td>&#128196;</td><td>${_feEsc(r)}</td><td></td><td></td></tr>`).join('');
+    document.getElementById('feCount').textContent=results.length+' results';
+  });
 }
 
 function _feNavToFile(path){

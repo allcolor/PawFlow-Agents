@@ -32,17 +32,13 @@ function cmdTask(text, parts) {
       addMsg('system', 'Usage: /task create <name> --prompt "..." [--criteria "..."] [--interval XX]\n       /task create <name> "inline prompt" [--criteria "..."]');
       return true;
     }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'create_task_def',
-        name: taskName,
-        data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
-      }),
-    }).then(r => r.json()).then(data => {
+    action$('create_task_def', {
+      name: taskName,
+      data: { prompt: taskPrompt, criteria, default_interval: interval || '6/1m' },
+    }).subscribe(data => {
       if (data.error) addMsg('error', data.error);
       else addMsg('system', `Task definition '${taskName}' created.`);
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'assign') {
     const qargs = parseQuotedArgs(text);
     const taskAgent = stripTarget(qargs[2] || '');
@@ -69,8 +65,7 @@ function cmdTask(text, parts) {
         if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
       }
     }
-    const body = {
-      action: 'assign_task', conversation_id: conversationId,
+    action$('assign_task', {
       agent_name: taskAgent, max_iterations: maxIter, verifier,
       task_def_name: taskArg,
       ...(interval != null ? { interval } : {}),
@@ -80,37 +75,30 @@ function cmdTask(text, parts) {
       ...(maxTotalTime ? { max_total_time: maxTotalTime } : {}),
       ...(maxReschedules ? { max_reschedules: maxReschedules } : {}),
       ...(autoAllow ? { auto_allow: true } : {}),
-    };
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    }).then(r => r.json()).then(data => {
+    }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', data.result || 'Task assigned.'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'delete' || sub === 'del') {
     const taskName = parts[2] || '';
     if (!taskName) { addMsg('system', 'Usage: /task delete <task_def_name|task_id>'); return true; }
     const isTaskInstance = taskName.startsWith('t_');
-    const body = isTaskInstance
-      ? { action: 'delete_task', conversation_id: conversationId, task_id: taskName }
-      : { action: 'delete_task_def', name: taskName };
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    }).then(r => r.json()).then(data => {
-      if (data.error) addMsg('error', data.error);
-      else if (isTaskInstance) addMsg('system', `Task instance '${taskName}' deleted.`);
-      else addMsg('system', `Task definition '${taskName}' deleted.`);
-    }).catch(e => addMsg('error', e.message));
+    if (isTaskInstance) {
+      action$('delete_task', { task_id: taskName }).subscribe(data => {
+        if (data.error) addMsg('error', data.error);
+        else addMsg('system', `Task instance '${taskName}' deleted.`);
+      });
+    } else {
+      action$('delete_task_def', { name: taskName }).subscribe(data => {
+        if (data.error) addMsg('error', data.error);
+        else addMsg('system', `Task definition '${taskName}' deleted.`);
+      });
+    }
   } else if (sub === 'status' || sub === 'list') {
     const listAgent = stripTarget(parts[2] || '');
-    const listBody = { action: 'task_status', conversation_id: conversationId, include_library: true };
-    if (listAgent) listBody.agent_name = listAgent;
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(listBody),
-    }).then(r => r.json()).then(data => {
+    const listParams = { include_library: true };
+    if (listAgent) listParams.agent_name = listAgent;
+    action$('task_status', listParams).subscribe(data => {
       const defs = data.definitions || [];
       const tasks = data.tasks || [];
       const lines = [];
@@ -144,22 +132,18 @@ function cmdTask(text, parts) {
       }
       if (!lines.length) addMsg('system', 'No task definitions or running tasks.');
       else addMsg('system', lines.join('\n'));
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'pause' || sub === 'resume' || sub === 'cancel') {
     const taskAgentRaw = parts[2];
     if (!taskAgentRaw) { addMsg('system', 'Usage: /task ' + sub + ' <task_id|@agent>'); return true; }
     const taskAgent = stripTarget(taskAgentRaw);
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: sub + '_task', conversation_id: conversationId,
-        task_id: taskAgent.startsWith('t_') ? taskAgent : '',
-        agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
-      }),
-    }).then(r => r.json()).then(data => {
+    action$(sub + '_task', {
+      task_id: taskAgent.startsWith('t_') ? taskAgent : '',
+      agent_name: taskAgent.startsWith('t_') ? '' : taskAgent,
+    }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'edit' || sub === 'set') {
     const taskId = parts[2] || '';
     if (!taskId || !taskId.startsWith('t_')) {
@@ -167,22 +151,19 @@ function cmdTask(text, parts) {
       return true;
     }
     const eqargs = parseQuotedArgs(text);
-    const editBody = { action: 'edit_task', conversation_id: conversationId, task_id: taskId };
+    const editParams = { task_id: taskId };
     for (let i = 3; i < eqargs.length; i++) {
-      if (eqargs[i] === '--budget' && eqargs[i+1]) { editBody.max_budget = eqargs[++i]; }
-      else if (eqargs[i] === '--turn-time' && eqargs[i+1]) { editBody.max_turn_time = eqargs[++i]; }
-      else if (eqargs[i] === '--total-time' && eqargs[i+1]) { editBody.max_total_time = eqargs[++i]; }
-      else if (eqargs[i] === '--max-reschedules' && eqargs[i+1]) { editBody.max_reschedules = parseInt(eqargs[++i]) || 0; }
-      else if (eqargs[i] === '--max' && eqargs[i+1]) { editBody.max_iterations = parseInt(eqargs[++i]) || 0; }
-      else if (eqargs[i] === '--interval' && eqargs[i+1]) { editBody.interval = eqargs[++i]; }
+      if (eqargs[i] === '--budget' && eqargs[i+1]) { editParams.max_budget = eqargs[++i]; }
+      else if (eqargs[i] === '--turn-time' && eqargs[i+1]) { editParams.max_turn_time = eqargs[++i]; }
+      else if (eqargs[i] === '--total-time' && eqargs[i+1]) { editParams.max_total_time = eqargs[++i]; }
+      else if (eqargs[i] === '--max-reschedules' && eqargs[i+1]) { editParams.max_reschedules = parseInt(eqargs[++i]) || 0; }
+      else if (eqargs[i] === '--max' && eqargs[i+1]) { editParams.max_iterations = parseInt(eqargs[++i]) || 0; }
+      else if (eqargs[i] === '--interval' && eqargs[i+1]) { editParams.interval = eqargs[++i]; }
     }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(editBody),
-    }).then(r => r.json()).then(data => {
+    action$('edit_task', editParams).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Task updated: ' + (data.changed || []).join(', ')); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /task create | assign | list | edit | delete | pause | resume | cancel');
   }
@@ -192,11 +173,9 @@ function cmdTask(text, parts) {
 function cmdVidservice(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_video_services', conversation_id: conversationId }),
-    }).then(r => r.json()).then(services => {
-      if (!Array.isArray(services) || services.length === 0) {
+    action$('list_video_services', {}).subscribe(data => {
+      const services = Array.isArray(data) ? data : (data.services || []);
+      if (!services.length) {
         addMsg('system', 'No video generation services deployed.');
       } else {
         const lines = services.map(s => {
@@ -208,34 +187,26 @@ function cmdVidservice(text, parts) {
         });
         addMsg('system', 'Video services available:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'select' && parts[2]) {
     const serviceName = stripTarget(parts[2]);
     const agentName = parts[3] ? stripTarget(parts[3]) : '';
     if (!agentName) { addMsg('system', 'Usage: /vidservice select @<service> @<agent|ALL>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'set_video_service', conversation_id: conversationId,
-        service_name: serviceName, agent_name: agentName,
-      }),
-    }).then(r => r.json()).then(data => {
+    action$('set_video_service', {
+      service_name: serviceName, agent_name: agentName,
+    }).subscribe(data => {
       if (data.ok) {
         const target = agentName === 'ALL' ? 'all agents' : agentName;
         addMsg('system', 'Video service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set video service');
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'clear') {
     const agentName = stripTarget(parts[2] || '');
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'clear_video_service', conversation_id: conversationId,
-        agent_name: agentName,
-      }),
-    }).then(r => r.json()).then(data => {
+    action$('clear_video_service', {
+      agent_name: agentName,
+    }).subscribe(data => {
       if (data.ok) {
         addMsg('system', agentName
           ? 'Video service preference cleared for ' + agentName + '.'
@@ -243,7 +214,7 @@ function cmdVidservice(text, parts) {
       } else {
         addMsg('error', data.error || 'Failed to clear');
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /vidservice list | select <name> [@agent] | clear [@agent]');
   }
@@ -253,11 +224,9 @@ function cmdVidservice(text, parts) {
 function cmdImgservice(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_image_services', conversation_id: conversationId }),
-    }).then(r => r.json()).then(services => {
-      if (!Array.isArray(services) || services.length === 0) {
+    action$('list_image_services', {}).subscribe(data => {
+      const services = Array.isArray(data) ? data : (data.services || []);
+      if (!services.length) {
         addMsg('system', 'No image generation services deployed.');
       } else {
         const lines = services.map(s => {
@@ -269,34 +238,26 @@ function cmdImgservice(text, parts) {
         });
         addMsg('system', 'Image services available:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'select' && parts[2]) {
     const serviceName = stripTarget(parts[2]);
     const agentName = parts[3] ? stripTarget(parts[3]) : '';
     if (!agentName) { addMsg('system', 'Usage: /imgservice select @<service> @<agent|ALL>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'set_image_service', conversation_id: conversationId,
-        service_name: serviceName, agent_name: agentName,
-      }),
-    }).then(r => r.json()).then(data => {
+    action$('set_image_service', {
+      service_name: serviceName, agent_name: agentName,
+    }).subscribe(data => {
       if (data.ok) {
         const target = agentName === 'ALL' ? 'all agents' : agentName;
         addMsg('system', 'Image service set to "' + serviceName + '" for ' + target + '.');
       } else {
         addMsg('error', data.error || 'Failed to set image service');
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'clear') {
     const agentName = stripTarget(parts[2] || '');
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'clear_image_service', conversation_id: conversationId,
-        agent_name: agentName,
-      }),
-    }).then(r => r.json()).then(data => {
+    action$('clear_image_service', {
+      agent_name: agentName,
+    }).subscribe(data => {
       if (data.ok) {
         addMsg('system', agentName
           ? 'Image service preference cleared for ' + agentName + '.'
@@ -304,7 +265,7 @@ function cmdImgservice(text, parts) {
       } else {
         addMsg('error', data.error || 'Failed to clear');
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /imgservice list | select <name> [@agent] | clear [@agent]');
   }
@@ -358,13 +319,8 @@ function cmdAddSkill(text, parts) {
   return true;
 }
 
-async function cmdSkillAssigned(agentName) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_agent_skills', agent_name: agentName, conversation_id: conversationId }),
-    });
-    const data = await resp.json();
+function cmdSkillAssigned(agentName) {
+  action$('list_agent_skills', { agent_name: agentName }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     const skills = data.skills || [];
     if (!skills.length) {
@@ -376,7 +332,7 @@ async function cmdSkillAssigned(agentName) {
       msg += `  • **${s.name}**` + (s.description ? ` — ${s.description}` : '') + '\n';
     });
     addMsg('system', msg);
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }
 
 function cmdResources() {
@@ -457,40 +413,31 @@ function cmdService(text, parts) {
 function cmdFlow(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_conv_flows' }),
-    }).then(r => r.json()).then(data => {
+    action$('list_conv_flows', {}).subscribe(data => {
       const flows = data.flows || [];
       if (!flows.length) { addMsg('system', 'No deployed flows.'); }
       else {
         const lines = flows.map(function(f) { return (f.status === 'running' ? '\u25b6' : '\u23f9') + ' ' + f.id + ' \u2014 ' + f.name + ' [' + f.status + ']'; });
         addMsg('system', 'Flows:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'templates') {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_available_flows' }),
-    }).then(r => r.json()).then(data => {
+    action$('list_available_flows', {}).subscribe(data => {
       const templates = data.templates || [];
       if (!templates.length) { addMsg('system', 'No flow templates.'); }
       else {
         const lines = templates.map(function(tmpl) { return tmpl.id + (tmpl.version ? ' v' + tmpl.version : '') + ' \u2014 ' + tmpl.name + ' (' + tmpl.tasks_count + ' tasks)'; });
         addMsg('system', 'Flow templates:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'deploy') {
     const templateId = parts[2];
     const scope = parts[3] || 'user';
     if (!templateId) { addMsg('system', 'Usage: /flow deploy <template_id> [user|conversation]'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'deploy_flow', template_id: templateId, scope, conversation_id: conversationId || '' }),
-    }).then(r => r.json()).then(data => {
+    action$('deploy_flow', { template_id: templateId, scope }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Deployed: ' + (data.instance_id || '?') + ' (' + scope + ')'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'start') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow start <instance_id> [key=val ...]'); return true; }
@@ -502,66 +449,48 @@ function cmdFlow(text, parts) {
       }
     }
     const startFlow = () => {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'start_flow', instance_id: iid }),
-      }).then(r => r.json()).then(data => {
+      action$('start_flow', { instance_id: iid }).subscribe(data => {
         if (data.error) { addMsg('error', data.error); }
         else { addMsg('system', 'Flow \'' + iid + '\' started'); }
-      }).catch(e => addMsg('error', e.message));
+      });
     };
     if (Object.keys(overrides).length) {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'update_flow_params', instance_id: iid, parameters: overrides }),
-      }).then(() => startFlow()).catch(e => addMsg('error', e.message));
+      action$('update_flow_params', { instance_id: iid, parameters: overrides }).subscribe(() => startFlow());
     } else {
       startFlow();
     }
   } else if (sub === 'stop') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow stop <instance_id>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'stop_flow', instance_id: iid }),
-    }).then(r => r.json()).then(data => {
+    action$('stop_flow', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' stopped'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'params') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow params <instance_id>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_flow_instance', instance_id: iid }),
-    }).then(r => r.json()).then(data => {
+    action$('get_flow_instance', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else {
         const params = { ...(data.template_parameters || {}), ...(data.parameters || {}) };
         const lines = Object.entries(params).map(function(entry) { return '  ' + entry[0] + ' = ' + entry[1]; });
         addMsg('system', 'Flow ' + (data.flow_name || iid) + ' [' + (data.status || '?') + ']:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'undeploy') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow undeploy <instance_id>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'undeploy_flow', instance_id: iid }),
-    }).then(r => r.json()).then(data => {
+    action$('undeploy_flow', { instance_id: iid }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' undeployed'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'promote') {
     const iid = parts[2];
     if (!iid) { addMsg('system', 'Usage: /flow promote <instance_id>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'promote_flow', instance_id: iid, target_scope: 'user' }),
-    }).then(r => r.json()).then(data => {
+    action$('promote_flow', { instance_id: iid, target_scope: 'user' }).subscribe(data => {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Flow \'' + iid + '\' promoted to user scope'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /flow list | templates | deploy | start | stop | params | undeploy | promote');
   }
@@ -571,27 +500,21 @@ function cmdFlow(text, parts) {
 function cmdPrompt(text, parts) {
   const sub = (parts[1] || 'list').toLowerCase();
   if (sub === 'list') {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'list_prompts', conversation_id: conversationId || '' }),
-    }).then(r => r.json()).then(data => {
+    action$('list_prompts', {}).subscribe(data => {
       const prompts = data.prompts || [];
       if (!prompts.length) { addMsg('system', 'No prompts.'); }
       else {
         const lines = prompts.map(function(p) { return '\u2022 ' + p.name + ': ' + (p.description || p.content || '').slice(0, 60); });
         addMsg('system', 'Prompts:\n' + lines.join('\n'));
       }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else if (sub === 'use') {
     const name = parts[2] || '';
     if (!name) { addMsg('system', 'Usage: /prompt use <name>'); return true; }
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_prompt', conversation_id: conversationId || '', name }),
-    }).then(r => r.json()).then(data => {
+    action$('get_prompt', { name }).subscribe(data => {
       if (data.content) { addMsg('system', 'Prompt \'' + name + '\':\n' + data.content); }
       else { addMsg('error', 'Prompt \'' + name + '\' not found'); }
-    }).catch(e => addMsg('error', e.message));
+    });
   } else {
     addMsg('system', 'Usage: /prompt list | use <name>');
   }

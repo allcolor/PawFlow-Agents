@@ -21,24 +21,17 @@ function showExecApprovalDialog(data) {
   document.body.appendChild(overlay);
 }
 
-async function resolveExec(requestId, approved, btn) {
+function resolveExec(requestId, approved, btn) {
   const overlay = btn.closest('.exec-overlay');
   const textarea = overlay.querySelector('#execCmdEdit');
   const editedCommand = textarea ? textarea.value : '';
   const result = { approved };
   if (editedCommand) result.edited_command = editedCommand;
-  try {
-    await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'exec_result',
-        request_id: requestId,
-        result: result,
-        conversation_id: conversationId,
-      }),
-    });
-  } catch (e) { console.error('Failed to send exec result:', e); }
+  fireAction('exec_result', {
+    request_id: requestId,
+    result: result,
+    conversation_id: conversationId,
+  });
   overlay.remove();
 }
 
@@ -74,20 +67,13 @@ function showToolApprovalDialog(data) {
   document.body.appendChild(overlay);
 }
 
-async function resolveToolApproval(requestId, choice, btn) {
+function resolveToolApproval(requestId, choice, btn) {
   const overlay = btn.closest('.exec-overlay');
-  try {
-    await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'tool_approval_result',
-        request_id: requestId,
-        result: { choice },
-        conversation_id: conversationId,
-      }),
-    });
-  } catch (e) { console.error('Failed to send tool approval:', e); }
+  fireAction('tool_approval_result', {
+    request_id: requestId,
+    result: { choice },
+    conversation_id: conversationId,
+  });
   overlay.remove();
 }
 

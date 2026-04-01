@@ -78,30 +78,21 @@ function copyMsg(btn) {
   });
 }
 
-async function deleteMsg(btn) {
+function deleteMsg(btn) {
   const msg = btn.closest('.msg');
   if (!msg || !conversationId) return;
   // If there are selected messages, delete all selected
   if (_selectedMsgIds.size > 0) {
-    await deleteSelectedMessages();
+    deleteSelectedMessages();
     return;
   }
   const mid = msg.dataset.msgid;
   if (!mid) { msg.remove(); return; }
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'delete_message', conversation_id: conversationId,
-        msg_id: mid,
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+  action$('delete_message', { msg_id: mid }).subscribe(data => {
     if (data.deleted) {
       reloadConv();
     }
-  } catch (e) { console.error('Delete message failed:', e); }
+  });
 }
 
 function toggleMsgSelect(el, event) {
@@ -161,44 +152,26 @@ function updateDeleteSelectedBar() {
   bar.style.display = 'flex';
 }
 
-async function deleteSelectedMessages() {
+function deleteSelectedMessages() {
   if (!_selectedMsgIds.size || !conversationId) return;
   const ids = Array.from(_selectedMsgIds);
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'delete_message', conversation_id: conversationId,
-        msg_ids: ids,
-      }),
-      credentials: 'same-origin',
-    });
-    const data = await resp.json();
+  action$('delete_message', { msg_ids: ids }).subscribe(data => {
     if (data.deleted) {
       clearMsgSelection();
       reloadConv();
       return;
     }
-  } catch (e) { console.error('Batch delete failed:', e); }
-  clearMsgSelection();
+    clearMsgSelection();
+  });
 }
 
-async function cancelAgent(target) {
+function cancelAgent(target) {
   if (!conversationId) return;
   document.getElementById('stopBtn').style.display = 'none';
   document.getElementById('status').textContent = t('cancelling');
-  const body = { action: 'cancel', conversation_id: conversationId, force: true };
-  if (target && target !== 'ALL') body.agent_name = target;
-  try {
-    await fetch(API, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-      credentials: 'same-origin',
-    });
-  } catch (e) {
-    console.warn('Cancel request failed:', e);
-  }
+  const params = { force: true };
+  if (target && target !== 'ALL') params.agent_name = target;
+  fireAction('cancel', params);
   // SSE "cancelled" event will handle the rest
 }
 
@@ -404,14 +377,8 @@ function handleKey(e) {
 }
 
 // ── Resources (agents, skills, mcp) ─────────────────────────────
-async function cmdResourceAction(action, extra) {
-  try {
-    const payload = { action, conversation_id: conversationId, ...extra };
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(payload),
-    });
-    const data = await resp.json();
+function cmdResourceAction(action, extra) {
+  action$(action, { ...extra }).subscribe(data => {
     if (data.error) { addMsg('error', data.error); return; }
     if (data.created) addMsg('system', `Created: ${extra.name || ''}`);
     else if (data.deleted) addMsg('system', `Deleted: ${extra.name || ''}`);
@@ -420,5 +387,5 @@ async function cmdResourceAction(action, extra) {
     else if (data.shared) addMsg('system', `Shared ${data.type} "${data.name}" to conversation ${data.target.substring(0,8)}...`);
     else if (data.message) addMsg('system', data.message);
     else addMsg('system', JSON.stringify(data, null, 2));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+  });
 }

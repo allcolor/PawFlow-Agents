@@ -25,12 +25,13 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   item('\ud83d\udcc8 View graph', () => addBrowserTab(instanceId, '/chat/js/flow_graph.html?instance_id=' + encodeURIComponent(instanceId)));
   if (scope === 'conversation') {
     item('\u2B06 Promote to user', () => {
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'promote_flow', instance_id: instanceId, target_scope: 'user' }),
-      }).then(r => r.json()).then(d => {
-        if (d.error) addMsg('error', d.error);
-        else { addMsg('system', `Flow '${instanceId}' promoted to user scope`); loadResources(); }
-      }).catch(e => addMsg('error', e.message));
+      action$('promote_flow', { instance_id: instanceId, target_scope: 'user' }).subscribe({
+        next: (d) => {
+          if (d.error) addMsg('error', d.error);
+          else { addMsg('system', `Flow '${instanceId}' promoted to user scope`); loadResources(); }
+        },
+        error: (e) => addMsg('error', e.message),
+      });
     });
   }
   const sep = document.createElement('div');
@@ -43,7 +44,7 @@ function showFlowInstanceMenu(e, instanceId, status, scope) {
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
-async function _showFlowStartDialog(instanceId, editOnly) {
+function _showFlowStartDialog(instanceId, editOnly) {
   let overlay = document.getElementById('resourceEditorOverlay');
   if (overlay) overlay.remove();
   overlay = document.createElement('div');
@@ -57,58 +58,60 @@ async function _showFlowStartDialog(instanceId, editOnly) {
   </div><div style="color:#888;font-size:12px;">Loading parameters...</div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
-  try {
-    const resp = await fetch(API, { method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_flow_instance', instance_id: instanceId }) });
-    const data = await resp.json();
-    if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${data.error}</div>`; return; }
-    // Merge template defaults with instance overrides
-    const tplParams = data.template_parameters || {};
-    const instParams = data.parameters || {};
-    const merged = { ...tplParams, ...instParams };
-    let fieldsHtml = '';
-    for (const [k, v] of Object.entries(merged)) {
-      const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
-      fieldsHtml += `<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(k)}</label>
-        <input class="flow-param-input" data-key="${escapeHtml(k)}" value="${escapeHtml(val)}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
-    }
-    if (!fieldsHtml) fieldsHtml = '<div style="color:#555;font-size:12px;">No parameters</div>';
-    const btnLabel = editOnly ? 'Save' : 'Start';
-    panel.querySelector('div:last-child').innerHTML = fieldsHtml
-      + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
-        <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
-        <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${btnLabel}</button>
-      </div>`;
-    document.getElementById('flowStartBtn').onclick = () => {
-      const params = {};
-      document.querySelectorAll('.flow-param-input').forEach(el => {
-        params[el.dataset.key] = el.value;
-      });
-      // Save params first, then optionally start
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'update_flow_params', instance_id: instanceId, parameters: params }) })
-      .then(r => r.json()).then(d => {
-        if (d.error) { addMsg('error', d.error); return; }
-        if (editOnly) {
-          addMsg('system', 'Parameters updated for ' + instanceId);
-          document.getElementById('resourceEditorOverlay').remove();
-          loadResources();
-        } else {
-          _flowAction(instanceId, 'start_flow');
-          document.getElementById('resourceEditorOverlay').remove();
-        }
-      }).catch(e => addMsg('error', e.message));
-    };
-  } catch (e) {
-    panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + e.message + '</div>';
-  }
+  action$('get_flow_instance', { instance_id: instanceId }).subscribe({
+    next: (data) => {
+      if (data.error) { panel.querySelector('div:last-child').innerHTML = `<div style="color:#e94560;">${data.error}</div>`; return; }
+      // Merge template defaults with instance overrides
+      const tplParams = data.template_parameters || {};
+      const instParams = data.parameters || {};
+      const merged = { ...tplParams, ...instParams };
+      let fieldsHtml = '';
+      for (const [k, v] of Object.entries(merged)) {
+        const val = typeof v === 'object' ? JSON.stringify(v) : String(v);
+        fieldsHtml += `<div style="margin-bottom:6px;"><label style="color:#aaa;font-size:11px;">${escapeHtml(k)}</label>
+          <input class="flow-param-input" data-key="${escapeHtml(k)}" value="${escapeHtml(val)}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+      }
+      if (!fieldsHtml) fieldsHtml = '<div style="color:#555;font-size:12px;">No parameters</div>';
+      const btnLabel = editOnly ? 'Save' : 'Start';
+      panel.querySelector('div:last-child').innerHTML = fieldsHtml
+        + `<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+          <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
+          <button id="flowStartBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">${btnLabel}</button>
+        </div>`;
+      document.getElementById('flowStartBtn').onclick = () => {
+        const params = {};
+        document.querySelectorAll('.flow-param-input').forEach(el => {
+          params[el.dataset.key] = el.value;
+        });
+        // Save params first, then optionally start
+        action$('update_flow_params', { instance_id: instanceId, parameters: params }).subscribe({
+          next: (d) => {
+            if (d.error) { addMsg('error', d.error); return; }
+            if (editOnly) {
+              addMsg('system', 'Parameters updated for ' + instanceId);
+              document.getElementById('resourceEditorOverlay').remove();
+              loadResources();
+            } else {
+              _flowAction(instanceId, 'start_flow');
+              document.getElementById('resourceEditorOverlay').remove();
+            }
+          },
+          error: (e) => addMsg('error', e.message),
+        });
+      };
+    },
+    error: (e) => {
+      panel.querySelector('div:last-child').innerHTML = '<div style="color:#e94560;">Error: ' + e.message + '</div>';
+    },
+  });
 }
 
 function _flowAction(instanceId, action) {
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action, instance_id: instanceId }),
-  }).then(r => r.json()).then(d => {
-    if (d.error) addMsg('error', d.error);
-    else { addMsg('system', `${action.replace('_', ' ')}: ${instanceId}`); loadResources(); }
-  }).catch(e => addMsg('error', e.message));
+  action$(action, { instance_id: instanceId }).subscribe({
+    next: (d) => {
+      if (d.error) addMsg('error', d.error);
+      else { addMsg('system', `${action.replace('_', ' ')}: ${instanceId}`); loadResources(); }
+    },
+    error: (e) => addMsg('error', e.message),
+  });
 }

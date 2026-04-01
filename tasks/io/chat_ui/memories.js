@@ -2,18 +2,16 @@
 let _memoryCache = [];
 let _memoryAgentFilter = null;  // null = all
 
-async function cmdShowMemories() {
-  try {
-    const body = { action: 'list_memories' };
-    if (_memoryAgentFilter !== null) body.agent_name = _memoryAgentFilter;
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify(body),
-    });
-    const data = await resp.json();
-    _memoryCache = data.memories || [];
-    showMemoryOverlay(_memoryCache);
-  } catch (e) { addMsg('error', 'Failed to load memories: ' + e.message); }
+function cmdShowMemories() {
+  const body = {};
+  if (_memoryAgentFilter !== null) body.agent_name = _memoryAgentFilter;
+  action$('list_memories', body).subscribe({
+    next: (data) => {
+      _memoryCache = data.memories || [];
+      showMemoryOverlay(_memoryCache);
+    },
+    error: (e) => addMsg('error', 'Failed to load memories: ' + e.message),
+  });
 }
 
 function showMemoryOverlay(memories) {
@@ -91,21 +89,17 @@ function _formatAge(ts) {
   return Math.floor(s / 86400) + 'd ago';
 }
 
-async function memFilterChanged() {
+function memFilterChanged() {
   const val = document.getElementById('memAgentFilter').value;
   _memoryAgentFilter = val === '__all__' ? null : val;
-  await cmdShowMemories();
+  cmdShowMemories();
 }
 
-async function memDelete(memId) {
+function memDelete(memId) {
   if (!confirm('Delete this memory?')) return;
-  try {
-    await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'delete_memory', memory_id: memId }),
-    });
-    await cmdShowMemories();
-  } catch (e) { addMsg('error', e.message); }
+  fireAction('delete_memory', { memory_id: memId });
+  // Refresh after a short delay to let the action complete
+  setTimeout(() => cmdShowMemories(), 500);
 }
 
 function memEdit(idx) {
@@ -125,18 +119,15 @@ function memEdit(idx) {
     + '</div></div>';
 }
 
-async function memSaveEdit(memId) {
+function memSaveEdit(memId) {
   const text = document.getElementById('mem-edit-text').value.trim();
   const tagsRaw = document.getElementById('mem-edit-tags').value;
   const agent = document.getElementById('mem-edit-agent').value.trim();
   const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t);
-  try {
-    await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'edit_memory', memory_id: memId, text, tags, agent }),
-    });
-    await cmdShowMemories();
-  } catch (e) { addMsg('error', e.message); }
+  action$('edit_memory', { memory_id: memId, text, tags, agent }).subscribe({
+    next: () => cmdShowMemories(),
+    error: (e) => addMsg('error', e.message),
+  });
 }
 
 function memAddNew() {
@@ -156,31 +147,25 @@ function memAddNew() {
   document.getElementById('mem-new-text').focus();
 }
 
-async function memSaveNew() {
+function memSaveNew() {
   const text = document.getElementById('mem-new-text').value.trim();
   if (!text) return;
   const tagsRaw = document.getElementById('mem-new-tags').value;
   const agent = document.getElementById('mem-new-agent').value.trim();
   const tags = tagsRaw.split(',').map(t => t.trim()).filter(t => t);
-  try {
-    await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'add_memory', text, tags, agent }),
-    });
-    await cmdShowMemories();
-  } catch (e) { addMsg('error', e.message); }
+  action$('add_memory', { text, tags, agent }).subscribe({
+    next: () => cmdShowMemories(),
+    error: (e) => addMsg('error', e.message),
+  });
 }
 
 // ── Secrets & Variables ──────────────────────────────────────────
-async function cmdAddSecret(name, value) {
-  try {
-    const resp = await fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'add_secret', key: name, value: value,
-                             conversation_id: conversationId }),
-    });
-    const data = await resp.json();
-    if (data.error) { addMsg('error', data.error); return; }
-    addMsg('system', t('secretAdded', { name, ref: data.key || name, short: name }));
-  } catch (e) { addMsg('error', 'Failed: ' + e.message); }
+function cmdAddSecret(name, value) {
+  action$('add_secret', { key: name, value: value, conversation_id: conversationId }).subscribe({
+    next: (data) => {
+      if (data.error) { addMsg('error', data.error); return; }
+      addMsg('system', t('secretAdded', { name, ref: data.key || name, short: name }));
+    },
+    error: (e) => addMsg('error', 'Failed: ' + e.message),
+  });
 }

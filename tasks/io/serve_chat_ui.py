@@ -54,11 +54,12 @@ def _load_html() -> str:
     v = _compute_js_version()
     template = (_CHAT_UI_DIR / "template.html").read_text(encoding="utf-8")
 
-    # Build <script src> tags
+    # Build <script defer> tags — all load in parallel, execute in order,
+    # only AFTER HTML is fully parsed (no HTTP slot contention)
     script_tags = []
     for mod in _JS_MODULES:
         if (_CHAT_UI_DIR / mod).exists():
-            script_tags.append(f'<script src="/chat/js/{mod}?v={v}"></script>')
+            script_tags.append(f'<script defer src="/chat/js/{mod}?v={v}"></script>')
     scripts_html = "\n".join(script_tags)
 
     # Replace placeholder with script tags

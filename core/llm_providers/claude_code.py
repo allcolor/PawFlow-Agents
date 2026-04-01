@@ -344,6 +344,31 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         new_content.append({"type": "text", "text": "[image]"})
                         continue
 
+                elif btype == "image_ref":
+                    # Image stored in FileStore — load for vision on last user message only
+                    if _is_last_user:
+                        try:
+                            from core.file_store import FileStore
+                            import base64 as _b64
+                            entry = FileStore.instance().get(block["file_id"])
+                            if entry:
+                                _fname, _data, _ct = entry
+                                _data_b64 = _b64.b64encode(_data).decode("ascii")
+                                image_blocks.append({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": block.get("mime_type", _ct),
+                                        "data": _data_b64,
+                                    },
+                                })
+                                logger.info("Loaded image from FileStore for vision: %s (%d bytes)",
+                                            block["file_id"], len(_data))
+                        except Exception as e:
+                            logger.warning("Failed to load image from FileStore: %s", e)
+                    new_content.append({"type": "text", "text": f"[image: {block.get('filename', '?')}]"})
+                    continue
+
                 new_content.append(block)
 
             m.content = new_content
@@ -383,6 +408,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
 
         initial_text = self._build_stdin_with_system(system_prompt, user_text)
+        logger.info("[claude-code] prompt size: system=%d user_text=%d initial=%d images=%d msgs=%d",
+                    len(system_prompt), len(user_text), len(initial_text),
+                    len(image_blocks), len(messages))
 
         user_id = getattr(self, '_user_id', "")
         conv_id = getattr(self, '_conversation_id', "")

@@ -1121,67 +1121,39 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             data_b64 = att.get("data", "")
 
             if mime in _IMAGE_TYPES:
-                # Image: send as image_url with data URI (OpenAI format, converted for Anthropic)
+                # Store image in FileStore — NEVER inline base64 in message content
+                from core.file_store import FileStore
+                import time as _time
+                _img_bytes = base64.b64decode(data_b64)
+                _img_fname = f"image_{int(_time.time())}_{len(parts)}.{filename.rsplit('.', 1)[-1] if '.' in filename else 'png'}"
+                _img_fid = FileStore.instance().store(
+                    _img_fname, _img_bytes, mime,
+                    user_id=getattr(self, '_user_id', ''), category="attachment")
+                logger.info("Attachment image stored: %s (%d bytes) -> %s",
+                            filename, len(_img_bytes), _img_fid)
                 parts.append({
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{mime};base64,{data_b64}"},
+                    "type": "image_ref",
+                    "file_id": _img_fid,
+                    "filename": _img_fname,
+                    "mime_type": mime,
+                    "size": len(_img_bytes),
                 })
-            elif mime == "application/pdf":
-                # PDF: try to extract text
-                try:
-                    raw = base64.b64decode(data_b64)
-                    pdf_text = self._extract_pdf_text(raw)
-                    parts.append({
-                        "type": "document",
-                        "filename": filename,
-                        "text": pdf_text,
-                    })
-                except Exception as e:
-                    parts.append({
-                        "type": "text",
-                        "text": f"[Attached PDF: {filename} — could not extract text: {e}]",
-                    })
-            elif mime in _TEXT_TYPES or filename.endswith((".txt", ".md", ".html", ".csv", ".json")):
-                # Text file: decode and inject
-                try:
-                    raw = base64.b64decode(data_b64)
-                    file_text = raw.decode("utf-8", errors="replace")
-                    parts.append({
-                        "type": "document",
-                        "filename": filename,
-                        "text": file_text,
-                    })
-                except Exception as e:
-                    parts.append({
-                        "type": "text",
-                        "text": f"[Attached file: {filename} — could not decode: {e}]",
-                    })
-            elif mime in _CONVERTIBLE_TYPES or any(filename.endswith(ext) for ext in _CONVERTIBLE_EXTS):
-                # Convert document to text
-                try:
-                    raw = base64.b64decode(data_b64)
-                    converted = self._convert_document_to_text(raw, filename, mime)
-                    parts.append({
-                        "type": "document",
-                        "filename": filename,
-                        "text": converted,
-                    })
-                except Exception as e:
-                    logger.warning("Failed to convert %s: %s", filename, e)
-                    parts.append({
-                        "type": "text",
-                        "text": f"[Attached file: {filename} ({mime}) — conversion failed: {e}]",
-                    })
             else:
-                # Unknown type — store in FileStore, give URL
+                # ALL non-image attachments: store in FileStore, reference in message
+                from core.file_store import FileStore
                 try:
                     raw = base64.b64decode(data_b64)
-                    from core.file_store import FileStore
-                    fid = FileStore.instance().store(filename, raw, mime)
-                    url = f"/files/{fid}/{filename}"
+                    _fid = FileStore.instance().store(
+                        filename, raw, mime,
+                        user_id=getattr(self, '_user_id', ''), category="attachment")
+                    logger.info("Attachment stored: %s (%s, %d bytes) -> %s",
+                                filename, mime, len(raw), _fid)
                     parts.append({
-                        "type": "text",
-                        "text": f"[Attached file: {filename} ({mime}, {len(raw):,} bytes) — download: {url}]",
+                        "type": "file_ref",
+                        "file_id": _fid,
+                        "filename": filename,
+                        "mime_type": mime,
+                        "size": len(raw),
                     })
                 except Exception:
                     parts.append({

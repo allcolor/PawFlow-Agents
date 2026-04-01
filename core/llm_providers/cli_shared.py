@@ -100,16 +100,34 @@ class LLMCliSharedMixin:
         last_user_text = ""
         has_history = False
 
+        import re as _re
+        _b64_pattern = _re.compile(r'data:[^;]+;base64,[A-Za-z0-9+/=]{100,}')
+
         for m in messages:
             text = m.text_content if isinstance(m.content, list) else (m.content or "")
             if m.role == "system":
                 system_parts.append(text)
             elif m.role == "user":
-                # Strip image placeholders and base64 artifacts
                 if isinstance(m.content, list):
-                    _parts = [p.get("text", "") for p in m.content
-                              if isinstance(p, dict) and p.get("type") == "text"]
-                    text = "\n".join(p for p in _parts if p.strip())
+                    _text_parts = []
+                    for p in m.content:
+                        if not isinstance(p, dict):
+                            continue
+                        pt = p.get("type", "")
+                        if pt == "text":
+                            _text_parts.append(p.get("text", ""))
+                        elif pt == "image_ref":
+                            _text_parts.append(f"[image: {p.get('filename', '?')}]")
+                        elif pt == "file_ref":
+                            _text_parts.append(
+                                f"[attached file: {p.get('filename', '?')} ({p.get('mime_type', '?')}) "
+                                f"— read via: read(path='{p.get('file_id', '?')}', source='filestore')]")
+                        # skip image_url, image, document (legacy inline)
+                    text = "\n".join(p for p in _text_parts if p.strip())
+                else:
+                    text = text or ""
+                # Safety: strip any remaining base64 data URIs from string content
+                text = _b64_pattern.sub('[image]', text)
                 last_user_text = text
                 if text.strip():
                     history_lines.append(f"<message role=\"user\">\n{text}\n</message>")

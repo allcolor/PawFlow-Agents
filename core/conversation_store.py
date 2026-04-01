@@ -660,20 +660,22 @@ class ConversationStore:
             cache = self._load_cache(cid)
             if cache["user_id"] and cache["user_id"] != user_id:
                 return None
-        total = self.message_count(cid)
         path = self._conv_path(cid)
-        lock = self._get_conv_lock(cid)
-        with lock:
-            if not path.exists():
-                return {"messages": [], "total_count": 0, "offset": 0,
-                        "limit": limit, "has_more": False}
-            try:
-                result = self._read_tail(path, total, limit, offset)
-                return result
-            except Exception as e:
-                logger.error("[convstore] load_page failed %s: %s", cid, e)
-                return {"messages": [], "total_count": total, "offset": offset,
-                        "limit": limit, "has_more": False}
+        total = self.message_count(cid)
+        # _read_tail reads the file without holding the conv lock.
+        # This avoids blocking _commit (set_status, append) while reading
+        # large files. The file is append-only so reading stale data is safe
+        # (we might miss the very last line, but that's acceptable for pagination).
+        if not path.exists():
+            return {"messages": [], "total_count": 0, "offset": 0,
+                    "limit": limit, "has_more": False}
+        try:
+            result = self._read_tail(path, total, limit, offset)
+            return result
+        except Exception as e:
+            logger.error("[convstore] load_page failed %s: %s", cid, e)
+            return {"messages": [], "total_count": total, "offset": offset,
+                    "limit": limit, "has_more": False}
 
     def _read_tail(self, path: Path, total_msgs: int, limit: int, offset: int) -> Dict:
         """Read the last (offset + limit) msg lines from the JSONL, return the page.

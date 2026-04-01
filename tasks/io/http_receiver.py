@@ -161,6 +161,10 @@ class HTTPReceiverTask(BaseTask):
 
         try:
             ff = self._queue.get_nowait()
+            _route = ff.get_attribute("http.route") or "?"
+            _method = ff.get_attribute("http.method") or "?"
+            _body_preview = ff.get_content()[:200].decode("utf-8", errors="replace")
+            logger.info("[httpReceiver] %s %s body=%s", _method, _route, _body_preview)
             return [ff]
         except queue.Empty:
             return []

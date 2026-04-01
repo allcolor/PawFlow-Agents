@@ -69,7 +69,15 @@ def _double_click(req):
 def _type(req):
     pag = _get_pyautogui()
     text = req.get("text", "")
-    pag.typewrite(text, interval=0.02) if text.isascii() else pag.write(text)
+    # Use clipboard paste — works with all characters and is instant
+    import subprocess, sys
+    if sys.platform == "win32":
+        subprocess.run(["powershell", "-Command",
+                        f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'" ],
+                       capture_output=True, timeout=5)
+        pag.hotkey("ctrl", "v")
+    else:
+        pag.typewrite(text, interval=0.02) if text.isascii() else pag.write(text)
     return {"typed": len(text)}
 
 

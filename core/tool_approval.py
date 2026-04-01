@@ -178,10 +178,18 @@ class ToolApprovalGate:
 
         # ── Dangerous bash content check ─────────────────────────────
         # Even with session_allow, dangerous patterns force re-approval.
+        # Catastrophic patterns get a visible warning hint in the dialog.
         _force_ask = False
+        _catastrophic_hint = False
         if tool_name in ("bash", "execute_script") and arguments:
             _cmd = arguments.get("command", "") or arguments.get("code", "")
-            if cls._is_dangerous_command(_cmd):
+            if cls._is_catastrophic_command(_cmd):
+                _force_ask = True
+                _catastrophic_hint = True
+                is_always_ask = True
+                effective_name = f"{tool_name}:catastrophic"
+                action_summary = f"\u26a0\ufe0f CATASTROPHIC: {action_summary}"
+            elif cls._is_dangerous_command(_cmd):
                 _force_ask = True
                 is_always_ask = True
                 effective_name = f"{tool_name}:dangerous"

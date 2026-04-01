@@ -114,12 +114,17 @@ class PawCode:
         # Resume last conversation with sliding window
         config = load_config()
         last_cid = config.get("last_conversation_id")
-        if last_cid:
+        if last_cid and self.session_token:
             try:
+                self.conversation_id = last_cid
+                # Connect SSE FIRST so send_action can receive command_result
+                self._ensure_sse()
+                # Start event consumer thread so SSE events are processed
+                self._start_event_consumer()
+                # Now we can safely wait for the result
                 data = self.api.send_action("load_history",
                                              conversation_id=last_cid, limit=50, offset=0)
                 if not data.get("error"):
-                    self.conversation_id = last_cid
                     total = data.get("message_count", 0)
                     has_more = data.get("has_more", False)
                     messages = data.get("messages", [])
@@ -127,7 +132,6 @@ class PawCode:
                     self.renderer.print_system(
                         f"Resumed {last_cid[:8]} (showing {len(messages)} of {total}{more_hint})")
                     self._display_history(messages, len(messages))
-                    # Auto-summary for long conversations
                     if total > 100 and messages:
                         for m in reversed(messages):
                             if m.get("type") in ("assistant", "agent_response"):
@@ -137,9 +141,10 @@ class PawCode:
                                 if preview:
                                     self.renderer.print_system(f"Last ({agent}): {preview}...")
                                 break
-                    self._ensure_sse()
+                else:
+                    self.conversation_id = None
             except Exception:
-                pass
+                self.conversation_id = None
 
         self.renderer.print_system("Ready. Type /help for commands, /quit to exit.\n")
 
@@ -176,10 +181,8 @@ class PawCode:
         from pawflow_cli.config import HISTORY_FILE, ensure_config_dir
         ensure_config_dir()
 
-        # Start background event consumer
-        self._event_thread = threading.Thread(target=self._event_consumer,
-                                               daemon=True, name="pawcode-events")
-        self._event_thread.start()
+        # Start background event consumer (if not already started at resume)
+        self._start_event_consumer()
 
         # Start active-agents poller (single source of truth for typing indicator)
         self._active_poll_thread = threading.Thread(target=self._active_agents_poller,
@@ -469,6 +472,14 @@ class PawCode:
         if self.conversation_id and (not self.sse or not self.sse.connected):
             self.sse = SSEClient(self.server_url, self.session_token, self.gateway_cookie)
             self.sse.connect(self.conversation_id)
+
+    def _start_event_consumer(self):
+        """Start the event consumer thread (idempotent)."""
+        if hasattr(self, '_event_thread') and self._event_thread and self._event_thread.is_alive():
+            return
+        self._event_thread = threading.Thread(target=self._event_consumer,
+                                               daemon=True, name="pawcode-events")
+        self._event_thread.start()
 
     def _event_consumer(self):
         """Background thread: continuously consume SSE events and render them."""

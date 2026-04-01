@@ -49,6 +49,8 @@ export class RelayManager implements vscode.Disposable {
   private outputChannel: vscode.OutputChannel;
   private dockerContainer: string = '';
   private dockerImage: string = '';
+  private dockerCpus: string = '2';
+  private dockerMemory: string = '4g';
   private _onStatusChange = new vscode.EventEmitter<string>();
   readonly onDidChangeStatus = this._onStatusChange.event;
 
@@ -64,6 +66,9 @@ export class RelayManager implements vscode.Disposable {
 
     this.rootDir = workspaceDir;
     this.dockerImage = dockerImage;
+    const config = vscode.workspace.getConfiguration('pawflow');
+    this.dockerCpus = config.get<string>('dockerCpus', '2');
+    this.dockerMemory = config.get<string>('dockerMemory', '4g');
     this.relayId = generateRelayId(username, workspaceDir);
     this.wsToken = crypto.randomBytes(24).toString('base64url');
     this.port = await findFreePort();
@@ -117,7 +122,7 @@ export class RelayManager implements vscode.Disposable {
       '--name', containerName,
       '-v', `${this.rootDir}:/workspace`,
       '--add-host', 'host.docker.internal:host-gateway',
-      '--cpus', '2', '--memory', '2g',
+      '--cpus', this.dockerCpus, '--memory', this.dockerMemory,
       '--security-opt', 'no-new-privileges',
       this.dockerImage,
       'python3', '/opt/pawflow/pawflow_relay.py',

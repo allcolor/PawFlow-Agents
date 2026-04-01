@@ -116,13 +116,16 @@ class RelayThread:
 
     def __init__(self, server_url: str, session_token: str, username: str,
                  directory: str, docker_image: str = "",
-                 gateway_cookie: str = ""):
+                 gateway_cookie: str = "",
+                 docker_cpus: str = "", docker_memory: str = ""):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
+        self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
+        self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
@@ -225,7 +228,7 @@ class RelayThread:
                 "--name", self._docker_container,
                 "-v", f"{_translate_path(_to_host_path(self.directory))}:/workspace",
                 "--add-host", "host.docker.internal:host-gateway",
-                "--cpus", "2", "--memory", "2g",
+                "--cpus", self.docker_cpus, "--memory", self.docker_memory,
                 "--security-opt", "no-new-privileges",
                 "-e", "GIT_CONFIG_COUNT=1",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",

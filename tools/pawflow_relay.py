@@ -2000,7 +2000,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                         "--name", _child_container,
                                         "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
                                         "-w", "/workspace",
-                                        "--cpus", "2", "--memory", "2g",
+                                        "--cpus", args.docker_cpus, "--memory", args.docker_memory,
                                         "--security-opt", "no-new-privileges",
                                         _img, "tail", "-f", "/dev/null",
                                     ], capture_output=True, text=True)
@@ -2404,6 +2404,10 @@ def main():
                         help="Use ws:// instead of wss:// (default is wss with self-signed cert)")
     parser.add_argument("--docker-image", default="",
                         help="Run exec/git commands inside this Docker image (mounts --dir as /workspace)")
+    parser.add_argument("--docker-cpus", default=os.environ.get("PAWFLOW_RELAY_CPUS", "2"),
+                        help="CPU limit for Docker containers (default: 2, env: PAWFLOW_RELAY_CPUS)")
+    parser.add_argument("--docker-memory", default=os.environ.get("PAWFLOW_RELAY_MEMORY", "4g"),
+                        help="Memory limit for Docker containers (default: 4g, env: PAWFLOW_RELAY_MEMORY)")
     parser.add_argument("--gateway-key", default=os.environ.get("PAWFLOW_GATEWAY_KEY", ""),
                         help="Private gateway access key (env: PAWFLOW_GATEWAY_KEY)")
     args = parser.parse_args()
@@ -2508,8 +2512,8 @@ def main():
                 docker_run_args.extend(["-v", f"{_translate_path(_to_host_path(_src))}:/opt/pawflow/{_relay_file}:ro"])
         docker_run_args += [
             "--add-host", "host.docker.internal:host-gateway",
-            "--cpus", "2",
-            "--memory", "2g",
+            "--cpus", args.docker_cpus,
+            "--memory", args.docker_memory,
             "--security-opt", "no-new-privileges",
             args.docker_image,
             "python3", "/opt/pawflow/pawflow_relay.py",

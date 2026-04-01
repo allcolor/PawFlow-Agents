@@ -157,6 +157,16 @@
           "default": "",
           "description": "Docker image to use for the filesystem relay (e.g. pawflow-relay-dev:latest). Leave empty for direct (native) mode."
         },
+        "pawflow.dockerCpus": {
+          "type": "string",
+          "default": "2",
+          "description": "CPU limit for Docker relay container (e.g. 2, 4)"
+        },
+        "pawflow.dockerMemory": {
+          "type": "string",
+          "default": "4g",
+          "description": "Memory limit for Docker relay container (e.g. 2g, 4g, 8g)"
+        },
         "pawflow.gatewayKey": {
           "type": "string",
           "default": "",

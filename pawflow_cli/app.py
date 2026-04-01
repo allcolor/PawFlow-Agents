@@ -55,11 +55,14 @@ class PawCode:
     """Main CLI application."""
 
     def __init__(self, server_url: str, directory: str,
-                 docker_image: str = "", gateway_cookie: str = ""):
+                 docker_image: str = "", gateway_cookie: str = "",
+                 docker_cpus: str = "", docker_memory: str = ""):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
+        self.docker_cpus = docker_cpus
+        self.docker_memory = docker_memory
 
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
@@ -773,6 +776,7 @@ class PawCode:
             self.server_url, self.session_token, self.username,
             self.directory,
             docker_image=self.docker_image,
+            docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
         )
         self.relay.start()
 
@@ -891,6 +895,7 @@ class PawCode:
             directory,
             docker_image=self.docker_image,
             gateway_cookie=self.gateway_cookie,
+            docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
@@ -918,6 +923,10 @@ def main():
                         help="Don't mount filesystem relay (chat only)")
     parser.add_argument("--docker-image", default="",
                         help="Run relay inside this Docker image (e.g. pawflow-relay-dev:latest)")
+    parser.add_argument("--docker-cpus", default="",
+                        help="CPU limit for Docker relay (default: 2, env: PAWFLOW_RELAY_CPUS)")
+    parser.add_argument("--docker-memory", default="",
+                        help="Memory limit for Docker relay (default: 4g, env: PAWFLOW_RELAY_MEMORY)")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
@@ -968,6 +977,8 @@ def main():
         directory=args.dir,
         docker_image=args.docker_image,
         gateway_cookie=gateway_cookie,
+        docker_cpus=args.docker_cpus,
+        docker_memory=args.docker_memory,
     )
 
     if args.login:

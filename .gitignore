@@ -15,6 +15,7 @@ build/
 .idea/
 *.swp
 *.swo
+.coverage
 
 # Environment
 .env
@@ -22,46 +23,68 @@ build/
 venv/
 .venv/
 
-# Secrets & auth (NEVER commit)
+# Node
+node_modules/
+
+# ── SECRETS & AUTH (NEVER commit) ──────────────────────────────
+config/global_secrets.json
+config/secrets.json
 config/secret.key
+config/users/*/secrets.json
+config/users/*/oauth_tokens.json
+
+# ── User-specific config (runtime, not source) ────────────────
+config/user_services/
+config/users/*/parameters.json
 config/agent_secrets.json
 config/sessions.json
 config/users.json
 config/agent_variables.json
 
-# Runtime state
+# ── Runtime state ──────────────────────────────────────────────
 continuous_state.json
 config/storage/
 config/flow_versions/
 
-# User data (runtime, not source)
+# ── Data (runtime, generated) ─────────────────────────────────
 data/conversations/
+data/claude_sessions/
 data/agent_flows/
 data/dynamic_tools/
 data/files/
 data/poll_schedule/
 data/token_usage.json
 data/identities.json
+data/identity_mappings.json
+data/memories/
+data/gateway_bans.json
+data/server_id
+data/deployments/*/
+!data/deployments/global/
 checkpoints/
 memory/
 
-# Plugin builds
+# ── Bundled/vendored (downloaded, not source) ─────────────────
+static/novnc/
+
+# ── Plugin builds ─────────────────────────────────────────────
 plugins/*.pfp
 
-# Config for user resources (runtime)
+# ── Config for user resources (runtime) ───────────────────────
 config/agents.json
 config/skills.json
 config/mcp_servers.json
 
-# OS
+# ── OS ────────────────────────────────────────────────────────
 Thumbs.db
 .DS_Store
+*.log
 
-# Temp test files
+# ── Streamlit (deprecated) ────────────────────────────────────
+.streamlit/
+
+# ── Temp test files ───────────────────────────────────────────
 _test_path.py
 test_flow.py
 test_gui.py
 test_input/
-data/claude_sessions/
-data/gateway_bans.json
-*.log

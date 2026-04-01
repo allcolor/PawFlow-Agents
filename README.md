@@ -1,304 +1,101 @@
-# PawFlow - Pipeline Framework
+# PawFlow
 
-## Vue d'Ensemble
+PawFlow is a self-hosted AI agent orchestration platform. It combines a NiFi-inspired pipeline engine with a multi-agent system that supports tool use, streaming, multi-provider LLMs, and a real-time web chat UI.
 
-PawFlow est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes.
+## Key Features
 
-### Principales Caractéristiques
-
-- **Architecture modulaire** : Tâches, Services, Flux et Groupes
-- **Format JSON déclaratif** : Les flux sont définis dans des fichiers JSON lisibles
-- **Deux états** : Création (design) et Runtime (exécution)
-- **Extensible** : Ajout facile de nouvelles tâches et services
-- **Flow-based programming** : Les données circulent via des FlowFiles
-- **Variables runtime** : Configuration overrideable au déploiement
+- **Multi-agent system** with tool-use loop, streaming SSE, context compaction, and memory
+- **Multiple LLM providers**: Claude Code (subprocess + MCP), Anthropic API, OpenAI API, Gemini CLI
+- **40+ built-in tools**: filesystem, bash, code editing, web fetch, screen capture, grep, glob, notebooks, media generation, and more
+- **Pipeline engine**: NiFi-style flow-based processing with FlowFiles, backpressure, and DAG execution
+- **Web chat UI**: real-time SSE, file explorer, context editor, conversation management, attachments, RxJS action bus
+- **Authentication gateway**: 9 providers (builtin, Google, GitHub, Microsoft, X/Twitter, Facebook, Amazon, Telegram, generic OAuth)
+- **Docker sandboxing**: isolated execution via relay containers with tool permissions
+- **PawCode CLI**: terminal client for interacting with PawFlow agents (interactive + stream-json modes)
+- **VS Code extension**: IDE integration
+- **Expression language**: `${scope.key:op1:op2("arg")}` with 40+ chainable operations
+- **Resource system**: agents, skills, MCP servers as managed resources with per-user/per-conversation scoping
+- **Cost tracking**: per-model, per-session token and cost accounting
+- **Identity system**: multi-provider account linking
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      GUI (Streamlit)                        │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐ │
-│   │  Editor      │    │  Runtime     │    │  Monitor     │ │
-│   │ (Design)     │    │  (Deploy)    │    │  (Dashboard) │ │
-│   └──────────────┘    └──────────────┘    └──────────────┘ │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                            ▼
-┌─────────────────────────────────────────────────────────────┐
-│                      Core Engine                            │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
-│  │  Repository  │  │  Executor    │  │  FlowFile        │  │
-│  │  (Git/DB/FS) │  │              │  │  (Context)       │  │
-│  └──────────────┘  └──────────────┘  └──────────────────┘  │
-└─────────────────────────────────────────────────────────────┘
-```
-
-## Structure du Projet
-
-```
 pawflow/
-├── core/                  # Interfaces abstraites et classes de base
-│   ├── __init__.py       # Definitions (Task, Service, Flow, FlowFile)
-│   ├── base_task.py      # Implémentation de base pour les tâches
-│   ├── base_service.py   # Implémentation de base pour les services
-│   └── flowfile.py       # Classe FlowFile
+├── core/                  # Engine: FlowFile, Task, Service, Flow abstractions
+│   ├── handlers/          # 35+ tool handlers (bash, edit, glob, grep, web, screen...)
+│   ├── llm_providers/     # Claude Code, Anthropic, OpenAI, Gemini
+│   ├── conversation_store.py   # JSONL conversation persistence
+│   ├── resource_store.py       # Agents, skills, MCP servers
+│   ├── file_store.py           # Binary attachment storage
+│   └── tool_registry.py        # Tool discovery and execution
 │
-├── tasks/                 # Implémentations de tâches
-│   ├── system/           # Tâches système (log, replace_text, wait, fail)
-│   ├── data/            # Tâches de traitement de données
-│   ├── io/              # Tâches d'entrée/sortie (HTTP, SFTP, S3, DB)
-│   └── control/         # Tâches de contrôle (route, split, merge)
+├── tasks/
+│   ├── ai/                # Agent system (context, compaction, streaming, actions, tools)
+│   ├── io/                # HTTP receiver, chat UI (JS), Telegram, Discord
+│   └── system/            # Log, wait, script, route, merge
 │
-├── services/              # Implémentations de services
-│   ├── auth/            # Services d'authentification (OAuth2, Basic Auth)
-│   ├── connectivity/    # Services de connectivité (DB, SFTP, HTTP)
-│   └── utils/           # Services utilitaires
+├── services/              # 40+ services
+│   ├── auth_gateway_service.py  # Multi-provider auth (9 providers)
+│   ├── tool_relay_service.py    # MCP bridge for Claude Code
+│   ├── *_service.py             # Browser, VNC, terminal, filesystem, messaging...
+│   └── auth_providers/          # OAuth provider implementations
 │
-├── engine/                # Moteur d'exécution
-│   ├── executor.py      # Moteur d'exécution des flux
-│   └── parser.py        # Parser et validateur de flux JSON
-│
-├── config/                # Configuration et stockage
-│   ├── __init__.py      # ConfigManager et Config
-│   └── storage/         # Implémentations de stockage (FS, SQLite, Git, PG)
-│
-├── gui/                   # Interface graphique (à implémenter)
-│   ├── editor/          # GUI de création de flux
-│   └── runtime/         # GUI de runtime et monitoring
-│
-├── docs/                  # Documentation
-├── examples/              # Exemples de flux
-├── tests/                 # Tests unitaires et d'intégration
-└── test_flow.py           # Script de test
+├── engine/                # Pipeline executor (batch + continuous with backpressure)
+├── pawflow_cli/           # PawCode CLI (interactive + stream-json)
+├── pawflow-vscode/        # VS Code extension
+├── gui/                   # Admin web UI + service registries
+├── config/                # JSON configuration (flows, agents, services, parameters)
+└── flows/                 # Flow definitions (JSON)
 ```
 
-## Installation
+## Quick Start
 
 ```bash
-# Cloner le repository
-git clone https://github.com/your-org/pawflow.git
-cd pawflow
-
-# Installer les dépendances
+# Install dependencies
 pip install -r requirements.txt
 
-# Lancer les tests
-python test_flow.py
+# Start the server
+python cli.py run --flow data/deployments/global/pawflow-agent.json
+
+# Open the web chat
+# http://localhost:9090
 ```
 
-## Utilisation Rapide
+### PawCode CLI
 
-### 1. Créer un flux simple
+```bash
+# Interactive mode
+pawcode --server http://localhost:9090
 
-```python
-from engine import FlowParser, FlowValidator, FlowExecutor
-from core import FlowFile
-
-# Configuration d'un flux
-flow_config = {
-    'id': 'mon-flux',
-    'name': 'Mon Flux',
-    'tasks': {
-        'log1': {
-            'type': 'log',
-            'parameters': {'message': 'Début', 'level': 'INFO'}
-        }
-    },
-    'relations': []
-}
-
-# Parser et valider
-flow = FlowParser.parse(flow_config)
-FlowValidator.validate(flow)
-
-# Exécuter
-executor = FlowExecutor()
-input_ff = FlowFile(content=b'data', attributes={'filename': 'test.txt'})
-result = executor.execute_flow(flow, [input_ff])
+# Stream-JSON mode (Claude Code compatible)
+echo '{"type":"user","message":{"role":"user","content":"hello"}}' | \
+  pawcode --input-format stream-json --output-format stream-json
 ```
 
-### 2. Créer une tâche personnalisée
+## LLM Providers
 
-```python
-from core import Task, FlowFile
-from typing import Dict, Any, List
+| Provider | Mode | Features |
+|---|---|---|
+| Claude Code | Subprocess + MCP | Full tool use via relay, session persistence |
+| Anthropic API | Direct API | Streaming, tool use, vision, thinking |
+| OpenAI API | Direct API | Streaming, tool use, vision |
+| Gemini CLI | Subprocess | Streaming |
 
-class MyCustomTask(Task):
-    TYPE = "my_custom"
-    VERSION = "1.0.0"
-    NAME = "Ma Tâche Personnalisée"
-    DESCRIPTION = "Description"
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self.param1 = config.get('param1', 'default')
-    
-    def execute(self, flowfile: FlowFile) -> List[FlowFile]:
-        # Traitement
-        content = flowfile.get_content().decode()
-        modified = content.upper()
-        flowfile.set_content(modified.encode())
-        return [flowfile]
-    
-    def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            'param1': {
-                'type': 'string',
-                'required': True,
-                'description': 'Paramètre 1'
-            }
-        }
+## Configuration
 
-# Enregistrer la tâche
-from core import TaskFactory
-TaskFactory.register(MyCustomTask)
-```
-
-### 3. Créer un service personnalisé
-
-```python
-from core import Service
-from typing import Dict, Any
-
-class MyService(Service):
-    TYPE = "my_service"
-    VERSION = "1.0.0"
-    NAME = "Mon Service"
-    DESCRIPTION = "Description"
-    
-    def __init__(self, config: Dict[str, Any]):
-        super().__init__(config)
-        self.api_key = config.get('api_key')
-    
-    def connect(self):
-        # Établir la connexion
-        pass
-    
-    def disconnect(self):
-        # Fermer la connexion
-        pass
-    
-    def get_parameter_schema(self) -> Dict[str, Any]:
-        return {
-            'api_key': {
-                'type': 'string',
-                'required': True,
-                'description': 'Clé API'
-            }
-        }
-
-# Enregistrer le service
-from core import ServiceFactory
-ServiceFactory.register(MyService)
-```
-
-## Format JSON des Flux
-
-Voir `docs/01_DOCUMENTATION_TECHNIQUE.md` pour la spécification complète.
-
-Exemple simplifié :
+Agents, services, and flows are configured via JSON files in `config/`. Parameters cascade: flow → conversation → user → global.
 
 ```json
 {
-  "$schema": "http://pawflow.org/schemas/flow-v1.json",
-  "metadata": {
-    "name": "mon-flux",
-    "version": "1.0.0"
-  },
-  "parameters": {},
-  "tasks": {
-    "task_id": {
-      "type": "replace_text",
-      "parameters": {
-        "search_pattern": "old",
-        "replacement": "new"
-      }
-    }
-  },
-  "relations": [
-    {
-      "from": "entry_1",
-      "to": "task_id",
-      "type": "success"
-    }
-  ]
+  "llm_service": "${claude_code_llm_service}",
+  "summarizer_service": "${summarizer_service}",
+  "permission_mode": "auto",
+  "max_iterations": 200,
+  "max_rounds": 5
 }
 ```
 
-## Tâches Disponibles
-
-### Tâches Système
-- **log** : Logguer un message
-- **replace_text** : Remplacer du texte (regex ou simple)
-- **wait** : Attendre une durée
-- **fail** : Échouer explicitement
-
-### À Implémenter
-- **script** : Exécuter un script Python
-- **shell** : Exécuter une commande shell
-- **http** : Appeler une API HTTP
-- **sftp** : Opérations SFTP
-- **s3** : Opérations AWS S3
-- **db** : Opérations base de données
-- **split** : Splitter un FlowFile
-- **merge** : Fusionner des FlowFiles
-- **route** : Router vers différentes branches
-
-## Services Disponibles
-
-### À Implémenter
-- **oauth2_authenticator** : Authentification OAuth2
-- **basic_auth** : Authentification HTTP Basic
-- **db_connection** : Connexion base de données
-- **sftp_connection** : Connexion SFTP
-- **s3_connection** : Connexion AWS S3
-- **http_connection** : Configuration HTTP pool
-
-## Documentation Complète
-
-- **Documentation Technique** : `docs/01_DOCUMENTATION_TECHNIQUE.md`
-- **Référence des Tâches/Services** : `docs/02_REFERENCE_TASKS_SERVICES.md`
-
-## Roadmap
-
-### Version 1.0 (MVP)
-- [x] Architecture core
-- [x] Interfaces Task/Service/Flow
-- [x] Tâches système de base
-- [x] Moteur d'exécution
-- [x] Parser et validateur
-- [ ] GUI Streamlit (editor)
-- [ ] GUI Streamlit (runtime)
-
-### Version 1.1
-- [ ] Tâches données (script, shell, convert)
-- [ ] Tâches IO (HTTP, SFTP, S3, DB)
-- [ ] Services de connectivité
-- [ ] Système de variables runtime
-
-### Version 1.2
-- [ ] GUI complète
-- [ ] Monitoring et logs
-- [ ] Tests d'intégration
-- [ ] Documentation utilisateur
-
-## Contribution
-
-1. Fork le repository
-2. Créer une branche pour la feature
-3. Commiter vos changements
-4. Pusher vers la branche
-5. Ouvrir une Pull Request
-
 ## License
 
-MIT License - Voir le fichier LICENSE
-
-## Auteur
-
-PawFlow Team
-
----
-
-**Note** : Ce projet est en cours de développement. De nombreuses fonctionnalités restent à implémenter. Consultez la roadmap pour plus de détails.
+MIT

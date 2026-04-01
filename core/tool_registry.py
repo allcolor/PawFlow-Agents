@@ -45,6 +45,7 @@ from core.handlers import (  # noqa: F401
     FlowManagerHandler,
     ForgetHandler,
     GetAgentResultsHandler,
+    GetToolSchemaHandler,
     HTTPToolHandler,
     ImageGenerationHandler,
     ImageModelInfoHandler,
@@ -68,6 +69,7 @@ from core.handlers import (  # noqa: F401
     StoreSecretHandler,
     TaskToolHandler,
     UpdatePlanHandler,
+    UseToolHandler,
     UseSkillHandler,
     VerifyPlanStepHandler,
     VerifyTaskHandler,
@@ -185,105 +187,6 @@ class ToolRegistry:
 
 
 
-class GetToolSchemaHandler(ToolHandler):
-    """Return the full JSON schema of a tool so the LLM can call it via use_tool."""
-
-    def __init__(self, registry: "ToolRegistry"):
-        self._registry = registry
-
-    @property
-    def name(self) -> str:
-        return "get_tool_schema"
-
-    @property
-    def description(self) -> str:
-        return "Get the full parameter schema for a tool. Call this BEFORE use_tool to know the required arguments."
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "tool_name": {"type": "string", "description": "Name of the tool to inspect"},
-            },
-            "required": ["tool_name"],
-        }
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        name = arguments.get("tool_name", "")
-        handler = self._registry.get(name)
-        if not handler:
-            available = [h.name for h in self._registry.list_tools()
-                         if h.name not in ("get_tool_schema", "use_tool")]
-            return json.dumps({"error": f"Unknown tool '{name}'",
-                               "available": available})
-        return json.dumps({
-            "name": handler.name,
-            "display_name": handler.display_name,
-            "description": handler.description,
-            "parameters": handler.parameters_schema,
-        }, indent=2)
-
-
-
-class UseToolHandler(ToolHandler):
-    """Execute any tool by name. The LLM should call get_tool_schema first."""
-
-    def __init__(self, registry: "ToolRegistry"):
-        self._registry = registry
-
-    @property
-    def name(self) -> str:
-        return "use_tool"
-
-    @property
-    def description(self) -> str:
-        return "Execute a tool by name with the given arguments. Call get_tool_schema first to know the parameters."
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "tool_name": {"type": "string", "description": "Name of the tool to execute"},
-                "arguments": {"type": "object", "description": "Arguments to pass to the tool"},
-            },
-            "required": ["tool_name", "arguments"],
-        }
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        tool_name = arguments.get("tool_name", "")
-        tool_args = arguments.get("arguments", {})
-        # LLM sometimes sends arguments as JSON string instead of dict
-        # (can be double-encoded — keep parsing until we get a dict)
-        for _ in range(3):  # max 3 levels of JSON encoding
-            if isinstance(tool_args, str):
-                try:
-                    tool_args = json.loads(tool_args)
-                except (json.JSONDecodeError, TypeError):
-                    return f"Error: invalid arguments format for '{tool_name}' — expected JSON object, got string: {tool_args[:200]}"
-            else:
-                break
-        if not isinstance(tool_args, dict):
-            return f"Error: arguments for '{tool_name}' must be a JSON object, got {type(tool_args).__name__}"
-        if tool_name in ("get_tool_schema", "use_tool"):
-            return (f"Error: '{tool_name}' is a meta-tool — call it directly "
-                    f"as a top-level tool call, not via use_tool.")
-        # Validate arguments against tool schema
-        handler = self._registry.get(tool_name)
-        if handler:
-            schema = handler.parameters_schema or {}
-            props = schema.get("properties", {})
-            if props and isinstance(tool_args, dict):
-                unknown = [k for k in tool_args if k not in props]
-                if unknown:
-                    valid = list(props.keys())
-                    return (f"Error: unknown argument(s) {unknown} for tool '{tool_name}'. "
-                            f"Valid arguments: {valid}. "
-                            f"Use get_tool_schema(tool_name='{tool_name}') to see full schema.")
-        return self._registry.execute(tool_name, tool_args)
-
-
 # ── Builtin handlers ──────────────────────────────────────────────────
 
 
@@ -381,6 +284,10 @@ def create_default_registry() -> ToolRegistry:
 
     # Security scanning
     registry.register(SecurityScanHandler())
+
+    # Meta-tools (lazy tool loading for API providers)
+    registry.register(GetToolSchemaHandler(registry))
+    registry.register(UseToolHandler(registry))
 
     return registry
 

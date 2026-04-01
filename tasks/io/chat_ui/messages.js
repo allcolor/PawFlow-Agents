@@ -85,10 +85,12 @@ function buildMetaLine(extra) {
   const tokIn = extra.tokens_in || src.tokens_in || 0;
   const tokOut = extra.tokens_out || src.tokens_out || 0;
   const dur = extra.duration_ms || 0;
+  const costUsd = extra.cost_usd || 0;
   const parts = [];
   if (model) parts.push(model);
   if (provider && provider !== model) parts.push(provider);
   if (tokIn || tokOut) parts.push('\u2191' + tokIn + ' \u2193' + tokOut);
+  if (costUsd) parts.push('$' + costUsd.toFixed(4));
   if (dur) parts.push((dur / 1000).toFixed(1) + 's');
   if (!parts.length) return '';
   // Compact summary line (always visible)
@@ -97,6 +99,7 @@ function buildMetaLine(extra) {
   const details = [];
   if (baseUrl) details.push('endpoint: ' + escapeHtml(baseUrl));
   if (tokIn || tokOut) details.push('tokens: ' + tokIn + ' in / ' + tokOut + ' out (' + (tokIn + tokOut) + ' total)');
+  if (costUsd) details.push('cost: $' + costUsd.toFixed(6));
   if (dur) details.push('duration: ' + (dur / 1000).toFixed(1) + 's');
   if (details.length) {
     line += '<span class="meta-details">' + details.join(' \u00b7 ') + '</span>';

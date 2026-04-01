@@ -31,6 +31,7 @@ class AgentResult:
     messages: List[LLMMessage] = field(default_factory=list)
     new_messages: List[LLMMessage] = field(default_factory=list)
     all_msg_ids: List[str] = field(default_factory=list)  # all assistant msg_ids (survives flush)
+    cost_usd: float = 0.0
 
 
 class AgentEmitter:
@@ -174,6 +175,7 @@ class StreamEmitter(AgentEmitter):
             "tokens_in": result.tokens_in,
             "tokens_out": result.tokens_out,
             "duration_ms": result.duration_ms,
+            "cost_usd": result.cost_usd,
             "source": result.source,
             "agent_name": self._agent_name or "",
         })

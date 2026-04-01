@@ -899,7 +899,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                          len(tool_defs), _tools_tokens, _tools_pct)
         _full_tool_defs = tool_defs
         if _lazy_tools and tool_defs:
-            from core.tool_registry import GetToolSchemaHandler, UseToolHandler
+            from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
             _gts = GetToolSchemaHandler(registry)
             _ut = UseToolHandler(registry)
             registry.register(_gts)
@@ -1027,6 +1027,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "active_llm_service": _active_llm_service,
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
             "memory_llm_service": self._resolve_service_param("memory_llm_service", user_id),
+            "title_llm_service": self._resolve_service_param("title_llm_service", user_id),
             "resolved_svc": resolved_svc,
             "max_budget_usd": _max_budget,
             "summarizer": self._get_summarizer_client(user_id),  # (client, max_ctx, svc_id)

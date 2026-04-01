@@ -224,6 +224,25 @@ class AgentUtilsMixin:
             return client, 0, svc_id
         return None, 0, ""
 
+    def _get_title_client(self, user_id: str = ""):
+        """Resolve a dedicated LLM service for conversation title generation.
+
+        Same pattern as _get_summarizer_client. When configured, the agent
+        loop generates a short title after the first done event.
+
+        Returns (service_or_client, service_id) or (None, "").
+        """
+        svc_id = self._resolve_service_param("title_llm_service", user_id)
+        if not svc_id:
+            return None, ""
+        logger.debug(f"[title_llm] resolved to '{svc_id}'")
+        client, svc = self._resolve_llm_service(svc_id, user_id)
+        if svc and hasattr(svc, 'complete'):
+            return svc, svc_id
+        if client:
+            return client, svc_id
+        return None, ""
+
     # ── Media service discovery (generic for image/video) ───────────
 
 

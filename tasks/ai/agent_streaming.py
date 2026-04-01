@@ -429,6 +429,10 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             # Set idle status
             ConversationStore.instance().set_status(conversation_id, "idle")
 
+            # ── Auto-generate conversation title ──
+            if not _had_error:
+                self._maybe_generate_title(ctx, conversation_id, bus)
+
         except Exception:
             _had_error = True
             try:
@@ -557,3 +561,94 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         _store.set_extra(conversation_id, "agent_tasks", _all_tasks)
                 except Exception as e:
                     logger.warning(f"[agent] Failed to auto-reschedule tasks: {e}")
+
+    def _maybe_generate_title(self, ctx: Dict, conversation_id: str, bus) -> None:
+        """Spawn a background thread to generate a conversation title if needed.
+
+        Conditions: title_llm_service configured AND conversation has no title yet.
+        """
+        title_svc_name = ctx.get("title_llm_service", "")
+        if not title_svc_name:
+            return
+        use_conv_store = ctx.get("use_conv_store", False)
+        if not use_conv_store or not conversation_id:
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            existing_title = ConversationStore.instance().get_extra(
+                conversation_id, "title",
+                user_id=ctx.get("user_id", ""),
+            )
+            if existing_title:
+                return  # already has a title
+        except Exception:
+            return
+
+        def _bg_generate_title():
+            """Background thread: call title LLM and publish result."""
+            try:
+                title_client, title_svc_id = self._get_title_client(
+                    ctx.get("user_id", ""))
+                if not title_client:
+                    logger.debug("[title] service '%s' could not be resolved", title_svc_name)
+                    return
+
+                # Extract last 1000 chars of context
+                messages = ctx.get("messages", [])
+                context_text = ""
+                for m in reversed(messages):
+                    content = m.content if isinstance(m.content, str) else str(m.content)
+                    context_text = content + "\n" + context_text
+                    if len(context_text) >= 1000:
+                        break
+                context_text = context_text[-1000:]
+
+                prompt = (
+                    f"Conversation context:\n{context_text}\n\n"
+                    "Generate a concise 3-7 word title for this conversation. "
+                    "Reply with ONLY the title, no quotes."
+                )
+
+                resp = title_client.complete(
+                    [LLMMessage(role="user", content=prompt)],
+                    max_tokens=30, temperature=0.3,
+                )
+                title = (resp.content or "").strip().strip('"\'')
+                if not title:
+                    return
+
+                # Track token usage
+                try:
+                    from core.token_tracker import TokenTracker
+                    if resp.tokens_in > 0:
+                        TokenTracker.instance().track(
+                            ctx.get("user_id", "system"),
+                            resp.tokens_in, resp.tokens_out,
+                            model=resp.model or "",
+                            agent_name=ctx.get("active_agent_name", "title"),
+                            llm_service=title_svc_id)
+                        TokenTracker.instance().flush()
+                except Exception:
+                    pass
+
+                # Save title
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_extra(
+                    conversation_id, "title", title,
+                    user_id=ctx.get("user_id", ""),
+                )
+
+                # Publish SSE event
+                bus.publish_event(conversation_id, "conversation_title", {
+                    "conversation_id": conversation_id,
+                    "title": title,
+                })
+                logger.info("[title] generated for %s: %s", conversation_id[:8], title)
+            except Exception as e:
+                logger.debug("[title] generation failed for %s: %s",
+                             conversation_id[:8], e)
+
+        threading.Thread(
+            target=_bg_generate_title, daemon=True,
+            name=f"title-gen-{conversation_id[:8]}",
+        ).start()

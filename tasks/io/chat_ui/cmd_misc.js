@@ -130,38 +130,73 @@ function cmdUsage() {
 function cmdCost(text) {
   const cargs = parseQuotedArgs(text);
   const target = stripTarget(cargs[1] || '') || selectedAgent || 'ALL';
-  fetch(API, {
+
+  // Fetch both user-level cost (existing) and conversation-level cost (new CostTracker)
+  const userCostP = fetch(API, {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'cost', agent: target }),
     credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
+  }).then(r => r.json());
+
+  const convCostP = conversationId
+    ? fetch(API, {
+        method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'get_cost', conversation_id: conversationId }),
+        credentials: 'same-origin',
+      }).then(r => r.json()).catch(() => null)
+    : Promise.resolve(null);
+
+  Promise.all([userCostP, convCostP]).then(([data, convData]) => {
+    const lines = [];
+
+    // Conversation cost (from CostTracker — model-aware pricing)
+    if (convData && !convData.error && convData.total_usd) {
+      lines.push('**Conversation cost: $' + convData.total_usd.toFixed(6) + '**');
+      const byModel = convData.by_model || {};
+      for (const [model, m] of Object.entries(byModel)) {
+        const tokIn = (m.in || 0).toLocaleString();
+        const tokOut = (m.out || 0).toLocaleString();
+        const cacheR = m.cache_read || 0;
+        const cacheW = m.cache_write || 0;
+        let detail = '  ' + model + ': ' + tokIn + ' in / ' + tokOut + ' out — $' + (m.cost || 0).toFixed(6);
+        if (cacheR || cacheW) {
+          detail += ' (cache: ' + cacheR.toLocaleString() + ' read, ' + cacheW.toLocaleString() + ' write)';
+        }
+        lines.push(detail);
+      }
+      lines.push('');
+    }
+
+    // User-level cost (existing per-agent breakdown)
     const services = data.services || [];
-    if (services.length === 0) {
+    if (services.length === 0 && lines.length === 0) {
       addMsg('system', 'No usage data found.');
-    } else {
-      const lines = services.map(s => {
+      return;
+    }
+    if (services.length > 0) {
+      lines.push('**User total (all conversations):**');
+      for (const s of services) {
         const svc = s.llm_service || '?';
         const model = s.model || '';
-        const provider = s.provider || '';
         const tokIn = (s.tokens_in || 0).toLocaleString();
         const tokOut = (s.tokens_out || 0).toLocaleString();
         const calls = s.calls || 0;
-        let line = svc + (model ? ' (' + model + ')' : '') + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
+        let line = '  ' + svc + (model ? ' (' + model + ')' : '') + ': ' + tokIn + ' in / ' + tokOut + ' out (' + calls + ' calls)';
         if (s.cost !== undefined) {
           line += ' — $' + s.cost.toFixed(6);
         } else {
           line += ' — cost: not configured';
         }
-        return line;
-      });
+        lines.push(line);
+      }
       const totalIn = services.reduce((sum, s) => sum + (s.tokens_in || 0), 0);
       const totalOut = services.reduce((sum, s) => sum + (s.tokens_out || 0), 0);
       const totalCost = services.reduce((sum, s) => sum + (s.cost || 0), 0);
       lines.push('---');
       lines.push('Total: ' + totalIn.toLocaleString() + ' in / ' + totalOut.toLocaleString() + ' out'
         + (totalCost > 0 ? ' — $' + totalCost.toFixed(6) : ''));
-      addMsg('system', lines.join('\n'));
     }
+    addMsg('system', lines.join('\n'));
   }).catch(e => addMsg('error', 'Failed: ' + e.message));
   return true;
 }

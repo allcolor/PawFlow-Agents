@@ -62,6 +62,8 @@ class AgentCoreMixin:
         ctx["_started_at"] = start_time
         total_tokens_in = 0
         total_tokens_out = 0
+        total_cache_read = 0
+        total_cache_write = 0
         tools_called: List[str] = []
         iteration = 0
         final_model = ""
@@ -85,6 +87,7 @@ class AgentCoreMixin:
         client._user_id = user_id
         client._agent_name = ctx.get("active_agent_name", "")
         client._agent_service = ctx.get("active_llm_service", "")
+        client._event_cid = ctx.get("_event_cid", conversation_id)
 
         # Register active claude-code client for preempt (stdin injection)
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id
@@ -488,6 +491,8 @@ class AgentCoreMixin:
                         response_content = _irpt_resp.content
                         total_tokens_in += _irpt_resp.tokens_in
                         total_tokens_out += _irpt_resp.tokens_out
+                        total_cache_read += getattr(_irpt_resp, 'cache_read_tokens', 0)
+                        total_cache_write += getattr(_irpt_resp, 'cache_creation_tokens', 0)
                         final_model = _irpt_resp.model
                         _flush()
                         raise _InterruptComplete()
@@ -791,6 +796,8 @@ class AgentCoreMixin:
                             self._cc_context_file_id = ''  # check once
                     total_tokens_in += response.tokens_in
                     total_tokens_out += response.tokens_out
+                    total_cache_read += getattr(response, 'cache_read_tokens', 0)
+                    total_cache_write += getattr(response, 'cache_creation_tokens', 0)
                     final_model = response.model
                     finish_reason = response.finish_reason
 
@@ -1075,6 +1082,13 @@ class AgentCoreMixin:
                 _flush()
 
             def _make_result(reason=""):
+                # Compute turn cost
+                try:
+                    from core.cost_tracker import CostTracker
+                    _conv_cost = CostTracker.instance().get_conversation_cost(conversation_id)
+                    _turn_cost = _conv_cost.get("total", 0.0)
+                except Exception:
+                    _turn_cost = 0.0
                 return AgentResult(
                     response_content=response_content,
                     conversation_id=conversation_id,
@@ -1085,7 +1099,8 @@ class AgentCoreMixin:
                     duration_ms=(time.time() - start_time) * 1000,
                     finish_reason=reason or finish_reason, source=_agent_source(),
                     messages=messages, new_messages=new_messages,
-                    all_msg_ids=all_assistant_msg_ids)
+                    all_msg_ids=all_assistant_msg_ids,
+                    cost_usd=_turn_cost)
 
             # Final drain: pick up any messages that arrived during the last turn
             _pre_drain = len(messages)
@@ -1119,6 +1134,17 @@ class AgentCoreMixin:
                     model=final_model or _client_model,
                     agent_name=ctx.get("active_agent_name", "") or "",
                     llm_service=ctx.get("active_llm_service", ""))
+
+                # Track cost per conversation/model
+                try:
+                    from core.cost_tracker import CostTracker
+                    CostTracker.instance().track(
+                        conversation_id, final_model or _client_model,
+                        tokens_in=total_tokens_in, tokens_out=total_tokens_out,
+                        cache_read=total_cache_read, cache_write=total_cache_write)
+                except Exception as _cost_err:
+                    logger.debug("[agent:%s] cost tracking error: %s",
+                                 conversation_id[:8], _cost_err)
 
                 self._cleanup_tool_result_files(
                     conversation_id=conversation_id,

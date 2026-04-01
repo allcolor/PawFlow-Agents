@@ -464,13 +464,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 f"Claude CLI pipe broken (exit {proc.returncode}): {stderr[:500]}")
 
         # SSE publisher for webchat visibility
+        # For task sub-conversations, publish to parent conv so webchat sees them
+        _event_cid = getattr(self, '_event_cid', '') or conv_id
         def _pub(event_type, data):
-            if not conv_id:
+            if not _event_cid:
                 return
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
-                    conv_id, event_type, data)
+                    _event_cid, event_type, data)
             except Exception:
                 pass
 

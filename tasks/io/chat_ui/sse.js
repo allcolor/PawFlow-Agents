@@ -535,6 +535,7 @@ function connectSSE(cid) {
     extra.base_url = data.base_url || '';
     extra.tokens_in = data.tokens_in || 0;
     extra.tokens_out = data.tokens_out || 0;
+    extra.cost_usd = data.cost_usd || 0;
     extra.duration_ms = data.duration_ms || 0;
     extra.ts = data.ts;
     // Register ALL msg_ids from this turn (prevents poll/replay duplicates)
@@ -603,6 +604,23 @@ function connectSSE(cid) {
     // Refresh conversation list
     loadConversations();
     // Don't close SSE — keep listening for timer-triggered events
+  });
+
+  // Auto-generated conversation title
+  eventSource.addEventListener('conversation_title', (e) => {
+    const data = JSON.parse(e.data);
+    const cid = data.conversation_id || conversationId;
+    const title = data.title || '';
+    if (!title) return;
+    // Update sidebar entry in-place without full reload
+    const convEl = document.querySelector('.conv-item[data-cid="' + cid + '"] .conv-preview');
+    if (convEl) {
+      // Preserve status dot if present
+      const dot = convEl.querySelector('.conv-status');
+      convEl.textContent = '';
+      if (dot) convEl.appendChild(dot);
+      convEl.appendChild(document.createTextNode(title));
+    }
   });
 
   eventSource.addEventListener('cancelled', (e) => {

@@ -67,6 +67,25 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         }, ensure_ascii=False).encode())
         return [flowfile]
 
+    if action == "get_cost":
+        # Per-conversation cost from CostTracker (in-memory, model-aware pricing)
+        conv_id = body.get("conversation_id", "")
+        try:
+            from core.cost_tracker import CostTracker
+            tracker = CostTracker.instance()
+            if conv_id:
+                data = tracker.get_conversation_cost(conv_id)
+            else:
+                data = {"total": tracker.get_total_cost(), "by_model": {}}
+            flowfile.set_content(json.dumps({
+                "total_usd": round(data.get("total", 0.0), 6),
+                "by_model": data.get("by_model", {}),
+                "conversation_id": conv_id,
+            }, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     if action == "list_active":
         conv_id = body.get("conversation_id", "")
         if not conv_id:

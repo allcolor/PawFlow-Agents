@@ -65,6 +65,10 @@ from core.handlers.user_interaction import (  # noqa: F401
     NotifyUserHandler,
     AskUserHandler,
 )
+from core.handlers.meta_tools import (  # noqa: F401
+    GetToolSchemaHandler,
+    UseToolHandler,
+)
 from core.handlers.web_fetch import (  # noqa: F401
     ExecuteScriptHandler,
     WebSearchHandler,

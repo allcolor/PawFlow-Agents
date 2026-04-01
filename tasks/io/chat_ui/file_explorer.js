@@ -380,7 +380,10 @@ _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
 
-loadConversations().then(convs => {
+// Load conversations and auto-resume the first one
+action$('list_conversations', {}).subscribe(data => {
+  const convs = data.conversations || [];
+  renderConvList(convs);
   if (convs.length && !conversationId) {
     resumeConv(convs[0].conversation_id);
   }

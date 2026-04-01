@@ -87,19 +87,23 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
         # Forward leftover bytes from backend to client
         client_sock.sendall(_leftover)
 
-    logger.info("VNC proxy: session %s connected (port %d)", session_id, target_port)
+    logger.info("VNC proxy: session %s connected (port %d, host=%s, leftover=%d bytes)",
+                session_id, target_port, target_host, len(_leftover))
 
     stop = threading.Event()
 
     def _relay(src, dst, name):
+        _bytes = 0
         try:
             while not stop.is_set():
                 data = src.recv(65536)
                 if not data:
+                    logger.debug("VNC proxy: %s EOF after %d bytes", name, _bytes)
                     break
+                _bytes += len(data)
                 dst.sendall(data)
-        except Exception:
-            pass
+        except Exception as _e:
+            logger.debug("VNC proxy: %s error after %d bytes: %s", name, _bytes, _e)
         finally:
             stop.set()
 

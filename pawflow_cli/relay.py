@@ -470,7 +470,6 @@ class RelayThread:
                     _ts.close()
                     vnc_port = _tp
                     _existing = True
-                    sys.stderr.write(f"[Relay] Found existing VNC server on port {_tp}\n")
                     break
                 except Exception:
                     pass
@@ -510,14 +509,14 @@ class RelayThread:
         import time as _t
         _t.sleep(0.5)
 
-        p_ws = _sp.Popen(_ws_base + [str(novnc_port), f"localhost:{vnc_port}"],
-                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        _ws_cmd = _ws_base + [str(novnc_port), f"localhost:{vnc_port}"]
+        p_ws = _sp.Popen(_ws_cmd, stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
         procs.append(p_ws)
 
         self._local_desktop_procs = procs
         self._local_desktop_vnc_port = vnc_port
         self._local_desktop_novnc_port = novnc_port
-        sys.stderr.write(f"[Relay] Local desktop started: vnc={vnc_port} novnc={novnc_port}\n")
+
         return {"vnc_port": vnc_port, "novnc_port": novnc_port, "local_screen": True}
 
     def _host_stop_local_desktop(self):

@@ -69,12 +69,23 @@ def _double_click(req):
 def _type(req):
     pag = _get_pyautogui()
     text = req.get("text", "")
-    # Use clipboard paste — works with all characters and is instant
-    import subprocess, sys
+    import sys
     if sys.platform == "win32":
-        subprocess.run(["powershell", "-Command",
-                        f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'" ],
-                       capture_output=True, timeout=5)
+        # Use Win32 clipboard API + Ctrl+V — reliable across sessions
+        import ctypes
+        import ctypes.wintypes
+        CF_UNICODETEXT = 13
+        u32 = ctypes.windll.user32
+        k32 = ctypes.windll.kernel32
+        if u32.OpenClipboard(0):
+            u32.EmptyClipboard()
+            data = text.encode("utf-16-le") + b"\x00\x00"
+            h = k32.GlobalAlloc(0x0042, len(data))
+            p = k32.GlobalLock(h)
+            ctypes.memmove(p, data, len(data))
+            k32.GlobalUnlock(h)
+            u32.SetClipboardData(CF_UNICODETEXT, h)
+            u32.CloseClipboard()
         pag.hotkey("ctrl", "v")
     else:
         pag.typewrite(text, interval=0.02) if text.isascii() else pag.write(text)

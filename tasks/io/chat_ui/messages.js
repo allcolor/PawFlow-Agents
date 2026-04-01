@@ -432,12 +432,7 @@ function _attachToolResult(tcEl, resultText) {
 
 function backgroundTool(tcId) {
   if (!conversationId || !tcId) return;
-  fetch(API, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({action: 'background_tool', conversation_id: conversationId, tc_id: tcId}),
-    credentials: 'same-origin',
-  }).then(r => r.json()).then(d => {
+  action$('background_tool', { tc_id: tcId }).subscribe(d => {
     if (d.ok) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {
@@ -456,7 +451,7 @@ function backgroundTool(tcId) {
         else tcEl.appendChild(klBtn);
       }
     }
-  }).catch(() => {});
+  });
 }
 
 function killTool(tcId) {
@@ -469,22 +464,13 @@ function killTool(tcId) {
     if (bullet) { bullet.classList.remove('bg', 'pending'); bullet.classList.add('done'); bullet.style.color = '#e94560'; bullet.title = 'Killed'; }
   }
   // Kill via tool relay (in-flight tools) AND background system
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({action: 'kill_tool', conversation_id: conversationId, tc_id: tcId}),
-    credentials: 'same-origin',
-  }).catch(() => {});
+  fireAction('kill_tool', { tc_id: tcId });
   cancelBgTool(tcId);
 }
 
 function cancelBgTool(tcId) {
   if (!conversationId || !tcId) return;
-  fetch(API, {
-    method: 'POST',
-    headers: getAuthHeaders(),
-    body: JSON.stringify({action: 'cancel_bg_tool', conversation_id: conversationId, tc_id: tcId}),
-    credentials: 'same-origin',
-  }).catch(() => {});
+  fireAction('cancel_bg_tool', { tc_id: tcId });
 }
 
 function _renderToolCallEdit(srcLabel, args) {
@@ -595,46 +581,45 @@ function _flushPendingImages() {
     else { byId[item.imgId] = item; fileIds.push(item.imgId); }
   }
   // Batch check: ask server which file_ids exist
-  fetch(API, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ action: 'check_files', file_ids: fileIds }),
-    credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
-    const available = new Set(data.available || []);
-    for (const fid of fileIds) {
-      const item = byId[fid];
-      if (!item) continue;
-      const el = document.getElementById(item.imgId);
-      if (!el) continue;
-      const wrapper = el.closest('.img-wrapper');
-      if (!available.has(fid)) {
-        // File doesn't exist — hide entirely
-        if (wrapper) wrapper.style.display = 'none';
-        continue;
+  action$('check_files', { file_ids: fileIds }).subscribe({
+    next: data => {
+      const available = new Set(data.available || []);
+      for (const fid of fileIds) {
+        const item = byId[fid];
+        if (!item) continue;
+        const el = document.getElementById(item.imgId);
+        if (!el) continue;
+        const wrapper = el.closest('.img-wrapper');
+        if (!available.has(fid)) {
+          // File doesn't exist — hide entirely
+          if (wrapper) wrapper.style.display = 'none';
+          continue;
+        }
+        // File exists — fetch the blob
+        fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
+          if (!r.ok) throw new Error(r.status);
+          return r.blob();
+        }).then(blob => {
+          el.src = URL.createObjectURL(blob);
+          el.style.display = 'block';
+        }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
       }
-      // File exists — fetch the blob
-      fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
-        if (!r.ok) throw new Error(r.status);
-        return r.blob();
-      }).then(blob => {
-        el.src = URL.createObjectURL(blob);
-        el.style.display = 'block';
-      }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
-    }
-  }).catch(() => {
-    // Fallback: try each individually
-    for (const item of batch) {
-      const el = document.getElementById(item.imgId);
-      if (!el) continue;
-      const wrapper = el.closest('.img-wrapper');
-      fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
-        if (!r.ok) throw new Error(r.status);
-        return r.blob();
-      }).then(blob => {
-        el.src = URL.createObjectURL(blob);
-        el.style.display = 'block';
-      }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
-    }
+    },
+    error: () => {
+      // Fallback: try each individually
+      for (const item of batch) {
+        const el = document.getElementById(item.imgId);
+        if (!el) continue;
+        const wrapper = el.closest('.img-wrapper');
+        fetch(item.url, { headers, credentials: 'same-origin' }).then(r => {
+          if (!r.ok) throw new Error(r.status);
+          return r.blob();
+        }).then(blob => {
+          el.src = URL.createObjectURL(blob);
+          el.style.display = 'block';
+        }).catch(() => { if (wrapper) wrapper.style.display = 'none'; });
+      }
+    },
   });
 }
 

@@ -78,10 +78,7 @@ function closeTerminalTab(tabId) {
     }
     // Tell server to close the PTY
     if (sessionId) {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'close_terminal', session_id: sessionId, relay_id: '' }),
-      }).catch(() => {});
+      fireAction('close_terminal', { session_id: sessionId, relay_id: '' });
     }
     panel.remove();
   }
@@ -141,10 +138,7 @@ function closeVSCodeTab(tabId) {
   if (panel) {
     const relayId = panel.dataset.relayId;
     if (relayId) {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'close_code_server', relay_id: relayId }),
-      }).catch(() => {});
+      fireAction('close_code_server', { relay_id: relayId });
     }
     panel.remove();
   }
@@ -198,10 +192,7 @@ function closeDesktopTab(tabId) {
   if (panel) {
     const relayId = panel.dataset.relayId;
     if (relayId) {
-      fetch(API, {
-        method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: 'close_desktop', relay_id: relayId }),
-      }).catch(() => {});
+      fireAction('close_desktop', { relay_id: relayId });
     }
     panel.remove();
   }

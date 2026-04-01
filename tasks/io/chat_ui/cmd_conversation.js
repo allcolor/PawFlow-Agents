@@ -213,9 +213,9 @@ function cmdPlan(text, parts, cmd) {
   const body = { message: planMsg };
   if (conversationId) body.conversation_id = conversationId;
   fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
-    .then(r => r.json()).then(data => {
-      if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
-    }).catch(e => addMsg('error', e.message));
+    .then(r => r.json())
+    .then(data => { if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); } })
+    .catch(e => addMsg('error', e.message));
   return true;
 }
 

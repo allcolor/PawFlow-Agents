@@ -113,16 +113,10 @@ async function loadResources() {
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
   // Fire-and-forget: result arrives via SSE command_result → _renderResourcesFromSSE
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
-  }).catch(() => {});
+  fireAction('list_resources');
   // Load tool schemas (async, fire-and-forget)
   if (!window._cachedTools) {
-    fetch(API, {
-      method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'get_tool_schemas', conversation_id: conversationId }),
-    }).catch(() => {});
+    fireAction('get_tool_schemas');
   }
 }
 function _renderResourcesFromSSE(data) {

@@ -1032,11 +1032,7 @@ function stopPollTimer() {
 
 async function showPrompts() {
   try {
-    const r = await fetch(AGENT_PATH, {
-      method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
-      body: JSON.stringify({action:'list_prompts', conversation_id: conversationId})
-    });
-    const data = await r.json();
+    const data = await rxjs.firstValueFrom(action$('list_prompts'));
     const prompts = data.prompts || [];
     if (!prompts.length) { addMsg('system', 'No prompts available. Create prompts via /prompt or manage_resource.'); return; }
     let overlay = document.getElementById('promptOverlay');
@@ -1061,11 +1057,7 @@ async function showPrompts() {
       item.addEventListener('click', async () => {
         const name = item.dataset.name;
         try {
-          const r2 = await fetch(AGENT_PATH, {
-            method: 'POST', headers: {'Content-Type':'application/json', ...authHeaders()},
-            body: JSON.stringify({action:'get_prompt', name: name, conversation_id: conversationId})
-          });
-          const d2 = await r2.json();
+          const d2 = await rxjs.firstValueFrom(action$('get_prompt', { name: name }));
           if (d2.content) {
             document.getElementById('input').value = d2.content;
             document.getElementById('input').focus();

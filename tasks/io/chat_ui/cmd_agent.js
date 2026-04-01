@@ -74,9 +74,9 @@ function cmdAgent(text, parts) {
       if (conversationId) body.conversation_id = conversationId;
       addMsg('user', resumeMsg);
       fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
-        .then(r => r.json()).then(data => {
-          if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
-        }).catch(e => addMsg('error', e.message))
+        .then(r => r.json())
+        .then(data => { if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); } })
+        .catch(e => addMsg('error', e.message))
         .finally(() => { sending = false; });
     }
   } else if (sub === 'setname' || sub === 'rename') {
@@ -274,17 +274,15 @@ function cmdAgentMsg(agentName, text) {
     method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),
     credentials: 'same-origin',
-  }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', data.error); sending = false; return; }
-    if (data.conversation_id && !conversationId) {
-      conversationId = data.conversation_id;
-      connectSSE(conversationId);
-    }
-    if (data.message_count) serverMsgCount = data.message_count;
-  }).catch(e => {
-    addMsg('error', 'Failed to send to agent: ' + e.message);
-    sending = false;
-  });
+  }).then(r => r.json())
+    .then(data => {
+      if (data.error) { addMsg('error', data.error); sending = false; return; }
+      if (data.conversation_id && !conversationId) { conversationId = data.conversation_id; connectSSE(conversationId); }
+      if (data.message_count) serverMsgCount = data.message_count;
+    }).catch(e => {
+      addMsg('error', 'Failed to send to agent: ' + e.message);
+      sending = false;
+    });
 }
 
 function cmdAgentMsgAll(text) {

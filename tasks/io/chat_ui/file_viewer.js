@@ -21,9 +21,8 @@ function showParamMenu(e, key, scope, isSecret) {
     item('\u270F Edit...', () => _showParamEditor(key, scope, isSecret, false));
     item('\u{1F5D1} Delete', () => {
       if (!confirm(`Delete ${isSecret ? 'secret' : 'variable'} '${key}' (${scope})?`)) return;
-      fetch(API, { method: 'POST', headers: getAuthHeaders(),
-        body: JSON.stringify({ action: isSecret ? 'delete_secret' : 'delete_param', key, scope, conversation_id: conversationId }),
-      }).then(() => loadResources()).catch(e => addMsg('error', e.message));
+      action$(isSecret ? 'delete_secret' : 'delete_param', { key, scope })
+        .subscribe({ next: () => loadResources(), error: e => addMsg('error', e.message) });
     }, true);
   }
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
@@ -63,13 +62,11 @@ function _saveParam(origKey, origScope, isSecret, isNew) {
   const scope = isNew ? (document.getElementById('pv-scope').value || 'conversation') : origScope;
   const value = document.getElementById('pv-value').value;
   if (!key) { alert('Key is required'); return; }
-  const action = isSecret ? 'set_secret' : 'set_param';
-  fetch(API, { method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({ action, key, value, scope, conversation_id: conversationId }),
-  }).then(r => r.json()).then(d => {
+  const actionName = isSecret ? 'set_secret' : 'set_param';
+  action$(actionName, { key, value, scope }).subscribe(d => {
     if (d.error) addMsg('error', d.error);
     else { document.getElementById('resourceEditorOverlay').remove(); loadResources(); }
-  }).catch(e => addMsg('error', e.message));
+  });
 }
 
 function toggleResourcesSection() {
@@ -80,26 +77,20 @@ function toggleResourcesSection() {
 // ── File Viewer ─────────────────────────────────────────────────
 function fetchFsFile(service, fpath) {
   // Fetch file from filesystem service and open in viewer
-  fetch(API, {
-    method: 'POST', headers: getAuthHeaders(),
-    body: JSON.stringify({
-      action: 'call_tool', tool_name: 'read',
-      arguments: { path: fpath, service: service },
-      conversation_id: conversationId,
-    }),
-  }).then(r => r.json()).then(data => {
-    if (data.error) { addMsg('error', 'Failed to read fs://' + service + '/' + fpath + ': ' + data.error); return; }
-    const result = data.result || '';
-    // Check if it's text or base64 binary
-    if (result.startsWith('(binary file')) {
-      addMsg('system', 'Binary file: fs://' + service + '/' + fpath);
-    } else {
-      // Create blob and open in viewer
-      const blob = new Blob([result], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      openFileViewer(url);
-    }
-  }).catch(e => addMsg('error', 'Failed: ' + e.message));
+  action$('call_tool', { tool_name: 'read', arguments: { path: fpath, service: service } })
+    .subscribe(data => {
+      if (data.error) { addMsg('error', 'Failed to read fs://' + service + '/' + fpath + ': ' + data.error); return; }
+      const result = data.result || '';
+      // Check if it's text or base64 binary
+      if (result.startsWith('(binary file')) {
+        addMsg('system', 'Binary file: fs://' + service + '/' + fpath);
+      } else {
+        // Create blob and open in viewer
+        const blob = new Blob([result], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        openFileViewer(url);
+      }
+    });
 }
 
 function openFileViewer(filenameOrUrl) {

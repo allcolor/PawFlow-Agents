@@ -702,7 +702,8 @@ class ConversationStore:
             remainder = b""
             msg_count = 0
 
-            while pos > 0 and msg_count < need * 3:
+            _lines_collected = 0
+            while pos > 0 and _lines_collected < need:
                 chunk_size = min(_CHUNK, pos)
                 pos -= chunk_size
                 f.seek(pos)
@@ -710,12 +711,10 @@ class ConversationStore:
                 remainder = b""
 
                 parts = chunk.split(b"\n")
-                # First part may be incomplete (mid-line) — save as remainder
                 if pos > 0:
                     remainder = parts[0]
                     parts = parts[1:]
 
-                # Process lines in reverse (they came from the tail)
                 for raw in reversed(parts):
                     raw = raw.strip()
                     if not raw:
@@ -729,8 +728,9 @@ class ConversationStore:
                         msg_count += 1
                     if t in ("msg", "msg_patch"):
                         raw_lines.append(line)
+                        _lines_collected += 1
 
-                if msg_count >= need * 2:
+                if _lines_collected >= need:
                     break
 
             # If we still have a remainder from the very start of file

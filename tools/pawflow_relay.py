@@ -1388,6 +1388,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
             }}
 
+        # Local screen actions: if in Docker, forward to host helper
+        if action in ("start_local_desktop", "stop_local_desktop", "local_screen_check"):
+            host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+            if host_helper:
+                return _forward_to_host_helper(host_helper, msg, ws_sock_ref[0], _ws_frame_send)
+
         if action == "start_local_desktop":
             # Idempotent
             if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:

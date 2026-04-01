@@ -73,18 +73,24 @@ def _type(req):
     if sys.platform == "win32":
         # Use Win32 clipboard API + Ctrl+V — reliable across sessions
         import ctypes
-        import ctypes.wintypes
         CF_UNICODETEXT = 13
+        GMEM_MOVEABLE = 0x0002
         u32 = ctypes.windll.user32
         k32 = ctypes.windll.kernel32
+        k32.GlobalAlloc.restype = ctypes.c_void_p
+        k32.GlobalLock.restype = ctypes.c_void_p
+        k32.GlobalLock.argtypes = [ctypes.c_void_p]
+        k32.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        u32.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+        data = text.encode("utf-16-le") + b"\x00\x00"
         if u32.OpenClipboard(0):
             u32.EmptyClipboard()
-            data = text.encode("utf-16-le") + b"\x00\x00"
-            h = k32.GlobalAlloc(0x0042, len(data))
-            p = k32.GlobalLock(h)
-            ctypes.memmove(p, data, len(data))
-            k32.GlobalUnlock(h)
-            u32.SetClipboardData(CF_UNICODETEXT, h)
+            h = k32.GlobalAlloc(GMEM_MOVEABLE, len(data))
+            if h:
+                p = k32.GlobalLock(h)
+                ctypes.memmove(p, data, len(data))
+                k32.GlobalUnlock(h)
+                u32.SetClipboardData(CF_UNICODETEXT, h)
             u32.CloseClipboard()
         pag.hotkey("ctrl", "v")
     else:

@@ -59,8 +59,10 @@ async function ctxEditMessage(index) {
 
 let _ctxDirty = false;
 function _ctxMutate(body, successMsg) {
+  const _action = body.action;
+  const _params = Object.fromEntries(Object.entries(body).filter(([k]) => k !== 'action'));
   return new Promise(resolve => {
-    action$(body.action, {...body, action: undefined}).subscribe(data => {
+    action$(_action, _params).subscribe(data => {
       if (data.error) { addMsg('error', data.error); resolve(false); return; }
       if (successMsg) addMsg('system', typeof successMsg === 'function' ? successMsg(data) : successMsg);
       _ctxFullData = null;

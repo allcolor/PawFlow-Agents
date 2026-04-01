@@ -460,23 +460,37 @@ class RelayThread:
                 return {"error": "websockify not installed. Install with: pip install websockify"}
 
         if _platform == "win32":
-            # Windows: use TightVNC
-            winvnc = None
-            for candidate in [
-                r"C:\Program Files\TightVNC\tvnserver.exe",
-                r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
-                r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
-            ]:
-                if os.path.exists(candidate):
-                    winvnc = candidate
+            # Windows: check if VNC server already running on 5900
+            _existing = False
+            for _tp in [5900, 5901]:
+                try:
+                    _ts = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    _ts.settimeout(1)
+                    _ts.connect(("localhost", _tp))
+                    _ts.close()
+                    vnc_port = _tp
+                    _existing = True
+                    sys.stderr.write(f"[Relay] Found existing VNC server on port {_tp}\n")
                     break
-            if not winvnc:
-                winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
-            if not winvnc:
-                return {"error": "No VNC server found. Install TightVNC or UltraVNC."}
-            p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],
-                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
-            procs.append(p_vnc)
+                except Exception:
+                    pass
+            if not _existing:
+                winvnc = None
+                for candidate in [
+                    r"C:\Program Files\TightVNC\tvnserver.exe",
+                    r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
+                    r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
+                ]:
+                    if os.path.exists(candidate):
+                        winvnc = candidate
+                        break
+                if not winvnc:
+                    winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
+                if not winvnc:
+                    return {"error": "No VNC server found. Install TightVNC or UltraVNC."}
+                p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],
+                                  stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+                procs.append(p_vnc)
 
         elif _platform == "linux":
             display = os.environ.get("DISPLAY", ":0")

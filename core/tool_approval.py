@@ -75,6 +75,46 @@ class ToolApprovalGate:
 
     _SEE_SCREEN_PATHS = frozenset({"screen", "screenshot"})
 
+    # ── Dangerous bash/exec patterns (like Claude Code) ──────────────
+    # Even if bash has session_allow, these patterns force re-approval.
+    _DANGEROUS_BASH_PATTERNS = frozenset({
+        # Interpreters — can run arbitrary code
+        "python", "python3", "python2", "node", "deno", "bun", "tsx",
+        "ruby", "perl", "php", "lua",
+        # Package runners — can execute arbitrary packages
+        "npx", "bunx", "npm run", "yarn run", "pnpm run", "bun run",
+        "pip install", "pip3 install",
+        # Shells / eval — can execute arbitrary commands
+        "bash", "sh", "zsh", "fish", "eval", "exec", "source",
+        # Privilege escalation / remote
+        "sudo", "su ", "ssh", "scp", "rsync",
+        # Dangerous file ops
+        "rm -rf", "rm -r", "rmdir", "mkfs", "dd if=", "chmod 777",
+        "> /dev/", "curl | sh", "wget | sh", "curl | bash", "wget | bash",
+        # Network / download (can exfiltrate data)
+        "curl", "wget", "nc ", "netcat",
+        # Git destructive
+        "git push --force", "git push -f", "git reset --hard",
+        "git clean -f", "git checkout -- .",
+        # Docker escape
+        "docker run", "docker exec",
+        # PowerShell
+        "powershell", "pwsh", "cmd /c", "wsl",
+    })
+
+    # ── Protected paths — always ask for write/delete ────────────────
+    _PROTECTED_PATHS = frozenset({
+        ".git/", ".git\\",
+        ".env", ".env.",
+        ".claude/", ".claude\\",
+        ".vscode/", ".vscode\\",
+        "secrets", ".credentials",
+        "id_rsa", "id_ed25519", ".ssh/",
+        ".npmrc", ".pypirc",
+        "docker-compose", "Dockerfile",
+        ".github/workflows",
+    })
+
     # ── State ─────────────────────────────────────────────────────────
 
     _lock = threading.Lock()
@@ -136,20 +176,50 @@ class ToolApprovalGate:
         if is_exempt:
             return "approved"
 
+        # ── Dangerous bash content check ─────────────────────────────
+        # Even with session_allow, dangerous patterns force re-approval.
+        _force_ask = False
+        if tool_name in ("bash", "execute_script") and arguments:
+            _cmd = arguments.get("command", "") or arguments.get("code", "")
+            if cls._is_dangerous_command(_cmd):
+                _force_ask = True
+                is_always_ask = True
+                effective_name = f"{tool_name}:dangerous"
+
+        # ── Protected path check ─────────────────────────────────────
+        # Write/delete to protected paths always ask, even with session_allow.
+        if tool_name in ("write", "edit", "delete", "batch_edit", "apply_patch",
+                         "find_replace") and arguments:
+            _path = arguments.get("path", "") or arguments.get("file_path", "")
+            if cls._is_protected_path(_path):
+                _force_ask = True
+                is_always_ask = True
+                effective_name = f"{tool_name}:protected"
+        if tool_name == "filesystem" and arguments:
+            _fs_action = arguments.get("action", "")
+            if _fs_action in ("write_file", "edit", "delete_file", "find_replace",
+                              "batch_edit", "apply_patch"):
+                _path = arguments.get("path", "")
+                if cls._is_protected_path(_path):
+                    _force_ask = True
+                    is_always_ask = True
+                    effective_name = f"filesystem.{_fs_action}:protected"
+
         # Check conversation+agent scoped permissions
         perms = cls._get_permissions(conversation_id, agent_name)
         # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:screen)
-        if tool_name == "filesystem" and arguments:
-            svc_name = arguments.get("service", "")
-            if svc_name and perms.get(f"_allow_all:filesystem.{svc_name}") == "always_allow":
+        if not _force_ask:
+            if tool_name == "filesystem" and arguments:
+                svc_name = arguments.get("service", "")
+                if svc_name and perms.get(f"_allow_all:filesystem.{svc_name}") == "always_allow":
+                    return "approved"
+                if perms.get("_allow_all:filesystem") == "always_allow":
+                    return "approved"
+            if perms.get(f"_allow_all:{tool_name}") == "always_allow":
                 return "approved"
-            if perms.get("_allow_all:filesystem") == "always_allow":
+            tool_perm = perms.get(effective_name, "") or perms.get(tool_name, "")
+            if tool_perm in ("always_allow", "session_allow"):
                 return "approved"
-        if perms.get(f"_allow_all:{tool_name}") == "always_allow":
-            return "approved"
-        tool_perm = perms.get(effective_name, "") or perms.get(tool_name, "")
-        if tool_perm in ("always_allow", "session_allow"):
-            return "approved"
 
         if not needs_ask:
             return "approved"
@@ -314,3 +384,59 @@ class ToolApprovalGate:
             else:
                 result[k] = v
         return result
+
+    @classmethod
+    def _is_dangerous_command(cls, command: str) -> bool:
+        """Check if a bash command contains dangerous patterns.
+
+        Returns True if the command matches any pattern from Claude Code's
+        dangerous command list (~90 patterns).
+        """
+        if not command:
+            return False
+        cmd_lower = command.lower().strip()
+        # Check each pattern
+        for pattern in cls._DANGEROUS_BASH_PATTERNS:
+            if pattern in cmd_lower:
+                return True
+        # Pipe to shell (download + execute)
+        if "|" in cmd_lower and any(sh in cmd_lower for sh in ("sh", "bash", "python", "node")):
+            return True
+        return False
+
+    @classmethod
+    def _is_catastrophic_command(cls, command: str) -> bool:
+        """Check if a command is catastrophic (blocked even in auto mode).
+
+        These commands are so dangerous they should NEVER run without
+        explicit user confirmation, regardless of permission mode.
+        """
+        if not command:
+            return False
+        cmd = command.strip()
+        _catastrophic = [
+            "rm -rf /", "rm -rf /*", "rm -rf ~",
+            "dd if=/dev/zero of=/dev/sd", "mkfs.",
+            ":(){:|:&};:", "chmod -R 777 /",
+            "mv / ", "mv /* ",
+            "> /dev/sda",
+            "del /f /s /q c:\\",
+        ]
+        for pat in _catastrophic:
+            if pat in cmd.lower():
+                return True
+        return False
+
+    @classmethod
+    def _is_protected_path(cls, path: str) -> bool:
+        """Check if a file path is protected (sensitive config/secrets).
+
+        Protected paths always require approval even with session_allow.
+        """
+        if not path:
+            return False
+        path_lower = path.lower().replace("\\", "/")
+        for protected in cls._PROTECTED_PATHS:
+            if protected.lower() in path_lower:
+                return True
+        return False

@@ -531,7 +531,18 @@ class ToolRelayService(BaseService):
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
             elif _perm_mode == "auto":
-                pass  # auto-approve everything
+                # Auto mode: approve everything EXCEPT catastrophic commands
+                from core.tool_approval import ToolApprovalGate
+                if tool_name in ("bash", "execute_script") and isinstance(arguments, dict):
+                    _cmd = arguments.get("command", "") or arguments.get("code", "")
+                    if ToolApprovalGate._is_catastrophic_command(_cmd):
+                        _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
+                        action_summary = f"{tool_name}({_cmd[:100]})"
+                        approval = ToolApprovalGate.check(
+                            tool_name, action_summary, _perm_cid, user_id, arguments)
+                        if approval != "approved":
+                            return {"type": "result", "request_id": request_id,
+                                    "data": f"Error: Catastrophic command blocked: {_cmd[:100]}"}
             elif _perm_mode == "read_only":
                 _write_tools = {"write", "edit", "batch_edit", "apply_patch", "find_replace",
                                 "delete", "mkdir", "bash", "notebook_edit", "execute_script"}

@@ -258,6 +258,13 @@ def cmd_gui(args):
     logger = logging.getLogger("pawflow")
 
     # 1. Register tasks and restore flows in the main process
+    # Cleanup orphan Docker containers from previous server run
+    from core.docker_utils import get_server_id, kill_containers
+    _srv_id = get_server_id()
+    _killed = kill_containers(_srv_id)
+    if _killed:
+        logger.info("Cleaned up %d orphan Docker container(s) from previous run", _killed)
+
     logger.info("Registering tasks...")
     from tasks import register_all_tasks
     register_all_tasks()

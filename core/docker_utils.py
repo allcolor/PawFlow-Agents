@@ -248,3 +248,79 @@ def docker_rm(container: str, force: bool = True, **kwargs) -> subprocess.Comple
         cmd.append("-f")
     cmd.append(container)
     return subprocess.run(cmd, capture_output=True, timeout=10, **kwargs)
+
+
+# ── Server/Relay identity for container naming ────────────────────
+
+_server_id_cache = None
+
+
+def get_server_id() -> str:
+    """Get persistent server ID (generated once, stored in data/server_id)."""
+    global _server_id_cache
+    if _server_id_cache:
+        return _server_id_cache
+    import hashlib, uuid
+    from pathlib import Path
+    path = Path("data/server_id")
+    if path.exists():
+        _server_id_cache = path.read_text().strip()
+    else:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _server_id_cache = hashlib.sha256(uuid.uuid4().bytes).hexdigest()[:12]
+        path.write_text(_server_id_cache)
+    return _server_id_cache
+
+
+def make_container_name(owner_id: str, purpose: str) -> str:
+    """Generate a Docker container name with owner prefix.
+
+    owner_id: server_id (for server containers) or relay_id (for client containers)
+    purpose:  'cc' (claude code), 'relay', 'child', etc.
+
+    Format: pf-{owner_id[:12]}-{purpose}-{uuid[:8]}
+    """
+    import uuid as _uuid
+    safe_owner = owner_id[:12].replace(".", "-").replace("_", "-")
+    return f"pf-{safe_owner}-{purpose}-{_uuid.uuid4().hex[:8]}"
+
+
+def list_containers(owner_id: str = "") -> list:
+    """List Docker containers matching owner prefix.
+
+    Returns list of {"id": str, "name": str, "status": str, "image": str}.
+    If owner_id is empty, lists ALL pf-* containers.
+    """
+    prefix = f"pf-{owner_id[:12].replace('.', '-').replace('_', '-')}" if owner_id else "pf-"
+    try:
+        result = subprocess.run(
+            docker_cmd() + ["ps", "-a", "--filter", f"name={prefix}",
+                            "--format", "{{.ID}}\t{{.Names}}\t{{.Status}}\t{{.Image}}"],
+            capture_output=True, text=True, timeout=10)
+        containers = []
+        for line in result.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                containers.append({
+                    "id": parts[0], "name": parts[1],
+                    "status": parts[2], "image": parts[3],
+                })
+        return containers
+    except Exception:
+        return []
+
+
+def kill_containers(owner_id: str) -> int:
+    """Kill all Docker containers matching owner prefix. Returns count killed."""
+    containers = list_containers(owner_id)
+    killed = 0
+    for c in containers:
+        try:
+            subprocess.run(docker_cmd() + ["rm", "-f", c["id"]],
+                           capture_output=True, timeout=10)
+            killed += 1
+        except Exception:
+            pass
+    return killed

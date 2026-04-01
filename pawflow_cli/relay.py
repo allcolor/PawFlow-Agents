@@ -186,7 +186,7 @@ class RelayThread:
         self._kill_docker()
 
     def _kill_docker(self):
-        """Kill this relay's Docker container if running."""
+        """Kill this relay's Docker containers (current + orphans)."""
         if self._docker_container:
             import subprocess as _sp
             try:
@@ -206,6 +206,14 @@ class RelayThread:
             except Exception:
                 pass
             self._docker_proc = None
+        # Kill orphans from this specific relay
+        try:
+            from core.docker_utils import kill_containers
+            _killed = kill_containers(self.relay_id)
+            if _killed:
+                sys.stderr.write(f"[Relay] Cleaned {_killed} orphan container(s)\n")
+        except Exception:
+            pass
 
     def _run_relay(self):
         """Run the WS relay connection loop (stderr suppressed)."""
@@ -226,8 +234,8 @@ class RelayThread:
             self._host_helper_thread.start()
 
             import subprocess as _sp
-            import uuid as _uuid
-            self._docker_container = f"pawflow-relay-{_uuid.uuid4().hex[:8]}"
+            from core.docker_utils import make_container_name
+            self._docker_container = make_container_name(self.relay_id, "relay")
             ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
             self._desktop_host_port = find_free_port()
             docker_cmd = _docker_cmd() + [

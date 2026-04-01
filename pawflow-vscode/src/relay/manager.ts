@@ -113,7 +113,8 @@ export class RelayManager implements vscode.Disposable {
   }
 
   private async _startDockerRelay(): Promise<void> {
-    const containerName = `pawflow-vscode-relay-${crypto.randomBytes(4).toString('hex')}`;
+    const safeId = this.relayId.slice(0, 12).replace(/[._]/g, '-');
+    const containerName = `pf-${safeId}-relay-${crypto.randomBytes(4).toString('hex')}`;
     this.dockerContainer = containerName;
 
     // The container runs the Python relay which connects back to our WS listener
@@ -154,6 +155,18 @@ export class RelayManager implements vscode.Disposable {
         this.outputChannel.appendLine(`[Relay] Killed container: ${this.dockerContainer}`);
       } catch {}
       this.dockerContainer = '';
+    }
+    // Kill orphans from this specific relay
+    if (this.relayId) {
+      const prefix = `pf-${this.relayId.slice(0, 12).replace(/[._]/g, '-')}`;
+      try {
+        const orphans = cp.execSync(`docker ps -a --filter "name=${prefix}" --format "{{.ID}}"`,
+                                     { encoding: 'utf-8', timeout: 10000 }).trim();
+        for (const cid of orphans.split('\n').filter(s => s.trim())) {
+          try { cp.execSync(`docker rm -f ${cid}`, { timeout: 10000 }); } catch {}
+          this.outputChannel.appendLine(`[Relay] Cleaned orphan: ${cid}`);
+        }
+      } catch {}
     }
   }
 

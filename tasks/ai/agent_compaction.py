@@ -77,8 +77,6 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
     # Max chars kept per tool result after compaction truncation
     _TOOL_TRUNC_LIMIT = 800
 
-    @staticmethod
-    @staticmethod
     def _microcompact_time_based(self, messages: List[LLMMessage],
                                   keep_recent: int = 5,
                                   gap_minutes: int = 60) -> int:

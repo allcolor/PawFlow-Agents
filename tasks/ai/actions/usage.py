@@ -98,11 +98,18 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
         active = []
         with self._active_contexts_lock:
             import time as _time
+            import re as _re_active
             for _k, ctx in self._active_contexts.items():
                 if _k == conv_id or _k.startswith(conv_id + ":"):
                     _started = ctx.get("_started_at", 0)
+                    # Extract task_id from key pattern conv::task::t_xxx:agent
+                    _task_id = ""
+                    _tm = _re_active.search(r'::task::(t_\w+)', _k)
+                    if _tm:
+                        _task_id = _tm.group(1)
                     active.append({
                         "agent_name": ctx.get("active_agent_name", ""),
+                        "task_id": _task_id,
                         "iteration": ctx.get("_iteration", 0),
                         "round": ctx.get("_round", 0),
                         "max_rounds": ctx.get("max_rounds", 0),

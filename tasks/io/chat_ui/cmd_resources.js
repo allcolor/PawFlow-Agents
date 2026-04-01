@@ -48,35 +48,39 @@ function cmdTask(text, parts) {
     const taskAgent = stripTarget(qargs[2] || '');
     const taskArg = qargs[3] || '';
     if (!taskAgent || !taskArg) {
-      addMsg('system', 'Usage: /task assign @<agent> <taskname> [--interval N]\n       /task assign @<agent> "<inline description>" [--criteria "..."] [--interval N]');
+      addMsg('system', 'Usage: /task assign @<agent> <task_def_name> [--interval N] [--max N] [--verifier @agent] [--var key=val]');
       return true;
     }
-    let interval = null, maxIter = 50, verifier = '', criteria = '';
+    let interval = null, maxIter = 0, verifier = '';
+    let maxBudget = '', maxTurnTime = '', maxTotalTime = '', maxReschedules = 0, autoAllow = false;
     const variables = {};
     for (let i = 4; i < qargs.length; i++) {
       if (qargs[i] === '--interval' && qargs[i+1]) { interval = qargs[++i]; }
-      else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 50; }
+      else if (qargs[i] === '--max' && qargs[i+1]) { maxIter = parseInt(qargs[++i]) || 0; }
       else if (qargs[i] === '--verifier' && qargs[i+1]) { verifier = stripTarget(qargs[++i]); }
-      else if (qargs[i] === '--criteria' && qargs[i+1]) { criteria = qargs[++i]; }
+      else if (qargs[i] === '--budget' && qargs[i+1]) { maxBudget = qargs[++i]; }
+      else if (qargs[i] === '--turn-time' && qargs[i+1]) { maxTurnTime = qargs[++i]; }
+      else if (qargs[i] === '--total-time' && qargs[i+1]) { maxTotalTime = qargs[++i]; }
+      else if (qargs[i] === '--max-reschedules' && qargs[i+1]) { maxReschedules = parseInt(qargs[++i]) || 0; }
+      else if (qargs[i] === '--auto-allow') { autoAllow = true; }
       else if (qargs[i] === '--var' && qargs[i+1]) {
         const kv = qargs[++i];
         const eq = kv.indexOf('=');
         if (eq > 0) variables[kv.substring(0, eq)] = kv.substring(eq + 1);
       }
     }
-    const isLibrary = !taskArg.includes(' ') && !criteria;
     const body = {
       action: 'assign_task', conversation_id: conversationId,
       agent_name: taskAgent, max_iterations: maxIter, verifier,
+      task_def_name: taskArg,
       ...(interval != null ? { interval } : {}),
       ...(Object.keys(variables).length ? { variables } : {}),
+      ...(maxBudget ? { max_budget: maxBudget } : {}),
+      ...(maxTurnTime ? { max_turn_time: maxTurnTime } : {}),
+      ...(maxTotalTime ? { max_total_time: maxTotalTime } : {}),
+      ...(maxReschedules ? { max_reschedules: maxReschedules } : {}),
+      ...(autoAllow ? { auto_allow: true } : {}),
     };
-    if (isLibrary) {
-      body.task_def_name = taskArg;
-    } else {
-      body.task = taskArg;
-      body.completion_criteria = criteria;
-    }
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
       body: JSON.stringify(body),
@@ -86,15 +90,17 @@ function cmdTask(text, parts) {
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'delete' || sub === 'del') {
     const taskName = parts[2] || '';
-    if (!taskName) { addMsg('system', 'Usage: /task delete <taskname>'); return true; }
+    if (!taskName) { addMsg('system', 'Usage: /task delete <task_def_name|task_id>'); return true; }
+    const isTaskInstance = taskName.startsWith('t_');
+    const body = isTaskInstance
+      ? { action: 'delete_task', conversation_id: conversationId, task_id: taskName }
+      : { action: 'delete_task_def', name: taskName };
     fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({
-        action: 'delete_task_def',
-        name: taskName,
-      }),
+      body: JSON.stringify(body),
     }).then(r => r.json()).then(data => {
       if (data.error) addMsg('error', data.error);
+      else if (isTaskInstance) addMsg('system', `Task instance '${taskName}' deleted.`);
       else addMsg('system', `Task definition '${taskName}' deleted.`);
     }).catch(e => addMsg('error', e.message));
   } else if (sub === 'status' || sub === 'list') {
@@ -114,18 +120,27 @@ function cmdTask(text, parts) {
           lines.push('\u2022 `' + d.name + '` — ' + (d.description || d.prompt.substring(0, 60)) + ' [' + (d.default_interval || '6/1m') + ']');
         }
       }
-      if (tasks.length) {
+      const formatTask = (t) => {
+        let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
+        const ivLabel = typeof t.interval === 'object' ? (t.interval.spec || t.interval.min + '-' + t.interval.max + 's') : t.interval + 's';
+        const iterLabel = t.max_iterations > 0 ? (t.iterations + '/' + t.max_iterations) : ('' + t.iterations);
+        line += ' [' + t.status + ', iter ' + iterLabel + ', ' + ivLabel + ']';
+        if (t.task_def_name) line += ' (def: ' + t.task_def_name + ')';
+        if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
+        if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
+        const limits = [];
+        if (t.max_budget) limits.push('budget: $' + t.max_budget + ' (used: $' + (t.total_cost || 0).toFixed(4) + ')');
+        if (t.timeout) limits.push('turn: ' + t.timeout + 's');
+        if (t.max_total_time) limits.push('total: ' + t.max_total_time + 's');
+        if (t.max_reschedules) limits.push('reschedules: ' + (t.reschedule_count || 0) + '/' + t.max_reschedules);
+        if (limits.length) line += '\n  Limits: ' + limits.join(', ');
+        return line;
+      };
+      const activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'paused');
+      if (activeTasks.length) {
         if (lines.length) lines.push('');
         lines.push('**Running:**');
-        for (const t of tasks) {
-          let line = '\u2022 `' + (t.task_id || '?') + '` ' + t.agent + ': ' + t.task.substring(0, 80);
-          const ivLabel = typeof t.interval === 'object' ? (t.interval.spec || t.interval.min + '-' + t.interval.max + 's') : t.interval + 's';
-          line += ' [' + t.status + ', iter ' + t.iterations + '/' + t.max_iterations + ', ' + ivLabel + ']';
-          if (t.task_def_name) line += ' (def: ' + t.task_def_name + ')';
-          if (t.verifier) line += ' (verifier: ' + t.verifier + ')';
-          if (t.last_result) line += '\n  Last: ' + t.last_result.substring(0, 100);
-          lines.push(line);
-        }
+        for (const t of activeTasks) lines.push(formatTask(t));
       }
       if (!lines.length) addMsg('system', 'No task definitions or running tasks.');
       else addMsg('system', lines.join('\n'));
@@ -145,8 +160,31 @@ function cmdTask(text, parts) {
       if (data.error) { addMsg('error', data.error); }
       else { addMsg('system', 'Task ' + sub + 'd for ' + taskAgent + '.'); }
     }).catch(e => addMsg('error', e.message));
+  } else if (sub === 'edit' || sub === 'set') {
+    const taskId = parts[2] || '';
+    if (!taskId || !taskId.startsWith('t_')) {
+      addMsg('system', 'Usage: /task edit <task_id> [--budget $X] [--turn-time Xm] [--total-time Xh] [--max-reschedules N] [--max N] [--interval X]');
+      return true;
+    }
+    const eqargs = parseQuotedArgs(text);
+    const editBody = { action: 'edit_task', conversation_id: conversationId, task_id: taskId };
+    for (let i = 3; i < eqargs.length; i++) {
+      if (eqargs[i] === '--budget' && eqargs[i+1]) { editBody.max_budget = eqargs[++i]; }
+      else if (eqargs[i] === '--turn-time' && eqargs[i+1]) { editBody.max_turn_time = eqargs[++i]; }
+      else if (eqargs[i] === '--total-time' && eqargs[i+1]) { editBody.max_total_time = eqargs[++i]; }
+      else if (eqargs[i] === '--max-reschedules' && eqargs[i+1]) { editBody.max_reschedules = parseInt(eqargs[++i]) || 0; }
+      else if (eqargs[i] === '--max' && eqargs[i+1]) { editBody.max_iterations = parseInt(eqargs[++i]) || 0; }
+      else if (eqargs[i] === '--interval' && eqargs[i+1]) { editBody.interval = eqargs[++i]; }
+    }
+    fetch(API, {
+      method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify(editBody),
+    }).then(r => r.json()).then(data => {
+      if (data.error) { addMsg('error', data.error); }
+      else { addMsg('system', 'Task updated: ' + (data.changed || []).join(', ')); }
+    }).catch(e => addMsg('error', e.message));
   } else {
-    addMsg('system', 'Usage: /task create | assign | list | delete | pause | resume | cancel');
+    addMsg('system', 'Usage: /task create | assign | list | edit | delete | pause | resume | cancel');
   }
   return true;
 }

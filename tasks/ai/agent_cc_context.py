@@ -100,6 +100,7 @@ class AgentCCContextMixin:
             role="assistant",
             content="Understood. I'll read the conversation history file to get full context, "
                     "then continue from the recent messages.",
+            source={"type": "context"},
         ))
         result.extend(recent_messages)
         return result

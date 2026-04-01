@@ -944,7 +944,8 @@ class AgentCoreMixin:
                         agent_svc=ctx.get("active_llm_service", ""),
                         conversation_id=conversation_id, user_id=user_id,
                         is_claude_code=_is_claude_code,
-                        cancel_check=emitter.check_cancelled)
+                        cancel_check=emitter.check_cancelled,
+                        event_cid=ctx.get("_event_cid", ""))
 
                     for tc, result_text in results:
                         tools_called.append(tc.name)

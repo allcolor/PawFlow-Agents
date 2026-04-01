@@ -13,7 +13,10 @@
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
        background: #1a1a2e; color: #e0e0e0; height: 100vh; display: flex; overflow: hidden; }
 .sidebar { width: 260px; background: #0f1629; border-right: 1px solid #0f3460;
-           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden; }
+           display: flex; flex-direction: column; height: 100vh; flex-shrink: 0; overflow: hidden;
+           transition: width 0.2s, min-width 0.2s; }
+.sidebar.collapsed { width: 0; min-width: 0; border-right: none; overflow: hidden; }
+.sidebar.collapsed > * { display: none; }
 .sidebar-header { padding: 12px 14px; border-bottom: 1px solid #0f3460;
                    display: flex; align-items: center; justify-content: space-between; }
 .sidebar-header h2 { font-size: 14px; color: #8888aa; font-weight: 600; }
@@ -44,14 +47,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .sidebar-settings select { width: 100%; background: #1a1a2e; color: #c0c0d0; border: 1px solid #0f3460;
                             border-radius: 4px; padding: 4px 6px; font-size: 12px; cursor: pointer; }
 .sidebar-settings select:focus { outline: none; border-color: #e94560; }
-.sidebar-toggle { display: none; position: fixed; top: 12px; left: 12px; z-index: 100;
+.sidebar-toggle { display: block; position: fixed; top: 12px; left: 12px; z-index: 100;
                    background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;
-                   border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px; }
-@media (max-width: 700px) {
-  .sidebar { position: fixed; left: -270px; z-index: 99; transition: left 0.2s; }
-  .sidebar.open { left: 0; }
-  .sidebar-toggle { display: block; }
-}
+                   border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px;
+                   transition: left 0.2s; }
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
 .header { background: #16213e; padding: 12px 20px; border-bottom: 1px solid #0f3460;
            display: flex; align-items: center; gap: 12px; }
@@ -252,7 +251,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .exec-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7);
                  z-index: 1000; display: flex; align-items: center; justify-content: center; }
 .exec-dialog { background: #1a1a2e; border: 1px solid #333; border-radius: 12px; padding: 24px;
-                max-width: 600px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+                max-width: 720px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
 .exec-dialog h3 { margin: 0 0 16px 0; color: #e0e0e0; font-size: 16px; }
 .exec-risk { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
               font-weight: 600; margin-left: 8px; }
@@ -266,6 +265,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
                       color: #c9d1d9; font-family: inherit; font-size: inherit; resize: vertical;
                       border-radius: 4px; padding: 8px; }
 .exec-cwd { color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+.tool-arg { margin-bottom: 6px; }
+.tool-arg-key { color: #f4a261; font-weight: 600; }
+.tool-arg-val { margin: 2px 0 0 0; padding: 4px 8px; background: #161b22; border-radius: 4px;
+                white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow-y: auto; }
 .exec-btns { display: flex; gap: 12px; justify-content: flex-end; }
 .exec-btns button { padding: 8px 20px; border: none; border-radius: 6px; font-size: 14px;
                      cursor: pointer; font-weight: 600; }
@@ -273,6 +276,23 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-
 .exec-approve:hover { background: #2ea043; }
 .exec-deny { background: #da3633; color: white; }
 .exec-deny:hover { background: #e5534b; }
+/* Generic dialog (relay picker, desktop mode, etc.) */
+.dialog-bg { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7);
+             z-index: 1000; display: flex; align-items: center; justify-content: center; }
+.dialog { background: #1a1a2e; border: 1px solid #0f3460; border-radius: 12px; padding: 24px;
+          min-width: 320px; max-width: 420px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.5); }
+.dialog-title { font-size: 16px; font-weight: 600; color: #e0e0e0; margin: 0 0 16px 0; }
+.dialog-body { margin-bottom: 16px; }
+.dialog-body .btn { display: block; width: 100%; margin-bottom: 8px; text-align: left; padding: 10px 14px;
+                     background: #16213e; color: #c0c0d0; border: 1px solid #0f3460; border-radius: 8px;
+                     cursor: pointer; font-size: 13px; transition: background 0.15s, border-color 0.15s; }
+.dialog-body .btn:hover { background: #1a2744; border-color: #e94560; color: #fff; }
+.dialog-body .btn-primary { background: #0f3460; color: #e0e0e0; }
+.dialog-body .btn-primary:hover { background: #e94560; border-color: #e94560; color: #fff; }
+.dialog-actions { display: flex; justify-content: flex-end; }
+.dialog-actions .btn { width: auto; display: inline-block; padding: 6px 16px; background: none;
+                        color: #6c6c8a; border: 1px solid #333; margin-bottom: 0; }
+.dialog-actions .btn:hover { color: #e94560; border-color: #e94560; }
 /* Terminal output in chat */
 .terminal-output { background: #0d1117; border: 1px solid #30363d; border-radius: 8px;
                     padding: 12px; margin: 8px 0; font-family: 'Consolas', 'Monaco', monospace;
@@ -381,7 +401,7 @@ if (typeof hljs !== 'undefined') {
 </head>
 <body>
 <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">&#9776;</button>
-<div class="sidebar" id="sidebar">
+<div class="sidebar collapsed" id="sidebar">
   <div class="sidebar-header">
     <h2>Conversations</h2>
     <button class="btn-new" onclick="newChat()">+ New</button>

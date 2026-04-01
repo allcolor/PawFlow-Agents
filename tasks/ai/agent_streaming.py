@@ -387,6 +387,22 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _bg.pop_completed(conversation_id, t["tc_id"])
             except Exception:
                 pass
+            # Final safety net: check for in-memory queued messages right before exit
+            _agent_n2 = ctx.get("active_agent_name", "") or ""
+            _ak2 = f"{conversation_id}:{_agent_n2}" if _agent_n2 else conversation_id
+            _qk2 = f"_queued_msgs:{_ak2}"
+            with self._active_lock:
+                _has_queued2 = bool(self._pending_user_msgs.get(_qk2))
+            if _has_queued2:
+                try:
+                    from core.poll_scheduler import PollScheduler
+                    PollScheduler.instance().schedule_delay(
+                        conversation_id, 1,
+                        key=f"{conversation_id}::pending_msg",
+                        reason="[pending_message] final safety-net check",
+                        user_id=ctx.get("user_id", ""))
+                except Exception:
+                    pass
             self._decrement_active(conversation_id, ctx)
 
     def _streaming_agent_loop_inner(self, ctx: Dict, conversation_id: str, bus) -> None:
@@ -442,9 +458,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         finally:
             use_conv_store = ctx.get("use_conv_store", False)
 
-            # Check for pending user messages — but NOT if interrupted or fatal error
+            # Check for pending user messages — even after poll runs
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
-            if use_conv_store and conversation_id and not ctx.get("is_poll") and not _was_interrupted and not _had_error:
+            if use_conv_store and conversation_id and not _was_interrupted and not _had_error:
                 try:
                     # Flush writer — ensure all messages from this turn are on disk
                     from core.conversation_writer import ConversationWriter
@@ -475,6 +491,22 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                                 key=f"{conversation_id}::pending_msg",
                                 reason=f"[pending_message] {len(_pending)} user message(s)",
                                 user_id=ctx.get("user_id", ""))
+                except Exception:
+                    pass
+            # Also check in-memory pending queue (messages queued while agent was busy)
+            _agent_n = ctx.get("active_agent_name", "") or ""
+            _ak = f"{conversation_id}:{_agent_n}" if _agent_n else conversation_id
+            _qk = f"_queued_msgs:{_ak}"
+            with self._active_lock:
+                _has_queued = bool(self._pending_user_msgs.get(_qk))
+            if _has_queued and not _was_interrupted:
+                try:
+                    from core.poll_scheduler import PollScheduler
+                    PollScheduler.instance().schedule_delay(
+                        conversation_id, 1,
+                        key=f"{conversation_id}::pending_msg",
+                        reason="[pending_message] queued in-memory message(s)",
+                        user_id=ctx.get("user_id", ""))
                 except Exception:
                     pass
 
@@ -513,23 +545,35 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 try:
                     _store = ConversationStore.instance()
                     from core.poll_scheduler import PollScheduler as _PS2
-                    _all_tasks = _store.get_extra(conversation_id, "agent_tasks") or {}
+                    # agent_tasks are stored on the parent conv, not the sub-conv
+                    _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
+                    _all_tasks = _store.get_extra(_parent_cid, "agent_tasks") or {}
                     _ag_name = ctx.get("active_agent_name") or ""
                     _tasks_changed = False
+                    # Accumulate total_cost from CostTracker
+                    if "::task::" in conversation_id:
+                        try:
+                            from core.cost_tracker import CostTracker as _CT
+                            _task_sub_cost = _CT.instance().get_conversation_cost(conversation_id)
+                            _tid_cost = conversation_id.rsplit("::", 1)[-1]
+                            if _tid_cost in _all_tasks:
+                                _all_tasks[_tid_cost]["total_cost"] = _task_sub_cost.get("total", 0.0)
+                                _tasks_changed = True
+                        except Exception:
+                            pass
                     for _tid, _task in _all_tasks.items():
                         if not isinstance(_task, dict) or _task.get("agent") != _ag_name:
                             continue
                         if _task.get("status") != "active":
                             continue
                         _iters = _task.get("iterations_done", 0)
-                        _max = _task.get("max_iterations", 50)
-                        if _iters >= _max:
-                            _task["status"] = "failed"
-                            _task["last_result"] = f"Auto-failed: {_iters}/{_max} iterations"
-                            _all_tasks[_tid] = _task
+                        _max = _task.get("max_iterations", 0)
+                        if _max > 0 and _iters >= _max:
+                            # Remove instance — only task_def + log remain
+                            del _all_tasks[_tid]
                             _tasks_changed = True
-                            continue
-                        _key = f"{conversation_id}::task::{_tid}"
+                            break  # dict changed, exit loop
+                        _key = f"{_parent_cid}::task::{_tid}"
                         if _PS2.instance().get(_key):
                             continue
                         from core.tool_registry import AssignTaskHandler as _ATH
@@ -553,12 +597,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                                 _all_tasks[_tid] = _task
                                 _tasks_changed = True
                         _PS2.instance().schedule_delay(
-                            conversation_id, _delay,
+                            _parent_cid, _delay,
                             key=_key,
                             reason=f"[agent_task:{_tid}] auto-reschedule ({_task.get('agent', _ag_name)})",
                             user_id=ctx.get("user_id", ""))
                     if _tasks_changed:
-                        _store.set_extra(conversation_id, "agent_tasks", _all_tasks)
+                        _store.set_extra(_parent_cid, "agent_tasks", _all_tasks)
                 except Exception as e:
                     logger.warning(f"[agent] Failed to auto-reschedule tasks: {e}")
 

@@ -110,33 +110,36 @@ class SeeHandler(BaseFsHandler):
         return f"Error: unsupported file type '{ext}' for see. Use read() for text files."
 
     def _see_screen(self, arguments: Dict[str, Any]) -> str:
-        """Capture screen via the relay and return as multimodal image."""
+        """Capture screen and return as multimodal image.
+
+        local_screen=true  → relay (user's actual desktop)
+        local_screen=false → Docker virtual screen (local capture)
+        """
         local_screen = bool(arguments.get("local_screen", False))
         source = arguments.get("source", "")
 
-        # Find relay
-        from core.handlers._fs_base import find_fs_service
         if local_screen:
-            svc = self._find_local_screen_relay()
-        elif source:
-            svc = find_fs_service(self._user_id, source)
+            # Route to relay for user's desktop
+            from core.handlers._fs_base import find_fs_service
+            svc = find_fs_service(self._user_id, source) if source else (
+                self._fs_service or find_fs_service(self._user_id))
+            if not svc:
+                return "Error: no relay connected for local screen capture."
+            try:
+                result = svc._request("screen_screenshot", ".", local_screen=True)
+            except Exception as e:
+                return f"Error: screen capture failed: {e}"
         else:
-            svc = self._fs_service or find_fs_service(self._user_id)
-
-        if not svc:
-            if local_screen:
-                return "Error: no relay with local screen access found."
-            return "Error: no relay connected for screen capture."
-
-        try:
-            result = svc._request("screen_screenshot", ".")
-        except Exception as e:
-            return f"Error: screen capture failed: {e}"
+            # Local Docker capture
+            try:
+                from tools.fs_screen import action_screen_screenshot
+                result = action_screen_screenshot(".", ".", {})
+            except Exception as e:
+                return f"Error: local screen capture failed: {e}"
 
         if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"
 
-        # result is base64 PNG data
         if isinstance(result, str):
             try:
                 import base64
@@ -146,23 +149,6 @@ class SeeHandler(BaseFsHandler):
                 return f"Error: screen capture decode failed: {e}"
 
         return "Error: unexpected screen capture result"
-
-    def _find_local_screen_relay(self):
-        """Find any relay with allow_local_screen=true."""
-        try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            ureg = UserServiceRegistry.get_instance()
-            for sid, sdef in ureg.get_all_for_user(self._user_id).items():
-                if getattr(sdef, "service_type", "") != "relay" or not sdef.enabled:
-                    continue
-                svc = ureg.get_live_instance(self._user_id, sid)
-                if svc:
-                    info = getattr(svc, '_relay_info', {}) or {}
-                    if info.get("allow_local_screen"):
-                        return svc
-        except Exception:
-            pass
-        return None
 
     def _see_image(self, fname: str, data: bytes, ext: str) -> str:
         """Return image as multimodal marker."""

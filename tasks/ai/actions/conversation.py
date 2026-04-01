@@ -135,7 +135,8 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 LLMMessage(role="user",
                            content=f"[Conversation summary â€” earlier messages compacted]\n\n{summary}"),
                 LLMMessage(role="assistant",
-                           content="Understood. I have the context from our earlier conversation. Continuing from where we left off."),
+                           content="Understood. I have the context from our earlier conversation. Continuing from where we left off.",
+                           source={"type": "context"}),
             ]
             store.save_agent_context(conv_id, _rs_agent, self._serialize_messages(new_context))
             return {"summary_length": len(summary),

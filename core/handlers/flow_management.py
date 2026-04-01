@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import re
 import threading
 import uuid
@@ -447,7 +448,7 @@ class FlowManagerHandler(ToolHandler):
 
             # Load the template
             flow_path = inst.flow_path
-            if not flow_path or not Path(flow_path).exists():
+            if not flow_path or not os.path.exists(flow_path):
                 flow_path = dep_reg._find_flow_path(inst.flow_id)
             if not flow_path:
                 dep_reg.update_status(flow_id, "error", "Template file not found")

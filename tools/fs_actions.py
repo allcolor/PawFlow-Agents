@@ -447,6 +447,22 @@ def action_grep(root_dir: str, path: str, req: Dict[str, Any]) -> Any:
     compiled = re.compile(regex, re.IGNORECASE)
     p = Path(path)
     results = []
+    if p.is_file():
+        # Single file — search it directly
+        try:
+            text = p.read_text(encoding="utf-8", errors="replace")
+            for i, line in enumerate(text.splitlines(), 1):
+                if compiled.search(line):
+                    results.append({
+                        "path": p.name,
+                        "line_number": i,
+                        "line": line[:500],
+                    })
+                    if len(results) >= 200:
+                        return results
+        except Exception:
+            pass
+        return results
     glob_pattern = "**/*" if recursive else "*"
     for fpath in p.glob(glob_pattern):
         if not fpath.is_file():

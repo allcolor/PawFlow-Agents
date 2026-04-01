@@ -147,8 +147,13 @@ function doLogout() {
 }
 
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
+  const sb = document.getElementById('sidebar');
+  sb.classList.toggle('collapsed');
+  const btn = document.getElementById('sidebarToggle');
+  btn.style.left = sb.classList.contains('collapsed') ? '12px' : '268px';
 }
+
+
 
 function _doNewChat() {
   if (eventSource) { eventSource.close(); eventSource = null; }
@@ -173,20 +178,20 @@ function _doNewChat() {
   updatePermissionBadge();
   highlightConv(null);
   // Close sidebar on mobile
-  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('sidebar').classList.add('collapsed');
   document.getElementById('input').focus();
 }
 
 async function newChat() {
   // Show agent picker to pre-assign agents to the new conversation
   const agents = await _pickAgentsForNewConv();
+  if (!agents || agents.length === 0) return;  // cancelled
   _doNewChat();
-  // Always create the conversation server-side (even without agents)
   try {
     const resp = await fetch(API, {
       method: 'POST',
       headers: getAuthHeaders(),
-      body: JSON.stringify({action: 'create_conversation', agents: agents || []})
+      body: JSON.stringify({action: 'create_conversation', agents: agents})
     });
     const data = await resp.json();
     if (data.conversation_id) {
@@ -194,8 +199,10 @@ async function newChat() {
       connectSSE(conversationId);
       loadResources();
       loadPermissionMode();
-      loadConversations();  // Refresh sidebar to show new conversation
+      loadConversations();
       highlightConv(conversationId);
+    } else {
+      addMsg('error', data.error || 'Failed to create conversation');
     }
   } catch(e) { console.error('create_conversation failed', e); }
 }

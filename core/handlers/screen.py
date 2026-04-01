@@ -9,11 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 class ScreenHandler(ToolHandler):
-    """Control the user's desktop through the relay: screenshots, mouse, keyboard.
+    """Control the desktop: screenshots, mouse, keyboard.
 
-    Routes screen_* actions to a filesystem service relay.
-    Supports local_screen mode: actions execute on the user's PC
-    (requires a relay with --allow-local-screen).
+    Routes screen_* actions to a filesystem relay (user's PC) or
+    executes locally on the Docker virtual screen.
+
+    local_screen=true  → relay (user's actual desktop)
+    local_screen=false → Docker Xvfb virtual screen
     """
 
     _fs_service = None
@@ -32,7 +34,7 @@ class ScreenHandler(ToolHandler):
             "press keys, scroll. Useful for GUI testing, visual verification, "
             "or when you need to see what the user sees. "
             "Use local_screen=true to act on the user's own display "
-            "(requires relay with --allow-local-screen)."
+            "(routed through the relay to the user's PC)."
         )
 
     @property
@@ -59,7 +61,7 @@ class ScreenHandler(ToolHandler):
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
                 "amount": {"type": "integer", "description": "Scroll amount (positive=down, negative=up, default 3)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit to auto-select."},
-                "local_screen": {"type": "boolean", "description": "If true, execute on the user's local screen instead of Docker virtual screen. Requires relay with --allow-local-screen. Default false."},
+                "local_screen": {"type": "boolean", "description": "If true, execute on the user's local desktop (via relay). If false, use the Docker virtual screen. Default false."},
             },
             "required": ["action"],
         }
@@ -73,61 +75,16 @@ class ScreenHandler(ToolHandler):
     def set_base_url(self, base_url: str):
         self._base_url = base_url.rstrip("/")
 
-    def _find_relay(self, relay_name: str = "", local_screen: bool = False):
-        """Find a relay service, optionally filtering by local_screen capability.
-
-        Returns the service instance or None.
-        """
+    def _find_relay(self, relay_name: str = ""):
+        """Find any relay service. Returns the service instance or None."""
         from core.handlers._fs_base import find_fs_service
 
         if relay_name:
-            svc = find_fs_service(self._user_id, relay_name)
-            if svc and local_screen:
-                info = getattr(svc, '_relay_info', {}) or {}
-                if not info.get("allow_local_screen"):
-                    return None  # requested relay doesn't have local_screen
-            return svc
+            return find_fs_service(self._user_id, relay_name)
 
-        # Auto-select: if local_screen, find relay with that capability
-        if local_screen:
-            return self._find_local_screen_relay()
-
-        # Default: use injected service or first available
         if self._fs_service:
             return self._fs_service
         return find_fs_service(self._user_id)
-
-    def _find_local_screen_relay(self):
-        """Find any relay with allow_local_screen=true."""
-        try:
-            from gui.services.user_service_registry import UserServiceRegistry
-            ureg = UserServiceRegistry.get_instance()
-            for sid, sdef in ureg.get_all_for_user(self._user_id).items():
-                stype = getattr(sdef, "service_type", "")
-                if stype != "relay" or not sdef.enabled:
-                    continue
-                svc = ureg.get_live_instance(self._user_id, sid)
-                if svc:
-                    info = getattr(svc, '_relay_info', {}) or {}
-                    if info.get("allow_local_screen"):
-                        return svc
-        except Exception:
-            pass
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                stype = getattr(sdef, "service_type", "")
-                if stype != "relay" or not getattr(sdef, "enabled", True):
-                    continue
-                svc = greg.get_live_instance(sid)
-                if svc:
-                    info = getattr(svc, '_relay_info', {}) or {}
-                    if info.get("allow_local_screen"):
-                        return svc
-        except Exception:
-            pass
-        return None
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
@@ -137,18 +94,20 @@ class ScreenHandler(ToolHandler):
         relay_name = arguments.get("relay", "")
         local_screen = bool(arguments.get("local_screen", False))
 
-        svc = self._find_relay(relay_name, local_screen)
-        if not svc:
-            if local_screen:
-                return (
-                    "Error: no relay with local screen access found. "
-                    "Start a relay with --allow-local-screen to enable this."
-                )
-            return "Error: no relay connected. Connect a filesystem relay with exec permissions."
+        if local_screen:
+            # Route to relay — user's actual desktop
+            svc = self._find_relay(relay_name)
+            if not svc:
+                return "Error: no relay connected. Connect a filesystem relay to capture the user's screen."
+            return self._exec_via_relay(svc, action, arguments)
+        else:
+            # Execute locally on Docker virtual screen
+            return self._exec_local(action, arguments)
 
-        # Build relay request
+    def _exec_via_relay(self, svc, action: str, arguments: dict) -> str:
+        """Execute screen action via relay (user's desktop)."""
         req_args = {k: v for k, v in arguments.items()
-                    if k not in ("action", "relay", "local_screen")}
+                    if k not in ("action", "relay")}
         try:
             result = svc._request(f"screen_{action}", ".", **req_args)
         except Exception as e:
@@ -161,13 +120,49 @@ class ScreenHandler(ToolHandler):
                 )
             return f"Error: screen action failed: {e}"
 
-        # _request() unwraps the relay response — result IS the data directly
         if isinstance(result, dict) and not result.get("ok", True):
             return f"Error: {result.get('error', 'unknown error')}"
 
-        data = result
+        return self._handle_result(action, result)
 
-        # Screenshot: store image in FileStore and return URL
+    def _exec_local(self, action: str, arguments: dict) -> str:
+        """Execute screen action locally on Docker virtual screen."""
+        try:
+            from tools.fs_screen import (
+                action_screen_screenshot, action_screen_click,
+                action_screen_double_click, action_screen_type,
+                action_screen_key, action_screen_move,
+                action_screen_scroll, action_screen_mouse_position,
+            )
+        except ImportError:
+            return "Error: screen automation not available in this environment (missing fs_screen)."
+
+        req = {k: v for k, v in arguments.items()
+               if k not in ("action", "relay", "local_screen")}
+
+        _actions = {
+            "screenshot": action_screen_screenshot,
+            "click": action_screen_click,
+            "double_click": action_screen_double_click,
+            "type": action_screen_type,
+            "key": action_screen_key,
+            "move": action_screen_move,
+            "scroll": action_screen_scroll,
+            "mouse_position": action_screen_mouse_position,
+        }
+        fn = _actions.get(action)
+        if not fn:
+            return f"Error: unknown screen action '{action}'"
+
+        try:
+            result = fn(".", ".", req)
+        except Exception as e:
+            return f"Error: screen action failed: {e}"
+
+        return self._handle_result(action, result)
+
+    def _handle_result(self, action: str, data) -> str:
+        """Process screen action result — store screenshots, format responses."""
         if action == "screenshot" and isinstance(data, str):
             try:
                 import base64
@@ -183,7 +178,7 @@ class ScreenHandler(ToolHandler):
             except Exception as e:
                 return f"Screenshot captured but storage failed: {e}"
 
-        if action == "mouse_position":
+        if action == "mouse_position" and isinstance(data, dict):
             return f"Mouse position: x={data.get('x', '?')}, y={data.get('y', '?')}"
 
         return f"OK: {action} completed"

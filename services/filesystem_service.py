@@ -948,12 +948,14 @@ class RelayService(BaseService):
                               new_source=new_source, cell_type=cell_type,
                               operation=operation)
 
-    def exec(self, path: str, command: str, timeout=None, shell: str = ""):
+    def exec(self, path: str, command: str, timeout=None, shell: str = "", env: dict = None):
         kwargs = {"command": command}
         if timeout is not None:
             kwargs["timeout"] = timeout
         if shell:
             kwargs["shell"] = shell
+        if env:
+            kwargs["env"] = env
         return self._request("exec", path, **kwargs)
 
     def exec_stream(self, path: str, command: str, timeout=None,

@@ -38,6 +38,10 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     env["PAWFLOW_FS_ROOT"] = root_abs
+    # Inject server-side secrets as environment variables
+    _extra_env = req.get("env")
+    if isinstance(_extra_env, dict):
+        env.update(_extra_env)
     # Relay-level Docker container: exec commands inside the persistent container
     # _DOCKER_CONTAINERS: {root_dir: container_name} — supports multiple relays
     _relay_container = req.get("_docker_container")
@@ -52,9 +56,13 @@ def action_exec(root_dir: str, path: str, req: Dict[str, Any], *,
             _container_shell = ["node", "-e", command]
         else:
             _container_shell = ["bash", "-c", command]
+        _docker_env_args = ["-e", "PYTHONIOENCODING=utf-8"]
+        if isinstance(_extra_env, dict):
+            for _ek, _ev in _extra_env.items():
+                _docker_env_args.extend(["-e", f"{_ek}={_ev}"])
         docker_exec_cmd = _docker_cmd() + [
             "exec", "-w", "/workspace",
-            "-e", "PYTHONIOENCODING=utf-8",
+        ] + _docker_env_args + [
             _relay_container,
         ] + _container_shell
         result = subprocess.run(

@@ -1,0 +1,22 @@
+{
+  "id": "moltbook-api",
+  "name": "Moltbook API",
+  "version": "1.0.0",
+  "parameters": {},
+  "tasks": {
+    "fetch": {
+      "type": "fetchHTTP",
+      "parameters": {
+        "url": "https://www.moltbook.com/api/v1/home",
+        "method": "GET",
+        "mode": "fast",
+        "output_format": "raw",
+        "headers": {
+          "Authorization": "Bearer ${MOLTBOOK_API_KEY}"
+        }
+      }
+    }
+  },
+  "relations": [],
+  "services": {}
+}

@@ -59,15 +59,11 @@ class AssignTaskHandler(ToolHandler):
                 },
                 "task_def_name": {
                     "type": "string",
-                    "description": "Name of a task definition from the library (use instead of task+criteria)",
-                },
-                "task": {
-                    "type": "string",
-                    "description": "Inline task description (alternative to task_def_name)",
+                    "description": "Name of the task definition to run. Must exist (conversation, user, or global scope).",
                 },
                 "completion_criteria": {
                     "type": "string",
-                    "description": "How to know the task is done (verifiable criteria)",
+                    "description": "Override completion criteria from the task definition",
                 },
                 "interval": {
                     "type": "string",
@@ -89,8 +85,32 @@ class AssignTaskHandler(ToolHandler):
                     "type": "string",
                     "description": "Context mode: 'isolated' (default), 'last:N' (last N messages), 'summary:N' (summary of N tokens), 'full' (entire parent context)",
                 },
+                "timeout": {
+                    "type": "string",
+                    "description": "DEPRECATED — use max_turn_time instead.",
+                },
+                "max_turn_time": {
+                    "type": "string",
+                    "description": "Max duration per work session. Examples: '300' (300s), '5m', '1h'. If exceeded the turn is interrupted (not cancelled) and rescheduled normally. Default: no limit.",
+                },
+                "max_budget": {
+                    "type": "string",
+                    "description": "Max total cost for this task. Examples: '0.50', '$2', '1.00'. Task is cancelled if cumulative cost exceeds this. Default: no limit.",
+                },
+                "max_total_time": {
+                    "type": "string",
+                    "description": "Max total elapsed time across all reschedules. Examples: '30m', '1h', '2h'. Task is cancelled if exceeded. Default: no limit.",
+                },
+                "max_reschedules": {
+                    "type": "integer",
+                    "description": "Max number of reschedules (work sessions) before the task is cancelled. Default: no limit (0).",
+                },
+                "auto_allow": {
+                    "type": "boolean",
+                    "description": "Auto-approve all tool calls and commands for this task (no permission prompts). Default: false.",
+                },
             },
-            "required": ["agent"],
+            "required": ["agent", "task_def_name"],
         }
 
     @staticmethod
@@ -137,6 +157,27 @@ class AssignTaskHandler(ToolHandler):
         return 60
 
     @staticmethod
+    def _parse_timeout(spec: str) -> int:
+        """Parse timeout spec → seconds. Returns 0 for no timeout.
+
+        Formats: '300' (seconds), '5m', '1h', '2h30m'
+        """
+        if not spec:
+            return 0
+        import re
+        spec = spec.strip()
+        try:
+            return int(spec)
+        except ValueError:
+            pass
+        total = 0
+        for m in re.finditer(r'(\d+)([smhd])', spec):
+            val = int(m.group(1))
+            unit = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}[m.group(2)]
+            total += val * unit
+        return total
+
+    @staticmethod
     def _resolve_task_vars(text: str, variables: dict, user_id: str = "") -> str:
         """Resolve variables in task prompt/criteria.
 
@@ -174,26 +215,27 @@ class AssignTaskHandler(ToolHandler):
         target = arguments.get("agent", "")
         if target == "self":
             target = self._agent_name or "assistant"
-        task_desc = arguments.get("task", "")
         task_def_name = arguments.get("task_def_name", "")
 
-        # Library lookup: resolve task_def_name → prompt + criteria + interval
-        if task_def_name and not task_desc:
-            from core.resource_store import ResourceStore
-            rs = ResourceStore.instance()
-            definition = rs.get_any("task_def", task_def_name, self._user_id)
-            if not definition:
-                return f"Error: task definition '{task_def_name}' not found"
-            task_desc = definition.get("prompt", "")
-            if not arguments.get("completion_criteria"):
-                arguments["completion_criteria"] = definition.get("criteria", "")
-            if not arguments.get("interval"):
-                arguments["interval"] = definition.get("default_interval", "6/1m")
-
-        if not task_desc:
-            return "Error: task description or task_def_name required"
+        if not task_def_name:
+            return "Error: task_def_name is required. Create a task definition first."
         if not self._conversation_id:
             return "Error: no conversation context"
+
+        # Resolve task_def_name → prompt + criteria + interval
+        from core.resource_store import ResourceStore
+        rs = ResourceStore.instance()
+        definition = rs.get_any("task_def", task_def_name, self._user_id,
+                                 conversation_id=self._conversation_id)
+        if not definition:
+            return f"Error: task definition '{task_def_name}' not found"
+        task_desc = definition.get("prompt", "")
+        if not task_desc:
+            return f"Error: task definition '{task_def_name}' has no prompt"
+        if not arguments.get("completion_criteria"):
+            arguments["completion_criteria"] = definition.get("criteria", "")
+        if not arguments.get("interval"):
+            arguments["interval"] = definition.get("default_interval", "6/1m")
 
         # Variable substitution in prompt and criteria
         _vars = arguments.get("variables") or {}
@@ -204,8 +246,20 @@ class AssignTaskHandler(ToolHandler):
             criteria = self._resolve_task_vars(criteria, _vars, self._user_id)
         _raw_iv = arguments.get("interval")
         interval_spec = str(_raw_iv) if _raw_iv else "6/1m"
-        max_iter = int(arguments.get("max_iterations", 50))
+        max_iter = int(arguments.get("max_iterations", 0))
         verifier = arguments.get("verifier", "")
+        # max_turn_time supersedes deprecated timeout
+        _turn_time_raw = arguments.get("max_turn_time", "") or arguments.get("timeout", "")
+        timeout_secs = self._parse_timeout(_turn_time_raw)
+        # New limit params
+        _max_budget_raw = str(arguments.get("max_budget", "") or "").strip().lstrip("$")
+        max_budget = float(_max_budget_raw) if _max_budget_raw else 0.0
+        max_total_time = self._parse_timeout(arguments.get("max_total_time", "") or "")
+        max_reschedules = int(arguments.get("max_reschedules", 0) or 0)
+        auto_allow = bool(arguments.get("auto_allow", False))
+        # Also check task definition for auto_allow default
+        if not auto_allow and definition.get("auto_allow"):
+            auto_allow = True
 
         # Parse interval: plain seconds or frequency spec (3/5m, 2-4/h)
         interval_data = self._parse_interval(interval_spec)
@@ -235,6 +289,13 @@ class AssignTaskHandler(ToolHandler):
             "created_at": _t.time(),
             "last_result": "",
             "context_mode": context_mode,
+            "timeout": timeout_secs,
+            "max_budget": max_budget,
+            "max_total_time": max_total_time,
+            "max_reschedules": max_reschedules,
+            "total_cost": 0.0,
+            "reschedule_count": 0,
+            "auto_allow": auto_allow,
         }
         all_tasks[task_id] = task_data
         store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
@@ -400,6 +461,20 @@ class CompleteTaskHandler(ToolHandler):
             # Don't touch cancelled/paused tasks — user cancelled intentionally
             if task.get("status") in ("cancelled", "paused"):
                 return f"Task {task_id} was {task['status']} — ignoring completion."
+            # Recurring tasks (no criteria) cannot be completed — ignore done=true
+            if not task.get("completion_criteria"):
+                task["status"] = "active"
+                all_tasks[task_id] = task
+                store.set_extra(_parent_cid, "agent_tasks", all_tasks)
+                delay = AssignTaskHandler._get_task_delay(task)
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().schedule_delay(
+                    _parent_cid, delay,
+                    key=f"{_parent_cid}::task::{task_id}",
+                    reason=f"[agent_task:{task_id}] recurring ({task.get('agent', agent)})",
+                    user_id=task.get("assigned_by", ""),
+                )
+                return f"Task {task_id} is recurring (no completion criteria). Progress noted. Next in {delay}s."
             verifier = task.get("verifier", "")
             if verifier:
                 task["status"] = "verifying"

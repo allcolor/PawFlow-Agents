@@ -501,14 +501,18 @@ class ToolRelayService(BaseService):
         registry = self._get_registry(user_id, conversation_id, agent_name)
 
         # Tool Approval Gate — reads permission_mode from conversation
+        # For task sub-conversations (conv::task::tid), inherit parent's permissions
+        _perm_cid = conversation_id
+        if conversation_id and '::task::' in conversation_id:
+            _perm_cid = conversation_id.split('::task::')[0]
         try:
             _perm_mode = "default"
             _tool_perm = ""
-            if conversation_id:
+            if _perm_cid:
                 from core.conversation_store import ConversationStore
                 _cs = ConversationStore.instance()
-                _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
-                _tperms = _cs.get_extra(conversation_id, "tool_permissions") or {}
+                _perm_mode = _cs.get_extra(_perm_cid, "permission_mode") or "default"
+                _tperms = _cs.get_extra(_perm_cid, "tool_permissions") or {}
                 _tool_perm = _tperms.get(tool_name, "")
 
             # Per-tool override
@@ -522,7 +526,7 @@ class ToolRelayService(BaseService):
                 _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
                 action_summary = f"{tool_name}({_path})" if _path else tool_name
                 approval = ToolApprovalGate.check(
-                    tool_name, action_summary, conversation_id, user_id, arguments)
+                    tool_name, action_summary, _perm_cid, user_id, arguments)
                 if approval != "approved":
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
@@ -548,12 +552,23 @@ class ToolRelayService(BaseService):
                 _path = arguments.get("path", "") if isinstance(arguments, dict) else ""
                 action_summary = f"{tool_name}({_path})" if _path else tool_name
                 approval = ToolApprovalGate.check(
-                    tool_name, action_summary, conversation_id, user_id, arguments)
+                    tool_name, action_summary, _perm_cid, user_id, arguments)
                 if approval != "approved":
                     return {"type": "result", "request_id": request_id,
                             "data": f"Error: Tool '{tool_name}' was {approval} by the user."}
         except Exception as e:
             logger.warning("Tool approval check failed: %s", e)
+
+        # Inject user secrets as env vars for exec-capable tools
+        _exec_tools = {"bash", "execute_script"}
+        if tool_name in _exec_tools and isinstance(arguments, dict) and user_id:
+            try:
+                _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
+                _secret_env = self._resolve_secrets_env(user_id, _secret_cid)
+                if _secret_env:
+                    arguments["_secret_env"] = _secret_env
+            except Exception as _se:
+                logger.warning("[tool-relay] failed to inject secrets: %s", _se)
 
         try:
             logger.info("[tool-relay] execute %s(%s) [req=%s]",
@@ -570,6 +585,46 @@ class ToolRelayService(BaseService):
         result_str = sanitize_unicode(result_str)
 
         return {"type": "result", "request_id": request_id, "data": result_str}
+
+    def _resolve_secrets_env(self, user_id: str, conversation_id: str) -> dict:
+        """Resolve user/global secrets into a flat dict for env injection.
+
+        Cascade: conversation → user → global (same as expression resolver).
+        Keys are uppercased with PAWFLOW_ prefix to avoid collisions.
+        """
+        from pathlib import Path
+        from core.config_store import ConfigStore
+
+        env = {}
+
+        # Global secrets
+        _global_path = Path("config/global_secrets.json")
+        for k, cv in ConfigStore.load_secrets(_global_path).items():
+            env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+
+        # User secrets (override global)
+        if user_id:
+            _user_path = Path("config/users") / user_id / "secrets.json"
+            for k, cv in ConfigStore.load_secrets(_user_path).items():
+                env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+
+        # Conversation secrets (override user)
+        if conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                from core.secrets import get_secrets_manager
+                _raw = ConversationStore.instance().get_extra(
+                    conversation_id, "conv_secrets") or {}
+                sm = get_secrets_manager()
+                for k, v in _raw.items():
+                    try:
+                        env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
+                    except Exception:
+                        env[k.upper()] = str(v)
+            except Exception:
+                pass
+
+        return env
 
 
 # Register with ServiceFactory

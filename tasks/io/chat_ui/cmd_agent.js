@@ -2,15 +2,34 @@
 // /interrupt, /stop, /agent, /msg, /btw, /setname
 // Loaded before commands.js — all functions are global.
 
+function _parseAgentTask(raw) {
+  // Parse "agent::taskid" or just "agent"
+  const idx = raw.indexOf('::');
+  if (idx === -1) return { agent: raw, taskId: '' };
+  return { agent: resolveAgentName(raw.substring(0, idx)), taskId: raw.substring(idx + 2) };
+}
+
 function cmdInterrupt(text, parts) {
-  const target = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
-  cmdAgentInterrupt(target);
+  const raw = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
+  const parsed = _parseAgentTask(raw);
+  if (parsed.taskId) {
+    interruptSingle(parsed.agent, parsed.taskId);
+    addMsg('system', 'Interrupting task ' + parsed.taskId + ' (' + parsed.agent + ')...');
+  } else {
+    cmdAgentInterrupt(parsed.agent);
+  }
   return true;
 }
 
 function cmdForceStop(text, parts) {
-  const target = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
-  cancelAgent(target);
+  const raw = parts.length > 1 ? resolveAgentName(stripTarget(parts[1])) : (selectedAgent || 'ALL');
+  const parsed = _parseAgentTask(raw);
+  if (parsed.taskId) {
+    stopSingle(parsed.agent, parsed.taskId);
+    addMsg('system', 'Stopping task ' + parsed.taskId + ' (' + parsed.agent + ')...');
+  } else {
+    cancelAgent(parsed.agent);
+  }
   return true;
 }
 

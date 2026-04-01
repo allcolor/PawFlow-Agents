@@ -39,7 +39,7 @@ const HELP_DATA = {
       + '  /vidservice clear @<agent>         \u2014 Remove preference for one agent\n',
   },
   '/task': {
-    usage: '/task create | assign | list | delete | pause | resume | cancel',
+    usage: '/task create | assign | list | edit | delete | pause | resume | cancel',
     short: 'Create, assign and manage agent tasks',
     detail: 'Task library + autonomous task assignment. Tasks can be reusable definitions or inline.\n\n'
       + '**Library (reusable definitions):**\n'
@@ -53,7 +53,13 @@ const HELP_DATA = {
       + '  /task assign @<agent> "<inline task>" [--criteria "..."] [--interval XX] [--verifier @<agent>]\n\n'
       + 'Variables: use ${name} in task definitions, resolved at assign time.\n'
       + 'Use \\${...} to keep literal ${...}. Cascade: secrets → params → env.\n\n'
+      + '**Limits (on assign or edit):**\n'
+      + '  --budget $5          \u2014 Cancel if cost exceeds\n'
+      + '  --turn-time 5m       \u2014 Interrupt if a single turn takes too long\n'
+      + '  --total-time 1h      \u2014 Cancel if total elapsed time exceeds\n'
+      + '  --max-reschedules 20 \u2014 Cancel after N reschedules\n\n'
       + '**Control:**\n'
+      + '  /task edit <task_id> [--budget $X] [--turn-time Xm] [--total-time Xh] [--max-reschedules N]\n'
       + '  /task pause <task_id|agent>   \u2014 Pause a task or all tasks of an agent\n'
       + '  /task resume <task_id|agent>  \u2014 Resume a paused task or all of an agent\n'
       + '  /task cancel <task_id|agent>  \u2014 Cancel a task or all of an agent\n\n'
@@ -223,20 +229,22 @@ const HELP_DATA = {
       + 'The override is per-conversation and persists across restarts.',
   },
   '/interrupt': {
-    usage: '/interrupt [@agent|ALL]',
+    usage: '/interrupt [@agent|@agent::taskid|ALL]',
     short: 'Interrupt an agent — asks it to respond immediately',
     detail: 'Asks the agent to wrap up and give its best answer now.\n\n'
-      + '  /interrupt           — Interrupt active agent (or all)\n'
-      + '  /interrupt @grok     — Interrupt only grok\n'
-      + '  /interrupt @ALL      — Interrupt all agents',
+      + '  /interrupt               — Interrupt active agent (or all)\n'
+      + '  /interrupt @grok         — Interrupt only grok\n'
+      + '  /interrupt @grok::t_abc  — Interrupt a specific task\n'
+      + '  /interrupt @ALL          — Interrupt all agents',
   },
   '/stop': {
-    usage: '/stop [@agent|ALL]',
+    usage: '/stop [@agent|@agent::taskid|ALL]',
     short: 'Force stop an agent — immediate cancel, no response',
     detail: 'Immediately kills the agent with no response.\n\n'
-      + '  /stop               — Force stop active agent (or all)\n'
-      + '  /stop @grok         — Force stop only grok\n'
-      + '  /stop @ALL          — Force stop all agents',
+      + '  /stop                   — Force stop active agent (or all)\n'
+      + '  /stop @grok             — Force stop only grok\n'
+      + '  /stop @grok::t_abc      — Force stop a specific task\n'
+      + '  /stop @ALL              — Force stop all agents',
   },
   '/restart_from': {
     usage: '/restart_from [@agent|ALL] [N]',

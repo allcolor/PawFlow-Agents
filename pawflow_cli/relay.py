@@ -337,10 +337,11 @@ class RelayThread:
         req = json.loads(buf.split(b"\n")[0])
         action = req.get("action", "")
 
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+
         if action == "claude_auth_login":
-            tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
-            if tools_dir not in sys.path:
-                sys.path.insert(0, tools_dir)
             from pawflow_relay import _claude_auth_login
 
             def _send_progress(data):
@@ -353,24 +354,151 @@ class RelayThread:
             result = _claude_auth_login(req, send_progress=_send_progress)
             resp = json.dumps({"type": "result", "data": result}) + "\n"
             conn.sendall(resp.encode("utf-8"))
+
+        elif action in ("start_local_desktop", "stop_local_desktop",
+                        "local_screen_check") or action.startswith("screen_"):
+            # Run local screen/desktop actions natively on host
+            self._handle_host_screen_action(conn, req, action)
+
         else:
             resp = json.dumps({"type": "error", "error": f"Unknown action: {action}"}) + "\n"
             conn.sendall(resp.encode("utf-8"))
 
-        # Direct mode: connect from this process
+    def _handle_host_screen_action(self, conn, req, action):
+        """Handle screen/desktop actions on the host machine.
 
-        ws_url = f"wss://localhost:{self.port}/ws/relay"
+        Delegates to pawflow_relay's _execute_command logic by running
+        the action in a temporary local context.
+        """
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+
+        # Reuse the relay's local desktop / screen handlers
+        # We build a minimal _execute_command-like dispatch
         try:
-            _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                    self.directory, False, allow_exec=True,
-                                    allow_automation=True, allow_local_screen=True)
-        except Exception:
-            if self._stop_event.is_set():
-                return
-            ws_url = f"ws://localhost:{self.port}/ws/relay"
+            if action == "start_local_desktop":
+                result = self._host_start_local_desktop(req)
+            elif action == "stop_local_desktop":
+                result = self._host_stop_local_desktop()
+            elif action.startswith("screen_"):
+                result = self._host_screen_tool(req, action)
+            else:
+                result = {"error": f"Unsupported host action: {action}"}
+
+            if "error" in result:
+                resp = json.dumps({"type": "error", "error": result["error"]}) + "\n"
+            else:
+                resp = json.dumps({"type": "result", "data": result}) + "\n"
+        except Exception as e:
+            resp = json.dumps({"type": "error", "error": str(e)}) + "\n"
+
+        conn.sendall(resp.encode("utf-8"))
+
+    def _host_start_local_desktop(self, req):
+        """Start VNC + websockify on the host to share the local screen."""
+        import subprocess as _sp
+        import shutil
+
+        # Idempotent
+        if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
+            alive = all(p.poll() is None for p in self._local_desktop_procs)
+            if alive:
+                return {"novnc_port": self._local_desktop_novnc_port, "already_running": True}
+            for p in self._local_desktop_procs:
+                try: p.kill()
+                except Exception: pass
+            self._local_desktop_procs = None
+
+        _platform = sys.platform
+        vnc_port = 0
+        novnc_port = int(req.get("novnc_port", 0))
+
+        # Find free ports
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 0)); vnc_port = s.getsockname()[1]
+        if not novnc_port:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", 0)); novnc_port = s.getsockname()[1]
+
+        procs = []
+
+        # Detect websockify once (binary or python module)
+        websockify_cmd = shutil.which("websockify")
+        if websockify_cmd:
+            _ws_base = [websockify_cmd]
+        else:
             try:
-                _relay_mod._ws_connect(ws_url, self.ws_token, self.ws_token, self.relay_id,
-                                        self.directory, False, allow_exec=True,
-                                        allow_automation=True, allow_local_screen=True)
+                _sp.run([sys.executable, "-m", "websockify", "--help"],
+                        capture_output=True, timeout=5)
+                _ws_base = [sys.executable, "-m", "websockify"]
             except Exception:
-                pass
+                return {"error": "websockify not installed. Install with: pip install websockify"}
+
+        if _platform == "win32":
+            # Windows: use TightVNC
+            winvnc = None
+            for candidate in [
+                r"C:\Program Files\TightVNC\tvnserver.exe",
+                r"C:\Program Files\uvnc bvba\UltraVNC\winvnc.exe",
+                r"C:\Program Files (x86)\TightVNC\tvnserver.exe",
+            ]:
+                if os.path.exists(candidate):
+                    winvnc = candidate
+                    break
+            if not winvnc:
+                winvnc = shutil.which("tvnserver") or shutil.which("winvnc")
+            if not winvnc:
+                return {"error": "No VNC server found. Install TightVNC or UltraVNC."}
+            p_vnc = _sp.Popen([winvnc, "-rfbport", str(vnc_port), "-localhost"],
+                              stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            procs.append(p_vnc)
+
+        elif _platform == "linux":
+            display = os.environ.get("DISPLAY", ":0")
+            if not shutil.which("x11vnc"):
+                return {"error": "x11vnc not installed"}
+            p_vnc = _sp.Popen(
+                ["x11vnc", "-display", display, "-forever", "-nopw",
+                 "-rfbport", str(vnc_port), "-shared", "-noxdamage"],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            procs.append(p_vnc)
+
+        elif _platform == "darwin":
+            vnc_port = 5900
+        else:
+            return {"error": f"Unsupported platform: {_platform}"}
+
+        import time as _t
+        _t.sleep(0.5)
+
+        p_ws = _sp.Popen(_ws_base + [str(novnc_port), f"localhost:{vnc_port}"],
+                         stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+        procs.append(p_ws)
+
+        self._local_desktop_procs = procs
+        self._local_desktop_vnc_port = vnc_port
+        self._local_desktop_novnc_port = novnc_port
+        sys.stderr.write(f"[Relay] Local desktop started: vnc={vnc_port} novnc={novnc_port}\n")
+        return {"vnc_port": vnc_port, "novnc_port": novnc_port, "local_screen": True}
+
+    def _host_stop_local_desktop(self):
+        if hasattr(self, '_local_desktop_procs') and self._local_desktop_procs:
+            for p in self._local_desktop_procs:
+                if p.poll() is None:
+                    p.terminate()
+            for p in self._local_desktop_procs:
+                try: p.wait(timeout=5)
+                except Exception: p.kill()
+            self._local_desktop_procs = None
+            sys.stderr.write("[Relay] Local desktop stopped\n")
+            return {"ok": True}
+        return {"was_running": False}
+
+    def _host_screen_tool(self, req, action):
+        """Forward screen automation actions to the host's screen tools."""
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        from screen_actions import handle_screen_action
+        return handle_screen_action(action, req)

@@ -34,7 +34,8 @@ class AgentToolExecMixin:
                             agent_name: str = "", agent_svc: str = "",
                             conversation_id: str = "", user_id: str = "",
                             is_claude_code: bool = False,
-                            cancel_check: callable = None):
+                            cancel_check: callable = None,
+                            event_cid: str = ""):
         """Execute tool calls with consecutive-call limiting + approval gate.
 
         Returns list of (tool_call, result_text) in original order.
@@ -58,14 +59,22 @@ class AgentToolExecMixin:
                     f"Stop and explain to the user what you've tried so far, "
                     f"and ask if they want you to continue."
                 )
+            # Build agent key for per-agent permissions
+            # For tasks: agent_name::task::task_id (derived from conversation_id)
+            _agent_key = agent_name
+            if "::task::" in conversation_id:
+                _task_suffix = conversation_id.split("::task::", 1)[1]
+                _agent_key = f"{agent_name}::task::{_task_suffix}"
             # Fine-grained tool permissions (override global mode)
             _tool_perm = ""
             _perm_mode = ""
+            _perm_cid = event_cid or conversation_id
             try:
                 from core.conversation_store import ConversationStore
                 _cs = ConversationStore.instance()
                 _perm_mode = _cs.get_extra(conversation_id, "permission_mode") or "default"
-                _tperms = _cs.get_extra(conversation_id, "tool_permissions") or {}
+                from core.tool_approval import ToolApprovalGate as _TAG
+                _tperms = _TAG._get_permissions(_perm_cid, _agent_key)
                 _tool_perm = _tperms.get(tc.name, "")
             except Exception:
                 pass
@@ -76,10 +85,12 @@ class AgentToolExecMixin:
             elif _tool_perm == "confirm":
                 # Force user confirmation regardless of global mode (even auto)
                 from core.tool_approval import ToolApprovalGate
+                _approval_cid = event_cid or conversation_id
                 approval = ToolApprovalGate.check(
                     tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
-                    conversation_id, user_id,
+                    _approval_cid, user_id,
                     arguments=tc.arguments,
+                    agent_name=_agent_key,
                 )
                 if approval != "approved":
                     return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
@@ -100,10 +111,12 @@ class AgentToolExecMixin:
                 else:
                     # default / approve_edits — use normal approval gate
                     from core.tool_approval import ToolApprovalGate
+                    _approval_cid = event_cid or conversation_id
                     approval = ToolApprovalGate.check(
                         tc.name, f"{tc.name}({json.dumps(tc.arguments)[:200]})",
-                        conversation_id, user_id,
+                        _approval_cid, user_id,
                         arguments=tc.arguments,
+                        agent_name=_agent_key,
                     )
                     if approval != "approved":
                         return tc, f"Error: Tool '{tc.name}' was {approval} by the user."

@@ -142,9 +142,14 @@ class ManageResourceHandler(ToolHandler):
                     # Store in conversation extras
                     from core.conversation_store import ConversationStore
                     cs = ConversationStore.instance()
-                    conv_agents = cs.get_extra(self._conversation_id, "conversation_agents") or {}
-                    conv_agents[name] = data
-                    cs.set_extra(self._conversation_id, "conversation_agents", conv_agents)
+                    if rtype == "task_def":
+                        conv_defs = cs.get_extra(self._conversation_id, "conversation_task_defs") or {}
+                        conv_defs[name] = data
+                        cs.set_extra(self._conversation_id, "conversation_task_defs", conv_defs)
+                    else:
+                        conv_agents = cs.get_extra(self._conversation_id, "conversation_agents") or {}
+                        conv_agents[name] = data
+                        cs.set_extra(self._conversation_id, "conversation_agents", conv_agents)
                 else:
                     store.create(rtype, name, user_id, data)
                 self._activate_resource(rtype, name)

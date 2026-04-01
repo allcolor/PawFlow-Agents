@@ -13,6 +13,62 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
+def _kill_running_task_agent(self, conv_id: str, task_id: str, agent_name: str, force: bool = True):
+    """Kill the running agent thread for a task sub-conversation.
+
+    force=True: kill Claude Code process immediately
+    force=False: graceful interrupt, then force-kill after 10s
+    """
+    sub_cid = f"{conv_id}::task::{task_id}"
+    # 1. Bump generation so agent loop detects staleness
+    with self._conv_gen_lock:
+        for k in list(self._conv_generation):
+            if k.startswith(sub_cid):
+                self._conv_generation[k] += 1
+    # 2. Set interrupt flag
+    with self._interrupt_lock:
+        self._conv_interrupt[sub_cid] = True
+    # 3. Kill Claude Code subprocess
+    _cc_key = f"{sub_cid}:{agent_name}" if agent_name else sub_cid
+    with self._active_contexts_lock:
+        _cc = self._active_claude_client.get(_cc_key)
+    if _cc and hasattr(_cc, 'cancel_claude_code'):
+        if force:
+            _cc.cancel_claude_code(force=True)
+        else:
+            # Graceful interrupt first
+            _cc.cancel_claude_code(force=False)
+            # Schedule force-kill after 10s if still running
+            def _escalate():
+                import time as _t
+                _t.sleep(10)
+                with self._active_contexts_lock:
+                    _cc2 = self._active_claude_client.get(_cc_key)
+                if _cc2 and hasattr(_cc2, 'cancel_claude_code'):
+                    logger.info("[task:%s] escalating to force-kill after 10s", task_id)
+                    _cc2.cancel_claude_code(force=True)
+            threading.Thread(target=_escalate, daemon=True,
+                           name=f"task-kill-{task_id}").start()
+    # 4. Cancel in-flight tool calls
+    try:
+        from services.tool_relay_service import ToolRelayService
+        ToolRelayService.cancel_agent(sub_cid, agent_name)
+    except Exception:
+        pass
+    # 5. Publish done event to parent conv
+    try:
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(
+            conv_id, "task_stopped", {
+                "task_id": task_id,
+                "agent_name": agent_name,
+                "force": force,
+            })
+    except Exception:
+        pass
+    logger.info("[task:%s] agent killed (force=%s)", task_id, force)
+
+
 def _handle_scheduling(self, action, body, store, user_id, flowfile):
     """Handle scheduling actions. Returns [flowfile] or None."""
 
@@ -115,14 +171,22 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"error": "Missing name or prompt"}).encode())
             return [flowfile]
-        from core.resource_store import ResourceStore
-        rs = ResourceStore.instance()
         uid = user_id or "anonymous"
         data["created_by"] = uid
+        scope = data.pop("scope", body.get("scope", "user"))
         try:
-            rs.create("task_def", name, uid, data)
+            if scope == "conversation" and conv_id:
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                conv_defs[name] = data
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+            else:
+                from core.resource_store import ResourceStore
+                rs = ResourceStore.instance()
+                rs.create("task_def", name, uid, data)
             flowfile.set_content(json.dumps(
-                {"ok": True, "name": name}).encode())
+                {"ok": True, "name": name, "scope": scope}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps(
                 {"error": str(e)}).encode())
@@ -134,20 +198,67 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"error": "Missing name"}).encode())
             return [flowfile]
-        from core.resource_store import ResourceStore
-        rs = ResourceStore.instance()
         uid = user_id or "anonymous"
-        deleted = rs.delete("task_def", name, uid)
+        # Try conversation scope first
+        deleted = False
+        if conv_id:
+            from core.conversation_store import ConversationStore
+            cs = ConversationStore.instance()
+            conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+            if name in conv_defs:
+                del conv_defs[name]
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+                deleted = True
+        if not deleted:
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            deleted = rs.delete("task_def", name, uid)
         flowfile.set_content(json.dumps(
             {"ok": True, "deleted": deleted}).encode())
+        return [flowfile]
+
+    if action == "promote_task_def":
+        name = body.get("name", "").strip()
+        target_scope = body.get("target_scope", "user")
+        if not name:
+            flowfile.set_content(json.dumps(
+                {"error": "Missing name"}).encode())
+            return [flowfile]
+        uid = user_id or "anonymous"
+        # Read from conversation scope
+        if not conv_id:
+            flowfile.set_content(json.dumps(
+                {"error": "No conversation context"}).encode())
+            return [flowfile]
+        from core.conversation_store import ConversationStore
+        cs = ConversationStore.instance()
+        conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+        if name not in conv_defs:
+            flowfile.set_content(json.dumps(
+                {"error": f"Task def '{name}' not found in conversation scope"}).encode())
+            return [flowfile]
+        data = dict(conv_defs[name])
+        try:
+            from core.resource_store import ResourceStore
+            rs = ResourceStore.instance()
+            target_uid = "__global__" if target_scope == "global" else uid
+            rs.create("task_def", name, target_uid, data)
+            # Remove from conversation scope
+            del conv_defs[name]
+            cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+            flowfile.set_content(json.dumps(
+                {"ok": True, "name": name, "scope": target_scope}).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps(
+                {"error": str(e)}).encode())
         return [flowfile]
 
     if action == "assign_task":
         conv_id = body.get("conversation_id", "")
         agent = body.get("agent_name", "")
-        task_desc = body.get("task", "") or body.get("task_def_name", "")
-        if not conv_id or not agent or not task_desc:
-            flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or task"}).encode())
+        task_def_name = body.get("task_def_name", "")
+        if not conv_id or not agent or not task_def_name:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id, agent_name, or task_def_name"}).encode())
             return [flowfile]
         from core.tool_registry import AssignTaskHandler
         h = AssignTaskHandler()
@@ -156,13 +267,16 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         h.set_user_id(user_id)
         result = h.execute({
             "agent": agent,
-            "task": body.get("task", ""),
-            "task_def_name": body.get("task_def_name", ""),
+            "task_def_name": task_def_name,
             "completion_criteria": body.get("completion_criteria", ""),
             "interval": body.get("interval"),
             "max_iterations": body.get("max_iterations", 50),
             "verifier": body.get("verifier", ""),
             "variables": body.get("variables"),
+            "max_turn_time": body.get("max_turn_time", ""),
+            "max_budget": body.get("max_budget", ""),
+            "max_total_time": body.get("max_total_time", ""),
+            "max_reschedules": body.get("max_reschedules", 0),
         })
         # Ensure poller is running (task needs it for scheduled wake-ups)
         poll_interval = int(self.config.get("poll_interval", 0))
@@ -202,6 +316,12 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 "interval": t.get("interval", 60),
                 "task_def_name": t.get("task_def_name", ""),
                 "created_by": t.get("created_by", ""),
+                "timeout": t.get("timeout", 0),
+                "max_budget": t.get("max_budget", 0),
+                "max_total_time": t.get("max_total_time", 0),
+                "max_reschedules": t.get("max_reschedules", 0),
+                "total_cost": t.get("total_cost", 0.0),
+                "reschedule_count": t.get("reschedule_count", 0),
             })
         # Include library definitions if requested
         defs_out = []
@@ -239,7 +359,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"task": task_name, "log": log}).encode())
         return [flowfile]
 
-    if action in ("pause_task", "resume_task", "cancel_task"):
+    if action in ("pause_task", "resume_task", "cancel_task", "delete_task"):
         conv_id = body.get("conversation_id", "")
         target = body.get("task_id", "") or body.get("agent_name", "")
         if not conv_id or not target:
@@ -262,12 +382,18 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         for tid, task in matched.items():
 
             if action == "cancel_task":
-                task["status"] = "cancelled"
                 scheduler.cancel(f"{conv_id}::task::{tid}")
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
+                # Force-stop the running task agent immediately
+                _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
+                # Remove instance from agent_tasks — only task_def + log remain
+                del all_tasks[tid]
+                continue  # skip all_tasks[tid] = task below
             elif action == "pause_task":
                 task["status"] = "paused"
                 scheduler.cancel(f"{conv_id}::task::{tid}")
+                # Interrupt the running task agent, force-stop after 10s
+                _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=False)
             elif action == "resume_task":
                 task["status"] = "active"
                 from core.tool_registry import AssignTaskHandler as _ATH
@@ -277,6 +403,16 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                     reason=f"[agent_task:{tid}] resumed ({task.get('agent', '?')})",
                     user_id=user_id,
                 )
+            elif action == "delete_task":
+                # Cancel schedules & kill agent first
+                scheduler.cancel(f"{conv_id}::task::{tid}")
+                scheduler.cancel(f"{conv_id}::task_verify::{tid}")
+                _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
+                # Remove from dict entirely
+                del all_tasks[tid]
+                # Also delete task log
+                store.set_extra(conv_id, f"task_log:{tid}", None)
+                continue  # skip all_tasks[tid] = task below
             all_tasks[tid] = task
         store.set_extra(conv_id, "agent_tasks", all_tasks)
         flowfile.set_content(json.dumps({
@@ -285,5 +421,40 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     # â”€â”€ Image service management â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    if action == "edit_task":
+        conv_id = body.get("conversation_id", "")
+        task_id = body.get("task_id", "")
+        if not conv_id or not task_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id"}).encode())
+            return [flowfile]
+        all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+        task = all_tasks.get(task_id)
+        if not task:
+            flowfile.set_content(json.dumps({"error": f"Task '{task_id}' not found"}).encode())
+            return [flowfile]
+        from core.tool_registry import AssignTaskHandler as _ATH_edit
+        _parse_t = _ATH_edit._parse_timeout
+        _editable = {
+            "max_turn_time": lambda v: _parse_t(str(v)) if v else 0,
+            "max_budget": lambda v: float(str(v).strip().lstrip("$")) if v else 0.0,
+            "max_total_time": lambda v: _parse_t(str(v)) if v else 0,
+            "max_reschedules": lambda v: int(v) if v else 0,
+            "max_iterations": lambda v: int(v) if v else 0,
+            "interval": lambda v: v,
+        }
+        _field_map = {"max_turn_time": "timeout"}
+        changed = []
+        for field, parser in _editable.items():
+            if field in body:
+                _store_key = _field_map.get(field, field)
+                task[_store_key] = parser(body[field])
+                changed.append(field)
+        if changed:
+            all_tasks[task_id] = task
+            store.set_extra(conv_id, "agent_tasks", all_tasks)
+        flowfile.set_content(json.dumps({"ok": True, "changed": changed}).encode())
+        return [flowfile]
+
+    # ── Image service management ──────────────────────────────────
 
     return None

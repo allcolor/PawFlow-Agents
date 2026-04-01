@@ -1,0 +1,45 @@
+{
+  "id": "moltbook-home-to-file",
+  "name": "Moltbook Home to File",
+  "version": "1.0.0",
+  "parameters": {},
+  "tasks": {
+    "trigger": {
+      "type": "generateFlowFile",
+      "parameters": {
+        "content": "start"
+      }
+    },
+    "fetchHome": {
+      "type": "fetchHTTP",
+      "parameters": {
+        "url": "https://www.moltbook.com/api/v1/home",
+        "method": "GET",
+        "mode": "fast",
+        "output_format": "raw",
+        "headers": {
+          "Authorization": "Bearer ${MOLTBOOK_API_KEY}"
+        }
+      }
+    },
+    "writeFile": {
+      "type": "executeScript",
+      "parameters": {
+        "script": "# Write response to file\nwith open('filestore://moltbook_home_response.json', 'w') as f:\n    f.write(content)\nresult = 'Written to filestore'"
+      }
+    }
+  },
+  "relations": [
+    {
+      "from": "trigger",
+      "to": "fetchHome",
+      "type": "success"
+    },
+    {
+      "from": "fetchHome",
+      "to": "writeFile",
+      "type": "success"
+    }
+  ],
+  "services": {}
+}

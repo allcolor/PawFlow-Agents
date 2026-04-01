@@ -442,14 +442,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "default_interval": t.get("default_interval", "6/1m"),
             } for t in rs.list_all("task_def", uid, conversation_id=conv_id)],
         }
-        # Running task instances for this conversation
+        # Task instances for this conversation
         if conv_id:
             all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
             running = []
+            all_task_instances = []
             for tid, t in all_tasks.items():
                 if not isinstance(t, dict):
                     continue
-                running.append({
+                entry = {
                     "task_id": tid,
                     "agent": t.get("agent", ""),
                     "task": t.get("task", "")[:80],
@@ -457,8 +458,15 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     "iterations": t.get("iterations_done", 0),
                     "max_iterations": t.get("max_iterations", 50),
                     "task_def_name": t.get("task_def_name", ""),
-                })
+                    "interval": t.get("interval", {}),
+                    "timeout": t.get("timeout", 0),
+                }
+                all_task_instances.append(entry)
+                # Running = active or paused only
+                if t.get("status") in ("active", "paused"):
+                    running.append(entry)
             result["running_tasks"] = running
+            result["all_tasks"] = all_task_instances
         # Services (global + user)
         try:
             from gui.services.global_service_registry import GlobalServiceRegistry
@@ -514,19 +522,22 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             dr = DeploymentRegistry.get_instance()
             dr.sync_with_executors()
             uid = user_id or "anonymous"
+            _is_admin = (flowfile.get_attribute("http.auth.roles") or "") == "admin"
             for iid, inst in dr.get_all().items():
                 # Determine scope
                 if not inst.owner or inst.owner == "__global__":
                     fscope = "global"
                 elif inst.conversation_id:
                     fscope = "conversation"
-                    # Only show conv-scoped flows in their conversation
-                    if inst.conversation_id != conv_id:
+                    # Show conv-scoped flows if they belong to this conv
+                    # (including flows deployed from task sub-conversations)
+                    _inst_parent = inst.conversation_id.split("::task::")[0] if "::task::" in inst.conversation_id else inst.conversation_id
+                    if _inst_parent != conv_id and not _is_admin:
                         continue
                 else:
                     fscope = "user"
-                # Skip other users' flows
-                if fscope != "global" and inst.owner != uid:
+                # Skip other users' flows (admins see all)
+                if fscope != "global" and inst.owner != uid and not _is_admin:
                     continue
                 flows.append({
                     "instance_id": iid,
@@ -591,6 +602,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rname = body.get("name", "").strip()
         data = body.get("data", {})
         scope = body.get("scope", "user")
+        conv_id = body.get("conversation_id", "")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
@@ -609,7 +621,14 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if rtype == "task_def":
             data.setdefault("created_by", uid)
         try:
-            rs.create(rtype, rname, target_uid, data)
+            if rtype == "task_def" and scope == "conversation" and conv_id:
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                conv_defs[rname] = data
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+            else:
+                rs.create(rtype, rname, target_uid, data)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -619,6 +638,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rtype = body.get("resource_type", "")
         rname = body.get("name", "").strip()
         scope = body.get("scope", "user")
+        conv_id = body.get("conversation_id", "")
         if scope == "global" and "admin" not in (flowfile.get_attribute("http.auth.roles") or ""):
             flowfile.set_content(json.dumps({"error": "Requires admin role for global scope"}).encode())
             flowfile.set_attribute("http.response.status", "403")
@@ -630,7 +650,16 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         rs = ResourceStore.instance()
         uid = user_id or "anonymous"
         target_uid = "__global__" if scope == "global" else uid
-        deleted = rs.delete(rtype, rname, target_uid)
+        if rtype == "task_def" and scope == "conversation" and conv_id:
+            from core.conversation_store import ConversationStore
+            cs = ConversationStore.instance()
+            conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+            deleted = rname in conv_defs
+            if deleted:
+                del conv_defs[rname]
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+        else:
+            deleted = rs.delete(rtype, rname, target_uid)
         flowfile.set_content(json.dumps({"ok": True, "deleted": deleted}).encode())
         return [flowfile]
 
@@ -651,8 +680,24 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         target_uid = "__global__" if target_scope == "global" else uid
         data = {k: v for k, v in item.items() if k not in ("name", "_scope")}
+        source_scope = item.get("_scope", "")
         try:
-            rs.create(rtype, rname, target_uid, data)
+            if target_scope == "conversation" and conv_id and rtype == "task_def":
+                # Copy into conversation scope
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                conv_defs[rname] = data
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
+            else:
+                rs.create(rtype, rname, target_uid, data)
+            # If promoting from conversation scope, remove from there
+            if source_scope == "conversation" and target_scope != "conversation" and conv_id and rtype == "task_def":
+                from core.conversation_store import ConversationStore
+                cs = ConversationStore.instance()
+                conv_defs = cs.get_extra(conv_id, "conversation_task_defs") or {}
+                conv_defs.pop(rname, None)
+                cs.set_extra(conv_id, "conversation_task_defs", conv_defs)
             flowfile.set_content(json.dumps({"ok": True, "copied_to": target_scope}).encode())
         except Exception as e:
             # If exists, update instead

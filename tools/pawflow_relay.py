@@ -701,8 +701,9 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
         return {"ok": False, "error": f"Cannot reach host helper at {host_helper}: {e}"}
 
     try:
-        # Send request
-        req = json.dumps({"action": msg.get("action", "")}) + "\n"
+        # Send request (forward full message minus internal fields)
+        _fwd_msg = {k: v for k, v in msg.items() if k not in ("type", "request_id")}
+        req = json.dumps(_fwd_msg) + "\n"
         sock.sendall(req.encode("utf-8"))
 
         # Read responses (newline-delimited JSON)
@@ -1215,6 +1216,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 sys.stderr.write("[FSRelay] code-server stopped\n")
                 return {"ok": True}
             return {"ok": True, "data": {"was_running": False}}
+
+        # ── Forward local screen/desktop to host helper if in Docker ────
+        _explicitly_local = action in (
+            "start_local_desktop", "stop_local_desktop", "local_screen_check")
+        _screen_with_flag = action.startswith("screen_") and msg.get("local_screen", False)
+        _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
+        if (_explicitly_local or _screen_with_flag) and _host_helper:
+            _fwd = {k: v for k, v in msg.items() if k != "local_screen"}
+            return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         # ── Desktop VNC (singleton) ──────────────────────────────────────
         if action == "start_desktop":
@@ -1748,6 +1758,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             return {"ok": True, "data": {"updated": _updated, "needs_restart": _needs_restart}}
 
         # Note: permission checks are enforced server-side by ToolApprovalGate.
+        # (local_screen forwarding handled earlier, before desktop handlers)
 
         from fs_actions import ACTIONS as _FS_ACTIONS
         handler_func = _FS_ACTIONS.get(action)

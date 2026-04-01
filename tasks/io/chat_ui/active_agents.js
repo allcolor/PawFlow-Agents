@@ -42,7 +42,8 @@ function updateActivePanel() {
   const now = Date.now();
   rows.innerHTML = names.map(key => {
     const info = activeInteractions[key];
-    const displayName = displayAgentName(info.name);
+    let displayName = displayAgentName(info.name);
+    if (info.taskId) displayName += ' [task:' + info.taskId + ']';
     const secs = Math.round((now - info.startedAt) / 1000);
     const timeStr = secs < 60 ? secs + 's' : Math.floor(secs/60) + 'm' + (secs%60) + 's';
     let statusParts = [];
@@ -66,8 +67,8 @@ function updateActivePanel() {
       + '<span class="a-status">' + escapeHtml(statusText) + '</span>'
       + '<span class="a-time">' + timeStr + '</span>'
       + '<span class="a-actions">'
-      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\')">&#x23F8;</button>'
-      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\')">&#x25A0;</button>'
+      + '<button title="Interrupt (force answer)" onclick="interruptSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x23F8;</button>'
+      + '<button class="btn-stop" title="Stop" onclick="stopSingle(\'' + escapeHtml(apiName) + '\',\'' + escapeHtml(info.taskId || '') + '\')">&#x25A0;</button>'
       + '</span></div>';
   }).join('');
   if (scrollNav) {
@@ -97,7 +98,7 @@ async function syncActiveFromServer() {
     if (!resp.ok) return;
     const data = await resp.json();
     const serverActive = data.active || [];
-    const serverKeys = new Set(serverActive.map(a => agentKey(a.agent_name)));
+    const serverKeys = new Set(serverActive.map(a => a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name)));
 
     // Server is the truth — remove anything server doesn't know about
     for (const key of Object.keys(activeInteractions)) {
@@ -105,13 +106,13 @@ async function syncActiveFromServer() {
         delete activeInteractions[key];
       }
     }
-    // Add/update from server
     const now = Date.now();
     for (const a of serverActive) {
-      const key = agentKey(a.agent_name);
+      const key = a.task_id ? agentKey(a.agent_name + '::' + a.task_id) : agentKey(a.agent_name);
       const existing = activeInteractions[key];
       activeInteractions[key] = {
         name: a.agent_name,
+        taskId: a.task_id || '',
         startedAt: existing ? existing.startedAt : now - ((a.duration_s || 0) * 1000),
         iteration: a.iteration || (existing ? existing.iteration : 0),
         round: a.round || 0,
@@ -127,59 +128,20 @@ async function syncActiveFromServer() {
     updateActivePanel();
     if (Object.keys(activeInteractions).length > 0) {
       if (!document.getElementById('typing')) showTyping();
-      // Auto-background: collapse streaming after 120s of activity
-      const AUTO_BG_MS = 120000;
-      for (const [key, info] of Object.entries(activeInteractions)) {
-        const elapsed = now - info.startedAt;
-        if (elapsed > AUTO_BG_MS && !info._backgrounded) {
-          info._backgrounded = true;
-          // Collapse all streaming elements for this agent
-          document.querySelectorAll('#messages .msg.streaming, #messages .msg.streaming-live').forEach(el => {
-            if (!el.classList.contains('auto-bg-collapsed')) {
-              el.classList.add('auto-bg-collapsed');
-              el.style.display = 'none';
-            }
-          });
-          // Show compact notification
-          const bgNote = document.createElement('div');
-          bgNote.className = 'msg system auto-bg-note';
-          bgNote.dataset.bgAgent = key;
-          bgNote.innerHTML = '\u23F3 <b>' + escapeHtml(displayAgentName(info.name)) + '</b> working in background ('
-            + info.totalTools + ' tools, iter ' + info.iteration + ')...';
-          bgNote.style.cssText = 'cursor:pointer;opacity:0.7;';
-          bgNote.title = 'Click to expand';
-          bgNote.onclick = () => {
-            document.querySelectorAll('.auto-bg-collapsed').forEach(e => {
-              e.classList.remove('auto-bg-collapsed');
-              e.style.display = '';
-            });
-            bgNote.remove();
-            info._backgrounded = false;
-          };
-          const container = document.getElementById('messages');
-          const typingEl = document.getElementById('typing');
-          if (typingEl) container.insertBefore(bgNote, typingEl);
-          else container.appendChild(bgNote);
-        }
-      }
     } else {
       hideTyping();
-      // Remove auto-bg notes when agent finishes
-      document.querySelectorAll('.auto-bg-note').forEach(n => n.remove());
-      document.querySelectorAll('.auto-bg-collapsed').forEach(e => {
-        e.classList.remove('auto-bg-collapsed');
-        e.style.display = '';
-      });
     }
   } catch(e) { /* silent — network may be down */ }
 }
 
-async function interruptSingle(agentName) {
+async function interruptSingle(agentName, taskId) {
   if (!conversationId) return;
   try {
+    const body = { action: 'interrupt', conversation_id: conversationId, agent_name: agentName };
+    if (taskId) body.task_id = taskId;
     await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'interrupt', conversation_id: conversationId, agent_name: agentName }),
+      body: JSON.stringify(body),
       credentials: 'same-origin',
     });
   } catch(e) { console.warn('Interrupt failed:', e); }
@@ -188,15 +150,19 @@ function interruptCurrent() {
   const target = typeof selectedAgent !== 'undefined' && selectedAgent ? selectedAgent : 'ALL';
   cmdAgentInterrupt(target);
 }
-async function stopSingle(agentName) {
+async function stopSingle(agentName, taskId) {
   if (!conversationId) return;
   try {
+    const body = { action: 'cancel', conversation_id: conversationId, agent_name: agentName, force: true };
+    if (taskId) body.task_id = taskId;
     await fetch(API, {
       method: 'POST', headers: getAuthHeaders(),
-      body: JSON.stringify({ action: 'cancel', conversation_id: conversationId, agent_name: agentName, force: true }),
+      body: JSON.stringify(body),
       credentials: 'same-origin',
     });
     // Optimistic removal — server will confirm on next poll
-    trackAgentDone(agentName);
+    const key = taskId ? agentKey(agentName + '::' + taskId) : agentKey(agentName);
+    delete activeInteractions[key];
+    updateActivePanel();
   } catch(e) { console.warn('Stop failed:', e); }
 }

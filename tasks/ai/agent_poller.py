@@ -16,6 +16,25 @@ from core.llm_client import LLMMessage
 logger = logging.getLogger(__name__)
 
 
+def _check_task_limits(task: dict, task_id: str) -> str:
+    """Check pre-launch limits. Returns cancel reason or empty string."""
+    import time as _t
+    # max_reschedules
+    _max_rs = task.get("max_reschedules", 0)
+    if _max_rs and task.get("reschedule_count", 0) >= _max_rs:
+        return f"max_reschedules reached ({_max_rs})"
+    # max_total_time
+    _max_tt = task.get("max_total_time", 0)
+    if _max_tt and task.get("created_at"):
+        _elapsed = _t.time() - task["created_at"]
+        if _elapsed >= _max_tt:
+            return f"max_total_time exceeded ({int(_elapsed)}s >= {_max_tt}s)"
+    # max_budget
+    _max_b = task.get("max_budget", 0)
+    if _max_b and task.get("total_cost", 0) >= _max_b:
+        return f"max_budget exceeded (${task['total_cost']} >= ${_max_b})"
+    return ""
+
 
 class AgentPollerMixin:
     """Methods extracted from AgentLoopTask."""
@@ -239,6 +258,9 @@ class AgentPollerMixin:
                         {"role": "user", "content": _task_prompt},
                     ]
                     store.save(entry_key, messages_data, user_id=_uid_tmp)
+                    # Set permission_mode on sub-conv if auto_allow
+                    if _task_data_tmp.get("auto_allow"):
+                        store.set_extra(entry_key, "permission_mode", "auto")
             else:
                 messages_data = store.load(cid)
             if not messages_data:
@@ -250,6 +272,31 @@ class AgentPollerMixin:
                 _all_tasks = store.get_extra(cid, "agent_tasks") or {}
                 _task_entry = _all_tasks.get(_task_id, {})
                 _thought_agent = _task_entry.get("agent", "")
+                # Skip cancelled/completed/failed tasks
+                _task_status = _task_entry.get("status", "")
+                if _task_status in ("cancelled", "completed", "failed"):
+                    logger.info("[poller] Skipping task %s — status=%s", _task_id, _task_status)
+                    with self._active_lock:
+                        self._active_thoughts.discard(entry_key)
+                    continue
+                # ── Pre-launch limit checks ──
+                _cancel_reason = _check_task_limits(_task_entry, _task_id)
+                if _cancel_reason:
+                    logger.info("[poller] Cancelling task %s — %s", _task_id, _cancel_reason)
+                    _task_entry["status"] = "cancelled"
+                    _task_entry["cancel_reason"] = _cancel_reason
+                    _all_tasks[_task_id] = _task_entry
+                    store.set_extra(cid, "agent_tasks", _all_tasks)
+                    bus.publish_event(cid, "task_stopped", {
+                        "task_id": _task_id, "agent_name": _thought_agent,
+                        "reason": _cancel_reason, "force": True})
+                    with self._active_lock:
+                        self._active_thoughts.discard(entry_key)
+                    continue
+                # ── Increment reschedule_count (only real runs, not skipped) ──
+                _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
+                _all_tasks[_task_id] = _task_entry
+                store.set_extra(cid, "agent_tasks", _all_tasks)
             elif "::" in entry_key:
                 # Thought key: conv::thought::agent_name
                 _thought_agent = entry_key.rsplit("::", 1)[-1]
@@ -337,11 +384,15 @@ class AgentPollerMixin:
                 ctx["_thought_key"] = entry_key
 
                 # _active_contexts is managed by _run_agent_loop (push/pop in finally)
-                bus.publish_event(cid, "thinking", {
+                _thinking_evt = {
                     "iteration": 0,
                     "poll": True,
                     "agent_name": _thought_agent,
-                })
+                }
+                # Include task_id so the UI creates a task block
+                if _is_task:
+                    _thinking_evt["task_id"] = _task_id
+                bus.publish_event(cid, "thinking", _thinking_evt)
 
                 # For task entries, use the sub-conversation ID so messages
                 # are persisted in the isolated task context
@@ -356,6 +407,27 @@ class AgentPollerMixin:
                     name=f"agent-thought-{entry_key[-16:]}",
                 )
                 thread.start()
+
+                # Task timeout watchdog
+                if _is_task:
+                    _task_timeout = (_task_entry or {}).get("timeout", 0)
+                    if _task_timeout and _task_timeout > 0:
+                        _wdog_tid = _task_id
+                        _wdog_agent = _thought_agent
+                        _wdog_cid = cid
+                        _wdog_thread = thread
+                        def _timeout_watchdog():
+                            _wdog_thread.join(timeout=_task_timeout)
+                            if _wdog_thread.is_alive():
+                                logger.warning("[task:%s] timeout after %ds, interrupting",
+                                              _wdog_tid, _task_timeout)
+                                from tasks.ai.actions.scheduling import _kill_running_task_agent
+                                _kill_running_task_agent(
+                                    self, _wdog_cid, _wdog_tid, _wdog_agent, force=False)
+                        threading.Thread(
+                            target=_timeout_watchdog, daemon=True,
+                            name=f"task-timeout-{_wdog_tid}",
+                        ).start()
             except Exception as e:
                 logger.error(f"[poller] Failed thought {entry_key}: {e}")
                 with self._active_lock:
@@ -493,7 +565,7 @@ class AgentPollerMixin:
                 _td = _my_tasks[0]
                 _tid = _td["task_id"]
                 _iter = _td.get("iterations_done", 0)
-                _max = _td.get("max_iterations", 50)
+                _max = _td.get("max_iterations", 0)
                 _rejection = _td.get("last_rejection")
                 _rej_text = ""
                 if _rejection:
@@ -501,9 +573,9 @@ class AgentPollerMixin:
                         f"\n\n[REJECTION] Rejected by {_rejection.get('by', '?')}: "
                         f"\"{_rejection.get('reason', '')}\". Address this."
                     )
-                if _iter >= _max:
-                    _td["status"] = "failed"
-                    _all_tasks[_tid] = _td
+                if _max > 0 and _iter >= _max:
+                    # Remove instance — only task_def + log remain
+                    del _all_tasks[_tid]
                     _CS3.instance().set_extra(conversation_id, "agent_tasks", _all_tasks)
                     return (
                         f"[System: Task {_tid} failed — max iterations ({_max}) reached]\n"
@@ -512,8 +584,9 @@ class AgentPollerMixin:
                 from datetime import datetime as _DTtask
                 _created_str = _DTtask.fromtimestamp(
                     _td.get("created_at", 0)).strftime("%Y-%m-%d %H:%M") if _td.get("created_at") else "?"
+                _iter_label = f"{_iter + 1}/{_max}" if _max > 0 else f"{_iter + 1}"
                 return (
-                    f"[System: Task {_tid} — iteration {_iter + 1}/{_max}]\n\n"
+                    f"[System: Task {_tid} — iteration {_iter_label}]\n\n"
                     f"**Task ID:** {_tid} (assigned {_created_str})\n"
                     f"**Task:** {_td.get('task', '?')}\n"
                     + (f"**Criteria:** {_td.get('completion_criteria', '')}\n" if _td.get("completion_criteria") else "")
@@ -534,9 +607,10 @@ class AgentPollerMixin:
             for _td in _my_tasks:
                 _tid = _td["task_id"]
                 _iter = _td.get("iterations_done", 0)
-                _max = _td.get("max_iterations", 50)
+                _max = _td.get("max_iterations", 0)
+                _il = f"{_iter + 1}/{_max}" if _max > 0 else f"{_iter + 1}"
                 lines.append(
-                    f"- **{_tid}** (iter {_iter + 1}/{_max}): {_td.get('task', '?')[:100]}"
+                    f"- **{_tid}** (iter {_il}): {_td.get('task', '?')[:100]}"
                     + (f" | Progress: {_td.get('last_result', '')[:60]}" if _td.get("last_result") else "")
                 )
             return (

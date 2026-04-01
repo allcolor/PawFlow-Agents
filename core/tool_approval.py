@@ -86,17 +86,21 @@ class ToolApprovalGate:
         cls, tool_name: str, action_summary: str,
         conversation_id: str, user_id: str,
         arguments: dict = None,
+        agent_name: str = "",
     ) -> str:
         """Check if tool execution is approved.
 
         Returns "approved" or "denied" or "timeout".
+        Permissions are scoped per (conversation, agent). Agent A's approval
+        does not carry over to agent B.
         For filesystem/see tools, arguments determine the approval level.
         Users can always override with "always_allow" — even for dangerous tools.
         """
         # Determine effective approval level
         effective_name = tool_name
-        needs_ask = tool_name in cls.ALWAYS_ASK
+        is_always_ask = tool_name in cls.ALWAYS_ASK
         is_exempt = tool_name in cls.EXEMPT_TOOLS
+        needs_ask = not is_exempt  # all non-exempt tools need approval
 
         # Filesystem: action-aware approval
         if tool_name == "filesystem" and arguments:
@@ -132,8 +136,8 @@ class ToolApprovalGate:
         if is_exempt:
             return "approved"
 
-        # Check conversation-level permissions (user can override anything)
-        perms = cls._get_permissions(conversation_id)
+        # Check conversation+agent scoped permissions
+        perms = cls._get_permissions(conversation_id, agent_name)
         # Check allow-all scopes (e.g. _allow_all:filesystem, _allow_all:screen)
         if tool_name == "filesystem" and arguments:
             svc_name = arguments.get("service", "")
@@ -162,6 +166,7 @@ class ToolApprovalGate:
                 "event": event,
                 "effective_name": effective_name,
                 "conversation_id": conversation_id,
+                "agent_name": agent_name,
             }
 
         # Publish SSE event for approval dialog
@@ -172,6 +177,8 @@ class ToolApprovalGate:
                     "request_id": request_id,
                     "tool_name": effective_name,
                     "action_summary": action_summary,
+                    "agent_name": agent_name,
+                    "arguments": cls._truncate_args(arguments or {}),
                 },
             )
         except Exception as e:
@@ -199,14 +206,15 @@ class ToolApprovalGate:
 
         choice = result.get("choice", "deny")
         perm_name = pending_info.get("effective_name", effective_name) if isinstance(pending_info, dict) else effective_name
+        _perm_agent = pending_info.get("agent_name", agent_name) if isinstance(pending_info, dict) else agent_name
 
         if choice == "allow_once":
             return "approved"
         elif choice == "allow_session":
-            cls._set_permission(conversation_id, perm_name, "session_allow")
+            cls._set_permission(conversation_id, perm_name, "session_allow", agent_name=_perm_agent)
             return "approved"
         elif choice == "always_allow":
-            cls._set_permission(conversation_id, perm_name, "always_allow")
+            cls._set_permission(conversation_id, perm_name, "always_allow", agent_name=_perm_agent)
             return "approved"
         else:
             return "denied"
@@ -225,39 +233,57 @@ class ToolApprovalGate:
         return True
 
     @classmethod
-    def _get_permissions(cls, conversation_id: str) -> Dict[str, str]:
-        """Get tool permissions for a conversation."""
+    def _perm_key(cls, agent_name: str = "") -> str:
+        """Return the store key for agent-scoped permissions."""
+        if agent_name:
+            return f"tool_permissions:{agent_name}"
+        return "tool_permissions"
+
+    @classmethod
+    def _get_permissions(cls, conversation_id: str, agent_name: str = "") -> Dict[str, str]:
+        """Get tool permissions for a (conversation, agent) pair."""
         if not conversation_id:
             return {}
         try:
             from core.conversation_store import ConversationStore
-            return ConversationStore.instance().get_extra(
+            store = ConversationStore.instance()
+            # Agent-scoped permissions take priority
+            if agent_name:
+                agent_perms = store.get_extra(
+                    conversation_id, cls._perm_key(agent_name)
+                ) or {}
+                if agent_perms:
+                    return agent_perms
+            # Fallback to conversation-level (legacy / no agent specified)
+            return store.get_extra(
                 conversation_id, "tool_permissions"
             ) or {}
         except Exception:
             return {}
 
     @classmethod
-    def allow_all(cls, conversation_id: str, scope: str):
+    def allow_all(cls, conversation_id: str, scope: str, agent_name: str = ""):
         """Auto-approve all operations for a scope (e.g. 'filesystem' or 'screen')."""
-        cls._set_permission(conversation_id, f"_allow_all:{scope}", "always_allow")
+        cls._set_permission(conversation_id, f"_allow_all:{scope}", "always_allow", agent_name=agent_name)
 
     @classmethod
-    def deny_all(cls, conversation_id: str, scope: str):
+    def deny_all(cls, conversation_id: str, scope: str, agent_name: str = ""):
         """Revoke auto-approve for a scope."""
-        cls._set_permission(conversation_id, f"_allow_all:{scope}", "")
+        cls._set_permission(conversation_id, f"_allow_all:{scope}", "", agent_name=agent_name)
 
     @classmethod
-    def _set_permission(cls, conversation_id: str, tool_name: str, level: str):
-        """Set a tool permission for a conversation."""
+    def _set_permission(cls, conversation_id: str, tool_name: str, level: str,
+                        agent_name: str = ""):
+        """Set a tool permission for a (conversation, agent) pair."""
         if not conversation_id:
             return
         try:
             from core.conversation_store import ConversationStore
             store = ConversationStore.instance()
-            perms = store.get_extra(conversation_id, "tool_permissions") or {}
+            key = cls._perm_key(agent_name)
+            perms = store.get_extra(conversation_id, key) or {}
             perms[tool_name] = level
-            store.set_extra(conversation_id, "tool_permissions", perms)
+            store.set_extra(conversation_id, key, perms)
         except Exception as e:
             logger.warning("Failed to set tool permission: %s", e)
 
@@ -277,3 +303,14 @@ class ToolApprovalGate:
             ) or "default"
         except Exception:
             return "default"
+
+    @staticmethod
+    def _truncate_args(arguments: dict, max_val_len: int = 500) -> dict:
+        """Truncate long argument values for the approval dialog."""
+        result = {}
+        for k, v in arguments.items():
+            if isinstance(v, str) and len(v) > max_val_len:
+                result[k] = v[:max_val_len] + f"... ({len(v)} chars)"
+            else:
+                result[k] = v
+        return result

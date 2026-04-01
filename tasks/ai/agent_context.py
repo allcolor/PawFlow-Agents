@@ -443,7 +443,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}"
                 ))
                 messages.insert(_inject_idx + 1, LLMMessage(
-                    role="assistant", content="Understood."
+                    role="assistant", content="Understood.",
+                    source={"type": "context"},
                 ))
 
         if use_conv_store and not conversation_id:
@@ -682,7 +683,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         role="user", content=" ".join(_resume_parts)))
                     messages.append(LLMMessage(
                         role="assistant",
-                        content="Understood. I'll continue from where I left off."))
+                        content="Understood. I'll continue from where I left off.",
+                        source={"type": "context"}))
                     # Clear checkpoint after injection
                     _cp_store.set_extra(conversation_id, _cp_key, None)
                     logger.info(f"[context:{conversation_id[:8]}] injected resume from cancel checkpoint")

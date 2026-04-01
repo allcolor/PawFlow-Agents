@@ -12,6 +12,7 @@ Each sub-agent runs its own tool-use loop with:
 - Result aggregation for parallel execution
 """
 
+import json
 import logging
 import time
 import uuid
@@ -411,7 +412,10 @@ class SubAgentExecutor:
                             )
                         except Exception:
                             pass
-                    tool_result = self._execute_tool(tc, tool_handlers, task.agent_name)
+                    tool_result = self._execute_tool(
+                        tc, tool_handlers, task.agent_name,
+                        conversation_id=task.parent_conversation_id,
+                        user_id=task.user_id)
                     messages.append(LLMMessage(
                         role="tool",
                         content=tool_result,
@@ -566,14 +570,36 @@ class SubAgentExecutor:
     def _execute_tool(
         self, tc: LLMToolCall, handlers: Dict,
         agent_name: str = "",
+        conversation_id: str = "",
+        user_id: str = "",
     ) -> str:
-        """Execute a single tool call."""
+        """Execute a single tool call with per-agent approval gate."""
         handler = handlers.get(tc.name)
         if handler is None:
             return f"Error: unknown tool '{tc.name}'"
         # Set agent identity for ownership tracking (ManageResourceHandler)
         if agent_name and hasattr(handler, 'set_agent_name'):
             handler.set_agent_name(agent_name)
+        # Permission check (per-agent scoped)
+        if conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                _perm_mode = ConversationStore.instance().get_extra(
+                    conversation_id, "permission_mode") or "default"
+                if _perm_mode != "auto":
+                    from core.tool_approval import ToolApprovalGate
+                    if tc.name not in ToolApprovalGate.EXEMPT_TOOLS:
+                        approval = ToolApprovalGate.check(
+                            tc.name,
+                            f"{tc.name}({json.dumps(tc.arguments)[:200]})",
+                            conversation_id, user_id,
+                            arguments=tc.arguments,
+                            agent_name=agent_name,
+                        )
+                        if approval != "approved":
+                            return f"Error: Tool '{tc.name}' was {approval} by the user."
+            except Exception as e:
+                logger.debug("Sub-agent approval check failed: %s", e)
         try:
             return handler.execute(tc.arguments)
         except Exception as e:

@@ -345,4 +345,8 @@ _msgObserver.observe(document.getElementById('messages'), { childList: true });
 document.getElementById('input').focus();
 updateActiveAgentBadge();
 
-loadConversations();
+loadConversations().then(convs => {
+  if (convs.length && !conversationId) {
+    resumeConv(convs[0].conversation_id);
+  }
+});

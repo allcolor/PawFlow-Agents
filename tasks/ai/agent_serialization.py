@@ -236,6 +236,8 @@ class AgentSerializationMixin:
                 }
                 if tool_call_id in _tc_id_to_name:
                     _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]
+                if m.get("source"):
+                    _tr_entry["source"] = m["source"]
                 result.append(_tr_entry)
             elif role in ("tool_call", "tool_result", "narration", "thinking"):
                 # display_only messages from claude-code turns — pass through as-is

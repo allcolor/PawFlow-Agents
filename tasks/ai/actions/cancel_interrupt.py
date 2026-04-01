@@ -20,12 +20,81 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     if action == "cancel":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")
+        task_id = body.get("task_id", "")
         if agent_name:
             agent_name = self._resolve_agent_name(agent_name, conv_id)
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
+
+        # Task-targeted cancel: stop a specific task agent
+        if task_id:
+            _task_cid = f"{conv_id}::task::{task_id}"
+
+            # 1. Mark task as cancelled in store — prevents poller reschedule
+            try:
+                _all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+                if task_id in _all_tasks:
+                    _all_tasks[task_id]["status"] = "cancelled"
+                    store.set_extra(conv_id, "agent_tasks", _all_tasks)
+                    logger.info(f"[agent:{conv_id[:8]}] task {task_id} marked cancelled in store")
+            except Exception as _e:
+                logger.warning(f"[agent:{conv_id[:8]}] failed to mark task cancelled: {_e}")
+
+            # 2. Bump generation — tells running thread to stop
+            #    cancel_agent without agent_name bumps the gen_key = _task_cid
+            #    which matches the poller's _thought_gen_key = entry_key
+            self.cancel_agent(_task_cid, agent_name="", silent=True)
+            if agent_name:
+                # Also bump the agent-specific key just in case
+                self.cancel_agent(_task_cid, agent_name=agent_name, silent=True)
+
+            try:
+                from services.tool_relay_service import ToolRelayService
+                ToolRelayService.cancel_agent(_task_cid, agent_name)
+            except Exception:
+                pass
+
+            # 3. Kill task's Claude Code subprocess
+            with self._active_contexts_lock:
+                _cc_keys = [k for k in self._active_claude_client
+                            if f"::task::{task_id}" in k]
+                _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
+            for _cc_key, client in _cc_clients:
+                if client and hasattr(client, 'cancel_claude_code'):
+                    client.cancel_claude_code(force=True)
+
+            # 4. Clear task's active context + active_thoughts
+            with self._active_contexts_lock:
+                for k in list(self._active_contexts):
+                    if f"::task::{task_id}" in k:
+                        del self._active_contexts[k]
+            with self._active_lock:
+                self._active_thoughts.discard(_task_cid)
+                self._active_thoughts.discard(f"{conv_id}::task_verify::{task_id}")
+
+            # 5. Cancel the scheduled task in the poller
+            try:
+                from engine.continuous_executor import PollScheduler
+                PollScheduler.instance().cancel(_task_cid)
+            except Exception:
+                pass
+
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conv_id, "task_stopped", {
+                    "task_id": task_id,
+                    "agent_name": agent_name or "",
+                    "force": True,
+                })
+            logger.info(f"[agent:{conv_id[:8]}] task {task_id} FORCE STOPPED")
+            flowfile.set_content(json.dumps({
+                "cancelled": True, "conversation_id": conv_id,
+                "task_id": task_id, "agent_name": agent_name or "",
+            }).encode())
+            return [flowfile]
+
         self.cancel_agent(conv_id, agent_name=agent_name)
         # Cancel in-flight tool calls for this agent
         try:
@@ -36,7 +105,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         # Kill Claude Code subprocess (check keyed entries)
         with self._active_contexts_lock:
             _cc_keys = [f"{conv_id}:{agent_name}"] if agent_name else \
-                [k for k in self._active_claude_client if k == conv_id or k.startswith(conv_id + ":")]
+                [k for k in self._active_claude_client if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
             _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
         for _cc_key, client in _cc_clients:
             if client and hasattr(client, 'cancel_claude_code'):
@@ -61,7 +130,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             self._user_active_conversations.discard(conv_id)
         with self._active_contexts_lock:
             for k in list(self._active_contexts):
-                if k == conv_id or k.startswith(conv_id + ":"):
+                if (k == conv_id or k.startswith(conv_id + ":")) and "::task::" not in k and "::task_verify::" not in k:
                     del self._active_contexts[k]
         logger.info(f"[agent:{conv_id[:8]}] FORCE STOPPED ({_killed} thread(s))")
         flowfile.set_content(json.dumps({
@@ -73,16 +142,20 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
     if action == "interrupt":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")
+        task_id = body.get("task_id", "")
         if agent_name:
             agent_name = self._resolve_agent_name(agent_name, conv_id)
         if not conv_id:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        self.interrupt_agent(conv_id, agent_name)
+        # Task-targeted interrupt: use task's conversation ID
+        _target_cid = f"{conv_id}::task::{task_id}" if task_id else conv_id
+        self.interrupt_agent(_target_cid, agent_name)
         flowfile.set_content(json.dumps({
             "interrupted": True, "conversation_id": conv_id,
             "agent_name": agent_name or "",
+            **({"task_id": task_id} if task_id else {}),
         }).encode())
         return [flowfile]
 
@@ -97,7 +170,7 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         user_id = flowfile.get_attribute("http.auth.principal") or ""
-        # Handle ALL â€” spawn btw for each agent + default
+        # Handle ALL — spawn btw for each agent + default
         if agent_name.upper() == "ALL":
             from core.resource_store import ResourceStore
             rs = ResourceStore.instance()

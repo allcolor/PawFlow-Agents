@@ -123,6 +123,9 @@ class BashHandler(BaseFsHandler):
             _exec_kwargs = {"shell": shell}
             if "timeout" in arguments:
                 _exec_kwargs["timeout"] = arguments["timeout"]
+            # Pass secret env vars (injected by tool_relay_service)
+            if arguments.get("_secret_env"):
+                _exec_kwargs["env"] = arguments["_secret_env"]
             result = svc.exec(path, command, **_exec_kwargs)
             output = result.get("stdout", "")
             if result.get("stderr"):
@@ -152,6 +155,12 @@ class BashHandler(BaseFsHandler):
                            cwd=cwd or self._workdir)
         if "timeout" in arguments:
             _run_kwargs["timeout"] = arguments["timeout"]
+        # Inject secret env vars
+        if arguments.get("_secret_env"):
+            import os
+            _env = os.environ.copy()
+            _env.update(arguments["_secret_env"])
+            _run_kwargs["env"] = _env
 
         try:
             result = subprocess.run(command, **_run_kwargs,

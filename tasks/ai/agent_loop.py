@@ -530,7 +530,7 @@ class AgentLoopTask(
                 self._conv_generation[conversation_id] = \
                     self._conv_generation.get(conversation_id, 0) + 1
                 for k in list(self._conv_generation):
-                    if k.startswith(conversation_id + ":") and "::thought::" not in k:
+                    if k.startswith(conversation_id + ":") and "::thought::" not in k and "::task::" not in k and "::task_verify::" not in k:
                         self._conv_generation[k] += 1
         if not silent:
             # Publish cancellation event for SSE listeners
@@ -553,7 +553,7 @@ class AgentLoopTask(
         # Kill Claude Code subprocess (check both conv:agent and conv-only keys)
         with self._active_contexts_lock:
             _cc_keys = [f"{conversation_id}:{agent_name}"] if _is_named else \
-                [k for k in self._active_claude_client if k == conversation_id or k.startswith(conversation_id + ":")]
+                [k for k in self._active_claude_client if (k == conversation_id or k.startswith(conversation_id + ":")) and "::task::" not in k and "::task_verify::" not in k]
             _cc_clients = [(k, self._active_claude_client.get(k)) for k in _cc_keys]
         for _cc_key, client in _cc_clients:
             if client and hasattr(client, 'cancel_claude_code'):

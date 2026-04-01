@@ -72,6 +72,12 @@ class LogTask(BaseTask):
         attrs.setdefault('fileSize', str(flowfile.size()))
         attrs.setdefault('uuid', flowfile.process_id[:8])
         attrs.setdefault('process.id', flowfile.process_id[:8])
+        # Make FlowFile body available as ${content}
+        if 'content' not in attrs:
+            try:
+                attrs['content'] = flowfile.get_content().decode('utf-8', errors='replace')[:10000]
+            except Exception:
+                attrs['content'] = ''
 
         formatted = resolve_expression(message, parameters=attrs)
 

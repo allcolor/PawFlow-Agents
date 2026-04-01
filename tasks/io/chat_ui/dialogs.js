@@ -43,15 +43,27 @@ async function resolveExec(requestId, approved, btn) {
 }
 
 // ── Tool Approval Dialog (Plan A) ─────────────────────────────────
+function _formatToolArgs(args) {
+  if (!args || typeof args !== 'object') return '';
+  const entries = Object.entries(args);
+  if (entries.length === 0) return '';
+  return entries.map(([k, v]) => {
+    let val = typeof v === 'string' ? v : JSON.stringify(v, null, 2);
+    return '<div class="tool-arg"><span class="tool-arg-key">' + escapeHtml(k) + ':</span> '
+      + '<pre class="tool-arg-val">' + escapeHtml(val) + '</pre></div>';
+  }).join('');
+}
+
 function showToolApprovalDialog(data) {
-  const { request_id, tool_name, action_summary } = data;
+  const { request_id, tool_name, arguments: args } = data;
+  const argsHtml = _formatToolArgs(args);
   const overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
   overlay.innerHTML = `
     <div class="exec-dialog">
       <h3>${escapeHtml(t('tool_approval.title') || 'Tool Permission')}
         <span class="exec-risk medium">${escapeHtml(tool_name)}</span></h3>
-      <div class="exec-cmd"><code>${escapeHtml(action_summary)}</code></div>
+      <div class="exec-cmd">${argsHtml || '<code>No arguments</code>'}</div>
       <div class="exec-btns" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="exec-deny" onclick="resolveToolApproval('${request_id}', 'deny', this)">${escapeHtml(t('tool_approval.deny') || 'Deny')}</button>
         <button class="exec-approve" onclick="resolveToolApproval('${request_id}', 'allow_once', this)">${escapeHtml(t('tool_approval.allow_once') || 'Allow Once')}</button>

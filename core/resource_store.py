@@ -278,21 +278,23 @@ class ResourceStore:
             result = user_items
 
         # Add conversation-scoped resources
-        if conversation_id and resource_type == "agent":
+        if conversation_id and resource_type in ("agent", "task_def"):
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
-                conv_agents = store.get_extra(conversation_id, "conversation_agents") or {}
-                disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+                extras_key = "conversation_agents" if resource_type == "agent" else "conversation_task_defs"
+                conv_items = store.get_extra(conversation_id, extras_key) or {}
                 seen_names = {item["name"] for item in result}
-                for name, data in conv_agents.items():
+                for name, data in conv_items.items():
                     if name not in seen_names:
                         entry = dict(data)
                         entry["name"] = name
                         entry["_scope"] = "conversation"
                         result.append(entry)
-                # Filter disabled
-                result = [r for r in result if r["name"] not in disabled]
+                # Filter disabled agents only
+                if resource_type == "agent":
+                    disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+                    result = [r for r in result if r["name"] not in disabled]
             except Exception:
                 pass
 
@@ -303,17 +305,18 @@ class ResourceStore:
                 conversation_id: str = "") -> Optional[Dict[str, Any]]:
         """Get a resource by name: conversation → user → global."""
         # 1. Conversation-scoped
-        if conversation_id and resource_type == "agent":
+        if conversation_id and resource_type in ("agent", "task_def"):
             try:
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
-                # Check disabled
-                disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
-                if name in disabled:
-                    return None
-                conv_agents = store.get_extra(conversation_id, "conversation_agents") or {}
-                if name in conv_agents:
-                    entry = dict(conv_agents[name])
+                if resource_type == "agent":
+                    disabled = set(store.get_extra(conversation_id, "disabled_agents") or [])
+                    if name in disabled:
+                        return None
+                extras_key = "conversation_agents" if resource_type == "agent" else "conversation_task_defs"
+                conv_items = store.get_extra(conversation_id, extras_key) or {}
+                if name in conv_items:
+                    entry = dict(conv_items[name])
                     entry["name"] = name
                     entry["_scope"] = "conversation"
                     return entry

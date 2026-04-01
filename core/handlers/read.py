@@ -67,8 +67,13 @@ class ReadHandler(BaseFsHandler):
 
         svc, workdir = self._resolve(source)
 
-        offset = int(arguments.get("offset", 0) or 0)
+        offset = int(arguments.get("offset", 0) or arguments.get("start_line", 0) or 0)
         limit = int(arguments.get("limit", 0) or 0)
+        # Support start_line/end_line as aliases for offset/limit
+        if not limit and arguments.get("end_line"):
+            end_line = int(arguments["end_line"])
+            if offset > 0 and end_line >= offset:
+                limit = end_line - offset + 1
 
         # FileStore
         if svc == "filestore":

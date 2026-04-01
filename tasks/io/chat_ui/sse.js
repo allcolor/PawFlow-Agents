@@ -9,10 +9,75 @@ function connectSSE(cid) {
     + (token ? '&token=' + encodeURIComponent(token) : '');
   eventSource = new EventSource(url);
 
+  // ── Task block grouping ─────────────────────────────────────────
+  const _taskBlocks = {};
+
+  function _getTaskBlock(taskId, agentName) {
+    if (!taskId) return null;
+    if (_taskBlocks[taskId]) return _taskBlocks[taskId];
+    const details = document.createElement('details');
+    details.className = 'msg task-block';
+    details.setAttribute('open', '');
+    details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
+    const summary = document.createElement('summary');
+    summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';
+    summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(taskId) + '</span>'
+      + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + ')</span>' : '')
+      + ' <span class="task-block-status" style="margin-left:auto;font-size:11px;color:#888">\u25cf running</span>';
+    details.appendChild(summary);
+    const content = document.createElement('div');
+    content.style.cssText = 'padding:4px 12px 8px;max-height:500px;overflow-y:auto;';
+    details.appendChild(content);
+    const container = document.getElementById('messages');
+    const typingEl = document.getElementById('typing');
+    if (typingEl) container.insertBefore(details, typingEl);
+    else container.appendChild(details);
+    scrollBottom();
+    _taskBlocks[taskId] = {el: details, content: content, summary: summary, agent: agentName};
+    // Show compact launch message in chat
+    const launchNote = document.createElement('div');
+    launchNote.className = 'msg system task-lifecycle';
+    launchNote.innerHTML = '\u25B6 <b>task ' + escapeHtml(taskId) + '</b> launching' + (agentName ? ' (' + escapeHtml(displayAgentName(agentName)) + ')' : '');
+    launchNote.style.cssText = 'font-size:12px;opacity:0.7;color:#6c5ce7;';
+    if (typingEl) container.insertBefore(launchNote, details);
+    else container.insertBefore(launchNote, details);
+    return _taskBlocks[taskId];
+  }
+
+  function _taskBlockAppend(taskId, childEl) {
+    const block = _taskBlocks[taskId];
+    if (block && childEl) {
+      block.content.appendChild(childEl);
+      block.content.scrollTop = block.content.scrollHeight;
+      scrollBottom();
+    }
+  }
+
+  function _finalizeTaskBlock(taskId) {
+    const block = _taskBlocks[taskId];
+    if (block) {
+      const statusEl = block.summary.querySelector('.task-block-status');
+      if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
+      block.el.removeAttribute('open');
+      // Show compact ended message in chat
+      const endNote = document.createElement('div');
+      endNote.className = 'msg system task-lifecycle';
+      endNote.innerHTML = '\u2713 <b>task ' + escapeHtml(taskId) + '</b> ended';
+      endNote.style.cssText = 'font-size:12px;opacity:0.7;color:#4ecdc4;';
+      block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
+      delete _taskBlocks[taskId];
+    }
+  }
+
   eventSource.addEventListener('thinking', (e) => {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
+    // Task events: create/update task block, don't touch main status bar
+    if (data.task_id) {
+      _getTaskBlock(data.task_id, agentName);
+      return;
+    }
     // New turn starting — clear cancel suppression so tool events show again
     if (agentName) _cancelledAgents.delete(agentName.toLowerCase());
     trackAgentStart(agentName);
@@ -42,10 +107,16 @@ function connectSSE(cid) {
       const content = document.createElement('div');
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
       details.appendChild(content);
-      const _msgContainer = document.getElementById('messages');
-      const _typingEl = document.getElementById('typing');
-      if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
-      else _msgContainer.appendChild(details);
+      if (data.task_id) {
+        const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+        if (tb) { tb.content.appendChild(details); }
+        else { document.getElementById('messages').appendChild(details); }
+      } else {
+        const _msgContainer = document.getElementById('messages');
+        const _typingEl = document.getElementById('typing');
+        if (_typingEl) _msgContainer.insertBefore(details, _typingEl);
+        else _msgContainer.appendChild(details);
+      }
       thinkingElements[aKey] = {el: details, content: content, summary: summary, text: '', startTime: Date.now()};
       scrollBottom();
     }
@@ -91,6 +162,11 @@ function connectSSE(cid) {
       if (s.el) {
         s.el.dataset.agent = (agent || '').toLowerCase();
         if (s.msg_id) s.el.dataset.msgid = s.msg_id;
+        // Move into task block if this is a task event
+        if (data.task_id) {
+          const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+          if (tb) tb.content.appendChild(s.el);
+        }
       }
       s.chunks.push(s.el);
       streamingEl = s.el;  // legacy global
@@ -103,12 +179,14 @@ function connectSSE(cid) {
     // Update content area only — preserve action buttons and meta
     let contentEl = s.el.querySelector('.msg-content');
     if (!contentEl) {
-      // First update: restructure into content + actions + meta
+      // First update: restructure into content + actions + time + meta
       const actions = s.el.querySelector('.msg-actions');
+      const timeEl = s.el.querySelector('.msg-time');
       const meta = s.el.querySelector('.msg-meta');
       contentEl = document.createElement('span');
       contentEl.className = 'msg-content';
       s.el.innerHTML = '';
+      if (timeEl) s.el.appendChild(timeEl);
       s.el.appendChild(contentEl);
       if (actions) s.el.appendChild(actions);
       else s.el.insertAdjacentHTML('beforeend',
@@ -182,11 +260,18 @@ function connectSSE(cid) {
     const el = document.createElement('div');
     el.className = 'msg narration';
     el.dataset.finalizedAgent = agent.toLowerCase();
-    el.innerHTML = badge + '<em>' + escapeHtml(data.text || '') + '</em>';
-    const _narContainer = document.getElementById('messages');
-    const _narTyping = document.getElementById('typing');
-    if (_narTyping) _narContainer.insertBefore(el, _narTyping);
-    else _narContainer.appendChild(el);
+    el.innerHTML = makeTimeHtml() + badge + '<em>' + escapeHtml(data.text || '') + '</em>';
+    // Route into task block if this is a task event
+    if (data.task_id) {
+      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+      if (tb) tb.content.appendChild(el);
+      else document.getElementById('messages').appendChild(el);
+    } else {
+      const _narContainer = document.getElementById('messages');
+      const _narTyping = document.getElementById('typing');
+      if (_narTyping) _narContainer.insertBefore(el, _narTyping);
+      else _narContainer.appendChild(el);
+    }
     scrollBottom();
   });
 
@@ -194,6 +279,8 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || '';
+    // Task events: skip entirely — task agents are not in activeInteractions
+    if (data.task_id) return;
     const aKey = agentKey(agentName);
     if (activeInteractions[aKey]) {
       activeInteractions[aKey].iteration = data.iteration;
@@ -329,6 +416,11 @@ function connectSSE(cid) {
     };
     if (data.parent_tc_id) tcExtra.parent_tc_id = data.parent_tc_id;
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
+    // Move into task block if this is a task event
+    if (data.task_id && tcEl && !data.parent_tc_id) {
+      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, tcAgent);
+      if (tb) tb.content.appendChild(tcEl);
+    }
     // Group under parent agent tool_call if this is a sub-agent tool
     if (data.parent_tc_id && tcEl) {
       const parentEl = document.querySelector('[data-tc-id="' + data.parent_tc_id + '"]');
@@ -343,7 +435,7 @@ function connectSSE(cid) {
         childContainer.appendChild(tcEl);
       }
     }
-    document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
+    if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
   });
 
   eventSource.addEventListener('tool_result', (e) => {
@@ -430,6 +522,22 @@ function connectSSE(cid) {
     scrollBottom();
   });
 
+  eventSource.addEventListener('task_stopped', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.task_id) {
+      // Update task block status
+      const block = _taskBlocks[data.task_id];
+      if (block) {
+        const statusEl = block.summary.querySelector('.task-block-status');
+        if (statusEl) { statusEl.textContent = data.force ? '\u2718 stopped' : '\u23F8 paused'; statusEl.style.color = data.force ? '#e94560' : '#f39c12'; }
+        block.el.removeAttribute('open');
+        delete _taskBlocks[data.task_id];
+      }
+      clearStream(data.agent_name || '');
+    }
+  });
+
   // ── Plan events ──────────────────────────────────────────────
   eventSource.addEventListener('plan_created', (e) => {
     lastSSEActivity = Date.now();
@@ -510,6 +618,22 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const doneAgent = data.agent_name || data.source?.name || '';
+    // Task done: finalize task block
+    if (data.task_id) {
+      finalizeThinking(doneAgent);
+      // Show agent's final message inside the task block before closing it
+      let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
+      taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
+      const block = _taskBlocks[data.task_id];
+      if (taskResp && block) {
+        const src = data.source || {type: 'agent', name: doneAgent};
+        const msgEl = addMsg('assistant', taskResp, {source: src, msg_id: data.msg_id || ''});
+        if (msgEl) block.content.appendChild(msgEl);
+      }
+      _finalizeTaskBlock(data.task_id);
+      clearStream(doneAgent);
+      return;
+    }
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
@@ -675,7 +799,7 @@ function connectSSE(cid) {
     const bKey = agent.toLowerCase();
     const dName = displayAgentName(agent);
     const el = addMsg('btw', '');
-    el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span><em style="color:#888;">thinking...</em>';
+    el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span><em style="color:#888;">thinking...</em>';
     btwElements[bKey] = el;
     btwTexts[bKey] = '';
     scrollBottom();
@@ -690,7 +814,7 @@ function connectSSE(cid) {
     btwTexts[bKey] = (btwTexts[bKey] || '') + data.text;
     const el = btwElements[bKey];
     if (el) {
-      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(btwTexts[bKey]);
+      el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(btwTexts[bKey]);
       scrollBottom();
     }
   });
@@ -703,12 +827,12 @@ function connectSSE(cid) {
     const dName = displayAgentName(agent);
     if (data.error) {
       const el = btwElements[bKey];
-      if (el) { el.innerHTML = '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] Error: ' + escapeHtml(data.error) + '</span>'; }
+      if (el) { el.innerHTML = makeTimeHtml() + '<span style="color:#f87171;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] Error: ' + escapeHtml(data.error) + '</span>'; }
       else { addMsg('error', '[' + dName + ' \u00b7 btw] ' + data.error); }
     } else if (data.response && !btwTexts[bKey]) {
       // Non-streaming fallback
       const el = btwElements[bKey] || addMsg('btw', '');
-      el.innerHTML = '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(data.response);
+      el.innerHTML = makeTimeHtml() + '<span style="color:#60a5fa;font-size:11px;">[' + escapeHtml(dName) + ' \u00b7 btw] </span>' + renderMarkdown(data.response);
     }
     delete btwElements[bKey];
     delete btwTexts[bKey];

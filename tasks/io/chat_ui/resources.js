@@ -243,20 +243,9 @@ async function loadResources() {
         <span style="color:#555;font-size:10px;">[${t.default_interval}]</span>
       </div>`;
     });
-    // All task instances (assigned tasks, any status)
-    (data.all_tasks || []).forEach(t => {
-      const statusColors = {active:'#4ecdc4', paused:'#f0ad4e', cancelled:'#888', failed:'#e74c3c', completed:'#2ecc71'};
-      const statusIcons = {active:'\u25B6', paused:'\u23F8', cancelled:'\u2716', failed:'\u274C', completed:'\u2705'};
-      const sc = statusColors[t.status] || '#666';
-      const si = statusIcons[t.status] || '\u2022';
-      const label = t.task_id + ' ' + t.agent + ': ' + (t.task_def_name || t.task.substring(0, 40));
-      const ivSpec = typeof t.interval === 'object' ? (t.interval.spec || '') : '';
-      html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
-        <span style="color:${sc};font-size:11px;">${si}</span>
-        <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
-        <span style="color:#555;font-size:10px;">[${t.status}, iter ${t.iterations}/${t.max_iterations}${ivSpec ? ', '+ivSpec : ''}]</span>
-      </div>`;
-    });
+    // Task instances are NOT shown here — only definitions.
+    // Active/paused instances appear in "Running Tasks" below.
+    // Completed/cancelled/failed instances are accessible via View Log on the definition.
     html += _sectionFooter();
     // Running task instances (active/paused)
     if (data.running_tasks && data.running_tasks.length) {
@@ -264,7 +253,7 @@ async function loadResources() {
       data.running_tasks.forEach(t => {
         const statusColor = t.status === 'active' ? '#4ecdc4' : t.status === 'paused' ? '#f0ad4e' : '#666';
         const statusIcon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : '\u23F9';
-        const label = (t.task_def_name || t.task.substring(0, 30)) + ' \u2192 ' + t.agent;
+        const label = (t.task_def_name || (t.task || '').substring(0, 30) || t.task_id) + ' \u2192 ' + t.agent;
         html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showRunningTaskMenu(event,'${t.task_id}','${t.agent}','${t.status}');return false;">
           <span style="color:${statusColor};font-size:11px;">${statusIcon}</span>
           <span style="color:#8888aa;font-size:11px;" title="${escapeHtml(t.task)}">${escapeHtml(label)}</span>
@@ -441,6 +430,7 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
   }
   if (rtype === 'task_def') {
     item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
+    item('\u{1F4DC} View Log...', () => _showTaskDefLog(name));
   }
   sep();
   // Copy between scopes
@@ -472,7 +462,7 @@ function _deleteResource(rtype, name, scope) {
   if (!confirm(`Delete ${rtype} '${name}' (${scope})?`)) return;
   fetch(API, { method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify({ action: 'delete_resource', resource_type: rtype,
-      name, scope: scope || 'user' }),
+      name, scope: scope || 'user', conversation_id: conversationId }),
   }).then(r => r.json()).then(d => {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', `${rtype} '${name}' deleted.`);
@@ -858,6 +848,13 @@ function _showAssignDialog(taskDefName) {
     <input id="assign-interval" placeholder="e.g. 6/1m, 2/1h, 60" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;"/></div>
   <div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">Variables (key=value, one per line)</label>
     <textarea id="assign-vars" placeholder="nbr_images=20&#10;style=cyberpunk" style="width:100%;min-height:60px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;"></textarea></div>
+  <details style="margin-bottom:8px;"><summary style="color:#888;font-size:11px;cursor:pointer;">Limits (optional)</summary>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+      <div><label style="color:#888;font-size:10px;">Max Budget</label><input id="assign-budget" placeholder="$5" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:#888;font-size:10px;">Turn Time</label><input id="assign-turn-time" placeholder="5m" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:#888;font-size:10px;">Total Time</label><input id="assign-total-time" placeholder="1h" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
+      <div><label style="color:#888;font-size:10px;">Max Reschedules</label><input id="assign-max-resched" placeholder="50" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:4px;border-radius:4px;font-size:11px;"/></div>
+    </div></details>
   <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
     <button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>
     <button onclick="_submitAssign('${taskDefName}')" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>
@@ -885,6 +882,14 @@ function _submitAssign(taskDefName) {
     }
     if (Object.keys(variables).length) body.variables = variables;
   }
+  const _bv = (document.getElementById('assign-budget') || {}).value || '';
+  const _tv = (document.getElementById('assign-turn-time') || {}).value || '';
+  const _ttv = (document.getElementById('assign-total-time') || {}).value || '';
+  const _rv = (document.getElementById('assign-max-resched') || {}).value || '';
+  if (_bv.trim()) body.max_budget = _bv.trim();
+  if (_tv.trim()) body.max_turn_time = _tv.trim();
+  if (_ttv.trim()) body.max_total_time = _ttv.trim();
+  if (_rv.trim()) body.max_reschedules = parseInt(_rv) || 0;
   fetch(API, { method: 'POST', headers: getAuthHeaders(),
     body: JSON.stringify(body),
   }).then(r => r.json()).then(d => {
@@ -892,6 +897,65 @@ function _submitAssign(taskDefName) {
     else { addMsg('system', d.result || 'Task assigned.'); loadResources(); }
     document.getElementById('resourceEditorOverlay').remove();
   }).catch(e => addMsg('error', e.message));
+}
+
+// ── Task instance context menu (Tasks section – management, not lifecycle) ──
+function showTaskInstanceMenu(e, taskId, agent, status) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:140px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  _positionMenu(menu, e);
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  const _taskAction = (action) => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: action + '_task', conversation_id: conversationId, task_id: taskId }),
+    }).then(r => r.json()).then(d => {
+      if (d.error) addMsg('error', d.error);
+      else addMsg('system', `Task ${taskId} ${action}d.`);
+      loadResources();
+    }).catch(e => addMsg('error', e.message));
+  };
+  // View task log
+  item('\u{1F4CB} View Log', () => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: taskId }),
+    }).then(r => r.json()).then(d => {
+      const log = d.log || [];
+      if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
+      const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
+      addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
+    }).catch(e => addMsg('error', e.message));
+  });
+  // View task details
+  item('\u{1F441} View Details', () => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+    }).then(r => r.json()).then(d => {
+      const task = (d.all_tasks || []).find(t => t.task_id === taskId);
+      if (!task) { addMsg('system', 'Task not found: ' + taskId); return; }
+      const info = [`Task: ${task.task_id}`, `Agent: ${task.agent}`, `Status: ${task.status}`,
+        `Iterations: ${task.iterations}/${task.max_iterations}`, `Definition: ${task.task_def_name || '-'}`,
+        `Prompt: ${task.task}`].join('\n');
+      addMsg('system', info);
+    }).catch(e => addMsg('error', e.message));
+  });
+  // Delete
+  const sep = document.createElement('div');
+  sep.style.cssText = 'height:1px;background:#333;margin:4px 0;';
+  menu.appendChild(sep);
+  item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
+  setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
 }
 
 // ── Running task context menu ─────────────────────────────────────
@@ -921,6 +985,20 @@ function showRunningTaskMenu(e, taskId, agent, status) {
       loadResources();
     }).catch(e => addMsg('error', e.message));
   };
+  // View task log
+  item('\u{1F4CB} View Log', () => {
+    fetch(API, { method: 'POST', headers: getAuthHeaders(),
+      body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: taskId }),
+    }).then(r => r.json()).then(d => {
+      const log = d.log || [];
+      if (!log.length) { addMsg('system', 'No log entries for ' + taskId); return; }
+      const lines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
+      addMsg('system', '\u{1F4CB} Task log ' + taskId + ':\n' + lines);
+    }).catch(e => addMsg('error', e.message));
+  });
+  // Edit limits
+  item('\u270F Edit Limits', () => _showEditLimitsDialog(taskId));
+  // Status-specific actions
   if (status === 'active') {
     item('\u23F8 Pause', () => _taskAction('pause'));
   } else if (status === 'paused') {
@@ -940,6 +1018,80 @@ function showRunningTaskMenu(e, taskId, agent, status) {
   menu.appendChild(sep2);
   item('\u{1F5D1} Delete', () => _taskAction('delete'), true);
   setTimeout(() => document.addEventListener('click', function _c() { menu.remove(); document.removeEventListener('click', _c); }), 0);
+}
+
+function _showEditLimitsDialog(taskId) {
+  // Fetch current task data
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'task_status', conversation_id: conversationId }),
+  }).then(r => r.json()).then(d => {
+    const task = (d.tasks || []).find(t => t.task_id === taskId);
+    if (!task) { addMsg('error', 'Task not found: ' + taskId); return; }
+    const overlay = document.createElement('div');
+    overlay.id = 'resourceEditorOverlay';
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.onclick = (ev) => { if (ev.target === overlay) overlay.remove(); };
+    const panel = document.createElement('div');
+    panel.style.cssText = 'background:#1a1a2e;border:1px solid #333;border-radius:8px;padding:20px;min-width:340px;max-width:420px;color:#e0e0e0;';
+    const _f = (id, label, val, ph) => `<div style="margin-bottom:8px;"><label style="font-size:11px;color:#888;">${label}</label><input id="${id}" value="${val||''}" placeholder="${ph}" style="width:100%;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-size:12px;"/></div>`;
+    panel.innerHTML = `<div style="font-weight:bold;margin-bottom:12px;">Edit Limits — ${taskId}</div>`
+      + _f('el-budget', 'Max Budget ($)', task.max_budget || '', '$5.00')
+      + _f('el-turn', 'Max Turn Time', task.timeout ? task.timeout+'s' : '', '5m')
+      + _f('el-total', 'Max Total Time', task.max_total_time ? task.max_total_time+'s' : '', '1h')
+      + _f('el-resched', 'Max Reschedules', task.max_reschedules || '', '50')
+      + _f('el-maxiter', 'Max Iterations', task.max_iterations || '', '50')
+      + `<div style="font-size:10px;color:#666;margin-bottom:8px;">Current: cost=$${(task.total_cost||0).toFixed(4)}, reschedules=${task.reschedule_count||0}</div>`
+      + `<div style="display:flex;gap:8px;justify-content:flex-end;"><button onclick="document.getElementById('resourceEditorOverlay').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button><button id="el-save" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button></div>`;
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    document.getElementById('el-save').onclick = () => {
+      const body = { action: 'edit_task', conversation_id: conversationId, task_id: taskId };
+      const bv = document.getElementById('el-budget').value.trim();
+      const tv = document.getElementById('el-turn').value.trim();
+      const ttv = document.getElementById('el-total').value.trim();
+      const rv = document.getElementById('el-resched').value.trim();
+      const mv = document.getElementById('el-maxiter').value.trim();
+      if (bv) body.max_budget = bv;
+      if (tv) body.max_turn_time = tv;
+      if (ttv) body.max_total_time = ttv;
+      if (rv) body.max_reschedules = parseInt(rv) || 0;
+      if (mv) body.max_iterations = parseInt(mv) || 0;
+      fetch(API, { method: 'POST', headers: getAuthHeaders(), body: JSON.stringify(body) })
+        .then(r => r.json()).then(data => {
+          if (data.error) addMsg('error', data.error);
+          else addMsg('system', 'Task limits updated: ' + (data.changed||[]).join(', '));
+          overlay.remove();
+          loadResources();
+        }).catch(e => addMsg('error', e.message));
+    };
+  }).catch(e => addMsg('error', e.message));
+}
+
+function _showTaskDefLog(defName) {
+  // Show all task instances for this definition, with their logs
+  fetch(API, { method: 'POST', headers: getAuthHeaders(),
+    body: JSON.stringify({ action: 'list_resources', conversation_id: conversationId }),
+  }).then(r => r.json()).then(d => {
+    const instances = (d.all_tasks || []).filter(t => t.task_def_name === defName);
+    if (!instances.length) { addMsg('system', 'No task instances for definition "' + defName + '"'); return; }
+    let lines = instances.map(t => {
+      const icon = t.status === 'active' ? '\u25B6' : t.status === 'paused' ? '\u23F8' : t.status === 'completed' ? '\u2705' : t.status === 'cancelled' ? '\u2718' : '\u26A0';
+      return icon + ' ' + t.task_id + ' (' + t.agent + ') — ' + t.status + ' [' + t.iterations + '/' + t.max_iterations + ']';
+    }).join('\n');
+    addMsg('system', '\u{1F4DC} Instances of "' + defName + '":\n' + lines);
+    // Also fetch logs for each instance
+    for (const inst of instances) {
+      fetch(API, { method: 'POST', headers: getAuthHeaders(),
+        body: JSON.stringify({ action: 'task_log', conversation_id: conversationId, name: inst.task_id }),
+      }).then(r => r.json()).then(ld => {
+        const log = ld.log || [];
+        if (log.length) {
+          const logLines = log.map(l => (l.ts ? new Date(l.ts*1000).toLocaleTimeString() + ' ' : '') + (l.event || '') + (l.detail ? ': ' + l.detail : '')).join('\n');
+          addMsg('system', '\u{1F4CB} Log ' + inst.task_id + ':\n' + logLines);
+        }
+      }).catch(() => {});
+    }
+  }).catch(e => addMsg('error', e.message));
 }
 
 function showServiceMenu(e, serviceId, scope, enabled) {

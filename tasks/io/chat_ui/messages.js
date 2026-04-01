@@ -108,6 +108,17 @@ function buildMetaLine(extra) {
 }
 
 
+function makeTimeHtml(tsEpoch) {
+  const msgTime = tsEpoch ? new Date(tsEpoch * 1000) : new Date();
+  const _today = new Date();
+  const _sameDay = msgTime.toDateString() === _today.toDateString();
+  const timeStr = _sameDay
+    ? msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
+    : msgTime.toLocaleDateString([], {day: '2-digit', month: '2-digit'}) + ' '
+      + msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
+  return '<span class="msg-time">' + timeStr + '</span>';
+}
+
 function addMsg(role, text, extra) {
   // Dedup by msg_id — if we've already displayed this message, skip
   const msgId = (extra && extra.msg_id) || '';
@@ -137,14 +148,7 @@ function addMsg(role, text, extra) {
   const badge = (extra && extra.source) ? sourceBadge(extra.source) : '';
   // Timestamp — use provided timestamp or current time
   const _ts = extra && (extra.timestamp || extra.ts);
-  const msgTime = _ts ? new Date(_ts * 1000) : new Date();
-  const _today = new Date();
-  const _sameDay = msgTime.toDateString() === _today.toDateString();
-  const timeStr = _sameDay
-    ? msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'})
-    : msgTime.toLocaleDateString([], {day: '2-digit', month: '2-digit'}) + ' '
-      + msgTime.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit', second: '2-digit'});
-  const timeHtml = '<span class="msg-time">' + timeStr + '</span>';
+  const timeHtml = makeTimeHtml(_ts || 0);
 
   // Action buttons (copy + delete + reply) for all user-visible messages
   let actionsHtml = '';
@@ -187,9 +191,9 @@ function addMsg(role, text, extra) {
     const bgBtn = (tcId && isLive) ? ' <button class="tc-bg-btn" onclick="backgroundTool(\'' + tcId + '\')" title="Run in background">\u2192 BG</button>' : '';
     const klBtn = (tcId && isLive) ? ' <button class="tc-kl-btn" onclick="killTool(\'' + tcId + '\')" title="Kill">\u2718</button>' : '';
     if (toolName === 'edit' && args && args.path) {
-      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + _renderToolCallEdit('', args) + bgBtn + klBtn;
     } else {
-      el.innerHTML = '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
+      el.innerHTML = timeHtml + '<span class="tc-bullet ' + bulletClass + '">\u25cf</span> ' + escapeHtml(_toolCallSummary(toolName, args || {})) + bgBtn + klBtn;
     }
   } else if (role === 'tool_result') {
     const tcId = (extra && extra.tc_id) || '';
@@ -209,7 +213,7 @@ function addMsg(role, text, extra) {
     const firstLine = resultText.split('\n')[0].substring(0, 120);
     const rendered = _renderToolOutput(resultText);
     // Reload: always collapsed
-    el.innerHTML = '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
+    el.innerHTML = timeHtml + '<span class="tc-bullet done">\u25cf</span> ' + escapeHtml(display)
       + '<div class="tc-result"><details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
       + rendered + '</details></div>';
   } else if (role === 'thinking') {
@@ -230,20 +234,20 @@ function addMsg(role, text, extra) {
   } else if (role === 'narration') {
     const srcN = (extra && extra.source) ? displayAgentName(extra.source.name || '') : '';
     const src = extra && extra.source ? extra.source : {type: 'agent', name: srcN};
-    el.innerHTML = sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';
+    el.innerHTML = timeHtml + sourceBadge(src) + '<em>' + escapeHtml(text) + '</em>';
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {
-    el.innerHTML = renderSubAgentTrace(text, extra);
+    el.innerHTML = timeHtml + renderSubAgentTrace(text, extra);
   } else if (role === 'error') {
-    el.innerHTML = badge + renderMarkdown(text);
+    el.innerHTML = timeHtml + badge + renderMarkdown(text);
   } else if (role === 'agent-result') {
     const agentName = (extra && typeof extra === 'string') ? extra : '';
-    el.innerHTML = (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
+    el.innerHTML = timeHtml + (agentName ? '<strong>' + escapeHtml(agentName) + ':</strong> ' : '') + renderMarkdown(text);
   } else if (extra && extra.html) {
-    el.innerHTML = text;
+    el.innerHTML = timeHtml + text;
   } else {
-    el.textContent = text;
+    el.innerHTML = timeHtml + escapeHtml(text);
   }
   // Check near-bottom BEFORE appending so new element doesn't shift the threshold
   const shouldScroll = isNearBottom();

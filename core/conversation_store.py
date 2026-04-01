@@ -132,12 +132,9 @@ class ConversationStore:
             else:
                 self._apply_append_only(path, operations)
 
-            # Invalidate + rebuild cache
-            with self._cache_lock:
-                self._cache.pop(cid, None)
-
-        # Rebuild cache outside main lock (reads under its own lock)
-        self._load_cache(cid)
+            # Rebuild cache atomically — read new state and swap in
+            # one step, so list_conversations never sees a missing entry.
+            self._reload_cache(cid)
 
     def _apply_append_only(self, path: Path, operations: List[dict]) -> None:
         """Fast path: just append lines to end of file."""
@@ -355,43 +352,50 @@ class ConversationStore:
     #  CACHE
     # ══════════════════════════════════════════════════════════════════
 
+    @staticmethod
+    def _scan_cache(lines):
+        c = {"user_id": "", "status": "idle", "created_at": 0,
+             "updated_at": 0, "expires_at": 0, "msg_count": 0,
+             "agents": set(), "extra_keys": set(), "preview": ""}
+        for line in lines:
+            t = line.get("t", "")
+            if t == "meta":
+                c["user_id"] = line.get("user_id", "")
+                c["status"] = line.get("status", "idle")
+                c["created_at"] = line.get("created_at", 0)
+                c["expires_at"] = line.get("expires_at", 0)
+            elif t == "msg":
+                c["msg_count"] += 1
+                if not c["preview"] and line.get("role") == "user":
+                    content = line.get("content", "")
+                    if isinstance(content, str) and content.strip():
+                        c["preview"] = content[:80]
+            elif t == "ctx":
+                a = line.get("agent", "")
+                if a:
+                    c["agents"].add(a)
+            elif t == "extra":
+                c["extra_keys"].add(line.get("key", ""))
+                if line.get("key") == "title":
+                    c["title"] = line.get("value", "")
+            elif t == "status":
+                c["status"] = line.get("status", c["status"])
+            c["updated_at"] = max(c["updated_at"], line.get("ts", 0))
+        return c
+
     def _load_cache(self, cid: str) -> dict:
         with self._cache_lock:
             if cid in self._cache:
                 return self._cache[cid]
+        return self._reload_cache(cid)
 
-        def _scan(lines):
-            c = {"user_id": "", "status": "idle", "created_at": 0,
-                 "updated_at": 0, "expires_at": 0, "msg_count": 0,
-                 "agents": set(), "extra_keys": set(), "preview": ""}
-            for line in lines:
-                t = line.get("t", "")
-                if t == "meta":
-                    c["user_id"] = line.get("user_id", "")
-                    c["status"] = line.get("status", "idle")
-                    c["created_at"] = line.get("created_at", 0)
-                    c["expires_at"] = line.get("expires_at", 0)
-                elif t == "msg":
-                    c["msg_count"] += 1
-                    # First user message = preview
-                    if not c["preview"] and line.get("role") == "user":
-                        content = line.get("content", "")
-                        if isinstance(content, str) and content.strip():
-                            c["preview"] = content[:80]
-                elif t == "ctx":
-                    a = line.get("agent", "")
-                    if a:
-                        c["agents"].add(a)
-                elif t == "extra":
-                    c["extra_keys"].add(line.get("key", ""))
-                    if line.get("key") == "title":
-                        c["title"] = line.get("value", "")
-                elif t == "status":
-                    c["status"] = line.get("status", c["status"])
-                c["updated_at"] = max(c["updated_at"], line.get("ts", 0))
-            return c
+    def _reload_cache(self, cid: str) -> dict:
+        """Read file from disk and atomically swap cache entry.
 
-        c = self._read(cid, _scan)
+        No gap where the entry is absent — list_conversations always
+        sees either the old or new value, never missing.
+        """
+        c = self._read(cid, self._scan_cache)
         with self._cache_lock:
             self._cache[cid] = c
         return c

@@ -508,10 +508,24 @@ class StreamEmitter(AgentEmitter):
             user_id=self._user_id, ttl=self._conv_ttl)
         self.ctx["_context_diverged"] = True
 
-        if "::task::" in self.conversation_id and public:
+        if "::task::" in self.conversation_id:
             _parent = self.conversation_id.split("::task::")[0]
-            ConversationWriter.for_conversation(_parent).enqueue(
-                public, user_id=self._user_id)
+            # Write all task messages (public + private) to parent conv
+            # so tool calls are visible in transcript on reload
+            _task_msgs = public + private
+            if _task_msgs:
+                # Deep copy to avoid mutating originals (shared with sub-conv write)
+                import copy as _copy
+                _task_msgs = _copy.deepcopy(_task_msgs)
+                # Tag each with task_id in source for frontend grouping
+                _tid = self._task_id
+                if _tid:
+                    for _tm in _task_msgs:
+                        _src = _tm.get("source") or {}
+                        _src["task_id"] = _tid
+                        _tm["source"] = _src
+                ConversationWriter.for_conversation(_parent).enqueue(
+                    _task_msgs, user_id=self._user_id)
 
         # Update known count: add the number of public messages we just enqueued
         # (don't re-read from store — the async writer may not have written yet)

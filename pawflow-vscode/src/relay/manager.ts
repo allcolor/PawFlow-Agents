@@ -84,10 +84,8 @@ export class RelayManager implements vscode.Disposable {
       config_str: configStr,
     });
     this.outputChannel.appendLine(`[Relay] Install result: ${JSON.stringify(installResult).slice(0, 300)}`);
-
-    if (installResult.error) {
-      throw new Error(`Service install failed: ${installResult.error}`);
-    }
+    // Server returns {"status": "accepted"} — actual install runs async.
+    // If it fails, relay connection will fail (caught below).
 
     this.outputChannel.appendLine(`[Relay] Service created: ${this.relayId} on port ${this.port} (token=${this.wsToken.slice(0,8)}...)`);
 

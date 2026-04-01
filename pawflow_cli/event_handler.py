@@ -263,6 +263,9 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
 
     elif ev_type == "command_result":
         _action = data.get("action", "")
+        # Push to SSE result queue so send_action() unblocks
+        if hasattr(app, 'api') and app.api and hasattr(app.api, '_sse_result_queue'):
+            app.api._sse_result_queue.push(_action, data)
         if data.get("error"):
             app.renderer.print_system(f"[{_action}] Error: {data['error']}")
         else:

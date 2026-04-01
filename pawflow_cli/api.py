@@ -45,6 +45,42 @@ def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
     return cookie_val
 
 
+class SSEResultQueue:
+    """Thread-safe queue for SSE command_result events, keyed by action name."""
+
+    def __init__(self):
+        self._waiters: Dict[str, threading.Event] = {}
+        self._results: Dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def get(self, action: str, timeout: float = 120) -> dict:
+        """Wait for a command_result with matching action. Returns parsed result."""
+        event = threading.Event()
+        with self._lock:
+            self._waiters[action] = event
+        if not event.wait(timeout=timeout):
+            with self._lock:
+                self._waiters.pop(action, None)
+            return {"error": f"Timeout waiting for {action} result"}
+        with self._lock:
+            self._waiters.pop(action, None)
+            return self._results.pop(action, {})
+
+    def push(self, action: str, data: dict):
+        """Push a command_result. Wakes up any waiting get()."""
+        with self._lock:
+            result = data
+            if isinstance(data.get("result"), str):
+                try:
+                    result = json.loads(data["result"])
+                except (json.JSONDecodeError, TypeError):
+                    result = data
+            self._results[action] = result
+            waiter = self._waiters.get(action)
+        if waiter:
+            waiter.set()
+
+
 class AgentAPIClient:
     """HTTP client for the PawFlow agent API."""
 
@@ -56,6 +92,7 @@ class AgentAPIClient:
         self._host = self._parsed.hostname or "localhost"
         self._port = self._parsed.port or (443 if self._parsed.scheme == "https" else 80)
         self._use_ssl = self._parsed.scheme == "https"
+        self._sse_result_queue = SSEResultQueue()
 
     def _get_conn(self, timeout: int = 30):
         if self._use_ssl:
@@ -74,7 +111,34 @@ class AgentAPIClient:
         return h
 
     def send_action(self, action: str, **kwargs) -> dict:
-        """Send an action to the agent API. Returns parsed JSON response."""
+        """Send an action and wait for the result via SSE command_result.
+
+        The server runs all actions in background and returns {"status": "accepted"}.
+        The real result arrives via SSE command_result event. This method blocks
+        until that event arrives (or timeout).
+
+        If no SSE client is connected, falls back to immediate response.
+        """
+        body = {"action": action}
+        body.update(kwargs)
+        resp = self._post("/api/agent", body)
+
+        # If server returned data directly (no conversation_id = sync), use it
+        if resp.get("status") != "accepted":
+            return resp
+
+        # Wait for SSE command_result with matching action
+        if not self._sse_result_queue:
+            return resp  # no SSE client — can't wait
+
+        try:
+            result = self._sse_result_queue.get(action, timeout=120)
+            return result
+        except Exception:
+            return resp
+
+    def send_action_fire(self, action: str, **kwargs) -> dict:
+        """Fire-and-forget action — don't wait for result."""
         body = {"action": action}
         body.update(kwargs)
         return self._post("/api/agent", body)

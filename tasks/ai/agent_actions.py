@@ -111,11 +111,14 @@ class AgentActionsMixin:
         """Run an action in background. Return ack immediately, result via SSE."""
         import copy
         _body = copy.deepcopy(body)
+        # Clone flowfile for bg thread — main thread will overwrite the original with ack
+        from core import FlowFile as _FF
+        _bg_ff = _FF(content=flowfile.get_content(), attributes=dict(flowfile.attributes))
 
         def _bg():
             try:
                 for handler in _ACTION_HANDLERS:
-                    result = handler(self, action, _body, store, user_id, flowfile)
+                    result = handler(self, action, _body, store, user_id, _bg_ff)
                     if result is not None:
                         _content = ""
                         if isinstance(result, list) and result:

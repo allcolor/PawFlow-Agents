@@ -77,6 +77,10 @@ class StreamEmitter(AgentEmitter):
                  agent: Any, gen_key: str, generation: int):
         self.conversation_id = conversation_id
         self.event_cid = ctx.get("_event_cid", conversation_id)
+        # Extract task_id from sub-conv ID so frontend can group task events
+        self._task_id = ''
+        if '::task::' in conversation_id:
+            self._task_id = conversation_id.split('::task::')[-1].split('::')[0]
         self.bus = bus
         self.ctx = ctx
         self.agent = agent  # AgentLoopTask instance
@@ -90,6 +94,11 @@ class StreamEmitter(AgentEmitter):
         self._conv_ttl = ctx.get("conv_ttl", 0)
         self._channel = ctx.get("channel", "")
         self._last_token_time = time.time()
+
+    def _emit(self, event_type: str, data: dict):
+        if self._task_id:
+            data['task_id'] = self._task_id
+        self.bus.publish_event(self.event_cid, event_type, data)
 
     def _agent_source(self) -> dict:
         import re as _re
@@ -119,7 +128,7 @@ class StreamEmitter(AgentEmitter):
         if ctx.get("is_random_thought"):
             _ff_info["type"] = "thought"
         if not ctx.get("is_poll") or _ff_info.get("reason"):
-            self.bus.publish_event(self.event_cid, "flowfile_in", _ff_info)
+            self._emit("flowfile_in", _ff_info)
 
     def on_iteration_start(self, iteration, round_num, max_iterations,
                            max_rounds, tools_called, poll_silent):
@@ -133,7 +142,7 @@ class StreamEmitter(AgentEmitter):
             f"iteration {iteration}/{max_iterations}, "
             f"messages={len(self.ctx.get('messages', []))}, "
             f"tools_called={len(tools_called)}")
-        self.bus.publish_event(self.event_cid, "iteration_status", {
+        self._emit("iteration_status", {
             "agent_name": self._agent_name or "",
             "iteration": iteration,
             "max_iterations": max_iterations,
@@ -143,7 +152,7 @@ class StreamEmitter(AgentEmitter):
             "total_tools": len(tools_called),
         })
         if not poll_silent:
-            self.bus.publish_event(self.event_cid, "thinking", {
+            self._emit("thinking", {
                 "iteration": iteration,
                 "round": round_num,
                 "agent_name": self._agent_name or "",
@@ -151,7 +160,7 @@ class StreamEmitter(AgentEmitter):
 
     def on_iteration_end(self, iteration, round_num, max_iterations,
                          max_rounds, tools_called):
-        self.bus.publish_event(self.event_cid, "iteration_status", {
+        self._emit("iteration_status", {
             "agent_name": self._agent_name or "",
             "iteration": iteration,
             "max_iterations": max_iterations,
@@ -165,7 +174,7 @@ class StreamEmitter(AgentEmitter):
         # Use all_msg_ids from the full turn (survives flush)
         _all_ids = result.all_msg_ids or []
         _last_id = _all_ids[-1] if _all_ids else self._current_msg_id
-        self.bus.publish_event(self.event_cid, "done", {
+        self._emit("done", {
             "response": result.response_content,
             "msg_id": _last_id,
             "all_msg_ids": _all_ids,
@@ -181,7 +190,7 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_error(self, error: Exception) -> None:
-        self.bus.publish_event(self.event_cid, "error_event", {
+        self._emit("error_event", {
             "message": str(error),
             "agent_name": self._agent_name or "",
             "conversation_id": self.conversation_id,
@@ -206,14 +215,14 @@ class StreamEmitter(AgentEmitter):
                 logger.warning(f"[agent] Failed to save cancel checkpoint: {e}")
 
     def on_fatal_error(self, error_msg: str) -> None:
-        self.bus.publish_event(self.event_cid, "error_event", {
+        self._emit("error_event", {
             "message": error_msg,
             "agent_name": self._agent_name or "",
             "conversation_id": self.conversation_id,
         })
 
     def on_overflow_retry(self, iteration: int) -> None:
-        self.bus.publish_event(self.event_cid, "thinking", {
+        self._emit("thinking", {
             "iteration": iteration,
             "detail": "compacting context...",
             "agent_name": self._agent_name or "",
@@ -229,6 +238,7 @@ class StreamEmitter(AgentEmitter):
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent
+        _tid = self._task_id
 
         _emitter = self  # capture for closure
 
@@ -237,12 +247,15 @@ class StreamEmitter(AgentEmitter):
                 raise AgentCancelled()
             _emitter._last_token_time = time.time()
             if not poll_silent:
-                bus.publish_event(cid, "token", {
+                evt = {
                     "text": text,
                     "msg_id": _emitter._current_msg_id,
                     "agent_name": agent_name or "",
                     "source": source,
-                })
+                }
+                if _tid:
+                    evt["task_id"] = _tid
+                bus.publish_event(cid, "token", evt)
         return on_token
 
     def get_thinking_callback(self, poll_silent: bool) -> Optional[Callable]:
@@ -252,15 +265,19 @@ class StreamEmitter(AgentEmitter):
         gen_key = self.gen_key
         generation = self.generation
         agent = self.agent
+        _tid = self._task_id
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
                 raise AgentCancelled()
             if not poll_silent:
-                bus.publish_event(cid, "thinking_content", {
+                evt = {
                     "text": text,
                     "agent_name": agent_name or "",
-                })
+                }
+                if _tid:
+                    evt["task_id"] = _tid
+                bus.publish_event(cid, "thinking_content", evt)
         return on_thinking
 
     def start_heartbeat(self, poll_silent: bool) -> Any:
@@ -269,6 +286,7 @@ class StreamEmitter(AgentEmitter):
         bus = self.bus
         agent_name = self._agent_name
         emitter = self
+        _tid = self._task_id
 
         _cancel_detected = threading.Event()
 
@@ -282,11 +300,14 @@ class StreamEmitter(AgentEmitter):
                 if poll_silent:
                     continue
                 elapsed = int(time.time() - emitter._last_token_time)
-                bus.publish_event(cid, "thinking", {
+                evt = {
                     "iteration": 0,
                     "waiting_seconds": elapsed,
                     "agent_name": agent_name or "",
-                })
+                }
+                if _tid:
+                    evt["task_id"] = _tid
+                bus.publish_event(cid, "thinking", evt)
 
         t = threading.Thread(target=heartbeat, daemon=True)
         t.start()
@@ -470,6 +491,10 @@ class StreamEmitter(AgentEmitter):
             content = m.get("content", "")
             if isinstance(content, str) and content.startswith("[System:"):
                 return False
+            # Synthetic context messages (compaction acks, resume acks)
+            src = m.get("source") or {}
+            if src.get("type") == "context":
+                return False
             return True
         public = [m for m in all_serialized if _is_public(m)]
         private = [m for m in all_serialized if m not in public and m.get("role") != "system"]
@@ -504,7 +529,7 @@ class StreamEmitter(AgentEmitter):
         # Random thought that produced no work
         if ctx.get("is_random_thought") and "[NO_PENDING_WORK]" in _stripped:
             logger.info(f"[agent:{self.conversation_id[:8]}] random thought → no pending work, discarding")
-            self.bus.publish_event(self.event_cid, "discard", {
+            self._emit("discard", {
                 "reason": "random_thought_no_work",
                 "agent_name": self._agent_name or "",
             })

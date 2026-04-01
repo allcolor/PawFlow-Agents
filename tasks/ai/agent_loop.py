@@ -443,7 +443,7 @@ class AgentLoopTask(
 
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         _body_preview = flowfile.get_content()[:200].decode("utf-8", errors="replace")
-        logger.info("[agent_loop] execute: %s", _body_preview)
+        logger.debug("[agent_loop] execute: %s", _body_preview)
         # Reject unlinked Telegram users (require identity link for security)
         tg_user_id = flowfile.get_attribute("telegram.user_id") or ""
         if tg_user_id:
@@ -480,13 +480,13 @@ class AgentLoopTask(
                     self._release_context_op(_ctx_op_conv_id)
             else:
                 action_result = self._handle_action(flowfile)
-            logger.info("[agent_loop] _handle_action returned %s",
-                        "result" if action_result is not None else "None (not an action)")
+            logger.debug("[agent_loop] _handle_action returned %s",
+                         "result" if action_result is not None else "None (not an action)")
             if action_result is not None:
                 return action_result
 
         streaming = self.config.get("streaming", False)
-        logger.info("[agent_loop] dispatching to %s", "streaming" if streaming else "sync")
+        logger.debug("[agent_loop] dispatching to %s", "streaming" if streaming else "sync")
         if streaming:
             return self._execute_streaming(flowfile)
         return self._execute_sync(flowfile)

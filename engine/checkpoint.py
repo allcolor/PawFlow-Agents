@@ -134,7 +134,7 @@ class CheckpointManager:
             # Trim old checkpoints
             self._trim_checkpoints()
 
-        logger.info(
+        logger.debug(
             f"Checkpoint saved: {filepath} "
             f"({sum(len(q['flowfiles']) for q in checkpoint['queues'])} FlowFiles)"
         )

@@ -431,8 +431,11 @@ def main():
 
             _log(f"RESULT {name}: {str(result)[:100]}")
             # Sanitize tool result (strip invisible/malicious unicode)
-            from core.sanitization import sanitize_unicode
-            result = sanitize_unicode(str(result)) if result else result
+            try:
+                from core.sanitization import sanitize_unicode
+                result = sanitize_unicode(str(result)) if result else result
+            except ImportError:
+                pass  # core.sanitization not available in Docker container
             # Convert __image_data__ markers to MCP image content blocks
             result_str = str(result)
             if "__image_data__:" in result_str:

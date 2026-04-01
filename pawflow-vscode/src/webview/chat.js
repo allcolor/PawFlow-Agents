@@ -772,13 +772,23 @@ function handleSSE(event) {
       addMsg('system', data.message || '');
       break;
 
-    case 'command_result':
-      if (data.error) { addMsg('error', data.error); }
-      else {
-        try { var cr = JSON.parse(data.result); addMsg('system', cr.error || cr.message || data.result); }
-        catch(e) { addMsg('system', data.result); }
-      }
+    case 'command_result': {
+      var crAction = data.action || '';
+      if (data.error) { addMsg('error', data.error); break; }
+      var crParsed = null;
+      try { crParsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result; } catch(e) {}
+      // Silent data actions
+      var crSilent = ['list_active','list_params_secrets','list_links','list_conversations',
+        'list_resources','list_agents','list_tools','list_skills','get_tool_schemas',
+        'get_permission_mode','get_context','get_plan','get_plans','get_cost','get_usage',
+        'poll','ping','list_repo_agents','list_secrets','list_variables','list_schedules',
+        'task_status','task_log','stats','check_files','port_forward_list','service_list'];
+      if (crSilent.indexOf(crAction) >= 0) break;
+      if (crParsed && crParsed.error) { addMsg('error', crParsed.error); }
+      else if (crParsed && crParsed.message) { addMsg('system', crParsed.message); }
+      else if (crParsed && crParsed.status === 'ok') { addMsg('system', crAction + ': OK'); }
       break;
+    }
 
     case 'btw_token':
       streaming['btw:' + agent] = (streaming['btw:' + agent] || '') + (data.text || '');

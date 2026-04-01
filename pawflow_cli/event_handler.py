@@ -269,10 +269,28 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             _result = data.get("result", "")
             try:
                 import json as _json_ev
-                _parsed = _json_ev.loads(_result)
-                _msg = _parsed.get("error") or _parsed.get("message") or _result
+                _parsed = _json_ev.loads(_result) if isinstance(_result, str) else _result
             except Exception:
-                _msg = _result
-            app.renderer.print_system(f"[{_action}] {_msg}")
+                _parsed = {}
+            # Silent data actions — don't print raw JSON
+            _silent = {"list_active", "list_params_secrets", "list_links",
+                        "list_conversations", "list_resources", "list_agents",
+                        "list_tools", "list_skills", "get_tool_schemas",
+                        "get_permission_mode", "get_context", "get_context_full",
+                        "get_resource_detail", "get_plan", "get_plans",
+                        "get_cost", "get_usage", "poll", "ping",
+                        "list_repo_agents", "list_secrets", "list_variables",
+                        "list_schedules", "list_memories", "list_prompts",
+                        "task_status", "task_log", "stats", "insights",
+                        "check_files", "port_forward_list", "service_list"}
+            if _action in _silent:
+                pass  # silently consumed
+            elif isinstance(_parsed, dict) and (_parsed.get("error") or _parsed.get("message")):
+                _msg = _parsed.get("error") or _parsed.get("message")
+                app.renderer.print_system(f"[{_action}] {_msg}")
+            elif isinstance(_parsed, dict) and _parsed.get("status") == "ok":
+                app.renderer.print_system(f"[{_action}] OK")
+            elif _result and not isinstance(_parsed, dict):
+                app.renderer.print_system(f"[{_action}] {_result}")
 
     return True, streaming_agent, thinking_agent

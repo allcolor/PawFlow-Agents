@@ -88,15 +88,7 @@ class ValidateSessionAuthTask(BaseTask):
             refreshed_session = self._try_silent_refresh(flowfile, sm)
             if refreshed_session:
                 session = refreshed_session
-                # Re-set the cookie with the new session_id
-                cookie_name = self.config.get("cookie_name", "pawflow_token")
-                cookie_max_age = 28800
-                cookie = (
-                    f"{cookie_name}={session.session_id}; "
-                    f"Path=/; Max-Age={cookie_max_age}; "
-                    f"HttpOnly; SameSite=Lax"
-                )
-                flowfile.set_attribute("http.response.header.Set-Cookie", cookie)
+                self._set_refreshed_token(flowfile, session)
             else:
                 return [self._auth_failed(flowfile, "Invalid session token")]
 
@@ -108,14 +100,7 @@ class ValidateSessionAuthTask(BaseTask):
                 flowfile, sm, username=expired_username)
             if refreshed_session:
                 session = refreshed_session
-                cookie_name = self.config.get("cookie_name", "pawflow_token")
-                cookie_max_age = 28800
-                cookie = (
-                    f"{cookie_name}={session.session_id}; "
-                    f"Path=/; Max-Age={cookie_max_age}; "
-                    f"HttpOnly; SameSite=Lax"
-                )
-                flowfile.set_attribute("http.response.header.Set-Cookie", cookie)
+                self._set_refreshed_token(flowfile, session)
             else:
                 return [self._auth_failed(flowfile, "Session expired")]
 
@@ -158,6 +143,17 @@ class ValidateSessionAuthTask(BaseTask):
 
         return ""
 
+    def _set_refreshed_token(self, flowfile: FlowFile, session):
+        """Set cookie + X-Session-Token header for transparent refresh."""
+        cookie_name = self.config.get("cookie_name", "pawflow_token")
+        cookie_max_age = int(self.config.get("cookie_max_age", 28800))
+        flowfile.set_attribute(
+            "http.response.header.Set-Cookie",
+            f"{cookie_name}={session.session_id}; Path=/; Max-Age={cookie_max_age}; "
+            f"HttpOnly; SameSite=Lax")
+        # For Bearer token clients (relay CLI) — pick up the new token
+        flowfile.set_attribute("http.response.header.X-Session-Token", session.session_id)
+
     def _try_silent_refresh(self, flowfile: FlowFile, sm,
                             username: str = "") -> object:
         """Try to silently refresh the OAuth session using stored refresh tokens.
@@ -169,12 +165,26 @@ class ValidateSessionAuthTask(BaseTask):
         Returns a new Session on success, or None on failure.
         """
         try:
+            from core.identity_service import IdentityService
+            id_svc = IdentityService.instance()
+
             if not username:
+                # Session gone — try all users with OAuth links
+                # (typically only 1-2 users on a personal instance)
+                candidates = []
+                for u in sm._users.values():
+                    if id_svc.get_links(u.username):
+                        candidates.append(u.username)
+                if not candidates:
+                    return None
+                for candidate in candidates:
+                    result = self._try_silent_refresh(flowfile, sm, username=candidate)
+                    if result:
+                        return result
                 return None
 
             # Find which OAuth provider this user is linked to
-            from core.identity_service import IdentityService
-            links = IdentityService.instance().get_links(username)
+            links = id_svc.get_links(username)
             if not links:
                 return None
 

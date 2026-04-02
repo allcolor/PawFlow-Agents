@@ -64,6 +64,9 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
+# Mutable holder so _api_call can update the relay's token transparently
+_token_holder = {"token": "", "on_refresh": None}
+
 def _api_call(server_url, method, path, body=None, session_token="", gateway_cookie=""):
     """HTTP request to PawFlow agent API (stdlib only)."""
     import http.client
@@ -93,6 +96,10 @@ def _api_call(server_url, method, path, body=None, session_token="", gateway_coo
     conn.request(method, path, body=payload, headers=headers)
     resp = conn.getresponse()
     data = resp.read().decode("utf-8")
+    # Transparent token refresh: server sends new token in header
+    new_token = resp.getheader("X-Session-Token")
+    if new_token and _token_holder["on_refresh"]:
+        _token_holder["on_refresh"](new_token)
     conn.close()
 
     if resp.status >= 400:
@@ -133,6 +140,17 @@ class RelayThread:
         self._stop_event = threading.Event()
         self._registered = False
         self._docker_container = None
+        # Register transparent token refresh callback
+        _token_holder["on_refresh"] = self._on_token_refresh
+
+    def _on_token_refresh(self, new_token):
+        """Called when server sends a refreshed session token."""
+        self.session_token = new_token
+        # Persist to local session cache
+        from pawflow_cli.config import save_session
+        save_session(new_token, self.username, self.server_url,
+                     __import__('time').time() + 8 * 3600)
+        sys.stderr.write("[Relay] Session token refreshed transparently\n")
 
     def start(self):
         """Register the service and start the relay thread."""

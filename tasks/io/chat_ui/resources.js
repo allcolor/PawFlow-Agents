@@ -273,9 +273,11 @@ async function _renderResourcesData(data) {
     html += _sectionFooter();
     // Variables & Secrets + Linked Accounts (async, appended when ready)
     if (!html) html = '<div style="color:#555;font-size:11px;">No resources. Use [+] or /agent create, /task create</div>';
-    el.innerHTML = html;
-    // Async: load params/secrets and linked accounts, append to panel
-    action$('list_params_secrets', { conversation_id: conversationId }).subscribe(ps => {
+    // Fetch params/secrets and linked accounts, then render all at once
+    rxjs.forkJoin([
+      action$('list_params_secrets', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
+      action$('list_linked_accounts', { conversation_id: conversationId }).pipe(rxjs.catchError(() => rxjs.of({}))),
+    ]).subscribe(([ps, linksData]) => {
       let extra = '';
       if (ps.parameters && ps.parameters.length) {
         extra += _sectionHeader('Variables', '_param');
@@ -296,10 +298,7 @@ async function _renderResourcesData(data) {
         });
         extra += _sectionFooter();
       }
-      if (extra) el.innerHTML += extra;
-    });
-    action$('list_linked_accounts', { conversation_id: conversationId }).subscribe(linksData => {
-      const links = linksData.links || {};
+      const links = (linksData && linksData.links) || {};
       const linkKeys = Object.keys(links);
       let linksHtml = '<div style="margin-top:6px;padding:4px 6px;font-size:11px;color:#888;border-top:1px solid #222;">';
       linksHtml += '<b>Linked Accounts</b>';
@@ -315,7 +314,9 @@ async function _renderResourcesData(data) {
         linksHtml += '<div style="color:#555;font-size:10px;margin-left:8px;">No linked accounts</div>';
       }
       linksHtml += '</div>';
-      el.innerHTML += linksHtml;
+      const fullHtml = html + extra + linksHtml;
+      // Only update DOM if content actually changed (prevents flash/blink)
+      if (el.innerHTML !== fullHtml) el.innerHTML = fullHtml;
     });
   } catch (e) {
     document.getElementById('resourcesContent').innerHTML = '';

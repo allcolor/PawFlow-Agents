@@ -1016,11 +1016,11 @@ function startPollTimer() {
     if (!conversationId) return;
     _recoverConversation(conversationId);
   }, 30000);
-  // Refresh resources panel every 10s
+  // Refresh resources panel every 30s (no-op if content unchanged)
   if (!resourcesTimer) {
     resourcesTimer = setInterval(() => {
       if (conversationId) loadResources();
-    }, 10000);
+    }, 30000);
   }
 }
 function stopPollTimer() {

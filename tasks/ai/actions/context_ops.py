@@ -467,25 +467,57 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _compact_keep = int(self.config.get("context_keep_recent", 6))
 
         _compact_instructions = body.get("instructions", "")
+        _compact_force = body.get("force", False)
+
+        # Check for precompact snapshot (skip with --force)
+        _snap_key = f"{conv_id}:{_ctx_agent}"
+        _precompact_snap = None if _compact_force else self._precompact_snapshots.pop(_snap_key, None)
 
         def _do_compact():
             msgs = self._deserialize_messages(_compact_source)
             before = len(msgs)
             estimated = self._estimate_tokens(msgs)
-            compacted = self._compact(
-                msgs, _compact_client, _compact_max,
-                conversation_id=_compact_conv,
-                agent_name=_compact_agent_name,
-                compact_instructions=_compact_instructions,
-                force=True,
-            )
+
+            if _precompact_snap and not _compact_instructions:
+                # Use existing precompact snapshot — merge with messages after snapshot
+                _snap_last_id = _precompact_snap.get("last_msg_id", "")
+                _split = len(msgs)
+                for _si in range(len(msgs)):
+                    _mid = getattr(msgs[_si], 'msg_id', None) or (msgs[_si].get('msg_id') if isinstance(msgs[_si], dict) else None)
+                    if _mid == _snap_last_id:
+                        _split = _si + 1
+                        break
+                _after = msgs[_split:]
+                compacted = list(_precompact_snap["messages"]) + _after
+                # If still over, compact further
+                _merged_est = self._estimate_tokens(compacted)
+                if _merged_est > _compact_max * 0.9:
+                    compacted = self._compact(
+                        compacted, _compact_client, _compact_max,
+                        conversation_id=_compact_conv,
+                        agent_name=_compact_agent_name,
+                        force=True,
+                    )
+                else:
+                    self._persist_context(compacted, _compact_conv, _compact_agent_name)
+                logger.info("[compact] used precompact snapshot: %d + %d after = %d msgs",
+                            len(_precompact_snap["messages"]), len(_after), len(compacted))
+            else:
+                compacted = self._compact(
+                    msgs, _compact_client, _compact_max,
+                    conversation_id=_compact_conv,
+                    agent_name=_compact_agent_name,
+                    compact_instructions=_compact_instructions,
+                    force=True,
+                )
             after_tokens = self._estimate_tokens(compacted)
             # Manual compact → invalidate claude-code sessions
             store.invalidate_claude_sessions(_compact_conv)
             return {"before": before, "after": len(compacted),
                     "tokens_before": estimated, "tokens_after": after_tokens,
                     "agent": _compact_agent_name or "shared",
-                    "focus": _compact_instructions or None}
+                    "focus": _compact_instructions or None,
+                    "used_snapshot": bool(_precompact_snap and not _compact_instructions)}
 
         return self._run_bg_context_op(conv_id, "compact", _do_compact, flowfile)
 

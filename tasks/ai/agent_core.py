@@ -366,16 +366,20 @@ class AgentCoreMixin:
                                     result = self._compact(
                                         _snap_msgs, compact_client, _max_ctx,
                                         threshold=0.0, force=True,
-                                        conversation_id=conversation_id,
+                                        conversation_id="",  # no SSE events for bg precompact
                                         agent_name=ctx.get("active_agent_name") or "",
                                         tool_defs=ctx.get("tool_defs"),
                                         chars_per_token=_cpt,
                                     )
-                                    ctx["_precompact_snapshot"] = {
+                                    _snap_data = {
                                         "messages": result,
                                         "last_msg_id": _snap_last_id,
                                         "original_count": len(_snap_msgs),
                                     }
+                                    ctx["_precompact_snapshot"] = _snap_data
+                                    # Also store at class level so /compact can use it
+                                    _snap_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}"
+                                    self._precompact_snapshots[_snap_key] = _snap_data
                                     logger.info("[precompact:%s] ready: %d → %d messages",
                                                 conversation_id[:8], len(_snap_msgs), len(result))
                                 except Exception as e:
@@ -415,6 +419,8 @@ class AgentCoreMixin:
                                         conversation_id[:8], len(_snap["messages"]),
                                         len(_after), len(llm_context))
                             ctx["_precompact_snapshot"] = None  # consumed
+                            _snap_key = f"{conversation_id}:{_agent_name}"
+                            self._precompact_snapshots.pop(_snap_key, None)
                             ctx["_context_diverged"] = True
                         else:
                             # Normal path: compact if over threshold

@@ -553,7 +553,7 @@ class AgentUtilsMixin:
     _TOOL_RESULT_TTL = 3600
     # Threshold for clearing tool results (chars). Results over this get
     # saved to FileStore and replaced with a reference after the LLM has seen them.
-    _TOOL_RESULT_CLEAR_THRESHOLD = 300
+    _TOOL_RESULT_CLEAR_THRESHOLD = 5000  # only store results > 5KB to FileStore
 
 
     @staticmethod
@@ -594,9 +594,9 @@ class AgentUtilsMixin:
         _FS_REF = _re_fs.compile(r'/files/[a-f0-9]{12}/')
         cleared = 0
 
-        # Clear ALL tool results > threshold — recent or not.
-        # The LLM can use read(path=url, source='filestore', offset, limit) to paginate.
-        for i in range(1, len(messages)):
+        # Clear old tool results > threshold, skipping the last `keep_recent` messages.
+        _cutoff = max(1, len(messages) - keep_recent) if keep_recent > 0 else len(messages)
+        for i in range(1, _cutoff):
             m = messages[i]
             if m.role != "tool" or not isinstance(m.content, str):
                 continue
@@ -604,9 +604,6 @@ class AgentUtilsMixin:
             content_len = len(content)
 
             # Skip small results
-            if content_len <= self._TOOL_RESULT_CLEAR_THRESHOLD:
-                continue
-            # Already fully cleared (short ref only) → skip
             if content_len <= self._TOOL_RESULT_CLEAR_THRESHOLD:
                 continue
             # Has a FileStore ref but still has content → shrink to ref only

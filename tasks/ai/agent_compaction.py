@@ -398,10 +398,9 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 m.content,
             )
 
-        # Clear oversized tool results to FileStore refs
-        self._clear_seen_tool_results(messages, keep_recent=0,
-                                       conversation_id=conversation_id,
-                                       agent_name=agent_name)
+        # NOTE: do NOT call _clear_seen_tool_results here — it stores to FileStore
+        # which is wrong during compaction (thousands of files). Compaction uses
+        # _truncate_tool_results (in-place truncation) and _progressive_clear instead.
 
         # ── Threshold check (skip when forced) ──
         _original_count = len(messages)

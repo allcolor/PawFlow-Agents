@@ -303,8 +303,10 @@ class AgentSummarizeMixin:
         _inner = getattr(client, '_client', client)
         _saved_conv = getattr(_inner, '_conversation_id', '')
         _saved_agent = getattr(_inner, '_agent_name', '')
+        _saved_event_cid = getattr(_inner, '_event_cid', '')
         _inner._conversation_id = ''
         _inner._agent_name = 'compact'
+        _inner._event_cid = ''  # prevent SSE events from leaking to parent conv
 
         max_retries = 3
         try:
@@ -343,6 +345,7 @@ class AgentSummarizeMixin:
         finally:
             _inner._conversation_id = _saved_conv
             _inner._agent_name = _saved_agent
+            _inner._event_cid = _saved_event_cid
             try:
                 FileStore.instance().delete(file_id)
             except Exception:

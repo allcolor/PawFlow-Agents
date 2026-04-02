@@ -684,14 +684,18 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
 
     # ── Context ──
     if cmd == "/compact":
-        # Parse: /compact [@agent] [-- instructions]
+        # Parse: /compact [@agent] [--force] [-- instructions]
         agent, rest = _extract_at_agent(arg, agent_name)
+        force = False
+        if "--force" in rest:
+            force = True
+            rest = rest.replace("--force", "").strip()
         instructions = ""
         if "--" in rest:
             _, instructions = rest.split("--", 1)
             instructions = instructions.strip()
         return {"action": "compact", "agent_name": agent,
-                "instructions": instructions, **base}
+                "instructions": instructions, "force": force, **base}
 
     if cmd == "/context":
         agent, _ = _extract_at_agent(arg, agent_name)

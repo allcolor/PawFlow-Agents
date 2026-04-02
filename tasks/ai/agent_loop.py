@@ -125,6 +125,9 @@ class AgentLoopTask(
         # conv_id -> threading.Event (set = free, cleared = blocked)
         self._context_op_events: Dict[str, threading.Event] = {}
         self._context_op_lock = threading.Lock()
+        # Precompact snapshots — survives agent restart, used by /compact
+        # Key: "conv_id:agent_name", Value: {"messages": [...], "last_msg_id": str, "original_count": int}
+        self._precompact_snapshots: Dict[str, dict] = {}
         # Calibrated chars-per-token ratio per LLM service (learned from actual usage)
         self._calibrated_cpt: Dict[str, float] = {}  # service_id -> chars_per_token
         self._calibrated_cpt_lock = threading.Lock()

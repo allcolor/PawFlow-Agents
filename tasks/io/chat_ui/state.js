@@ -137,11 +137,14 @@ function doLogout() {
     .finally(() => { window.location.href = LOGIN_URL || '/auth/login'; });
 }
 
-function toggleSidebar() {
+function _syncToggleBtn() {
   const sb = document.getElementById('sidebar');
-  sb.classList.toggle('collapsed');
   const btn = document.getElementById('sidebarToggle');
-  btn.style.left = sb.classList.contains('collapsed') ? '12px' : '268px';
+  if (sb && btn) btn.style.left = sb.classList.contains('collapsed') ? '12px' : '268px';
+}
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+  _syncToggleBtn();
 }
 
 
@@ -170,6 +173,7 @@ function _doNewChat() {
   highlightConv(null);
   // Close sidebar on mobile
   document.getElementById('sidebar').classList.add('collapsed');
+  _syncToggleBtn();
   document.getElementById('input').focus();
 }
 

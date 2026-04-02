@@ -91,6 +91,7 @@ function resumeConv(cid, force) {
   startPollTimer();
   updateDeleteBtn();
   document.getElementById('sidebar').classList.add('collapsed');
+  _syncToggleBtn();
   // Load history via action$ — result renders when it arrives
   action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
     .subscribe(data => _renderHistory(data));

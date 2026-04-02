@@ -137,6 +137,17 @@ class ToolRelayService(BaseService):
     _inflight_lock = threading.Lock()
 
     @classmethod
+    def cancel_request(cls, request_id: str):
+        """Cancel a single in-flight tool request by its request/tc id."""
+        with cls._inflight_lock:
+            info = cls._inflight.get(request_id)
+        if info and isinstance(info, dict):
+            cancel_evt = info.get("cancel")
+            if cancel_evt:
+                cancel_evt.set()
+                logger.info("[tool-relay] cancelled request %s", request_id)
+
+    @classmethod
     def cancel_agent(cls, conversation_id: str, agent_name: str):
         """Cancel all in-flight tool calls for a (conv, agent).
 
@@ -187,6 +198,10 @@ class ToolRelayService(BaseService):
             if not _raw_args or _raw_args == {}:
                 logger.warning("[tool-relay] EMPTY ARGS received for %s (request=%s) raw msg keys: %s",
                                _tool, request_id, list(msg.keys()))
+                # Don't execute tools with empty args — return empty result
+                # This is a phantom call from CC's incremental update pattern
+                return {"type": "response", "request_id": request_id,
+                        "result": ""}
             return self._handle_execute(
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,

@@ -12,6 +12,7 @@ import logging
 import os
 import subprocess
 import threading
+import time
 from typing import List
 
 from core.docker_utils import docker_popen, docker_rm
@@ -542,8 +543,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # Drop phantom tool calls: empty inner args + no result (never executed)
             # For MCP wrapped calls, check the inner arguments, not the wrapper
             def _has_real_args(t):
-                if t.get("id", "") in _tool_results:
-                    return True  # has a result — keep regardless
+                tid = t.get("id", "")
+                result = _tool_results.get(tid, "")
+                # Drop phantom tool calls with empty/ignored results
+                if result and "no command provided" in str(result):
+                    return False
                 args = t.get("arguments", {})
                 if not args or args == {}:
                     return False
@@ -552,11 +556,24 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     inner = args.get("arguments", {})
                     if not inner or inner == {}:
                         return False
+                    # bash with empty/whitespace command
+                    inner_tool = args.get("tool_name", "")
+                    if inner_tool == "bash" and isinstance(inner, dict) and not str(inner.get("command", "")).strip():
+                        return False
+                    # Any tool where all string values are empty
+                    if isinstance(inner, dict) and inner and all(
+                            not str(v).strip() for v in inner.values()):
+                        return False
+                # Non-MCP bash with empty command
+                if t.get("name") == "bash" and isinstance(args, dict) and not str(args.get("command", "")).strip():
+                    return False
                 return True
             tc = [t for t in _turn_tool_calls if _has_real_args(t)]
             _dropped = len(_turn_tool_calls) - len(tc)
             if _dropped:
-                logger.info("[claude-code] dropped %d phantom tool call(s) from turn", _dropped)
+                _dropped_tcs = [t for t in _turn_tool_calls if not _has_real_args(t)]
+                logger.warning("[CC-DROPPED] %d phantom tool call(s): %s", _dropped,
+                             json.dumps(_dropped_tcs, default=str, ensure_ascii=False)[:3000])
             thinking = _turn_thinking
             # Attach results to tool calls
             for t in tc:
@@ -588,6 +605,89 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 # by turn_callback. Only the LAST turn stays in content_parts
                 content_parts.clear()
 
+        # Stall watchdog: if CC emits a system event (init or compact_boundary)
+        # but produces no assistant response within _STALL_TIMEOUT seconds,
+        # kill the process. The retry loop in stream_chat will relaunch
+        # a fresh CC process with the same session.
+        _STALL_TIMEOUT = 120  # seconds
+        _stall_start_time = 0.0  # time.monotonic() when stall watch begins
+        _got_assistant = False   # set True on first assistant event
+        _last_tool_result_time = 0.0  # monotonic time of last tool_result with no pending tools
+        _pending_tool_ids = set()     # tool_use ids awaiting results
+        _emitted_sse_tcs = set()      # tool_use ids for which we sent a SSE tool_call
+
+        # Phantom tool call detector: if CC emits too many empty/phantom
+        # tool calls in a short window, it likely lost context after a bad
+        # internal compact. Trigger a PawFlow compact to recover.
+        _PHANTOM_WINDOW = 300   # 5 minutes
+        _PHANTOM_THRESHOLD = 10
+        _phantom_timestamps: list = []  # monotonic timestamps of phantom detections
+
+        _watchdog_stop = threading.Event()
+
+        def _record_phantom(tool_name: str, block_id: str):
+            """Record a phantom tool call. If threshold exceeded, trigger compact."""
+            now = time.monotonic()
+            _phantom_timestamps.append(now)
+            # Prune entries outside window
+            cutoff = now - _PHANTOM_WINDOW
+            while _phantom_timestamps and _phantom_timestamps[0] < cutoff:
+                _phantom_timestamps.pop(0)
+            count = len(_phantom_timestamps)
+            if count >= _PHANTOM_THRESHOLD:
+                logger.warning(
+                    "[claude-code] %d phantom tool calls in %ds window "
+                    "(latest: %s id=%s) — triggering PawFlow compact",
+                    count, _PHANTOM_WINDOW, tool_name, block_id)
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+                from core.llm_client import CCCompactDetected
+                raise CCCompactDetected(
+                    f"Too many phantom tool calls ({count} in {_PHANTOM_WINDOW}s)")
+
+        def _stall_watchdog():
+            while not _watchdog_stop.is_set():
+                if _stall_start_time and not _got_assistant:
+                    elapsed = time.monotonic() - _stall_start_time
+                    if elapsed >= _STALL_TIMEOUT:
+                        logger.warning(
+                            "[claude-code] Stall detected (%.0fs with no assistant "
+                            "response) — killing process for retry", elapsed)
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        return
+                # Tool result stall: all tools resolved but no assistant response
+                if _last_tool_result_time and not _pending_tool_ids:
+                    elapsed = time.monotonic() - _last_tool_result_time
+                    if elapsed >= _STALL_TIMEOUT:
+                        logger.warning(
+                            "[claude-code] Tool-result stall (%.0fs since last "
+                            "tool_result, no pending tools, no assistant) "
+                            "— killing for retry", elapsed)
+                        try:
+                            proc.kill()
+                        except OSError:
+                            pass
+                        return
+                # Debug: log watchdog state every 30s
+                if not hasattr(_stall_watchdog, '_dbg_count'):
+                    _stall_watchdog._dbg_count = 0
+                _stall_watchdog._dbg_count += 1
+                if _stall_watchdog._dbg_count % 3 == 0:  # every 30s
+                    logger.debug(
+                        '[claude-code] watchdog state: stall_start=%.1f got_assistant=%s '
+                        'last_tr=%.1f pending=%s',
+                        _stall_start_time, _got_assistant,
+                        _last_tool_result_time, _pending_tool_ids)
+                _watchdog_stop.wait(10)  # check every 10s
+
+        _watchdog_thread = threading.Thread(target=_stall_watchdog, daemon=True)
+        _watchdog_thread.start()
+
         try:
             for line in proc.stdout:
                 line = line.strip()
@@ -616,9 +716,25 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 sid)
                         except Exception:
                             pass
+                    # compact_boundary → kill CC + PawFlow compact; init → arm stall watchdog
+                    subtype = event.get("subtype", "")
+                    if subtype == "compact_boundary":
+                        logger.warning("[claude-code] compact_boundary detected — killing CC, PawFlow will compact")
+                        proc.kill()
+                        from core.llm_client import CCCompactDetected
+                        raise CCCompactDetected("CC auto-compact detected")
+                    if subtype == "init":
+                        _stall_start_time = time.monotonic()
+                        _got_assistant = False
+                        logger.info("[claude-code] init — stall watchdog armed (%.0fs timeout)",
+                                    _STALL_TIMEOUT)
                     continue
 
                 if etype == "assistant":
+                    # Got a response — stall watchdog disarmed
+                    _got_assistant = True
+                    _last_tool_result_time = 0.0
+
                     msg = event.get("message", {})
                     msg_id = msg.get("id", "")
 
@@ -642,6 +758,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 if callback:
                                     callback(text)
                         elif btype == "tool_use":
+                            logger.info("[CC-RAW-TOOL] block=%s", json.dumps(block, default=str, ensure_ascii=False))
                             _block_id = block.get("id", "")
                             _block_entry = {
                                 "name": block.get("name", ""),
@@ -661,6 +778,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _turn_tool_calls[_existing_idx] = _block_entry
                             else:
                                 _turn_tool_calls.append(_block_entry)
+                            _pending_tool_ids.add(_block_id)
                             # Unwrap MCP wrapper for display:
                             # mcp__pawflow__use_tool(tool_name=X, arguments={...})
                             # → X({...})
@@ -675,8 +793,19 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # an incremental update that will be followed by the
                             # real one with actual arguments.
                             if not _tc_args or _tc_args == {} or _tc_args == "{}":
-                                logger.debug("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
+                                logger.warning("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
                                              _tc_name, _block_id)
+                                continue
+                            # Skip bash with empty/missing/whitespace command
+                            if _tc_name == "bash" and isinstance(_tc_args, dict) and not str(_tc_args.get("command", "")).strip():
+                                logger.warning("[claude-code] skipping SSE for bash with empty command (id=%s)", _block_id)
+                                _record_phantom(_tc_name, _block_id)
+                                continue
+                            # Skip any tool where ALL string values are empty
+                            if isinstance(_tc_args, dict) and _tc_args and all(
+                                    not str(v).strip() for v in _tc_args.values()):
+                                logger.warning("[claude-code] skipping SSE for %s with all-empty args (id=%s)", _tc_name, _block_id)
+                                _record_phantom(_tc_name, _block_id)
                                 continue
                             # Skip meta tools from SSE
                             if _tc_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
@@ -692,6 +821,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id
                             _pub("tool_call", _tc_event)
+                            _emitted_sse_tcs.add(_block_id)
                         elif btype == "thinking":
                             thinking = block.get("thinking", "")
                             if thinking:
@@ -713,6 +843,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     msg = event.get("message", {})
                     for block in msg.get("content", []):
                         if block.get("type") == "tool_result":
+                            logger.info("[CC-RAW-RESULT] block=%s", json.dumps(block, default=str, ensure_ascii=False)[:2000])
                             tc_id = block.get("tool_use_id", "")
                             result_text = block.get("content", "")
                             if isinstance(result_text, list):
@@ -724,6 +855,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             # Store for turn_callback persistence
                             if tc_id:
                                 _tool_results[tc_id] = result_str
+                                _pending_tool_ids.discard(tc_id)
+                                if not _pending_tool_ids:
+                                    _last_tool_result_time = time.monotonic()
                             # Resolve tool name from turn_tool_calls
                             _tr_name = tc_id
                             for _tc in _turn_tool_calls:
@@ -735,6 +869,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     break
                             # Skip meta tool results from SSE
                             if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
+                                continue
+                            # Skip empty/phantom tool results from SSE
+                            if not result_str or result_str == "" or "no command provided" in result_str:
                                 continue
                             _tr_event = {
                                 "tool": _tr_name,
@@ -834,6 +971,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     break
 
         finally:
+            # Stop compact stall watchdog
+            _watchdog_stop.set()
             # Flush any pending turn (ensures last text is persisted even if interrupted)
             try:
                 _flush_turn()
@@ -847,11 +986,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # Don't error on non-zero exit if we got a successful result
         # (process was killed after break on result event — that's expected)
         _got_result = bool(last_data.get("session_id") or last_data.get("result"))
+        _was_compact_stall = (proc.returncode == -9 and _stall_start_time > 0 and not _got_assistant)
         if proc.returncode and proc.returncode != 0 and not _got_result:
             if _stderr:
                 logger.error("Claude CLI stderr: %.500s", _stderr)
+            _reason = "compact_stall" if _was_compact_stall else ""
             raise LLMClientError(
                 f"Claude CLI stream exited with code {proc.returncode}"
+                + (f" ({_reason})" if _reason else "")
                 + (f": {_stderr[:200]}" if _stderr else ""))
 
         # If turn_callback handled all turns, don't return content

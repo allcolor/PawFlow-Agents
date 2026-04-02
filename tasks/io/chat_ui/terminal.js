@@ -293,6 +293,10 @@ async function cmdDesktop(text, parts) {
       const _desktopSid = _prefix + '_' + relayId;
       const _tabLabel = localScreen ? relayId + ' (local)' : relayId;
       addDesktopTab(_tabLabel, resp.url || '/vnc/' + _desktopSid + '/vnc.html?autoconnect=true&resize=scale&path=vnc/' + _desktopSid + '/websockify');
+      // Connect audio if available
+      if (resp.audio_session) {
+        audioConnect(resp.audio_session);
+      }
       addMsg('system', (localScreen ? 'Local screen' : 'Desktop') + ' ready.');
     },
     error: (e) => {

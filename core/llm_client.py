@@ -581,7 +581,8 @@ class LLMClient(
                 is_429 = "429" in err_str or "rate_limit" in err_str.lower()
                 is_529 = "529" in err_str or "overloaded" in err_str.lower()
                 is_500 = "500" in err_str or "Internal server error" in err_str
-                retryable = is_429 or is_529 or is_500 or any(
+                is_compact_stall = "compact_stall" in err_str
+                retryable = is_429 or is_529 or is_500 or is_compact_stall or any(
                     code in err_str for code in ("503", "502", "reset", "timeout",
                                                   "api_error", "server_error")
                 )
@@ -600,6 +601,13 @@ class LLMClient(
                                 logger.error("Fallback model '%s' also failed: %s", self.fallback_model, fb_err)
                         raise LLMClientError(
                             f"Overloaded (529) after {overloaded_attempts} attempts: {last_error}")
+
+                if is_compact_stall:
+                    # Compact stall: CC was killed after being unresponsive
+                    # post-compaction. Retry immediately (no backoff needed,
+                    # the session is already compacted).
+                    logger.warning("[stream] Compact stall detected — retrying immediately")
+                    continue
 
                 if retryable and attempt < self.max_retries:
                     # Prefer server-specified delay, fall back to exponential backoff with jitter
@@ -677,4 +685,13 @@ class LLMClient(
 
 class LLMClientError(Exception):
     """Error from LLM client."""
+    pass
+
+
+class CCCompactDetected(Exception):
+    """Raised when Claude Code starts auto-compaction.
+
+    The agent loop should intercept this, kill CC, run a PawFlow
+    compaction instead, and relaunch CC with fresh context.
+    """
     pass

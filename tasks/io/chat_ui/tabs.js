@@ -196,6 +196,7 @@ function closeDesktopTab(tabId) {
     }
     panel.remove();
   }
+  if (typeof audioDisconnect === 'function') audioDisconnect();
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();
   if (_activeTab === tabId) switchTab('chat');

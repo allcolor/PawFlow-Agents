@@ -1340,13 +1340,40 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                      str(_novnc_port), f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
+                # 6. PulseAudio (virtual audio sink for desktop apps)
+                import shutil as _shutil
+                _audio_port = 0
+                if _shutil.which("pulseaudio"):
+                    _p_pulse = subprocess.Popen(
+                        ["pulseaudio", "--start", "--exit-idle-time=-1",
+                         "--load=module-null-sink sink_name=virtual_out",
+                         "--load=module-always-sink"],
+                        env=_user_env, preexec_fn=_as_user,
+                        stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_pulse)
+                    _time_mod.sleep(0.5)
+                    # Audio capture server (Opus over TCP)
+                    _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
+                    _audio_script = Path("/opt/pawflow/audio_capture.py")
+                    if _audio_script.exists():
+                        _p_audio = subprocess.Popen(
+                            [sys.executable, str(_audio_script),
+                             "--port", str(_audio_port), "--source", "pulse"],
+                            env=_user_env, preexec_fn=_as_user,
+                            stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_audio)
+                        sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")
+                    else:
+                        _audio_port = 0
+
                 _execute_command._desktop_procs = _procs
                 _execute_command._desktop_vnc_port = _vnc_port
                 _execute_command._desktop_novnc_port = _novnc_port
                 _execute_command._desktop_display = _display
-                sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} res={_resolution}\n")
+                sys.stderr.write(f"[FSRelay] Desktop started: display={_display} vnc={_vnc_port} novnc={_novnc_port} audio={_audio_port} res={_resolution}\n")
                 return {"ok": True, "data": {
                     "vnc_port": _vnc_port, "novnc_port": _novnc_port,
+                    "audio_port": _audio_port,
                     "display": _display, "resolution": _resolution
                 }}
             except FileNotFoundError as e:
@@ -1379,11 +1406,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _local_running = False
             if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
                 _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)
+            _novnc = getattr(_execute_command, '_desktop_novnc_port', None)
             return {"ok": True, "data": {
                 "running": _running,
                 "display": getattr(_execute_command, '_desktop_display', None),
                 "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
-                "novnc_port": getattr(_execute_command, '_desktop_novnc_port', None),
+                "novnc_port": _novnc,
+                "audio_port": (_novnc + 100) if _novnc and _running else 0,
                 "local_screen_running": _local_running,
                 "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
             }}

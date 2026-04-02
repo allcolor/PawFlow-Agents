@@ -6,7 +6,7 @@ import time
 from typing import Dict, List
 
 from core.llm_client import (
-    LLMClient, LLMMessage, LLMToolDefinition,
+    LLMClient, LLMMessage, LLMToolDefinition, CCCompactDetected,
 )
 from tasks.ai.agent_emitter import AgentEmitter, AgentResult
 from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
@@ -713,6 +713,42 @@ class AgentCoreMixin:
                         response = _llm_call(_call_context)
                     except AgentCancelled:
                         raise
+                    except CCCompactDetected:
+                        # CC started auto-compacting → do PawFlow compact instead
+                        logger.warning("[agent:%s] CCCompactDetected — running PawFlow compact",
+                                       conversation_id[:8])
+                        # Invalidate CC session
+                        try:
+                            from core.conversation_store import ConversationStore
+                            _an = ctx.get("active_agent_name", "") or "default"
+                            ConversationStore.instance().invalidate_claude_sessions(
+                                conversation_id)
+                            ConversationStore.instance().set_extra(
+                                conversation_id, f"claude_session:{_an}", "")
+                        except Exception:
+                            pass
+                        ctx["_claude_has_session"] = False
+                        # Run PawFlow compact on messages
+                        try:
+                            messages = list(self._auto_compact_messages(
+                                list(messages),
+                                conversation_id=conversation_id,
+                                agent_name=ctx.get("active_agent_name", ""),
+                                user_id=user_id,
+                                max_context=ctx.get("max_context_size", 200000),
+                                compact_instructions=ctx.get("compact_instructions", ""),
+                            ))
+                            llm_context = self._prepare_cc_file_context(messages)
+                            logger.info("[agent:%s] PawFlow compact done, %d messages, retrying CC",
+                                        conversation_id[:8], len(messages))
+                        except Exception as compact_err:
+                            logger.error("[agent:%s] PawFlow compact failed: %s",
+                                         conversation_id[:8], compact_err)
+                            emitter.on_fatal_error(f"Compact failed: {compact_err}")
+                            _fatal_error = True
+                            _fatal_error_msg = f"Compact failed: {compact_err}"
+                            break
+                        continue
                     except Exception as llm_err:
                         err_str = str(llm_err)
                         # AgentCancelled may be wrapped in LLMClientError

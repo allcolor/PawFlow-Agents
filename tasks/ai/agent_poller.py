@@ -65,7 +65,11 @@ class AgentPollerMixin:
             if self._poller_stop.is_set():
                 break
             try:
+                _t0 = time.time()
                 self._poll_once()
+                _dt = time.time() - _t0
+                if _dt > 0.05:
+                    logger.warning(f"[poller] _poll_once took {_dt*1000:.0f}ms")
             except Exception as e:
                 logger.error(f"Agent poller error: {e}", exc_info=True)
 
@@ -79,6 +83,7 @@ class AgentPollerMixin:
         bus = ConversationEventBus.instance()
         store = ConversationStore.instance()
         scheduler = PollScheduler.instance()
+        _pt0 = time.time()
 
         # Checkpoint cleanup (once per day, tracked by class var)
         try:
@@ -93,18 +98,26 @@ class AgentPollerMixin:
         except Exception as _cp_err:
             logger.debug(f"[checkpoint] cleanup failed: {_cp_err}")
 
+        _dt_ckpt = time.time() - _pt0
+        if _dt_ckpt > 0.05: logger.warning(f"[poller-timing] checkpoint: {_dt_ckpt*1000:.0f}ms")
+        _pt1 = time.time()
         # Watchdog: ensure active tasks always have a pending schedule
         try:
             self._ensure_tasks_scheduled()
         except Exception as _wt_err:
             logger.warning(f"Task watchdog failed: {_wt_err}")
 
+        _dt_tasks = time.time() - _pt1
+        if _dt_tasks > 0.05: logger.warning(f"[poller-timing] ensure_tasks: {_dt_tasks*1000:.0f}ms")
+        _pt2 = time.time()
         # Watchdog: ensure enabled autoconv thoughts have a pending schedule
         try:
             self._ensure_thoughts_scheduled()
         except Exception as _wt_err:
             logger.warning(f"Thought watchdog failed: {_wt_err}")
 
+        _dt_thoughts = time.time() - _pt2
+        if _dt_thoughts > 0.05: logger.warning(f"[poller-timing] ensure_thoughts: {_dt_thoughts*1000:.0f}ms")
         # Collect conversations to poll from two sources:
         # 1. Scheduled rechecks that are due (persistent, works without SSE)
         # 2. Active SSE conversations with cooldown expired (legacy behavior)
@@ -819,6 +832,9 @@ class AgentPollerMixin:
         count = 0
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
+            _cache = store._load_cache(cid)
+            if "agent_tasks" not in _cache.get("extra_keys", set()):
+                continue
             all_tasks = store.get_extra(cid, "agent_tasks") or {}
             if not isinstance(all_tasks, dict):
                 continue
@@ -859,7 +875,10 @@ class AgentPollerMixin:
         store = ConversationStore.instance()
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
-            all_tasks = store.get_extra(cid, "agent_tasks") or {}
+            _cache = store._load_cache(cid)
+            if "agent_tasks" not in _cache.get("extra_keys", set()):
+                continue
+            all_tasks = store.get_extra_cached(cid, "agent_tasks") or {}
             if not isinstance(all_tasks, dict):
                 continue
             for tid, task in all_tasks.items():
@@ -908,7 +927,10 @@ class AgentPollerMixin:
         store = ConversationStore.instance()
         for conv in store.list_conversations():
             cid = conv["conversation_id"]
-            extra = store.get_extras(cid) or {}
+            _cache = store._load_cache(cid)
+            if not any(k.startswith("random_thought::") for k in _cache.get("extra_keys", set())):
+                continue
+            extra = _cache.get("extras", {})
             for key, val in extra.items():
                 if not key.startswith("random_thought::") or not isinstance(val, dict):
                     continue

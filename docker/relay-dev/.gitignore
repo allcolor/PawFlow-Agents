@@ -1,0 +1,8 @@
+# Build context files copied by build.sh (cleaned up after build)
+pawflow_relay.py
+fs_actions.py
+fs_exec.py
+fs_screen.py
+fs_mcp.py
+pawflow.py
+audio_capture.py

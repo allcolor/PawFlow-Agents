@@ -143,10 +143,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends sudo \
     && echo 'pawflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pawflow \
     && chmod 440 /etc/sudoers.d/pawflow
 
-# ── Desktop environment (VNC) ───────────────────────────────────────
+# ── Desktop environment (VNC + audio) ───────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xfce4 xfce4-goodies dbus-x11 \
     x11vnc novnc websockify \
+    pulseaudio pulseaudio-utils \
     xdotool xclip xsel scrot wmctrl \
     fonts-dejavu fonts-liberation fonts-noto-color-emoji \
     libgtk-3-0 libnotify4 \
@@ -185,7 +186,7 @@ RUN curl -fsSL https://dl.google.com/linux/direct/google-chrome-stable_current_a
     && rm /tmp/chrome.deb && rm -rf /var/lib/apt/lists/* \
     # Wrapper: Docker containers can't use Chrome's sandbox
     && mv /opt/google/chrome/google-chrome /opt/google/chrome/google-chrome-real \
-    && printf '#!/bin/bash\nexec /opt/google/chrome/google-chrome-real --no-sandbox "$@"\n' \
+    && printf '#!/bin/bash\nexec /opt/google/chrome/google-chrome-real --no-sandbox --disable-gpu --disable-dev-shm-usage "$@"\n' \
        > /opt/google/chrome/google-chrome \
     && chmod +x /opt/google/chrome/google-chrome \
     && ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium-browser
@@ -213,6 +214,7 @@ COPY fs_exec.py /opt/pawflow/fs_exec.py
 COPY fs_screen.py /opt/pawflow/fs_screen.py
 COPY fs_mcp.py /opt/pawflow/fs_mcp.py
 COPY pawflow.py /opt/pawflow/pawflow.py
+COPY audio_capture.py /opt/pawflow/audio_capture.py
 ENV PYTHONPATH="/opt/pawflow"
 
 WORKDIR /workspace

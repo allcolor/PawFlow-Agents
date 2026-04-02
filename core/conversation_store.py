@@ -351,7 +351,7 @@ class ConversationStore:
     def _scan_cache(lines):
         c = {"user_id": "", "status": "idle", "created_at": 0,
              "updated_at": 0, "expires_at": 0, "msg_count": 0,
-             "agents": set(), "extra_keys": set(), "preview": ""}
+             "agents": set(), "extra_keys": set(), "extras": {}, "preview": ""}
         for line in lines:
             t = line.get("t", "")
             if t == "meta":
@@ -370,8 +370,10 @@ class ConversationStore:
                 if a:
                     c["agents"].add(a)
             elif t == "extra":
-                c["extra_keys"].add(line.get("key", ""))
-                if line.get("key") == "title":
+                _ekey = line.get("key", "")
+                c["extra_keys"].add(_ekey)
+                c["extras"][_ekey] = line.get("value")
+                if _ekey == "title":
                     c["title"] = line.get("value", "")
             elif t == "status":
                 c["status"] = line.get("status", c["status"])
@@ -810,6 +812,11 @@ class ConversationStore:
 
     # ── Extras ────────────────────────────────────────────────────────
 
+    def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
+        """Fast get_extra from in-memory cache — no disk I/O."""
+        cache = self._load_cache(cid)
+        return cache.get("extras", {}).get(key, default)
+
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
@@ -838,6 +845,11 @@ class ConversationStore:
         if not self.exists(cid):
             return False
         self._commit(cid, [{"op": "extra", "key": key, "value": value}])
+        # Update in-memory cache
+        with self._cache_lock:
+            if cid in self._cache:
+                self._cache[cid]["extra_keys"].add(key)
+                self._cache[cid].setdefault("extras", {})[key] = value
         return True
 
     def invalidate_claude_sessions(self, cid: str) -> None:

@@ -31,6 +31,7 @@ _JS_MODULES = [
     "resources.js", "services.js", "file_viewer.js", "file_explorer.js",
     "tabs.js",
     "terminal.js",
+    "audio.js",
 ]
 
 _html_cache: str = ""

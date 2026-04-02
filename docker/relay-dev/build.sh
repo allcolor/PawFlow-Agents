@@ -22,11 +22,12 @@ cp "$ROOT_DIR/tools/fs_exec.py" "$SCRIPT_DIR/fs_exec.py"
 cp "$ROOT_DIR/tools/fs_screen.py" "$SCRIPT_DIR/fs_screen.py"
 cp "$ROOT_DIR/tools/fs_mcp.py" "$SCRIPT_DIR/fs_mcp.py"
 cp "$ROOT_DIR/docker/pawflow_sdk/pawflow.py" "$SCRIPT_DIR/pawflow.py"
+cp "$ROOT_DIR/tools/audio_capture.py" "$SCRIPT_DIR/audio_capture.py"
 
 docker build -t pawflow-relay-dev:latest "$SCRIPT_DIR"
 
 # Cleanup
-rm -f "$SCRIPT_DIR/pawflow_relay.py" "$SCRIPT_DIR/fs_actions.py" "$SCRIPT_DIR/fs_exec.py" "$SCRIPT_DIR/fs_screen.py" "$SCRIPT_DIR/fs_mcp.py" "$SCRIPT_DIR/pawflow.py"
+rm -f "$SCRIPT_DIR/pawflow_relay.py" "$SCRIPT_DIR/fs_actions.py" "$SCRIPT_DIR/fs_exec.py" "$SCRIPT_DIR/fs_screen.py" "$SCRIPT_DIR/fs_mcp.py" "$SCRIPT_DIR/pawflow.py" "$SCRIPT_DIR/audio_capture.py"
 
 echo ""
 echo "Built pawflow-relay-dev:latest"

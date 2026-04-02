@@ -128,6 +128,7 @@ class ServerRelayManager:
 
         port = _find_free_port()
         desktop_host_port = _find_free_port()
+        audio_host_port = _find_free_port()
         token = secrets.token_urlsafe(32)
         relay_id = _relay_id_for_conv(conv_id)
         path = f"/ws/relay/{relay_id}"
@@ -178,6 +179,7 @@ class ServerRelayManager:
             "--env", f"PAWFLOW_RELAY_DIR={relay_workspace}",
             "--env", "PAWFLOW_RELAY_ALLOW_EXEC=1",
             "--publish", f"{desktop_host_port}:6080",
+            "--publish", f"{audio_host_port}:6180",
             "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
         ]
 
@@ -204,7 +206,7 @@ class ServerRelayManager:
             "python3", _SCRIPT_IN_CONTAINER,
         ])
         cmd = _docker_cmd() + ["run"] + docker_run_args
-        logger.info("Spawning server relay container: %s", container_name)
+        logger.info("Spawning server relay container: %s  cmd=%s", container_name, cmd)
         result = subprocess.run(
             cmd, capture_output=True, text=True, timeout=30,
         )
@@ -229,6 +231,7 @@ class ServerRelayManager:
             "ws_url": ws_url_for_container,
             "volume": volume,
             "desktop_host_port": desktop_host_port,
+            "audio_host_port": audio_host_port,
         }
         store.set_extra(conv_id, "server_relay", metadata)
         logger.info("Server relay spawned for conv %s: %s", conv_id, relay_id)

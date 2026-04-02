@@ -261,12 +261,14 @@ class RelayThread:
                 self._docker_container = make_container_name(self.relay_id, "relay")
                 ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
                 self._desktop_host_port = find_free_port()
+                self._audio_host_port = find_free_port()
                 docker_cmd = _docker_cmd() + [
                     "run", "--rm",
                     "--name", self._docker_container,
                     "-v", f"{_translate_path(_to_host_path(self.directory))}:/workspace",
                     "--add-host", "host.docker.internal:host-gateway",
                     "--cpus", self.docker_cpus, "--memory", self.docker_memory,
+                    "--shm-size", "512m",
                     "--security-opt", "no-new-privileges",
                     "-e", "GIT_CONFIG_COUNT=4",
                     "-e", "GIT_CONFIG_KEY_0=safe.directory",
@@ -279,6 +281,7 @@ class RelayThread:
                     "-e", "GIT_CONFIG_VALUE_3=false",
                     "-e", f"PAWFLOW_HOST_HELPER={_get_host_ip()}:{host_helper_port}",
                     "--publish", f"{self._desktop_host_port}:6080",
+                    "--publish", f"{self._audio_host_port}:6180",
                     "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
                     self.docker_image,
                     "python3", "/opt/pawflow/pawflow_relay.py",

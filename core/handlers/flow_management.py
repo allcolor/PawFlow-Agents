@@ -605,7 +605,10 @@ class CreatePlanHandler(ToolHandler):
         return (
             "Create a structured plan for a multi-step task. Each step has a "
             "description and status. The plan requires user approval before execution. "
-            "Use assign_plan to assign it to agents after approval."
+            "Use assign_plan to assign it to agents after approval.\n"
+            "WORKFLOW: 1) create_plan → 2) user approves → 3) work on steps, calling update_plan "
+            "to mark each step in_progress then done as you go → 4) post a final recap message "
+            "summarizing what was accomplished when all steps are done."
         )
 
     @property
@@ -707,7 +710,10 @@ class UpdatePlanHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Update the status of one or more steps in a plan. "
-            "Call this as you complete steps to show progress to the user."
+            "Call this as you complete steps to show progress to the user.\n"
+            "IMPORTANT: Update steps in real-time as you work — mark in_progress when starting "
+            "a step, then done when finished. Do NOT batch all updates at the end. "
+            "The user sees progress live."
         )
 
     @property

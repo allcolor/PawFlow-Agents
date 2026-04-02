@@ -112,11 +112,10 @@ function _sectionFooter() { return '</div>'; }
 async function loadResources() {
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
-  // Fire-and-forget: result arrives via SSE command_result → _renderResourcesFromSSE
-  fireAction('list_resources');
-  // Load tool schemas (async, fire-and-forget)
+  action$('list_resources', {}).subscribe(data => _renderResourcesFromSSE(data));
+  // Load tool schemas
   if (!window._cachedTools) {
-    fireAction('get_tool_schemas');
+    action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
   }
 }
 function _renderResourcesFromSSE(data) {

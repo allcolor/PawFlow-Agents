@@ -299,6 +299,11 @@ class AgentSerializationMixin:
                     else:
                         entry["source"] = {"type": "agent", "name": ""}
                 result.append(entry)
+        # Propagate task_id from source to top-level for frontend task block grouping
+        for _item in result:
+            _src = _item.get("source")
+            if isinstance(_src, dict) and _src.get("task_id") and "task_id" not in _item:
+                _item["task_id"] = _src["task_id"]
         return result
 
 

@@ -318,7 +318,9 @@ class AgentCoreMixin:
                     ctx["_iteration"] = iteration
                     ctx["_round"] = current_round
 
-                    poll_silent = ctx.get("is_poll", False) and iteration == 1
+                    # Tasks are explicit user actions — always stream their output
+                    _is_task = "::task::" in conversation_id
+                    poll_silent = ctx.get("is_poll", False) and iteration == 1 and not _is_task
                     # Heartbeat covers the ENTIRE iteration (LLM + tools)
                     _iter_hb = emitter.start_heartbeat(poll_silent)
                     emitter.on_iteration_start(

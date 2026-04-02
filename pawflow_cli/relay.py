@@ -243,7 +243,7 @@ class RelayThread:
         import pawflow_relay as _relay_mod
 
         if self.docker_image:
-            # Docker mode: launch relay INSIDE container
+            # Docker mode: launch relay INSIDE container with auto-restart
             # Start host helper (TCP server for host-level commands like claude_auth_login)
             host_helper_port = find_free_port()
             self._host_helper_thread = threading.Thread(
@@ -253,80 +253,104 @@ class RelayThread:
 
             import subprocess as _sp
             from core.docker_utils import make_container_name
-            self._docker_container = make_container_name(self.relay_id, "relay")
-            ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
-            self._desktop_host_port = find_free_port()
-            docker_cmd = _docker_cmd() + [
-                "run", "--rm",
-                "--name", self._docker_container,
-                "-v", f"{_translate_path(_to_host_path(self.directory))}:/workspace",
-                "--add-host", "host.docker.internal:host-gateway",
-                "--cpus", self.docker_cpus, "--memory", self.docker_memory,
-                "--security-opt", "no-new-privileges",
-                "-e", "GIT_CONFIG_COUNT=4",
-                "-e", "GIT_CONFIG_KEY_0=safe.directory",
-                "-e", "GIT_CONFIG_VALUE_0=/workspace",
-                "-e", "GIT_CONFIG_KEY_1=core.preloadIndex",
-                "-e", "GIT_CONFIG_VALUE_1=true",
-                "-e", "GIT_CONFIG_KEY_2=core.fsmonitor",
-                "-e", "GIT_CONFIG_VALUE_2=false",
-                "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
-                "-e", "GIT_CONFIG_VALUE_3=false",
-                "-e", f"PAWFLOW_HOST_HELPER={_get_host_ip()}:{host_helper_port}",
-                "--publish", f"{self._desktop_host_port}:6080",
-                "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
-                self.docker_image,
-                "python3", "/opt/pawflow/pawflow_relay.py",
-                "--server", ws_url,
-                "--token", self.ws_token,
-                "--relay-id", self.relay_id,
-                "--dir", "/workspace",
-                "--allow-exec",
-                "--allow-automation",
-                "--allow-local-screen",
-            ]
-            try:
-                self._docker_proc = _sp.Popen(
-                    docker_cmd, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
-                # Background thread to read relay logs from container stderr
-                def _read_relay_logs():
-                    try:
-                        for line in self._docker_proc.stderr:
-                            msg = line.decode("utf-8", errors="replace").rstrip()
-                            if msg and "[FSRelay]" in msg:
-                                # Show important relay events to user
-                                if any(k in msg for k in ("connect", "disconnect", "error", "Reconnect")):
-                                    sys.stderr.write(f"[Relay] {msg}\n")
-                    except Exception:
-                        pass
-                threading.Thread(target=_read_relay_logs, daemon=True,
-                                 name="relay-log-reader").start()
-                # Wait for container to exit or stop event
-                while not self._stop_event.is_set():
-                    try:
-                        self._docker_proc.wait(timeout=1)
-                        break  # container exited
-                    except _sp.TimeoutExpired:
-                        continue
-                # Check exit code
-                rc = self._docker_proc.poll()
-                if rc and rc != 0:
-                    stderr = ""
-                    try:
-                        stderr = self._docker_proc.stderr.read().decode("utf-8", errors="replace")
-                    except Exception:
-                        pass
-                    sys.stderr.write(f"[Relay] Docker relay failed (exit {rc}):\n")
-                    sys.stderr.write(f"[Relay] {stderr[:500]}\n")
-            except Exception as e:
-                sys.stderr.write(f"[Relay] Docker error: {e}\n")
-            finally:
-                if hasattr(self, '_docker_proc') and self._docker_proc:
-                    try:
-                        self._docker_proc.kill()
-                    except (OSError, Exception):
-                        pass
-                    self._docker_proc = None
+
+            restart_delay = 1
+            max_restart_delay = 60
+
+            while not self._stop_event.is_set():
+                self._docker_container = make_container_name(self.relay_id, "relay")
+                ws_url = f"wss://{_get_host_ip()}:{self.port}/ws/relay"
+                self._desktop_host_port = find_free_port()
+                docker_cmd = _docker_cmd() + [
+                    "run", "--rm",
+                    "--name", self._docker_container,
+                    "-v", f"{_translate_path(_to_host_path(self.directory))}:/workspace",
+                    "--add-host", "host.docker.internal:host-gateway",
+                    "--cpus", self.docker_cpus, "--memory", self.docker_memory,
+                    "--security-opt", "no-new-privileges",
+                    "-e", "GIT_CONFIG_COUNT=4",
+                    "-e", "GIT_CONFIG_KEY_0=safe.directory",
+                    "-e", "GIT_CONFIG_VALUE_0=/workspace",
+                    "-e", "GIT_CONFIG_KEY_1=core.preloadIndex",
+                    "-e", "GIT_CONFIG_VALUE_1=true",
+                    "-e", "GIT_CONFIG_KEY_2=core.fsmonitor",
+                    "-e", "GIT_CONFIG_VALUE_2=false",
+                    "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
+                    "-e", "GIT_CONFIG_VALUE_3=false",
+                    "-e", f"PAWFLOW_HOST_HELPER={_get_host_ip()}:{host_helper_port}",
+                    "--publish", f"{self._desktop_host_port}:6080",
+                    "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+                    self.docker_image,
+                    "python3", "/opt/pawflow/pawflow_relay.py",
+                    "--server", ws_url,
+                    "--token", self.ws_token,
+                    "--relay-id", self.relay_id,
+                    "--dir", "/workspace",
+                    "--allow-exec",
+                    "--allow-automation",
+                    "--allow-local-screen",
+                ]
+                _start_time = time.time()
+                try:
+                    self._docker_proc = _sp.Popen(
+                        docker_cmd, stdin=_sp.DEVNULL, stdout=_sp.PIPE, stderr=_sp.PIPE)
+                    # Background thread to read relay logs from container stderr
+                    def _read_relay_logs():
+                        try:
+                            for line in self._docker_proc.stderr:
+                                msg = line.decode("utf-8", errors="replace").rstrip()
+                                if msg and "[FSRelay]" in msg:
+                                    if any(k in msg for k in ("connect", "disconnect", "error", "Reconnect")):
+                                        sys.stderr.write(f"[Relay] {msg}\n")
+                        except Exception:
+                            pass
+                    threading.Thread(target=_read_relay_logs, daemon=True,
+                                     name="relay-log-reader").start()
+                    # Wait for container to exit or stop event
+                    while not self._stop_event.is_set():
+                        try:
+                            self._docker_proc.wait(timeout=1)
+                            break  # container exited
+                        except _sp.TimeoutExpired:
+                            continue
+                    # If stop was requested, exit the restart loop
+                    if self._stop_event.is_set():
+                        break
+                    # Container exited unexpectedly — check exit code
+                    rc = self._docker_proc.poll()
+                    if rc and rc != 0:
+                        stderr = ""
+                        try:
+                            stderr = self._docker_proc.stderr.read().decode("utf-8", errors="replace")
+                        except Exception:
+                            pass
+                        sys.stderr.write(f"[Relay] Docker relay exited (code {rc}), restarting in {restart_delay}s\n")
+                        if stderr:
+                            sys.stderr.write(f"[Relay] {stderr[:500]}\n")
+                    else:
+                        sys.stderr.write(f"[Relay] Docker relay exited (code 0), restarting in {restart_delay}s\n")
+                except Exception as e:
+                    sys.stderr.write(f"[Relay] Docker error: {e}, retrying in {restart_delay}s\n")
+                finally:
+                    if hasattr(self, '_docker_proc') and self._docker_proc:
+                        try:
+                            self._docker_proc.kill()
+                        except (OSError, Exception):
+                            pass
+                        self._docker_proc = None
+
+                # Reset backoff if container ran for more than 30s (was healthy)
+                if time.time() - _start_time > 30:
+                    restart_delay = 1
+                # Backoff before restart
+                self._stop_event.wait(restart_delay)
+                if self._stop_event.is_set():
+                    break
+                restart_delay = min(restart_delay * 2, max_restart_delay)
+                # Kill any orphan containers before restart
+                self._kill_docker()
+                sys.stderr.write(f"[Relay] Restarting Docker relay container...\n")
+
             return
 
     def _run_host_helper(self, port: int):

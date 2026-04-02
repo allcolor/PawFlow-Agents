@@ -874,6 +874,15 @@ class AgentPollerMixin:
                 with self._active_lock:
                     if sched_key in self._active_thoughts:
                         continue
+                # Check limits before rescheduling
+                _cancel = _check_task_limits(task, tid)
+                if _cancel:
+                    task["status"] = "cancelled"
+                    task["cancel_reason"] = _cancel
+                    all_tasks[tid] = task
+                    store.set_extra(cid, "agent_tasks", all_tasks)
+                    logger.info(f"[task-watchdog] Cancelled task {tid}: {_cancel}")
+                    continue
                 from core.tool_registry import AssignTaskHandler
                 delay = AssignTaskHandler._get_task_delay(task)
                 sched.schedule_delay(

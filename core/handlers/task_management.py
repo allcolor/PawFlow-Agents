@@ -463,6 +463,17 @@ class CompleteTaskHandler(ToolHandler):
                 return f"Task {task_id} was {task['status']} — ignoring completion."
             # Recurring tasks (no criteria) cannot be completed — ignore done=true
             if not task.get("completion_criteria"):
+                # Check limits before rescheduling
+                from tasks.ai.agent_poller import _check_task_limits
+                _cancel_reason = _check_task_limits(task, task_id)
+                if _cancel_reason:
+                    task["status"] = "cancelled"
+                    task["cancel_reason"] = _cancel_reason
+                    all_tasks[task_id] = task
+                    store.set_extra(_parent_cid, "agent_tasks", all_tasks)
+                    from core.poll_scheduler import PollScheduler
+                    PollScheduler.instance().cancel(f"{_parent_cid}::task::{task_id}")
+                    return f"Task {task_id} cancelled: {_cancel_reason}"
                 task["status"] = "active"
                 all_tasks[task_id] = task
                 store.set_extra(_parent_cid, "agent_tasks", all_tasks)
@@ -498,6 +509,25 @@ class CompleteTaskHandler(ToolHandler):
                     f"{_parent_cid}::task::{task_id}")
                 return f"Task {task_id} completed."
         else:
+            # Check limits before rescheduling
+            from tasks.ai.agent_poller import _check_task_limits
+            _cancel_reason = _check_task_limits(task, task_id)
+            if _cancel_reason:
+                task["status"] = "cancelled"
+                task["cancel_reason"] = _cancel_reason
+                all_tasks[task_id] = task
+                store.set_extra(_parent_cid, "agent_tasks", all_tasks)
+                from core.poll_scheduler import PollScheduler
+                PollScheduler.instance().cancel(f"{_parent_cid}::task::{task_id}")
+                try:
+                    from core.conversation_event_bus import ConversationEventBus
+                    ConversationEventBus.instance().publish_event(
+                        _parent_cid, "task_stopped", {
+                            "task_id": task_id, "agent_name": agent,
+                            "reason": _cancel_reason, "force": True})
+                except Exception:
+                    pass
+                return f"Task {task_id} cancelled: {_cancel_reason}"
             task["status"] = "active"
             all_tasks[task_id] = task
             store.set_extra(_parent_cid, "agent_tasks", all_tasks)

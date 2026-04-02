@@ -94,15 +94,17 @@ def action_screen_screenshot(root_dir, abs_path, req):
         import mss
         with mss.mss() as sct:
             img = sct.grab(sct.monitors[0])
+            w, h = img.size
             from mss.tools import to_png
             png = to_png(img.rgb, img.size)
-        return base64.b64encode(png).decode("ascii")
+        return {"image": base64.b64encode(png).decode("ascii"), "width": w, "height": h}
     except ImportError:
         import io, pyautogui
         screenshot = pyautogui.screenshot()
+        w, h = screenshot.size
         buf = io.BytesIO()
         screenshot.save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode("ascii")
+        return {"image": base64.b64encode(buf.getvalue()).decode("ascii"), "width": w, "height": h}
 
 
 def action_screen_screenshot_region(root_dir, abs_path, req):

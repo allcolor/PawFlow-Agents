@@ -32,9 +32,12 @@ class ScreenHandler(ToolHandler):
             "Interact with a desktop screen. "
             "Take screenshots to see what's on screen, click elements, type text, "
             "press keys, scroll. Useful for GUI testing, visual verification, "
-            "or when you need to see what the user sees. "
-            "Use local_screen=true to act on the user's own display "
-            "(routed through the relay to the user's PC)."
+            "or when you need to see what the user sees.\n"
+            "IMPORTANT: Set local_screen=true to act on the user's real PC display, "
+            "or local_screen=false (default) for the Docker virtual screen.\n"
+            "COORDINATES: x,y are in physical pixels matching the screenshot resolution. "
+            "Always take a screenshot first — the result includes the screen resolution "
+            "(e.g. 2560x1440). Use those pixel dimensions to calculate click/move coordinates."
         )
 
     @property
@@ -163,20 +166,32 @@ class ScreenHandler(ToolHandler):
 
     def _handle_result(self, action: str, data) -> str:
         """Process screen action result — store screenshots, format responses."""
-        if action == "screenshot" and isinstance(data, str):
-            try:
-                import base64
-                img_bytes = base64.b64decode(data)
-                from core.file_store import FileStore
-                import time
-                fname = f"screenshot_{int(time.time())}.png"
-                fid = FileStore.instance().store(
-                    fname, img_bytes, "image/png",
-                    user_id=self._user_id, category="screenshot")
-                url = f"{self._base_url}/files/{fid}/{fname}" if self._base_url else f"/files/{fid}/{fname}"
-                return f"Screenshot captured: {url}\n{len(img_bytes):,} bytes, {data[:20]}..."
-            except Exception as e:
-                return f"Screenshot captured but storage failed: {e}"
+        # Screenshot: accept both raw base64 string and {image, width, height} dict
+        if action == "screenshot":
+            b64_data = None
+            width = height = None
+            if isinstance(data, dict) and "image" in data:
+                b64_data = data["image"]
+                width = data.get("width")
+                height = data.get("height")
+            elif isinstance(data, str):
+                b64_data = data
+            if b64_data:
+                try:
+                    import base64
+                    img_bytes = base64.b64decode(b64_data)
+                    from core.file_store import FileStore
+                    import time
+                    fname = f"screenshot_{int(time.time())}.png"
+                    fid = FileStore.instance().store(
+                        fname, img_bytes, "image/png",
+                        user_id=self._user_id, category="screenshot")
+                    url = f"{self._base_url}/files/{fid}/{fname}" if self._base_url else f"/files/{fid}/{fname}"
+                    size_info = f"\nScreen resolution: {width}x{height}" if width and height else ""
+                    coord_hint = f" — use these dimensions for x,y coordinates in click/move/scroll actions" if width else ""
+                    return f"Screenshot captured: {url}\n{len(img_bytes):,} bytes, {b64_data[:20]}...{size_info}{coord_hint}"
+                except Exception as e:
+                    return f"Screenshot captured but storage failed: {e}"
 
         if action == "mouse_position" and isinstance(data, dict):
             return f"Mouse position: x={data.get('x', '?')}, y={data.get('y', '?')}"

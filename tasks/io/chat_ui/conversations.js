@@ -103,12 +103,37 @@ function _renderHistory(data) {
     return;
   }
   nicknameMap = data.nicknames || {};
+  // Group messages by task_id for task block rendering
+  const _histTaskBlocks = {};
+  function _getHistTaskBlock(taskId, agentName) {
+    if (_histTaskBlocks[taskId]) return _histTaskBlocks[taskId];
+    const details = document.createElement('details');
+    details.className = 'msg task-block';
+    details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
+    const summary = document.createElement('summary');
+    summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';
+    summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(taskId) + '</span>'
+      + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + ')</span>' : '')
+      + ' <span style="margin-left:auto;font-size:11px;color:#888">\u2714 done</span>';
+    details.appendChild(summary);
+    const content = document.createElement('div');
+    content.style.cssText = 'padding:4px 12px 8px;max-height:500px;overflow-y:auto;';
+    details.appendChild(content);
+    document.getElementById('messages').appendChild(details);
+    _histTaskBlocks[taskId] = {el: details, content: content};
+    return _histTaskBlocks[taskId];
+  }
   for (const m of (data.messages || [])) {
     let content = m.content || '';
     if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
       content = content.replace(/^\[[^\]]+\]:\s*/, '');
     }
-    addMsg(m.type || m.role, content, m);
+    const el = addMsg(m.type || m.role, content, m);
+    if (m.task_id && el) {
+      const agentName = (m.source && m.source.name) || '';
+      const tb = _getHistTaskBlock(m.task_id, agentName);
+      tb.content.appendChild(el);
+    }
   }
   serverMsgCount = data.message_count || 0;
   currentOffset = data.raw_count || (data.messages || []).length;

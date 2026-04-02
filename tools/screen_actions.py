@@ -55,9 +55,10 @@ def handle_screen_action(action: str, req: dict) -> dict:
 def _screenshot(req):
     pag = _get_pyautogui()
     screenshot = pag.screenshot()
+    w, h = screenshot.size
     buf = io.BytesIO()
     screenshot.save(buf, format="PNG")
-    return base64.b64encode(buf.getvalue()).decode("ascii")
+    return {"image": base64.b64encode(buf.getvalue()).decode("ascii"), "width": w, "height": h}
 
 
 def _click(req):

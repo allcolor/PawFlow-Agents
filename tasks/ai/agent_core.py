@@ -206,26 +206,30 @@ class AgentCoreMixin:
                             from core.llm_client import unwrap_mcp_tool
                             for tc in msg.tool_calls:
                                 _tc_name, _tc_args = unwrap_mcp_tool(tc.name, tc.arguments)
+                                if _tc_name == "get_tool_schema":
+                                    continue
                                 _sse.append({"type": "tool_call", "data": {
                                     "tool": _tc_name, "arguments": _tc_args,
                                     "tc_id": tc.id,
                                     "agent_name": _agent, "llm_service": _svc,
                                 }})
                         if msg.role == "tool":
-                            _preview = (msg.content[:2000] if isinstance(msg.content, str)
-                                        else str(msg.content)[:2000])
-                            if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
-                                _nl = _preview.find("\n")
-                                if _nl >= 0:
-                                    _preview = _preview[_nl + 1:]
-                                if _preview.endswith("[/TOOL OUTPUT]"):
-                                    _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
-                            _sse.append({"type": "tool_result", "data": {
-                                "tool": getattr(msg, '_tool_name', ''),
-                                "result": _preview,
-                                "tc_id": getattr(msg, 'tool_call_id', ''),
-                                "agent_name": _agent, "llm_service": _svc,
-                            }})
+                            _raw_tool_name = getattr(msg, '_tool_name', '')
+                            if _raw_tool_name not in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
+                                _preview = (msg.content[:2000] if isinstance(msg.content, str)
+                                            else str(msg.content)[:2000])
+                                if isinstance(_preview, str) and _preview.startswith("[TOOL OUTPUT"):
+                                    _nl = _preview.find("\n")
+                                    if _nl >= 0:
+                                        _preview = _preview[_nl + 1:]
+                                    if _preview.endswith("[/TOOL OUTPUT]"):
+                                        _preview = _preview[:-len("[/TOOL OUTPUT]")].rstrip("\n")
+                                _sse.append({"type": "tool_result", "data": {
+                                    "tool": _raw_tool_name,
+                                    "result": _preview,
+                                    "tc_id": getattr(msg, 'tool_call_id', ''),
+                                    "agent_name": _agent, "llm_service": _svc,
+                                }})
                     ConversationWriter.for_conversation(conversation_id).enqueue(
                         [_store_msg], user_id=user_id, sse_events=_sse if _sse else None)
                 except Exception:

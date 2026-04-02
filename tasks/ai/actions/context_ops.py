@@ -621,13 +621,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if ek.startswith("claude_session:") and ev:
                     _cc_agent = ek[len("claude_session:"):]
                     _agent_ctx_map[f"cc_session:{_cc_agent}"] = "cc-active"
-            for ek in _extras:
-                if ek.startswith("task_log:"):
-                    _tid = ek[9:]
+            _tasks_data = _extras.get("agent_tasks", {})
+            if isinstance(_tasks_data, dict):
+                for _tid, _t_entry in _tasks_data.items():
                     _sub_cid = f"{conv_id}::task::{_tid}"
                     if store.exists(_sub_cid):
-                        _tasks_data = _extras.get("agent_tasks", {})
-                        _t_entry = _tasks_data.get(_tid, {}) if isinstance(_tasks_data, dict) else {}
                         _t_agent = _t_entry.get("agent", "?")
                         _agent_ctx_map[f"task:{_tid} ({_t_agent})"] = "sub-conv"
         flowfile.set_content(json.dumps({

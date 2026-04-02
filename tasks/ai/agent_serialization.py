@@ -114,6 +114,7 @@ class AgentSerializationMixin:
         """
         result = []
         _tc_id_to_name = {}  # tool_call_id → display name (for tool_result matching)
+        _META_TOOLS = {"get_tool_schema"}
         for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
             if role == "system":
@@ -172,6 +173,8 @@ class AgentSerializationMixin:
                     _tc_name = tc.get("name", "?")
                     _tc_args = tc.get("arguments", {})
                     _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
+                    if _tc_name in _META_TOOLS:
+                        continue
                     _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
                     # Format source label
                     _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
@@ -215,6 +218,9 @@ class AgentSerializationMixin:
                         "source": _tc_source,
                     })
             elif role == "tool" and tool_call_id:
+                # Skip results for hidden meta tools
+                if _tc_id_to_name.get(tool_call_id) in _META_TOOLS:
+                    continue
                 # Tool result message — strip security wrapper for display
                 display_content = content
                 if display_content.startswith("[TOOL OUTPUT"):
@@ -240,6 +246,9 @@ class AgentSerializationMixin:
                     _tr_entry["source"] = m["source"]
                 result.append(_tr_entry)
             elif role in ("tool_call", "tool_result", "narration", "thinking"):
+                # Skip meta tools from display
+                if role in ("tool_call", "tool_result") and m.get("tool_name") in _META_TOOLS:
+                    continue
                 # display_only messages from claude-code turns — pass through as-is
                 entry = {"type": role, "role": role, "content": content, "raw_index": raw_idx,
                          "display_only": True}

@@ -670,13 +670,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 _tc_name = _tc_args.get("tool_name", _tc_name)
                                 _tc_args = _tc_args.get("arguments", _tc_args)
                             elif _tc_name == "mcp__pawflow__get_tool_schema":
-                                _tc_args = _tc_args  # keep as-is
+                                _tc_name = "get_tool_schema"
                             # Don't emit SSE for empty-arg tool calls — likely
                             # an incremental update that will be followed by the
                             # real one with actual arguments.
                             if not _tc_args or _tc_args == {} or _tc_args == "{}":
                                 logger.debug("[claude-code] skipping SSE for empty tool_use %s (id=%s) — awaiting args",
                                              _tc_name, _block_id)
+                                continue
+                            # Skip meta tools from SSE
+                            if _tc_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
                                 continue
                             _tc_event = {
                                 "tool": _tc_name,
@@ -730,6 +733,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                     if _tr_name == "mcp__pawflow__use_tool":
                                         _tr_name = _tc.get("arguments", {}).get("tool_name", _tr_name)
                                     break
+                            # Skip meta tool results from SSE
+                            if _tr_name in ("get_tool_schema", "mcp__pawflow__get_tool_schema"):
+                                continue
                             _tr_event = {
                                 "tool": _tr_name,
                                 "result": result_str[:300],

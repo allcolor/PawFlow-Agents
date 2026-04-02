@@ -116,6 +116,21 @@ def _handle_usage(self, action, body, store, user_id, flowfile):
                         "last_tool": ctx.get("_last_tool", ""),
                         "duration_s": _time.time() - _started if _started else 0,
                     })
+        # Also include scheduled tasks (active but between turns)
+        try:
+            from core.conversation_store import ConversationStore
+            all_tasks = ConversationStore.instance().get_extra(conv_id, "agent_tasks") or {}
+            _active_task_ids = {a["task_id"] for a in active if a.get("task_id")}
+            for tid, task in all_tasks.items():
+                if tid not in _active_task_ids and task.get("status") == "active":
+                    active.append({
+                        "agent_name": task.get("agent", ""),
+                        "task_id": tid,
+                        "status": "scheduled",
+                        "iteration": task.get("reschedule_count", 0),
+                    })
+        except Exception:
+            pass
         flowfile.set_content(json.dumps({"active": active}).encode())
         return [flowfile]
 

@@ -109,7 +109,7 @@ function connectSSE(cid) {
       details.appendChild(content);
       if (data.task_id) {
         const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-        if (tb) { tb.content.appendChild(details); }
+        if (tb) { tb.content.appendChild(details); tb.content.scrollTop = tb.content.scrollHeight; }
         else { document.getElementById('messages').appendChild(details); }
       } else {
         const _msgContainer = document.getElementById('messages');
@@ -165,7 +165,7 @@ function connectSSE(cid) {
         // Move into task block if this is a task event
         if (data.task_id) {
           const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-          if (tb) tb.content.appendChild(s.el);
+          if (tb) { tb.content.appendChild(s.el); tb.content.scrollTop = tb.content.scrollHeight; }
         }
       }
       s.chunks.push(s.el);
@@ -264,7 +264,7 @@ function connectSSE(cid) {
     // Route into task block if this is a task event
     if (data.task_id) {
       const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-      if (tb) tb.content.appendChild(el);
+      if (tb) { tb.content.appendChild(el); tb.content.scrollTop = tb.content.scrollHeight; }
       else document.getElementById('messages').appendChild(el);
     } else {
       const _narContainer = document.getElementById('messages');
@@ -419,7 +419,7 @@ function connectSSE(cid) {
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
       const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, tcAgent);
-      if (tb) tb.content.appendChild(tcEl);
+      if (tb) { tb.content.appendChild(tcEl); tb.content.scrollTop = tb.content.scrollHeight; }
     }
     // Group under parent agent tool_call if this is a sub-agent tool
     if (data.parent_tc_id && tcEl) {
@@ -453,7 +453,7 @@ function connectSSE(cid) {
       }
     }
     // Fallback: standalone element
-    addMsg('tool_result', data.result || '', {
+    const trEl = addMsg('tool_result', data.result || '', {
       tool_name: data.tool,
       tool: data.tool,
       source: data.source || {type: 'agent', name: data.agent_name || '', llm_service: data.llm_service || ''},
@@ -463,6 +463,11 @@ function connectSSE(cid) {
       ts: data.ts,
       tc_id: tcId,
     });
+    // Route into task block if this is a task event
+    if (data.task_id && trEl) {
+      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, data.agent_name || '');
+      if (tb) { tb.content.appendChild(trEl); tb.content.scrollTop = tb.content.scrollHeight; }
+    }
   });
 
   eventSource.addEventListener('bg_task_update', (e) => {
@@ -533,6 +538,20 @@ function connectSSE(cid) {
         delete _taskBlocks[data.task_id];
       }
       clearStream(data.agent_name || '');
+    }
+  });
+
+  eventSource.addEventListener('task_msg', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.task_id && data.from === 'user') {
+      const block = _taskBlocks[data.task_id];
+      if (block) {
+        const el = document.createElement('div');
+        el.className = 'msg user';
+        el.textContent = data.message;
+        _taskBlockAppend(data.task_id, el);
+      }
     }
   });
 
@@ -766,8 +785,8 @@ function connectSSE(cid) {
       _cancelledAgents.add(cancelAgent.toLowerCase());
     }
     if (cancelAgent === 'all') {
-      activeInteractions = {};
-      updateActivePanel();
+      // Don't clear activeInteractions — server is source of truth via syncActive
+      syncActiveFromServer();
       // Clean up all narrations + thinking
       document.querySelectorAll('#messages .narration').forEach(el => el.remove());
       document.querySelectorAll('#messages .thinking-block').forEach(el => el.remove());

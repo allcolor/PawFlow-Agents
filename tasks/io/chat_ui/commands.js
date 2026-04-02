@@ -6,9 +6,9 @@ const HELP_DATA = {
     detail: 'Without arguments, lists all commands. With a command name, shows detailed documentation.\nExample: /help agent',
   },
   '/msg': {
-    usage: '/msg [@agent] <message>',
-    short: 'Send a message to a specific agent (shortcut for /agent msg)',
-    detail: 'Send a message to a specific agent without changing the active agent.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @"Agent With Spaces" Hello',
+    usage: '/msg [@agent|@t_taskid] <message>',
+    short: 'Send a message to an agent or a running task',
+    detail: 'Send a message to a specific agent or task without changing the active agent.\n\nExamples:\n  /msg @grok Explain this code\n  /msg @ALL What do you think?\n  /msg @t_8953b308 Check the latest post\n  /msg @"Agent With Spaces" Hello',
   },
   '/btw': {
     usage: '/btw [@agent|ALL] <question>',

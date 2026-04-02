@@ -34,6 +34,35 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
+def _redact_secrets(text: str, secret_values: set) -> str:
+    """Replace occurrences of secret values in text with a redaction marker.
+
+    Also catches partial matches (prefixes/suffixes of secrets >= 8 chars)
+    to handle truncated output (e.g. head -c 20).
+    """
+    if len(text) > 1_000_000 or '\x00' in text:
+        return text
+    _MARKER = "<****secret****>"
+    _MIN_PARTIAL = 8
+    for val in secret_values:
+        if val in text:
+            text = text.replace(val, _MARKER)
+        elif len(val) >= _MIN_PARTIAL:
+            # Check if any prefix of the secret (>= 8 chars) appears in text
+            for plen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
+                prefix = val[:plen]
+                if prefix in text:
+                    text = text.replace(prefix, _MARKER)
+                    break
+            # Check if any suffix of the secret (>= 8 chars) appears in text
+            for slen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
+                suffix = val[-slen:]
+                if suffix in text:
+                    text = text.replace(suffix, _MARKER)
+                    break
+    return text
+
+
 class ToolRelayService(BaseService):
     """Tool execution service for MCP bridge connections."""
 
@@ -569,14 +598,20 @@ class ToolRelayService(BaseService):
         except Exception as e:
             logger.warning("Tool approval check failed: %s", e)
 
-        # Inject user secrets as env vars for exec-capable tools
-        _exec_tools = {"bash", "execute_script"}
-        if tool_name in _exec_tools and isinstance(arguments, dict) and user_id:
+        # Resolve secrets for env injection + redaction
+        _secret_values = set()
+        _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
+        if user_id and isinstance(arguments, dict):
             try:
-                _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
                 _secret_env = self._resolve_secrets_env(user_id, _secret_cid)
                 if _secret_env:
-                    arguments["_secret_env"] = _secret_env
+                    # Collect values for redaction (skip short values to avoid false positives)
+                    for _sv in _secret_env.values():
+                        if _sv and len(_sv) >= 4:
+                            _secret_values.add(_sv)
+                    # Inject env vars for exec-capable tools
+                    if tool_name in {"bash", "execute_script"}:
+                        arguments["_secret_env"] = _secret_env
             except Exception as _se:
                 logger.warning("[tool-relay] failed to inject secrets: %s", _se)
 
@@ -592,47 +627,55 @@ class ToolRelayService(BaseService):
         from core.sanitization import sanitize_unicode
         result_str = sanitize_unicode(result_str)
 
+        # Redact secret values from tool output
+        if _secret_values:
+            result_str = _redact_secrets(result_str, _secret_values)
+
         return {"type": "result", "request_id": request_id, "data": result_str}
 
     def _resolve_secrets_env(self, user_id: str, conversation_id: str) -> dict:
-        """Resolve user/global secrets into a flat dict for env injection.
+        return resolve_secrets_env(user_id, conversation_id)
 
-        Cascade: conversation → user → global (same as expression resolver).
-        Keys are uppercased with PAWFLOW_ prefix to avoid collisions.
-        """
-        from pathlib import Path
-        from core.config_store import ConfigStore
 
-        env = {}
+def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
+    """Resolve user/global secrets into a flat dict for env injection.
 
-        # Global secrets
-        _global_path = Path("config/global_secrets.json")
-        for k, cv in ConfigStore.load_secrets(_global_path).items():
+    Cascade: conversation → user → global (same as expression resolver).
+    Keys are uppercased with PAWFLOW_ prefix to avoid collisions.
+    """
+    from pathlib import Path
+    from core.config_store import ConfigStore
+
+    env = {}
+
+    # Global secrets
+    _global_path = Path("config/global_secrets.json")
+    for k, cv in ConfigStore.load_secrets(_global_path).items():
+        env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+
+    # User secrets (override global)
+    if user_id:
+        _user_path = Path("config/users") / user_id / "secrets.json"
+        for k, cv in ConfigStore.load_secrets(_user_path).items():
             env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
-        # User secrets (override global)
-        if user_id:
-            _user_path = Path("config/users") / user_id / "secrets.json"
-            for k, cv in ConfigStore.load_secrets(_user_path).items():
-                env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+    # Conversation secrets (override user)
+    if conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            from core.secrets import get_secrets_manager
+            _raw = ConversationStore.instance().get_extra(
+                conversation_id, "conv_secrets") or {}
+            sm = get_secrets_manager()
+            for k, v in _raw.items():
+                try:
+                    env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
+                except Exception:
+                    env[k.upper()] = str(v)
+        except Exception:
+            pass
 
-        # Conversation secrets (override user)
-        if conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                from core.secrets import get_secrets_manager
-                _raw = ConversationStore.instance().get_extra(
-                    conversation_id, "conv_secrets") or {}
-                sm = get_secrets_manager()
-                for k, v in _raw.items():
-                    try:
-                        env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
-                    except Exception:
-                        env[k.upper()] = str(v)
-            except Exception:
-                pass
-
-        return env
+    return env
 
 
 # Register with ServiceFactory

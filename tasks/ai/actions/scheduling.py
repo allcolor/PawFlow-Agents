@@ -455,6 +455,43 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         flowfile.set_content(json.dumps({"ok": True, "changed": changed}).encode())
         return [flowfile]
 
+    if action == "msg_task":
+        conv_id = body.get("conversation_id", "")
+        task_id = body.get("task_id", "")
+        message = body.get("message", "")
+        if not conv_id or not task_id or not message:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id, task_id, or message"}).encode())
+            return [flowfile]
+        all_tasks = store.get_extra(conv_id, "agent_tasks") or {}
+        task = all_tasks.get(task_id)
+        if not task:
+            flowfile.set_content(json.dumps({"error": f"Task '{task_id}' not found"}).encode())
+            return [flowfile]
+        if task.get("status") not in ("active", "paused"):
+            flowfile.set_content(json.dumps({"error": f"Task '{task_id}' is {task.get('status', 'unknown')}, cannot send message"}).encode())
+            return [flowfile]
+        sub_cid = f"{conv_id}::task::{task_id}"
+        store.append_messages(sub_cid, [{"role": "user", "content": message}])
+        if task.get("status") == "paused":
+            task["status"] = "active"
+            all_tasks[task_id] = task
+            store.set_extra(conv_id, "agent_tasks", all_tasks)
+        from core.poll_scheduler import PollScheduler
+        sched_key = f"{conv_id}::task::{task_id}"
+        PollScheduler.instance().schedule_delay(
+            conv_id, 1,
+            key=sched_key,
+            reason=f"[agent_task:{task_id}] user message injected",
+            user_id=user_id,
+        )
+        from core.conversation_event_bus import ConversationEventBus
+        ConversationEventBus.instance().publish_event(
+            conv_id, "task_msg",
+            {"task_id": task_id, "message": message, "from": "user"},
+        )
+        flowfile.set_content(json.dumps({"ok": True, "task_id": task_id}).encode())
+        return [flowfile]
+
     # ── Image service management ──────────────────────────────────
 
     return None

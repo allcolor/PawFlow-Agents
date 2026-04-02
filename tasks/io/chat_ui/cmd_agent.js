@@ -131,8 +131,9 @@ function cmdMsg(text) {
     target = selectedAgent;
     msgText = margs.slice(1).join(' ');
   }
-  if (!target) { addMsg('system', 'Usage: /msg [@agent] <message> (defaults to selected agent)'); }
+  if (!target) { addMsg('system', 'Usage: /msg [@agent|@t_taskid] <message> (defaults to selected agent)'); }
   else if (!msgText) { addMsg('system', 'Usage: /msg ' + target + ' <message>'); }
+  else if (/^t_[0-9a-f]+$/.test(target)) { cmdTaskMsg(target, msgText); }
   else if (target.toUpperCase() === 'ALL') { cmdAgentMsgAll(msgText); }
   else { cmdAgentMsg(target, msgText); }
   return true;
@@ -283,6 +284,15 @@ function cmdAgentMsg(agentName, text) {
       addMsg('error', 'Failed to send to agent: ' + e.message);
       sending = false;
     });
+}
+
+function cmdTaskMsg(taskId, text) {
+  if (!conversationId) { addMsg('system', 'No active conversation.'); return; }
+  addMsg('user', text, { source: { type: 'user', name: '', target_task: taskId } });
+  action$('msg_task', { task_id: taskId, message: text }).subscribe(data => {
+    if (data.error) { addMsg('error', data.error); }
+    else { addMsg('system', 'Message sent to task ' + taskId); }
+  });
 }
 
 function cmdAgentMsgAll(text) {

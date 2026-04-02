@@ -40,6 +40,19 @@ class AgentToolExecMixin:
 
         Returns list of (tool_call, result_text) in original order.
         """
+        # Load secret values for output redaction
+        _secret_values = set()
+        if user_id:
+            try:
+                from services.tool_relay_service import resolve_secrets_env, _redact_secrets
+                _scid = conversation_id.split('::task::')[0] if '::task::' in conversation_id else conversation_id
+                _senv = resolve_secrets_env(user_id, _scid)
+                for _sv in _senv.values():
+                    if _sv and len(_sv) >= 4:
+                        _secret_values.add(_sv)
+            except Exception:
+                pass
+
         # Determine blocked tools
         blocked = set()
         if max_consecutive > 0:
@@ -131,6 +144,9 @@ class AgentToolExecMixin:
                 self._run_hook("pre", tc.name, tc.arguments, conversation_id, user_id)
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)
                 result = registry.execute(tc.name, tc.arguments) or ""
+                # Redact secrets from tool output
+                if _secret_values and isinstance(result, str):
+                    result = _redact_secrets(result, _secret_values)
                 # Post-hook execution
                 self._run_hook("post", tc.name, tc.arguments, conversation_id, user_id)
                 # Check for ask_user pause signal

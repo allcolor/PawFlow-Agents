@@ -549,6 +549,16 @@ function connectSSE(cid) {
     if (isPendingApproval && planId) {
       msgHtml += ' &mdash; <button onclick="planAction(\'approve_plan\',\'' + planId + '\')" style="margin-left:6px;padding:2px 10px;background:#6c5ce7;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:0.9em">\u2705 Approve</button>';
     }
+    // Show step list
+    if (plan.steps && plan.steps.length) {
+      msgHtml += '<ol style="margin:6px 0 0 16px;padding:0;font-size:0.9em;color:#c0c0d0">';
+      for (const s of plan.steps) {
+        const desc = typeof s === 'string' ? s : (s.description || s.title || '');
+        const icon = (s.status === 'done') ? '\u2713' : '\u25CB';
+        msgHtml += '<li style="margin:2px 0">' + icon + ' ' + escapeHtml(desc) + '</li>';
+      }
+      msgHtml += '</ol>';
+    }
     addMsg('system', msgHtml, {html: true});
     // Refresh plans panel if open
     if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();

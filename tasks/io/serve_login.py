@@ -96,8 +96,8 @@ class ServeLoginTask(BaseTask):
 
     def _build_redirect_uri(self, flowfile, callback_path):
         """Build the full redirect URI from the current request."""
-        host = flowfile.get_attribute("http.header.Host") or "localhost:9090"
-        scheme = "https" if flowfile.get_attribute("http.header.X-Forwarded-Proto") == "https" else "http"
+        host = flowfile.get_attribute("http.header.host") or "localhost:9090"
+        scheme = "https" if flowfile.get_attribute("http.header.x-forwarded-proto") == "https" else "http"
         return f"{scheme}://{host}{callback_path}"
 
     def _render_page(self, providers, auth_svc, flowfile,

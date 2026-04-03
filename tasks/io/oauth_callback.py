@@ -294,7 +294,10 @@ class OAuthCallbackTask(BaseTask):
 
         # Exchange code via the gateway (handles provisioning + rate limiting)
         ip = flowfile.get_attribute("http.remote.addr") or ""
-        redirect_uri = oauth_service.redirect_uri
+        # Build redirect_uri dynamically from Host header (must match what was sent to provider)
+        host = flowfile.get_attribute("http.header.host") or "localhost:9090"
+        scheme = self._detect_scheme(flowfile)
+        redirect_uri = f"{scheme}://{host}/auth/callback"
         result = auth_svc.authenticate_oauth(provider_name, code, redirect_uri, ip=ip)
 
         if not result.success:
@@ -348,6 +351,20 @@ class OAuthCallbackTask(BaseTask):
         flowfile.set_attribute("http.response.header.Set-Cookie",
                                f"{cookie}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}")
         return [flowfile]
+
+    @staticmethod
+    def _detect_scheme(flowfile):
+        """Detect HTTP or HTTPS from request attributes."""
+        if flowfile.get_attribute("http.header.x-forwarded-proto") == "https":
+            return "https"
+        if flowfile.get_attribute("http.scheme") == "https":
+            return "https"
+        if flowfile.get_attribute("http.ssl") == "true":
+            return "https"
+        host = flowfile.get_attribute("http.header.host") or ""
+        if host.endswith(":443"):
+            return "https"
+        return "http"
 
     def _get_oauth_service(self, flowfile: FlowFile):
         """Resolve the OAuth provider service."""

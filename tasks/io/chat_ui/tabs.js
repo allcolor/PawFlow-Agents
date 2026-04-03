@@ -196,14 +196,10 @@ function addDesktopTab(relayId, iframeSrc) {
 
 /** Close a Desktop tab. */
 function closeDesktopTab(tabId) {
+  // Just close the tab locally — does NOT stop the desktop
+  // Use /desktop stop to actually shut down the desktop
   const panel = document.getElementById('tabContent_' + tabId);
-  if (panel) {
-    const relayId = panel.dataset.relayId;
-    if (relayId) {
-      fireAction('close_desktop', { relay_id: relayId });
-    }
-    panel.remove();
-  }
+  if (panel) panel.remove();
   if (typeof audioDisconnect === 'function') audioDisconnect();
   const btn = document.querySelector('.tab-btn[data-tab="' + tabId + '"]');
   if (btn) btn.remove();

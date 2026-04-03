@@ -1639,6 +1639,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
             # Check if already running (idempotent)
             status = svc._request("desktop_status")
+            logger.info("[open_desktop] desktop_status for %s: %s (key=%s)", relay_id, status, _action_status_key)
             if isinstance(status, dict) and status.get(_action_status_key):
                 if local_screen:
                     _novnc_port = status.get("local_screen_novnc_port")
@@ -1665,6 +1666,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                         return [flowfile]
                 else:
                     _hp = _get_desktop_host_port(relay_id)
+                    logger.info("[open_desktop] already running, host_port=%s for %s", _hp, relay_id)
                     if _hp:
                         _sid = f"{_session_prefix}_{relay_id}"
                         from services.vnc_proxy import register_session

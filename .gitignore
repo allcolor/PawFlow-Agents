@@ -35,12 +35,14 @@ config/users/*/secrets.json
 config/users/*/oauth_tokens.json
 
 # ── User-specific config (runtime, not source) ────────────────
+config/global_services.json
 config/user_services/
 config/users/*/parameters.json
 config/agent_secrets.json
 config/sessions.json
 config/users.json
 config/agent_variables.json
+config/ssl/
 
 # ── Runtime state ──────────────────────────────────────────────
 continuous_state.json

@@ -232,13 +232,44 @@ async function cmdCode(text, parts) {
 async function cmdDesktop(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (sub === 'close') {
+    // Just close the tab locally (desktop keeps running)
     if (_activeTab && _activeTab.startsWith('desktop-')) {
       closeDesktopTab(_activeTab);
     } else {
       const btn = document.querySelector('.tab-btn[data-tab^="desktop-"]');
       if (btn) closeDesktopTab(btn.dataset.tab);
     }
-    addMsg('system', 'Desktop closed.');
+    addMsg('system', 'Desktop tab closed (desktop still running). Use /desktop stop to shut down.');
+    return true;
+  }
+
+  if (sub === 'stop') {
+    // Actually stop the desktop on the relay
+    const relayToStop = parts[2] || '';
+    let _stopRelayId = relayToStop;
+    if (!_stopRelayId) {
+      // Find relay from active desktop tab
+      const panel = _activeTab && document.getElementById('tabContent_' + _activeTab);
+      _stopRelayId = panel && panel.dataset.relayId;
+      if (!_stopRelayId) {
+        const anyPanel = document.querySelector('[id^="tabContent_desktop-"]');
+        _stopRelayId = anyPanel && anyPanel.dataset.relayId;
+      }
+    }
+    if (!_stopRelayId) {
+      addMsg('system', 'No active desktop to stop. Usage: /desktop stop [relay_id]');
+      return true;
+    }
+    addMsg('system', 'Stopping desktop on ' + _stopRelayId + '...');
+    fireAction('close_desktop', { relay_id: _stopRelayId });
+    // Close all desktop tabs for this relay
+    document.querySelectorAll('[id^="tabContent_desktop-"]').forEach(p => {
+      if (p.dataset.relayId === _stopRelayId) {
+        const tId = p.id.replace('tabContent_', '');
+        closeDesktopTab(tId);
+      }
+    });
+    addMsg('system', 'Desktop stopped.');
     return true;
   }
 

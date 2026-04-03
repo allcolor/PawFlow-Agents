@@ -1232,7 +1232,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 return {"ok": False, "error": "Exec not allowed"}
             # Idempotent: if already running, return existing info
             if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                _alive = all(p.poll() is None for p in _execute_command._desktop_procs)
+                _essential = getattr(_execute_command, '_desktop_essential_procs', None) or _execute_command._desktop_procs
+                _alive = all(p.poll() is None for p in _essential)
                 if _alive:
                     return {"ok": True, "data": {
                         "vnc_port": _execute_command._desktop_vnc_port,
@@ -1337,6 +1338,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _novnc_web = "/usr/share/novnc"
                 _p_novnc = subprocess.Popen(
                     ["websockify", "--web", _novnc_web,
+                     "--heartbeat", "30",
                      str(_novnc_port), f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
@@ -1397,6 +1399,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _audio_port = 0
 
                 _execute_command._desktop_procs = _procs
+                _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]
                 _execute_command._desktop_vnc_port = _vnc_port
                 _execute_command._desktop_novnc_port = _novnc_port
                 _execute_command._desktop_display = _display
@@ -1432,7 +1435,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         if action == "desktop_status":
             _running = False
             if hasattr(_execute_command, '_desktop_procs') and _execute_command._desktop_procs:
-                _running = all(p.poll() is None for p in _execute_command._desktop_procs)
+                # Check only essential processes (Xvfb, x11vnc, websockify)
+                # startxfce4 and dbus may exit normally after spawning children
+                _essential = getattr(_execute_command, '_desktop_essential_procs', None)
+                if _essential:
+                    _running = all(p.poll() is None for p in _essential)
+                else:
+                    _running = any(p.poll() is None for p in _execute_command._desktop_procs)
             _local_running = False
             if hasattr(_execute_command, '_local_desktop_procs') and _execute_command._local_desktop_procs:
                 _local_running = all(p.poll() is None for p in _execute_command._local_desktop_procs)

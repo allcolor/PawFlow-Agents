@@ -165,16 +165,10 @@ class OAuthRedirectTask(BaseTask):
             flowfile.set_attribute("http.response.status", "404")
             return [flowfile]
 
-        # Build redirect URI from the oauth service config
-        redirect_uri = ""
-        for svc in (self._services or {}).values():
-            if hasattr(svc, 'redirect_uri'):
-                redirect_uri = svc.redirect_uri
-                break
-        if not redirect_uri:
-            host = flowfile.get_attribute("http.header.Host") or "localhost:9090"
-            scheme = "https" if flowfile.get_attribute("http.header.X-Forwarded-Proto") == "https" else "http"
-            redirect_uri = f"{scheme}://{host}/auth/callback"
+        # Build redirect URI dynamically from request Host header
+        host = flowfile.get_attribute("http.header.host") or "localhost:9090"
+        scheme = self._detect_scheme(flowfile)
+        redirect_uri = f"{scheme}://{host}/auth/callback"
 
         # Generate state via oauth_service (shared with callback) — not auth_svc
         # because auth_svc may be a different instance after service restart
@@ -189,6 +183,21 @@ class OAuthRedirectTask(BaseTask):
         flowfile.set_attribute("http.response.status", "302")
         flowfile.set_attribute("http.response.header.Location", url)
         return [flowfile]
+
+    @staticmethod
+    def _detect_scheme(flowfile):
+        """Detect HTTP or HTTPS from request attributes."""
+        # http_receiver.py lowercases header keys
+        if flowfile.get_attribute("http.header.x-forwarded-proto") == "https":
+            return "https"
+        if flowfile.get_attribute("http.scheme") == "https":
+            return "https"
+        if flowfile.get_attribute("http.ssl") == "true":
+            return "https"
+        host = flowfile.get_attribute("http.header.host") or ""
+        if host.endswith(":443"):
+            return "https"
+        return "http"
 
     def _build_inline_service(self):
         """Build OAuthProviderService from task config (when service isn't injected)."""

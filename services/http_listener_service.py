@@ -246,12 +246,29 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Collect headers
         headers = {k: v for k, v in self.headers.items()}
 
+        # Inject scheme hint when connection is TLS (auto-detect)
+        import ssl as _ssl_mod
+        _sock = getattr(self, 'request', None) or getattr(self, 'connection', None)
+        _is_tls = isinstance(_sock, _ssl_mod.SSLSocket)
+        if _is_tls:
+            if not any(k.lower() == 'x-forwarded-proto' for k in headers):
+                headers['x-forwarded-proto'] = 'https'
+        logger.debug("TLS detect: sock_type=%s is_tls=%s path=%s", type(_sock).__name__, _is_tls, path)
+
         # Match route
         registry: RouteRegistry = self.server._route_registry
         timeout: float = self.server._request_timeout
         result = registry.match(method, path)
 
         if result is None:
+            # Redirect unmatched GET requests to /chat
+            if method == "GET" and path != "/chat":
+                _scheme = "https" if headers.get('x-forwarded-proto') == 'https' else "http"
+                _host = headers.get('host') or headers.get('Host') or 'localhost'
+                self.send_response(302)
+                self.send_header("Location", f"{_scheme}://{_host}/chat")
+                self.end_headers()
+                return
             self.send_response(404)
             self.send_header("Content-Type", "application/json")
             self.end_headers()

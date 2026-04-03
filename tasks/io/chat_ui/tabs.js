@@ -124,7 +124,6 @@ function addVSCodeTab(relayId, iframeSrc) {
   iframe.src = iframeSrc;
   iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
   iframe.allow = 'clipboard-read; clipboard-write';
-  iframe.credentialless = true;  // COEP compatibility
   panel.appendChild(iframe);
 
   document.querySelector('.main').appendChild(panel);
@@ -188,7 +187,6 @@ function addDesktopTab(relayId, iframeSrc) {
   iframe.src = iframeSrc;
   iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
   iframe.allow = 'clipboard-read; clipboard-write';
-  iframe.credentialless = true;  // COEP compatibility
   panel.appendChild(iframe);
 
   document.querySelector('.main').appendChild(panel);
@@ -244,7 +242,6 @@ function addBrowserTab(label, iframeSrc) {
   iframe.src = iframeSrc;
   iframe.style.cssText = 'flex:1;border:none;width:100%;height:100%;';
   iframe.allow = 'clipboard-read; clipboard-write';
-  iframe.credentialless = true;  // COEP compatibility
   panel.appendChild(iframe);
 
   document.querySelector('.main').appendChild(panel);

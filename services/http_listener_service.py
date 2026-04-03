@@ -228,8 +228,13 @@ class _RequestHandler(BaseHTTPRequestHandler):
                         self.end_headers()
                         self.wfile.write(b'{"error": "Unauthorized"}')
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Session auth check failed: %s", e, exc_info=True)
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error": "Internal Server Error"}')
+                return
 
         # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
         # BEFORE reaching this handler — so no WS detection needed here.
@@ -570,8 +575,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                         sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
                         sock.close()
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("WS gateway check failed: %s", e, exc_info=True)
+                sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+                sock.close()
+                return
 
             # Session auth check for WebSocket connections
             try:
@@ -598,8 +606,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                         sock.sendall(b"HTTP/1.1 401 Unauthorized\r\n\r\n")
                         sock.close()
                         return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("WS session auth check failed: %s", e, exc_info=True)
+                sock.sendall(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+                sock.close()
+                return
 
             # Match route
             result = self._route_registry.match("GET", path)

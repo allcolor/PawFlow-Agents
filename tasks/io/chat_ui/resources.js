@@ -1265,7 +1265,6 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   iframe.src = vncUrl;
   iframe.style.cssText = 'flex:1;border:none;background:#000;';
   iframe.allow = 'clipboard-read; clipboard-write';
-  iframe.credentialless = true;  // COEP compatibility
   const status = document.createElement('div');
   status.style.cssText = 'padding:6px 16px;color:#aaa;font-size:11px;background:#16213e;';
   status.textContent = 'Waiting for authorization...';

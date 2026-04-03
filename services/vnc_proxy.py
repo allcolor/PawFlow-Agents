@@ -264,9 +264,11 @@ def _check_http_session_auth(pending_req) -> bool:
             pending_req.complete(401, {"Content-Type": "application/json"},
                                  b'{"error": "Unauthorized"}')
             return False
-    except Exception:
-        pass
-    return True
+    except Exception as e:
+        logger.error("VNC session auth check failed: %s", e, exc_info=True)
+        pending_req.complete(500, {"Content-Type": "application/json"},
+                             b'{"error": "Internal Server Error"}')
+        return False
 
 
 def vnc_http_proxy(pending_req):

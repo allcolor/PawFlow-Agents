@@ -31,7 +31,7 @@ var _pcmFlushTimer = null;
 var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 7200; // 150ms at 48kHz — matches worklet TARGET
+var _PRE_BUFFER_TARGET = 4800; // 100ms at 48kHz — matches worklet TARGET
 
 // Diagnostic stats
 var _audioStats = {
@@ -117,18 +117,17 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 7200; // 150ms at 48kHz — absorbs delivery jitter
+    const TARGET = 4800; // 100ms at 48kHz — absorbs jitter
 
-    // PLL: smoothly track source rate with imperceptible speed adjustment.
-    // Max ±1% pitch deviation — still inaudible for speech.
+    // PLL: smoothly track source rate with gentle speed adjustment.
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     const error = available - TARGET;
-    this._smoothStep += error * 0.00002;
-    this._smoothStep = Math.max(this.baseStep - 0.01, Math.min(this.baseStep + 0.01, this._smoothStep));
+    this._smoothStep += error * 0.00005;
+    this._smoothStep = Math.max(this.baseStep - 0.005, Math.min(this.baseStep + 0.005, this._smoothStep));
     const step = this._smoothStep;
 
-    // Snap forward if buffer > 500ms (24000 samples) — too far behind
-    if (available > 24000) {
+    // Snap forward if buffer > 250ms (12000 samples) — too far behind
+    if (available > 12000) {
       this.sabRPos = wPos - TARGET;
       this._smoothStep = this.baseStep;
     }
@@ -167,16 +166,16 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 7200;
+    const TARGET = 4800;
 
     // PLL: same as SAB path
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     const error = available - TARGET;
-    this._pmSmoothStep += error * 0.00002;
-    this._pmSmoothStep = Math.max(this.baseStep - 0.01, Math.min(this.baseStep + 0.01, this._pmSmoothStep));
+    this._pmSmoothStep += error * 0.00005;
+    this._pmSmoothStep = Math.max(this.baseStep - 0.005, Math.min(this.baseStep + 0.005, this._pmSmoothStep));
     const step = this._pmSmoothStep;
 
-    if (available > 24000) {
+    if (available > 12000) {
       this.rPos = this.wPos - TARGET;
       this._pmSmoothStep = this.baseStep;
     }

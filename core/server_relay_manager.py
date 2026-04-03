@@ -112,7 +112,7 @@ class ServerRelayManager:
         """
         from core.conversation_store import ConversationStore
 
-        store = ConversationStore.get_instance()
+        store = ConversationStore.instance()
         existing = store.get_extra(conv_id, "server_relay")
         if existing and isinstance(existing, dict) and existing.get("relay_id"):
             # Check if the container is actually running
@@ -247,7 +247,7 @@ class ServerRelayManager:
         """Stop and remove the server relay for this conversation."""
         from core.conversation_store import ConversationStore
 
-        store = ConversationStore.get_instance()
+        store = ConversationStore.instance()
         meta = store.get_extra(conv_id, "server_relay")
         if not meta or not isinstance(meta, dict):
             return False
@@ -290,7 +290,7 @@ class ServerRelayManager:
         """Stop the relay container without removing the volume."""
         from core.conversation_store import ConversationStore
 
-        store = ConversationStore.get_instance()
+        store = ConversationStore.instance()
         meta = store.get_extra(conv_id, "server_relay")
         if not meta or not isinstance(meta, dict):
             return False
@@ -303,7 +303,7 @@ class ServerRelayManager:
         """Return the relay_id for this conversation, or None."""
         from core.conversation_store import ConversationStore
 
-        meta = ConversationStore.get_instance().get_extra(conv_id, "server_relay")
+        meta = ConversationStore.instance().get_extra(conv_id, "server_relay")
         if meta and isinstance(meta, dict):
             return meta.get("relay_id")
         return None
@@ -312,7 +312,7 @@ class ServerRelayManager:
         """Return full relay metadata for this conversation, or None."""
         from core.conversation_store import ConversationStore
 
-        meta = ConversationStore.get_instance().get_extra(conv_id, "server_relay")
+        meta = ConversationStore.instance().get_extra(conv_id, "server_relay")
         if meta and isinstance(meta, dict) and meta.get("relay_id"):
             return meta
         return None
@@ -321,7 +321,7 @@ class ServerRelayManager:
         """List all conversations with a server relay (scans ConversationStore)."""
         from core.conversation_store import ConversationStore
 
-        store = ConversationStore.get_instance()
+        store = ConversationStore.instance()
         result = []
         try:
             for conv in store.list_conversations():
@@ -353,7 +353,7 @@ class ServerRelayManager:
             try:
                 # Clear stale metadata so spawn() doesn't treat it as alive
                 from core.conversation_store import ConversationStore
-                ConversationStore.get_instance().set_extra(conv_id, "server_relay", None)
+                ConversationStore.instance().set_extra(conv_id, "server_relay", None)
                 self.spawn(conv_id, user_id)
                 restarted += 1
                 logger.info("Restarted server relay for conv %s", conv_id)

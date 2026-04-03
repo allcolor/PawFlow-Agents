@@ -53,6 +53,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     super();
     this.useSAB = false;
     this.underruns = 0;
+    // Base step: ratio between source rate (48kHz Opus) and output rate (hardware)
+    this.baseStep = 48000 / sampleRate;
     // postMessage fallback ring
     this.ring = new Float32Array(48000 * 4);
     this.wPos = 0;
@@ -71,7 +73,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         const fill = this.useSAB
           ? Atomics.load(this.sabCtrl, 0) - Math.floor(this.sabRPos)
           : this.wPos - Math.floor(this.rPos);
-        this.port.postMessage({ type: 'stats', fill: fill, underruns: this.underruns });
+        this.port.postMessage({ type: 'stats', fill: fill, underruns: this.underruns, sampleRate: sampleRate, baseStep: this.baseStep });
         this.underruns = 0;
         return;
       }
@@ -115,21 +117,29 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 3360; // 70ms — absorbs main-thread decode jitter
+    const TARGET = 3360; // 70ms at 48kHz — absorbs main-thread decode jitter
 
-    // Proportional speed-up only — NEVER slow down
-    let step = 1.0;
+    // Base step accounts for sample rate mismatch (e.g. 48kHz source → 44.1kHz output)
+    // Speed-up only on top of base — NEVER go below baseStep
+    let step = this.baseStep;
     if (available > 96000) {
       this.sabRPos = wPos - TARGET;
-      step = 1.0;
+      step = this.baseStep;
     } else if (available > TARGET) {
-      step = 1.0 + Math.min((available - TARGET) * 0.00001, 0.05);
+      step = this.baseStep + Math.min((available - TARGET) * 0.00001, 0.05);
     }
 
     if (available < out.length) this.underruns++;
 
-    // Fade-in after underrun: ramp volume over 64 samples to avoid click
+    // After underrun: snap forward to real-time position (drop late audio
+    // instead of playing it delayed, which causes audible slowdown).
     const wasUnderrun = this._sabWasUnderrun || false;
+    if (wasUnderrun && available >= out.length) {
+      // Data is back — skip ahead so we're at TARGET fill, not behind
+      if (available > TARGET) {
+        this.sabRPos = wPos - TARGET;
+      }
+    }
     let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
     this._sabWasUnderrun = (available < out.length);
 
@@ -159,17 +169,22 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const available = this.wPos - irPos;
     const TARGET = 3360;
 
-    let step = 1.0;
+    let step = this.baseStep;
     if (available > 96000) {
       this.rPos = this.wPos - TARGET;
-      step = 1.0;
+      step = this.baseStep;
     } else if (available > TARGET) {
-      step = 1.0 + Math.min((available - TARGET) * 0.00001, 0.05);
+      step = this.baseStep + Math.min((available - TARGET) * 0.00001, 0.05);
     }
 
     if (available < out.length) this.underruns++;
 
     const wasUnderrun = this._pmWasUnderrun || false;
+    if (wasUnderrun && available >= out.length) {
+      if (available > TARGET) {
+        this.rPos = this.wPos - TARGET;
+      }
+    }
     let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
     this._pmWasUnderrun = (available < out.length);
 
@@ -268,6 +283,8 @@ function audioConnect(sessionId) {
       if (e.data && e.data.type === 'stats') {
         _audioStats.underruns += e.data.underruns;
         _audioStats.ringFill = e.data.fill;
+        if (e.data.sampleRate) _audioStats.hwRate = e.data.sampleRate;
+        if (e.data.baseStep) _audioStats.baseStep = e.data.baseStep;
       }
     };
     // Send SAB references to worklet
@@ -314,7 +331,9 @@ function audioConnect(sessionId) {
         ' ring_fill=' + _audioStats.ringFill +
         ' (' + Math.round(_audioStats.ringFill / 48) + 'ms)' +
         ' dec_queue=' + (_audioDecoder ? _audioDecoder.decodeQueueSize : 'N/A') +
-        ' mode=' + (_useSAB ? 'SAB' : 'postMsg'));
+        ' mode=' + (_useSAB ? 'SAB' : 'postMsg') +
+        ' hw_rate=' + (_audioStats.hwRate || '?') +
+        ' baseStep=' + (_audioStats.baseStep || '?'));
       _audioStats.wsMessages = 0;
       _audioStats.decoderResets = 0;
       _audioStats.decoderErrors = 0;

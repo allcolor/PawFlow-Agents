@@ -137,12 +137,15 @@ function audioConnect(sessionId) {
   _preBufferDone = false;
   _audioStats = { wsMessages: 0, decoderResets: 0, decoderErrors: 0, batchesSent: 0, partialFlushes: 0, underruns: 0, ringFill: 0, lastLogTime: 0 };
 
-  if (!_audioCtx) {
-    _audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    _audioGain = _audioCtx.createGain();
-    _audioGain.connect(_audioCtx.destination);
-    _audioGain.gain.value = _audioVolume;
+  // Always recreate AudioContext to avoid stale graph state after reconnect
+  if (_audioCtx) {
+    try { _audioCtx.close(); } catch(e) {}
   }
+  _audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+  _audioGain = _audioCtx.createGain();
+  _audioGain.connect(_audioCtx.destination);
+  _audioGain.gain.value = _audioMuted ? 0 : _audioVolume;
+  _audioWorkletModuleLoaded = false;
   if (_audioCtx.state === 'suspended') _audioCtx.resume();
 
   function _setupWorkletNode() {
@@ -343,7 +346,13 @@ function audioDisconnect() {
     _audioWorkletNode.disconnect();
     _audioWorkletNode = null;
   }
+  if (_audioCtx) {
+    try { _audioCtx.close(); } catch(e) {}
+    _audioCtx = null;
+    _audioGain = null;
+  }
   _audioWorkletReady = false;
+  _audioWorkletModuleLoaded = false;
   _pcmBatch = null;
   _pcmBatchPos = 0;
   _preBuffer = [];

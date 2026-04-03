@@ -981,11 +981,19 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             _sid = msg.get("session_id", "")
             if not _sid:
                 return {"ok": False, "error": "Missing session_id"}
+            if _sid.startswith("local_term_"):
+                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
+                if _hh:
+                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
             ok = _close_terminal(_sid)
             return {"ok": ok, "error": "" if ok else "Session not found"}
 
         if action == "write_terminal":
             _sid = msg.get("session_id", "")
+            if _sid.startswith("local_term_"):
+                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
+                if _hh:
+                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
             _tsess = _terminal_sessions.get(_sid)
             if not _tsess:
                 return {"ok": False, "error": f"Terminal session not found: {_sid}"}
@@ -998,6 +1006,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         if action == "resize_terminal":
             _sid = msg.get("session_id", "")
+            if _sid.startswith("local_term_"):
+                _hh = os.environ.get("PAWFLOW_HOST_HELPER", "")
+                if _hh:
+                    return _forward_to_host_helper(_hh, msg, ws_sock_ref[0], _ws_frame_send)
             _tsess = _terminal_sessions.get(_sid)
             if not _tsess:
                 return {"ok": False, "error": f"Terminal session not found: {_sid}"}
@@ -1278,15 +1290,12 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _explicitly_local = action in (
             "start_local_desktop", "stop_local_desktop", "local_screen_check",
             "open_local_terminal", "start_local_code_server")
-        # Also forward terminal I/O for local terminal sessions
-        if not _explicitly_local and action in ("write_terminal", "resize_terminal", "close_terminal"):
-            _sid = msg.get("session_id", "")
-            if _sid.startswith("local_term_"):
-                _explicitly_local = True
-        _screen_with_flag = action.startswith("screen_") and msg.get("local_screen", False)
+        # NOTE: write_terminal/resize_terminal/close_terminal for local_term_*
+        # are forwarded inline in the terminal action handlers above.
+        _screen_with_flag = action.startswith("screen_") and msg.get("local", False)
         _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
         if (_explicitly_local or _screen_with_flag) and _host_helper:
-            _fwd = {k: v for k, v in msg.items() if k != "local_screen"}
+            _fwd = {k: v for k, v in msg.items() if k != "local"}
             return _forward_to_host_helper(_host_helper, _fwd, ws_sock_ref[0], _ws_frame_send)
 
         # ── Desktop VNC (singleton) ──────────────────────────────────────

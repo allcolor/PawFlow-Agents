@@ -356,7 +356,6 @@ class RelayThread:
 
         elif action in ("write_terminal", "resize_terminal", "close_terminal"):
             sid = req.get("session_id", "")
-            sys.stderr.write(f"[Relay] host helper: {action} sid={sid} sessions={list(self._local_terminals.keys()) if hasattr(self, '_local_terminals') else 'NONE'}\n")
             if hasattr(self, '_local_terminals') and sid in self._local_terminals:
                 t = self._local_terminals[sid]
                 if action == "write_terminal":

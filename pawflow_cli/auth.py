@@ -12,16 +12,46 @@ from pawflow_cli.config import load_session, save_session, clear_session
 
 
 def check_session(server_url: str) -> dict:
-    """Check for a valid cached session. Returns {} if none/expired."""
+    """Check for a valid cached session. Validates with server, returns {} if invalid."""
     cached = load_session()
-    if cached and cached.get("server_url") == server_url:
-        # Refresh if within 30min of expiry
+    if not cached or cached.get("server_url") != server_url:
+        return {}
+    token = cached.get("token", "")
+    if not token:
+        return {}
+    # Validate token with a lightweight server call (ping action)
+    try:
+        import http.client
+        from urllib.parse import urlparse
+        parsed = urlparse(server_url)
+        host = parsed.hostname or "localhost"
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request("POST", "/api/agent",
+                     body=json.dumps({"action": "ping"}),
+                     headers={"Content-Type": "application/json",
+                              "Authorization": f"Bearer {token}"})
+        resp = conn.getresponse()
+        resp.read()
+        # Server may send a refreshed token in header
+        new_token = resp.getheader("X-Session-Token")
+        conn.close()
+        if resp.status == 401 or resp.status == 403:
+            clear_session()
+            return {}
+        if new_token:
+            token = new_token
+            save_session(token, cached.get("username", ""), server_url,
+                         time.time() + 8 * 3600)
+        return {"token": token, "username": cached.get("username", ""),
+                "server_url": server_url}
+    except Exception:
+        # Server unreachable — trust local cache if not expired
         expires = cached.get("expires_at", 0)
-        if expires and expires - time.time() < 1800:
-            cached["expires_at"] = time.time() + 8 * 3600
-            save_session(cached["token"], cached["username"], server_url, cached["expires_at"])
-        return cached
-    return {}
+        if expires and time.time() < expires:
+            return cached
+        clear_session()
+        return {}
 
 
 def authenticate(server_url: str, force: bool = False) -> dict:

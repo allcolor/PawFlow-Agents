@@ -31,7 +31,7 @@ var _pcmFlushTimer = null;
 var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 1440; // 30ms at 48kHz
+var _PRE_BUFFER_TARGET = 7200; // 150ms at 48kHz — matches worklet TARGET
 
 // Diagnostic stats
 var _audioStats = {
@@ -117,31 +117,29 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 3360; // 70ms at 48kHz — absorbs main-thread decode jitter
+    const TARGET = 7200; // 150ms at 48kHz — absorbs delivery jitter
 
-    // Base step accounts for sample rate mismatch (e.g. 48kHz source → 44.1kHz output)
-    // Speed-up only on top of base — NEVER go below baseStep
-    let step = this.baseStep;
+    // Constant step — NEVER change playback speed (preserves pitch always).
+    // Drop samples to drain excess buffer instead of speeding up.
+    const step = this.baseStep;
+    if (available > TARGET * 3) {
+      // Buffer way too full (>450ms): snap to TARGET
+    // PLL: smoothly track source rate with imperceptible speed adjustment.
+    // Max ±0.2% pitch deviation — inaudible. No snaps, no drops.
+    if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
+    const error = available - TARGET;
+    this._smoothStep += error * 0.000002;
+    this._smoothStep = Math.max(this.baseStep - 0.002, Math.min(this.baseStep + 0.002, this._smoothStep));
+    const step = this._smoothStep;
+
+    // Emergency: if buffer is absurdly large (>2s), snap forward
     if (available > 96000) {
       this.sabRPos = wPos - TARGET;
-      step = this.baseStep;
-    } else if (available > TARGET) {
-      step = this.baseStep + Math.min((available - TARGET) * 0.00001, 0.05);
     }
 
     if (available < out.length) this.underruns++;
-
-    // After underrun: snap forward to real-time position (drop late audio
-    // instead of playing it delayed, which causes audible slowdown).
-    const wasUnderrun = this._sabWasUnderrun || false;
-    if (wasUnderrun && available >= out.length) {
-      // Data is back — skip ahead so we're at TARGET fill, not behind
-      if (available > TARGET) {
-        this.sabRPos = wPos - TARGET;
-      }
-    }
-    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
     this._sabWasUnderrun = (available < out.length);
+    let fadeIn = 0;
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.sabRPos);
@@ -167,23 +165,18 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 3360;
+    const TARGET = 7200;
 
-    let step = this.baseStep;
-    if (available > 96000) {
+    const step = this.baseStep;
+    if (available > TARGET * 3) {
       this.rPos = this.wPos - TARGET;
-      step = this.baseStep;
-    } else if (available > TARGET) {
-      step = this.baseStep + Math.min((available - TARGET) * 0.00001, 0.05);
     }
 
     if (available < out.length) this.underruns++;
 
     const wasUnderrun = this._pmWasUnderrun || false;
-    if (wasUnderrun && available >= out.length) {
-      if (available > TARGET) {
-        this.rPos = this.wPos - TARGET;
-      }
+    if (wasUnderrun && available >= out.length && available > TARGET) {
+      this.rPos = this.wPos - TARGET;
     }
     let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
     this._pmWasUnderrun = (available < out.length);

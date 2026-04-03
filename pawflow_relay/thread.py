@@ -283,7 +283,7 @@ class RelayThread:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("0.0.0.0", port))
-        srv.listen(1)
+        srv.listen(5)
         srv.settimeout(2)
         sys.stderr.write(f"[Relay] Host helper listening on port {port}\n")
 
@@ -294,13 +294,25 @@ class RelayThread:
                 continue
             except Exception:
                 break
-            try:
-                self._handle_host_helper_conn(conn)
-            except Exception as e:
-                sys.stderr.write(f"[Relay] Host helper error: {e}\n")
-            finally:
-                conn.close()
+            # Handle each connection in its own thread (terminal sessions are persistent)
+            threading.Thread(
+                target=self._handle_host_helper_conn_safe, args=(conn,),
+                daemon=True, name="host-helper-conn").start()
         srv.close()
+
+    def _handle_host_helper_conn_safe(self, conn):
+        """Wrapper that closes conn unless the handler takes ownership."""
+        _close_conn = True
+        try:
+            _close_conn = self._handle_host_helper_conn(conn)
+        except Exception as e:
+            sys.stderr.write(f"[Relay] Host helper error: {e}\n")
+        finally:
+            if _close_conn is not False:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _handle_host_helper_conn(self, conn):
         """Handle a single host helper connection."""
@@ -340,7 +352,7 @@ class RelayThread:
             # Open PTY, send result, then stream terminal_data as progress
             # The relay's _forward_to_host_helper will forward progress to the server WS
             self._host_terminal_persistent(conn, req)
-            return  # conn managed by _host_terminal_persistent
+            return False  # conn managed by _host_terminal_persistent, don't close
 
         elif action in ("write_terminal", "resize_terminal", "close_terminal"):
             sid = req.get("session_id", "")

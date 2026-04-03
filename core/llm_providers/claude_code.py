@@ -718,8 +718,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             pass
                     # compact_boundary → kill CC + PawFlow compact; init → arm stall watchdog
                     subtype = event.get("subtype", "")
-                    if subtype == "compact_boundary":
-                        logger.warning("[claude-code] compact_boundary detected — killing CC, PawFlow will compact")
+                    if subtype == "compact_boundary" or (
+                            subtype == "status" and event.get("status") == "compacting"):
+                        logger.warning("[claude-code] CC compacting detected (subtype=%s) "
+                                       "— killing CC, PawFlow will compact", subtype)
                         proc.kill()
                         from core.llm_client import CCCompactDetected
                         raise CCCompactDetected("CC auto-compact detected")

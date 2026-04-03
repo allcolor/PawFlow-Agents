@@ -121,15 +121,28 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     let step = 1.0;
     if (available > 96000) {
       this.sabRPos = wPos - TARGET;
+  _processSAB(out) {
+    const ring = this.sabRing;
+    const len = ring.length;
+    const wPos = Atomics.load(this.sabCtrl, 0);
+    const available = wPos - Math.floor(this.sabRPos);
+    const TARGET = 3360; // 70ms — absorbs main-thread decode jitter
+
+    // Proportional speed-up only — NEVER slow down
+    let step = 1.0;
+    if (available > 96000) {
+      this.sabRPos = wPos - TARGET;
       step = 1.0;
     } else if (available > TARGET) {
-      // Speed up proportionally: +0.01 per 1000 samples above target, max +5%
       step = 1.0 + Math.min((available - TARGET) * 0.00001, 0.05);
     }
-    // Never step < 1.0 — if buffer is low, just play at normal speed.
-    // A micro-silence (underrun) is inaudible; a slowdown is not.
 
     if (available < out.length) this.underruns++;
+
+    // Fade-in after underrun: ramp volume over 64 samples to avoid click
+    const wasUnderrun = this._sabWasUnderrun || false;
+    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
+    this._sabWasUnderrun = (available < out.length);
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.sabRPos);
@@ -137,10 +150,16 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         const frac = this.sabRPos - ri;
         const s0 = ring[ri % len];
         const s1 = (ri + 1 < wPos) ? ring[(ri + 1) % len] : s0;
-        out[i] = s0 + frac * (s1 - s0);
+        let sample = s0 + frac * (s1 - s0);
+        if (fadeIn > 0) {
+          sample *= (64 - fadeIn) / 64;
+          fadeIn--;
+        }
+        out[i] = sample;
         this.sabRPos += step;
       } else {
-        out[i] = 0;
+        // Underrun: hold last sample value instead of zero (less audible)
+        out[i] = i > 0 ? out[i-1] * 0.99 : 0;
       }
     }
   }
@@ -149,7 +168,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 2400;
+    const TARGET = 3360;
 
     let step = 1.0;
     if (available > 96000) {
@@ -161,16 +180,25 @@ class AudioRingProcessor extends AudioWorkletProcessor {
 
     if (available < out.length) this.underruns++;
 
+    const wasUnderrun = this._pmWasUnderrun || false;
+    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
+    this._pmWasUnderrun = (available < out.length);
+
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.rPos);
       if (ri < this.wPos) {
         const frac = this.rPos - ri;
         const s0 = this.ring[ri % len];
         const s1 = (ri + 1 < this.wPos) ? this.ring[(ri + 1) % len] : s0;
-        out[i] = s0 + frac * (s1 - s0);
+        let sample = s0 + frac * (s1 - s0);
+        if (fadeIn > 0) {
+          sample *= (64 - fadeIn) / 64;
+          fadeIn--;
+        }
+        out[i] = sample;
         this.rPos += step;
       } else {
-        out[i] = 0;
+        out[i] = i > 0 ? out[i-1] * 0.99 : 0;
       }
     }
   }

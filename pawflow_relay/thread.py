@@ -548,7 +548,14 @@ class RelayThread:
                                             dimensions=(rows, cols))
 
                 def _read_pty():
-                    return pty_proc.read(4096).encode("utf-8", errors="replace")
+                    # read() without args returns available data (non-blocking if data ready)
+                    # read(N) blocks until N chars — unusable for interactive terminal
+                    data = pty_proc.read()
+                    if not data:
+                        import time as _t
+                        _t.sleep(0.01)  # avoid busy-spin when no data
+                        return b""
+                    return data.encode("utf-8", errors="replace")
 
                 def _write_pty(data):
                     pty_proc.write(data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data)
@@ -558,7 +565,8 @@ class RelayThread:
 
                 def _kill():
                     try:
-                        pty_proc.kill()
+                        import signal as _sig
+                        pty_proc.kill(_sig.SIGTERM)
                     except Exception:
                         pass
                 proc = None  # no subprocess.Popen on Windows

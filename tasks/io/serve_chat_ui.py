@@ -143,9 +143,11 @@ class ServeChatUITask(BaseTask):
         flowfile.set_attribute("http.response.header.Content-Type",
                                "text/html; charset=utf-8")
         flowfile.set_attribute("http.response.header.Cache-Control", "no-cache")
-        # Enable SharedArrayBuffer for AudioWorklet zero-copy ring buffer.
-        # credentialless allows cross-origin iframes (noVNC) without CORP headers.
-        flowfile.set_attribute("http.response.header.Cross-Origin-Opener-Policy", "same-origin")
+        # SharedArrayBuffer needs COEP but COOP: same-origin kills all
+        # fetch/SSE when an iframe (noVNC) loads — browser recreates the
+        # browsing context group.  same-origin-allow-popups is safe and
+        # still grants SAB in Chromium 110+.
+        flowfile.set_attribute("http.response.header.Cross-Origin-Opener-Policy", "same-origin-allow-popups")
         flowfile.set_attribute("http.response.header.Cross-Origin-Embedder-Policy", "credentialless")
         return [flowfile]
 

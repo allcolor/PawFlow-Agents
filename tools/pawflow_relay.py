@@ -700,6 +700,7 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     except Exception as e:
         return {"ok": False, "error": f"Cannot reach host helper at {host_helper}: {e}"}
 
+    _sock_owned_by_bg = [False]
     try:
         # Send request (forward full message minus internal fields)
         _fwd_msg = {k: v for k, v in msg.items() if k not in ("type", "request_id")}
@@ -772,7 +773,7 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                                 except Exception:
                                     pass
                         import threading as _th
-                        sock._bg_owned = True
+                        _sock_owned_by_bg[0] = True
                         _th.Thread(target=_bg_progress_reader, daemon=True,
                                    name=f"host-helper-stream-{request_id[:8]}").start()
                         return {"ok": True, "data": data}
@@ -788,7 +789,7 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     finally:
         # Socket closed by bg reader for persistent streams,
         # or here for non-persistent commands
-        if not hasattr(sock, '_bg_owned'):
+        if not _sock_owned_by_bg[0]:
             try:
                 sock.close()
             except Exception:

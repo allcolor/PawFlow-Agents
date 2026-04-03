@@ -123,8 +123,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     // PLL: track source rate — converge to actual input rate
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     const error = available - TARGET;
-    this._smoothStep += error * 0.00005;
-    this._smoothStep = Math.max(this.baseStep * 0.92, Math.min(this.baseStep * 1.08, this._smoothStep));
+    this._smoothStep += error * 0.0001;
+    this._smoothStep = Math.max(this.baseStep * 0.88, Math.min(this.baseStep * 1.12, this._smoothStep));
     const step = this._smoothStep;
 
     // Snap forward if buffer > 500ms (24000 samples) — emergency only
@@ -172,8 +172,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     // PLL: same as SAB path
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     const error = available - TARGET;
-    this._pmSmoothStep += error * 0.00005;
-    this._pmSmoothStep = Math.max(this.baseStep * 0.92, Math.min(this.baseStep * 1.08, this._pmSmoothStep));
+    this._pmSmoothStep += error * 0.0001;
+    this._pmSmoothStep = Math.max(this.baseStep * 0.88, Math.min(this.baseStep * 1.12, this._pmSmoothStep));
     const step = this._pmSmoothStep;
 
     if (available > 24000) {

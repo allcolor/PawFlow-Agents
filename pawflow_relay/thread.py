@@ -548,14 +548,18 @@ class RelayThread:
                                             dimensions=(rows, cols))
 
                 def _read_pty():
-                    # read() without args returns available data (non-blocking if data ready)
-                    # read(N) blocks until N chars — unusable for interactive terminal
-                    data = pty_proc.read()
-                    if not data:
-                        import time as _t
-                        _t.sleep(0.01)  # avoid busy-spin when no data
+                    # pywinpty read() always blocks. Use the underlying
+                    # socket with a timeout for non-blocking reads.
+                    pty_proc.fileobj.settimeout(0.1)
+                    try:
+                        data = pty_proc.fileobj.recv(4096)
+                        if not data:
+                            raise EOFError("PTY closed")
+                        return data
+                    except socket.timeout:
                         return b""
-                    return data.encode("utf-8", errors="replace")
+                    except OSError:
+                        raise EOFError("PTY closed")
 
                 def _write_pty(data):
                     pty_proc.write(data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data)

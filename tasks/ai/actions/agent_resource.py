@@ -535,9 +535,20 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     except Exception:
                         pass
                     for _rid in _all_ids:
-                        _rsvc = _greg2.get_live_instance(_rid)
+                        _rsvc = None
+                        _connected = False
+                        # Same logic as service list: use registry.is_connected
+                        try:
+                            _connected = _greg2.is_connected(_rid)
+                            _rsvc = _greg2.get_live_instance(_rid)
+                        except Exception:
+                            pass
                         if not _rsvc and _ureg2 and user_id:
-                            _rsvc = _ureg2.get_live_instance(user_id, _rid)
+                            try:
+                                _connected = _ureg2.is_connected(user_id, _rid)
+                                _rsvc = _ureg2.get_live_instance(user_id, _rid)
+                            except Exception:
+                                pass
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
                         _relay_details[_rid] = {
                             "root": _ri2.get("root", ""),
@@ -545,7 +556,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                             "platform": _ri2.get("platform", ""),
                             "containerized": _ri2.get("containerized", False),
                             "allow_local": _ri2.get("allow_local", False),
-                            "connected": _rsvc is not None and getattr(_rsvc, '_relay_connected', False),
+                            "connected": _connected,
                         }
                 except Exception:
                     pass

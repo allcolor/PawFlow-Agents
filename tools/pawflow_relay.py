@@ -1346,7 +1346,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 if _shutil.which("pulseaudio"):
                     _p_pulse = subprocess.Popen(
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
-                         "--load=module-null-sink sink_name=virtual_out",
+                         "--load=module-null-sink sink_name=virtual_out rate=48000",
                          "--load=module-always-sink"],
                         env=_user_env, preexec_fn=_as_user,
                         stdout=_log_d, stderr=_log_d)

@@ -119,15 +119,15 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const available = wPos - Math.floor(this.sabRPos);
     const TARGET = 4800; // 100ms at 48kHz — absorbs jitter
 
-    // PLL: smoothly track source rate with gentle speed adjustment.
+    // PLL: track source rate — ±2% max pitch deviation (inaudible for speech)
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     const error = available - TARGET;
-    this._smoothStep += error * 0.00005;
-    this._smoothStep = Math.max(this.baseStep - 0.005, Math.min(this.baseStep + 0.005, this._smoothStep));
+    this._smoothStep += error * 0.0002;
+    this._smoothStep = Math.max(this.baseStep - 0.02, Math.min(this.baseStep + 0.02, this._smoothStep));
     const step = this._smoothStep;
 
-    // Snap forward if buffer > 250ms (12000 samples) — too far behind
-    if (available > 12000) {
+    // Snap forward if buffer > 500ms (24000 samples) — emergency only
+    if (available > 24000) {
       this.sabRPos = wPos - TARGET;
       this._smoothStep = this.baseStep;
     }
@@ -171,11 +171,11 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     // PLL: same as SAB path
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     const error = available - TARGET;
-    this._pmSmoothStep += error * 0.00005;
-    this._pmSmoothStep = Math.max(this.baseStep - 0.005, Math.min(this.baseStep + 0.005, this._pmSmoothStep));
+    this._pmSmoothStep += error * 0.0002;
+    this._pmSmoothStep = Math.max(this.baseStep - 0.02, Math.min(this.baseStep + 0.02, this._pmSmoothStep));
     const step = this._pmSmoothStep;
 
-    if (available > 12000) {
+    if (available > 24000) {
       this.rPos = this.wPos - TARGET;
       this._pmSmoothStep = this.baseStep;
     }

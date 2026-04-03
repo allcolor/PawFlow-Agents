@@ -29,10 +29,33 @@ function _loadXterm() {
 }
 
 /** Get all connected relays. */
+/** Get relays linked to the current conversation (with details from list_resources cache). */
 function _getRelays() {
   return new Promise((resolve, reject) => {
-    action$('service_list').subscribe({
-      next: data => resolve((data.services || []).filter(s => s.type === 'relay' && s.started)),
+    action$('list_resources').subscribe({
+      next: data => {
+        var rb = data.relay_bindings || { linked: {}, default: {}, details: {} };
+        var linked = rb.linked || {};
+        var details = rb.details || {};
+        // Collect unique relay IDs across all scopes
+        var seen = {};
+        var relays = [];
+        Object.keys(linked).forEach(function(scope) {
+          (linked[scope] || []).forEach(function(rid) {
+            if (seen[rid]) return;
+            seen[rid] = true;
+            var det = details[rid] || {};
+            relays.push({
+              id: rid,
+              connected: det.connected !== false,
+              root: det.root || '',
+              host_root: det.host_root || '',
+              allow_local: det.allow_local || false,
+            });
+          });
+        });
+        resolve(relays.filter(r => r.connected));
+      },
       error: e => reject(e),
     });
   });
@@ -44,21 +67,42 @@ function _pickRelay(relays) {
   if (relays.length === 1) return Promise.resolve(relays[0].id);
   return new Promise(resolve => {
     const bg = document.createElement('div');
-    bg.className = 'dialog-bg';
-    bg.innerHTML = '<div class="dialog" style="max-width:340px">'
-      + '<div class="dialog-title">Choose relay</div>'
-      + '<div class="dialog-body" id="_relayPickList"></div>'
-      + '<div class="dialog-actions"><button onclick="this.closest(\'.dialog-bg\').remove()" class="btn">Cancel</button></div>'
+    bg.className = 'exec-overlay';
+    bg.innerHTML = '<div class="exec-dialog" style="min-width:320px;">'
+      + '<h3>Choose relay</h3>'
+      + '<div id="_relayPickList" style="margin:12px 0;"></div>'
+      + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Cancel</button></div>'
       + '</div>';
     const list = bg.querySelector('#_relayPickList');
     for (const r of relays) {
       const btn = document.createElement('button');
-      btn.className = 'btn btn-primary';
+      btn.className = 'exec-approve';
       btn.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
-      btn.textContent = r.id + (r.name && r.name !== r.id ? ' (' + r.name + ')' : '');
+      var label = r.id;
+      if (r.host_root) label += ' \u2014 ' + r.host_root;
+      else if (r.root) label += ' \u2014 ' + r.root;
+      btn.textContent = label;
       btn.onclick = () => { bg.remove(); resolve(r.id); };
       list.appendChild(btn);
     }
+    document.body.appendChild(bg);
+  });
+}
+
+/** Pick docker/local mode for a relay that supports both. Returns 'docker', 'local', or null (cancelled). */
+function _pickMode(relayId) {
+  return new Promise(resolve => {
+    const bg = document.createElement('div');
+    bg.className = 'exec-overlay';
+    bg.innerHTML = '<div class="exec-dialog" style="min-width:280px;">'
+      + '<h3>Execution mode</h3>'
+      + '<div style="margin:12px 0;color:#aaa;">Relay <b>' + escapeHtml(relayId) + '</b> supports both modes.</div>'
+      + '<div class="exec-btns" style="flex-direction:column;gap:8px;">'
+      + '<button class="exec-approve" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'docker\');">\u{1F433} Docker (sandboxed)</button>'
+      + '<button class="exec-approve" style="width:100%;background:#4ecdc4;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(\'local\');">\u{1F4BB} Local (host machine)</button>'
+      + '<button class="exec-deny" style="width:100%;" onclick="this.closest(\'.exec-overlay\').remove();window._pickModeResolve(null);">Cancel</button>'
+      + '</div></div>';
+    window._pickModeResolve = resolve;
     document.body.appendChild(bg);
   });
 }
@@ -79,10 +123,15 @@ async function cmdTerminal(text, parts) {
   }
 
   let relayId = parts[1] || '';
+  let localMode = false;
+  if (sub === 'local') { localMode = true; relayId = parts[2] || ''; }
+  else if (sub === 'docker') { relayId = parts[2] || ''; }
+
+  var allRelays = [];
   if (!relayId) {
     try {
-      const relays = await _getRelays();
-      relayId = await _pickRelay(relays);
+      allRelays = await _getRelays();
+      relayId = await _pickRelay(allRelays);
       if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /terminal <relay_name>');
         return true;
@@ -92,10 +141,20 @@ async function cmdTerminal(text, parts) {
       return true;
     }
   }
+  // Offer docker/local choice if relay supports it and not already specified
+  if (!localMode && sub !== 'docker') {
+    if (!allRelays.length) try { allRelays = await _getRelays(); } catch(e) {}
+    var relay = allRelays.find(r => r.id === relayId);
+    if (relay && relay.allow_local) {
+      var mode = await _pickMode(relayId);
+      if (mode === null) return true;
+      localMode = mode === 'local';
+    }
+  }
 
-  addMsg('system', 'Opening terminal on ' + relayId + '...');
+  addMsg('system', 'Opening terminal on ' + relayId + (localMode ? ' (local)' : '') + '...');
 
-  action$('open_terminal', { relay_id: relayId, cols: 120, rows: 30 }).subscribe({
+  action$('open_terminal', { relay_id: relayId, cols: 120, rows: 30, local: localMode }).subscribe({
     next: async (resp) => {
       if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);
@@ -196,10 +255,15 @@ async function cmdCode(text, parts) {
   }
 
   let relayId = parts[1] || '';
+  let localMode = false;
+  if (sub === 'local') { localMode = true; relayId = parts[2] || ''; }
+  else if (sub === 'docker') { relayId = parts[2] || ''; }
+
+  var allRelays = [];
   if (!relayId) {
     try {
-      const relays = await _getRelays();
-      relayId = await _pickRelay(relays);
+      allRelays = await _getRelays();
+      relayId = await _pickRelay(allRelays);
       if (!relayId) {
         addMsg('system', 'No connected relay found. Usage: /code <relay_name>');
         return true;
@@ -209,9 +273,18 @@ async function cmdCode(text, parts) {
       return true;
     }
   }
+  if (!localMode && sub !== 'docker') {
+    if (!allRelays.length) try { allRelays = await _getRelays(); } catch(e) {}
+    var relay = allRelays.find(r => r.id === relayId);
+    if (relay && relay.allow_local) {
+      var mode = await _pickMode(relayId);
+      if (mode === null) return true;
+      localMode = mode === 'local';
+    }
+  }
 
-  addMsg('system', 'Starting code-server on ' + relayId + '...');
-  action$('open_code_server', { relay_id: relayId }).subscribe({
+  addMsg('system', 'Starting code-server on ' + relayId + (localMode ? ' (local)' : '') + '...');
+  action$('open_code_server', { relay_id: relayId, local: localMode }).subscribe({
     next: (resp) => {
       if (resp.error) {
         addMsg('system', '\u26a0 ' + resp.error);
@@ -298,17 +371,13 @@ async function cmdDesktop(text, parts) {
 
   // Check if the relay supports local screen and offer choice
   if (!localScreen && sub !== 'docker') {
-    try {
-      const relays = await _getRelays();
-      const relay = relays.find(r => r.id === relayId);
-      const info = relay && relay.relay_info;
-      if (info && info.allow_local_screen) {
-        const choice = await _pickDesktopMode();
-        if (choice === null) return true;  // cancelled
-        localScreen = choice === 'local';
-      }
-    } catch (e) {
-      // Fall through to default (docker)
+    var _dRelays = [];
+    try { _dRelays = await _getRelays(); } catch(e) {}
+    var _dRelay = _dRelays.find(r => r.id === relayId);
+    if (_dRelay && _dRelay.allow_local) {
+      var _dMode = await _pickMode(relayId);
+      if (_dMode === null) return true;
+      localScreen = _dMode === 'local';
     }
   }
 
@@ -338,32 +407,7 @@ async function cmdDesktop(text, parts) {
 }
 
 /** Pick between Docker desktop and local screen. */
-function _pickDesktopMode() {
-  return new Promise(resolve => {
-    const bg = document.createElement('div');
-    bg.className = 'dialog-bg';
-    bg.innerHTML = '<div class="dialog" style="max-width:340px">'
-      + '<div class="dialog-title">Choose desktop mode</div>'
-      + '<div class="dialog-body" id="_desktopPickList"></div>'
-      + '<div class="dialog-actions"><button onclick="this.closest(\'.dialog-bg\').remove()" class="btn">Cancel</button></div>'
-      + '</div>';
-    const list = bg.querySelector('#_desktopPickList');
-    const btnDocker = document.createElement('button');
-    btnDocker.className = 'btn btn-primary';
-    btnDocker.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
-    btnDocker.textContent = 'Docker Desktop (virtual screen in container)';
-    btnDocker.onclick = () => { bg.remove(); resolve('docker'); };
-    list.appendChild(btnDocker);
-    const btnLocal = document.createElement('button');
-    btnLocal.className = 'btn btn-primary';
-    btnLocal.style.cssText = 'display:block;width:100%;margin-bottom:6px;text-align:left;';
-    btnLocal.textContent = 'Local Screen (user\'s display)';
-    btnLocal.onclick = () => { bg.remove(); resolve('local'); };
-    list.appendChild(btnLocal);
-    bg.querySelector('.dialog-actions button').onclick = () => { bg.remove(); resolve(null); };
-    document.body.appendChild(bg);
-  });
-}
+// _pickDesktopMode removed — replaced by unified _pickMode
 
 /** /port-forward command */
 async function cmdPortForward(text, parts) {

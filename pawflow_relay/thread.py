@@ -488,35 +488,77 @@ class RelayThread:
         return handle_screen_action(action, req)
 
     def _host_open_local_terminal(self, req):
-        """Open a PTY terminal on the host machine."""
-        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
+        """Open a PTY terminal on the host machine.
+
+        Creates a PTY process and returns the session_id. The terminal
+        I/O is then proxied through the relay's WS terminal channel.
+        """
+        import subprocess as _sp
+        import shutil
+        import uuid as _uuid
+
+        cols = req.get("cols", 80)
+        rows = req.get("rows", 24)
+        shell = req.get("shell")
+
+        # Detect shell
+        if not shell:
+            if sys.platform == "win32":
+                shell = shutil.which("pwsh") or shutil.which("powershell") or "cmd.exe"
+            else:
+                shell = os.environ.get("SHELL", "/bin/bash")
+
+        session_id = f"local_term_{_uuid.uuid4().hex[:8]}"
+
         try:
-            from fs_actions import ACTIONS
-            handler = ACTIONS.get("open_terminal")
-            if not handler:
-                return {"error": "open_terminal action not available on host"}
-            cols = req.get("cols", 80)
-            rows = req.get("rows", 24)
-            shell = req.get("shell")
-            result = handler(self.directory, cols=cols, rows=rows,
-                             **({"shell": shell} if shell else {}))
-            return result if isinstance(result, dict) else {"session_id": str(result)}
+            if sys.platform == "win32":
+                # Windows: use subprocess with pipes (no PTY)
+                proc = _sp.Popen(
+                    [shell], stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                    cwd=self.directory, bufsize=0,
+                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP)
+            else:
+                # Unix: use PTY
+                import pty
+                master, slave = pty.openpty()
+                import fcntl, struct, termios
+                winsize = struct.pack("HHHH", rows, cols, 0, 0)
+                fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)
+                proc = _sp.Popen(
+                    [shell], stdin=slave, stdout=slave, stderr=slave,
+                    cwd=self.directory, preexec_fn=os.setsid,
+                    close_fds=True)
+                os.close(slave)
+                # Store master fd for I/O
+                proc._master_fd = master
+
+            # Store session for later I/O
+            if not hasattr(self, '_local_terminals'):
+                self._local_terminals = {}
+            self._local_terminals[session_id] = proc
+
+            return {"session_id": session_id}
         except Exception as e:
             return {"error": f"Failed to open local terminal: {e}"}
 
     def _host_start_local_code_server(self, req):
         """Start code-server on the host machine."""
-        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
-        if tools_dir not in sys.path:
-            sys.path.insert(0, tools_dir)
+        import subprocess as _sp
+        import shutil
+
+        code_server = shutil.which("code-server")
+        if not code_server:
+            return {"error": "code-server not installed on host. Install with: npm install -g code-server"}
+
+        port = find_free_port()
         try:
-            from fs_actions import ACTIONS
-            handler = ACTIONS.get("start_code_server")
-            if not handler:
-                return {"error": "start_code_server action not available on host"}
-            result = handler(self.directory)
-            return result if isinstance(result, dict) else {"port": result}
+            proc = _sp.Popen(
+                [code_server, "--port", str(port), "--auth", "none",
+                 "--bind-addr", f"127.0.0.1:{port}", self.directory],
+                stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            if not hasattr(self, '_local_code_server'):
+                self._local_code_server = {}
+            self._local_code_server[port] = proc
+            return {"port": port}
         except Exception as e:
-            return {"error": f"Failed to start local code-server: {e}"}
+            return {"error": f"Failed to start code-server: {e}"}

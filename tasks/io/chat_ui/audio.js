@@ -120,21 +120,28 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const TARGET = 7200; // 150ms at 48kHz — absorbs delivery jitter
 
     // PLL: smoothly track source rate with imperceptible speed adjustment.
-    // Max ±0.2% pitch deviation — inaudible. No snaps, no drops.
+    // Max ±1% pitch deviation — still inaudible for speech.
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     const error = available - TARGET;
-    this._smoothStep += error * 0.000002;
-    this._smoothStep = Math.max(this.baseStep - 0.002, Math.min(this.baseStep + 0.002, this._smoothStep));
+    this._smoothStep += error * 0.00002;
+    this._smoothStep = Math.max(this.baseStep - 0.01, Math.min(this.baseStep + 0.01, this._smoothStep));
     const step = this._smoothStep;
 
-    // Emergency: if buffer is absurdly large (>2s), snap forward
-    if (available > 96000) {
+    // Snap forward if buffer > 500ms (24000 samples) — too far behind
+    if (available > 24000) {
       this.sabRPos = wPos - TARGET;
+      this._smoothStep = this.baseStep;
     }
 
+    const wasUnderrun = this._sabWasUnderrun || false;
     if (available < out.length) this.underruns++;
     this._sabWasUnderrun = (available < out.length);
-    let fadeIn = 0;
+    // After underrun recovery, snap to TARGET to avoid playing stale audio
+    if (wasUnderrun && available >= out.length && available > TARGET * 2) {
+      this.sabRPos = wPos - TARGET;
+      this._smoothStep = this.baseStep;
+    }
+    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.sabRPos);
@@ -165,22 +172,23 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     // PLL: same as SAB path
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     const error = available - TARGET;
-    this._pmSmoothStep += error * 0.000002;
-    this._pmSmoothStep = Math.max(this.baseStep - 0.002, Math.min(this.baseStep + 0.002, this._pmSmoothStep));
+    this._pmSmoothStep += error * 0.00002;
+    this._pmSmoothStep = Math.max(this.baseStep - 0.01, Math.min(this.baseStep + 0.01, this._pmSmoothStep));
     const step = this._pmSmoothStep;
 
-    if (available > 96000) {
+    if (available > 24000) {
       this.rPos = this.wPos - TARGET;
+      this._pmSmoothStep = this.baseStep;
     }
-
-    if (available < out.length) this.underruns++;
 
     const wasUnderrun = this._pmWasUnderrun || false;
-    if (wasUnderrun && available >= out.length && available > TARGET) {
+    if (available < out.length) this.underruns++;
+    this._pmWasUnderrun = (available < out.length);
+    if (wasUnderrun && available >= out.length && available > TARGET * 2) {
       this.rPos = this.wPos - TARGET;
+      this._pmSmoothStep = this.baseStep;
     }
     let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
-    this._pmWasUnderrun = (available < out.length);
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.rPos);

@@ -547,9 +547,9 @@ class LLMClient(
             try:
                 return _do_stream(model)
             except Exception as e:
-                # Don't retry on cancellation
+                # Don't retry on cancellation or CC compact detection
                 from tasks.ai.agent_exceptions import AgentCancelled as _AC
-                if isinstance(e, _AC):
+                if isinstance(e, (_AC, CCCompactDetected)):
                     raise
                 last_error = e
                 err_str = str(e)

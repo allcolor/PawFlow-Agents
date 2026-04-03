@@ -383,7 +383,7 @@ function connectSSE(cid) {
     const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
     const srcInfo = data.source_agent ? displayAgentName(data.source_agent) + ' \u2192 ' : '';
     const header = srcInfo + displayAgentName(agent) + svcInfo;
-    if (data.response) {
+    if (data.response && !_CONTEXT_ACKS.has((data.response || '').trim())) {
       const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
       if (data.source_agent) extra.source.reply_to = data.source_agent;
       extra.model = data.model || '';

@@ -984,7 +984,7 @@ class AgentCoreMixin:
                             _apply_bg_results(messages, conversation_id)
                             continue
 
-                        _resp_text = response.content or ""
+                        _resp_text = _strip_context_ack(response.content or "")
                         # Claude-code: turn_callback persisted all content.
                         # response.content is "" — don't persist an empty msg.
                         # response_content stays "" — done event uses last turn text.

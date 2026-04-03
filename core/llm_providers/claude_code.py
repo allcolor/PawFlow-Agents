@@ -962,13 +962,16 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
-                    # result event is always the final signal — Claude Code
-                    # absorbs all pending preempts inline before emitting result.
+                    # result = end of one CC turn. If preempt messages
+                    # were injected, CC will start new turns for them —
+                    # do NOT break, keep streaming until all preempts are
+                    # consumed (each one produces its own result event).
                     _pending = getattr(self, '_preempt_pending', 0)
                     if _pending > 0:
-                        logger.info("[claude-code] result event with %d preempt(s) pending "
-                                    "— resetting to 0 and breaking", _pending)
-                        self._preempt_pending = 0
+                        self._preempt_pending = _pending - 1
+                        logger.info("[claude-code] result event, %d preempt(s) remaining "
+                                    "— continuing stream", _pending - 1)
+                        continue
                     break
 
         finally:

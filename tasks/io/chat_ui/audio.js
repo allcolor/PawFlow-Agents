@@ -23,7 +23,7 @@ var _pcmFlushTimer = null;   // timer to flush partial batches
 var _preBuffer = [];          // array of Float32Array chunks
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 480;  // 10ms at 48kHz — near-zero startup latency
+var _PRE_BUFFER_TARGET = 1440; // 30ms at 48kHz — minimal pre-buffer for tight A/V sync
 
 // Diagnostic stats
 var _audioStats = {
@@ -94,9 +94,10 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     } else if (available > 3360) {
       // >70ms: speed up ~2%
       step = 1.02;
+    } else if (available < 480) {
+      // <10ms: gentle slow down ~0.5% (never more — audible on music)
+      step = 0.995;
     }
-    // No slowdown ever — even 0.5% is audible on music.
-    // If buffer empties, a micro-silence is less noticeable than tempo change.
     if (available < out.length) {
       this.underruns++;
     }

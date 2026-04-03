@@ -488,60 +488,203 @@ class RelayThread:
         return handle_screen_action(action, req)
 
     def _host_open_local_terminal(self, req):
-        """Open a PTY terminal on the host machine.
+        """Open a terminal on the host with a WS bridge for I/O.
 
-        Creates a PTY process and returns the session_id. The terminal
-        I/O is then proxied through the relay's WS terminal channel.
+        Same approach as VNC local: start the PTY + a local WS server,
+        return the port. The terminal proxy on the PawFlow server connects
+        to this WS port for bidirectional I/O.
         """
         import subprocess as _sp
         import shutil
         import uuid as _uuid
+        import base64
 
         cols = req.get("cols", 80)
         rows = req.get("rows", 24)
         shell = req.get("shell")
 
-        # Detect shell
         if not shell:
             if sys.platform == "win32":
                 shell = (shutil.which("pwsh")
                          or shutil.which("powershell")
                          or shutil.which("git-bash")
-                         or shutil.which("bash")  # git bash or WSL
+                         or shutil.which("bash")
                          or "cmd.exe")
             else:
                 shell = os.environ.get("SHELL", "/bin/bash")
 
         session_id = f"local_term_{_uuid.uuid4().hex[:8]}"
+        ws_port = find_free_port()
 
         try:
-            if sys.platform == "win32":
-                # Windows: use subprocess with pipes (no PTY)
-                proc = _sp.Popen(
-                    [shell], stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                    cwd=self.directory, bufsize=0,
-                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP)
-            else:
-                # Unix: use PTY
-                import pty
+            # Launch PTY (Unix) or subprocess (Windows)
+            if sys.platform != "win32":
+                import pty, fcntl, struct, termios
                 master, slave = pty.openpty()
-                import fcntl, struct, termios
                 winsize = struct.pack("HHHH", rows, cols, 0, 0)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)
                 proc = _sp.Popen(
                     [shell], stdin=slave, stdout=slave, stderr=slave,
-                    cwd=self.directory, preexec_fn=os.setsid,
-                    close_fds=True)
+                    cwd=self.directory, preexec_fn=os.setsid, close_fds=True)
                 os.close(slave)
-                # Store master fd for I/O
-                proc._master_fd = master
+                master_fd = master
 
-            # Store session for later I/O
-            if not hasattr(self, '_local_terminals'):
-                self._local_terminals = {}
-            self._local_terminals[session_id] = proc
+                def _read_pty():
+                    return os.read(master_fd, 4096)
 
-            return {"session_id": session_id}
+                def _write_pty(data):
+                    os.write(master_fd, data)
+
+                def _resize_pty(c, r):
+                    winsize = struct.pack("HHHH", r, c, 0, 0)
+                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+            else:
+                proc = _sp.Popen(
+                    [shell], stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.STDOUT,
+                    cwd=self.directory, bufsize=0,
+                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP)
+
+                def _read_pty():
+                    return proc.stdout.read1(4096) if hasattr(proc.stdout, 'read1') else proc.stdout.read(1)
+
+                def _write_pty(data):
+                    proc.stdin.write(data)
+                    proc.stdin.flush()
+
+                def _resize_pty(c, r):
+                    pass  # Windows pipes don't support resize
+
+            # Start WS server for terminal I/O (same pattern as websockify for VNC)
+            import hashlib as _hashlib
+
+            srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            srv_sock.bind(("0.0.0.0", ws_port))
+            srv_sock.listen(1)
+            srv_sock.settimeout(30)
+
+            def _ws_bridge():
+                """Accept one WS connection, bridge PTY I/O."""
+                try:
+                    client, _ = srv_sock.accept()
+                except socket.timeout:
+                    proc.kill()
+                    srv_sock.close()
+                    return
+                srv_sock.close()
+
+                # WS handshake
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    chunk = client.recv(4096)
+                    if not chunk:
+                        client.close()
+                        proc.kill()
+                        return
+                    data += chunk
+
+                headers = {}
+                for line in data.decode("latin-1").split("\r\n")[1:]:
+                    if ":" in line:
+                        k, v = line.split(":", 1)
+                        headers[k.strip()] = v.strip()
+
+                ws_key = headers.get("Sec-WebSocket-Key", "")
+                _MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+                accept = base64.b64encode(
+                    _hashlib.sha1(ws_key.encode() + _MAGIC).digest()).decode()
+                resp = (f"HTTP/1.1 101 Switching Protocols\r\n"
+                        f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                        f"Sec-WebSocket-Accept: {accept}\r\n\r\n")
+                client.sendall(resp.encode())
+
+                def _ws_send(payload_bytes, opcode=0x02):
+                    """Send a WS frame (binary)."""
+                    length = len(payload_bytes)
+                    if length <= 125:
+                        header = bytes([0x80 | opcode, length])
+                    elif length <= 65535:
+                        header = bytes([0x80 | opcode, 126]) + length.to_bytes(2, 'big')
+                    else:
+                        header = bytes([0x80 | opcode, 127]) + length.to_bytes(8, 'big')
+                    client.sendall(header + payload_bytes)
+
+                def _ws_recv():
+                    """Receive a WS frame. Returns (opcode, payload)."""
+                    hdr = b""
+                    while len(hdr) < 2:
+                        hdr += client.recv(2 - len(hdr))
+                    opcode = hdr[0] & 0x0F
+                    masked = bool(hdr[1] & 0x80)
+                    length = hdr[1] & 0x7F
+                    if length == 126:
+                        raw = client.recv(2)
+                        length = int.from_bytes(raw, 'big')
+                    elif length == 127:
+                        raw = client.recv(8)
+                        length = int.from_bytes(raw, 'big')
+                    mask = client.recv(4) if masked else b""
+                    payload = b""
+                    while len(payload) < length:
+                        payload += client.recv(length - len(payload))
+                    if masked:
+                        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+                    return opcode, payload
+
+                # Reader thread: PTY → WS
+                _stop = threading.Event()
+
+                def _reader():
+                    while not _stop.is_set():
+                        try:
+                            data = _read_pty()
+                            if not data:
+                                break
+                            _ws_send(data)
+                        except (OSError, BrokenPipeError):
+                            break
+                    _stop.set()
+
+                reader_t = threading.Thread(target=_reader, daemon=True)
+                reader_t.start()
+
+                # Main loop: WS → PTY
+                try:
+                    while not _stop.is_set():
+                        opcode, payload = _ws_recv()
+                        if opcode == 0x08:  # close
+                            break
+                        if opcode == 0x09:  # ping
+                            _ws_send(payload, opcode=0x0A)
+                            continue
+                        if opcode == 0x01:  # text = JSON command
+                            try:
+                                msg = json.loads(payload.decode("utf-8"))
+                                if msg.get("type") == "terminal_resize":
+                                    _resize_pty(msg.get("cols", 80), msg.get("rows", 24))
+                                    continue
+                            except Exception:
+                                pass
+                        # Binary or text terminal input
+                        if payload:
+                            _write_pty(payload)
+                except (OSError, BrokenPipeError, ConnectionResetError):
+                    pass
+                finally:
+                    _stop.set()
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
+
+            threading.Thread(target=_ws_bridge, daemon=True,
+                             name=f"local-term-ws-{session_id}").start()
+
+            return {"session_id": session_id, "ws_port": ws_port, "local_terminal": True}
         except Exception as e:
             return {"error": f"Failed to open local terminal: {e}"}
 

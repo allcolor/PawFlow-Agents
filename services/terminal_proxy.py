@@ -10,6 +10,7 @@ traffic alongside filesystem commands on the same relay channel.
 
 import json
 import logging
+import socket
 import struct
 import threading
 
@@ -93,6 +94,12 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 4001, "Unknown terminal session")
         return
 
+    # Direct WS mode: bridge browser WS ↔ host WS (local terminal)
+    direct_ws = sess.get("direct_ws")
+    if direct_ws:
+        _terminal_ws_direct(client_sock, session_id, direct_ws)
+        return
+
     relay_service = sess.get("relay_service")
     if not relay_service:
         _ws_close(client_sock, 4002, "Relay not available")
@@ -103,7 +110,7 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
         if session_id in _sessions:
             _sessions[session_id]["browser_sock"] = client_sock
 
-    logger.info("Terminal proxy: session %s connected", session_id)
+    logger.info("Terminal proxy: session %s connected (relay mode)", session_id)
 
     try:
         while True:
@@ -143,7 +150,119 @@ def terminal_ws_handler(client_sock, path_params: dict, meta: dict):
             client_sock.close()
         except Exception:
             pass
+
+
+def _terminal_ws_direct(browser_sock, session_id, host_addr):
+    """Bridge browser WS ↔ host WS for local terminal.
+
+    The host helper runs a WS server on host_addr (host:port).
+    We connect to it and bidirectionally bridge all frames.
+    """
+    import hashlib as _hashlib
+    import base64 as _b64
+
+    host, port = host_addr.rsplit(":", 1)
+    port = int(port)
+
+    logger.info("Terminal proxy: session %s connecting to host WS %s:%d", session_id, host, port)
+
+    # Connect to host WS
+    host_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        host_sock.connect((host, port))
+    except Exception as e:
+        logger.error("Terminal proxy: failed to connect to host %s:%d: %s", host, port, e)
+        _ws_close(browser_sock, 4003, f"Cannot connect to host terminal: {e}")
+        return
+
+    # WS handshake with host
+    import secrets as _sec
+    ws_key = _b64.b64encode(_sec.token_bytes(16)).decode()
+    handshake = (f"GET / HTTP/1.1\r\nHost: {host}:{port}\r\n"
+                 f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
+                 f"Sec-WebSocket-Key: {ws_key}\r\n"
+                 f"Sec-WebSocket-Version: 13\r\n\r\n")
+    host_sock.sendall(handshake.encode())
+
+    # Read handshake response
+    resp = b""
+    while b"\r\n\r\n" not in resp:
+        chunk = host_sock.recv(4096)
+        if not chunk:
+            _ws_close(browser_sock, 4003, "Host WS handshake failed")
+            host_sock.close()
+            return
+        resp += chunk
+
+    if b"101" not in resp.split(b"\r\n")[0]:
+        _ws_close(browser_sock, 4003, "Host WS handshake rejected")
+        host_sock.close()
+        return
+
+    logger.info("Terminal proxy: session %s host WS connected", session_id)
+
+    _stop = threading.Event()
+
+    def _host_to_browser():
+        """Forward host WS frames → browser WS."""
+        try:
+            while not _stop.is_set():
+                opcode, payload = _ws_recv(host_sock)
+                if opcode == 0x08:
+                    break
+                # Forward as-is to browser
+                _ws_send(browser_sock, payload, opcode=opcode)
+        except Exception:
+            pass
+        finally:
+            _stop.set()
+
+    h2b = threading.Thread(target=_host_to_browser, daemon=True,
+                           name=f"term-h2b-{session_id}")
+    h2b.start()
+
+    # Browser → host
+    try:
+        while not _stop.is_set():
+            opcode, payload = _ws_recv(browser_sock)
+            if opcode == 0x08:
+                break
+            if opcode == 0x09:  # ping from browser
+                _ws_send(browser_sock, payload, opcode=0x0A)
+                continue
+            # Forward to host (client frames must be masked per RFC 6455)
+            _ws_send_masked(host_sock, payload, opcode=opcode)
+    except Exception:
+        pass
+    finally:
+        _stop.set()
+        try:
+            host_sock.close()
+        except Exception:
+            pass
+        try:
+            browser_sock.close()
+        except Exception:
+            pass
+        with _lock:
+            if session_id in _sessions:
+                _sessions[session_id]["browser_sock"] = None
         logger.info("Terminal proxy: session %s disconnected", session_id)
+
+
+def _ws_send_masked(sock, payload, opcode=0x02):
+    """Send a masked WS frame (client→server frames must be masked)."""
+    import secrets as _sec
+    mask = _sec.token_bytes(4)
+    length = len(payload)
+    if length <= 125:
+        header = bytes([0x80 | opcode, 0x80 | length])
+    elif length <= 65535:
+        header = bytes([0x80 | opcode, 0x80 | 126]) + length.to_bytes(2, 'big')
+    else:
+        header = bytes([0x80 | opcode, 0x80 | 127]) + length.to_bytes(8, 'big')
+    masked = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+    sock.sendall(header + mask + masked)
 
 
 def _send_command_to_relay(relay_service, cmd: dict):

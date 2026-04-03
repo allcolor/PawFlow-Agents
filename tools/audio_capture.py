@@ -161,21 +161,41 @@ def _capture_loop(source: str):
 
             logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
             _pkt_count = 0
+            _skip_count = 0
             _interval_start = time.monotonic()
+            _next_send = time.monotonic()
+            _FRAME_DUR = 0.020  # 20ms per frame
 
             while True:
                 # Blocking read of exactly one frame (20ms at 48kHz)
                 pcm = proc.stdout.read(frame_bytes)
                 if not pcm or len(pcm) < frame_bytes:
                     break
+
+                _now = time.monotonic()
+                # Wallclock pacing: send at exactly 50fps regardless of PA clock
+                if _now < _next_send - _FRAME_DUR:
+                    # We're >1 frame ahead of wallclock — drop this frame
+                    _skip_count += 1
+                    continue
+
+                if _now < _next_send:
+                    time.sleep(_next_send - _now)
+
                 opus_pkt = encoder.encode(pcm)
                 _broadcast(opus_pkt)
                 _pkt_count += 1
+                _next_send += _FRAME_DUR
 
-                _now = time.monotonic()
+                # If we fell way behind (>500ms), reset the clock
+                if time.monotonic() > _next_send + 0.5:
+                    _next_send = time.monotonic()
+
                 if _now - _interval_start >= 10.0:
-                    logger.info("Audio capture: %d pkts/10s", _pkt_count)
+                    logger.info("Audio capture: %d pkts/10s (skipped %d)",
+                                _pkt_count, _skip_count)
                     _pkt_count = 0
+                    _skip_count = 0
                     _interval_start = _now
 
             proc.wait()

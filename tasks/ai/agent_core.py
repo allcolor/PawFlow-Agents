@@ -748,6 +748,13 @@ class AgentCoreMixin:
                             _fatal_error = True
                             _fatal_error_msg = f"Compact failed: {compact_err}"
                             break
+                        # Re-adopt current generation so the compacted loop
+                        # is not killed by a stale generation check.
+                        # (The CC kill + compact may have taken long enough
+                        # for a new message to bump the generation.)
+                        with self._conv_gen_lock:
+                            emitter.generation = self._conv_generation.get(
+                                emitter.gen_key, emitter.generation)
                         continue
                     except Exception as llm_err:
                         err_str = str(llm_err)

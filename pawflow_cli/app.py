@@ -109,7 +109,16 @@ class PawCode:
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         if self.session_token:
-            self.connect_relay(self.directory)
+            try:
+                self.connect_relay(self.directory)
+            except Exception as e:
+                if "401" in str(e) or "Unauthorized" in str(e):
+                    self.session_token = ""
+                    self.username = ""
+                    self.renderer.print_system(
+                        "Session expired. Use /login to authenticate.")
+                else:
+                    raise
 
         # Cleanup on exit
         atexit.register(self._cleanup)

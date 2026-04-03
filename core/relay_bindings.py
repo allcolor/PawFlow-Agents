@@ -17,7 +17,7 @@ _EXTRA_KEY = "relay_bindings"
 
 def _get_store():
     from core.conversation_store import ConversationStore
-    return ConversationStore.get_instance()
+    return ConversationStore.instance()
 
 
 def get_bindings(cid: str) -> Dict[str, Any]:

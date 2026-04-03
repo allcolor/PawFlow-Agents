@@ -544,7 +544,7 @@ class RelayThread:
             else:
                 # Windows: use ConPTY via pywinpty
                 from winpty import PtyProcess
-                pty_proc = PtyProcess.spawn(shell, cwd=self.directory,
+                pty_proc = PtyProcess.spawn([shell], cwd=self.directory,
                                             dimensions=(rows, cols))
 
                 def _read_pty():

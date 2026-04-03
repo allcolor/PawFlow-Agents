@@ -230,6 +230,8 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
                 pending_req.complete(200, {
                 "Content-Type": content_type,
                 "Cross-Origin-Resource-Policy": "same-origin",
+                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Embedder-Policy": "credentialless",
             }, body)
                 return True
             except Exception:
@@ -267,6 +269,8 @@ def vnc_http_proxy(pending_req):
             pending_req.complete(200, {
                 "Content-Type": content_type,
                 "Cross-Origin-Resource-Policy": "same-origin",
+                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Embedder-Policy": "credentialless",
             }, body)
     except urllib.error.HTTPError as e:
         if e.code == 405 and _serve_novnc_local(pending_req, sub_path):

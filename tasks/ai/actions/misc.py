@@ -428,7 +428,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
 
     if action == "relay_list_available":
         from core.relay_bindings import list_available_relays
-        relays = list_available_relays()
+        relays = list_available_relays(user_id=user_id)
         if not relays:
             flowfile.set_content(json.dumps({
                 "relays": [],

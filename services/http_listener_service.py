@@ -428,13 +428,21 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
         return client_socket, client_address
 
     def process_request(self, request, client_address):
-        """Route connections: WS goes to own thread, HTTP to BaseHTTPRequestHandler.
+        """Spawn a dispatch thread immediately — never block the accept loop."""
+        t = threading.Thread(
+            target=self._dispatch_request,
+            args=(request, client_address),
+            daemon=True)
+        t.start()
 
-        Reads headers from the socket to detect WebSocket upgrade.
-        For WS: runs handler in own thread on raw socket.
-        For HTTP: wraps socket with pre-read data and delegates to normal path.
+    def _dispatch_request(self, request, client_address):
+        """Route connections: read headers, detect WS vs HTTP, handle.
+
+        Runs in its own thread so the accept loop is never blocked by
+        slow clients, half-open TCP, or browser preflight connections.
         """
         # Read headers to determine HTTP vs WS (64KB max to prevent abuse)
+        request.settimeout(10.0)
         try:
             data = b""
             while b"\r\n\r\n" not in data:
@@ -452,6 +460,11 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             except Exception:
                 pass
             return
+        finally:
+            try:
+                request.settimeout(None)
+            except Exception:
+                pass
 
         # Private gateway — reject banned IPs before any processing
         try:
@@ -463,18 +476,19 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
             pass
 
         if b"Upgrade: websocket" in data or b"upgrade: websocket" in data:
-            # WS — handle directly, NOT through BaseHTTPRequestHandler
+            # WS — handle directly on raw socket
             self._ws_sockets.add(id(request))
-            t = threading.Thread(
-                target=self._handle_ws_connection_with_data,
-                args=(request, client_address, data),
-                daemon=True)
-            t.start()
+            self._handle_ws_connection_with_data(request, client_address, data)
             return
 
         # HTTP — put the already-read data back via a wrapper socket
         request = _PrefixedSocket(request, data)
-        super().process_request(request, client_address)
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
 
     def shutdown_request(self, request):
         """Don't close sockets that were handed to WS handlers."""

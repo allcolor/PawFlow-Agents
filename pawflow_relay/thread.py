@@ -517,7 +517,7 @@ class RelayThread:
         ws_port = find_free_port()
 
         try:
-            # Launch PTY (Unix) or subprocess (Windows)
+            # Launch PTY
             if sys.platform != "win32":
                 import pty, fcntl, struct, termios
                 master, slave = pty.openpty()
@@ -538,21 +538,30 @@ class RelayThread:
                 def _resize_pty(c, r):
                     winsize = struct.pack("HHHH", r, c, 0, 0)
                     fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+
+                def _kill():
+                    proc.kill()
             else:
-                proc = _sp.Popen(
-                    [shell], stdin=_sp.PIPE, stdout=_sp.PIPE, stderr=_sp.STDOUT,
-                    cwd=self.directory, bufsize=0,
-                    creationflags=_sp.CREATE_NEW_PROCESS_GROUP)
+                # Windows: use ConPTY via pywinpty
+                from winpty import PtyProcess
+                pty_proc = PtyProcess.spawn(shell, cwd=self.directory,
+                                            dimensions=(rows, cols))
 
                 def _read_pty():
-                    return proc.stdout.read1(4096) if hasattr(proc.stdout, 'read1') else proc.stdout.read(1)
+                    return pty_proc.read(4096).encode("utf-8", errors="replace")
 
                 def _write_pty(data):
-                    proc.stdin.write(data)
-                    proc.stdin.flush()
+                    pty_proc.write(data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data)
 
                 def _resize_pty(c, r):
-                    pass  # Windows pipes don't support resize
+                    pty_proc.setwinsize(r, c)
+
+                def _kill():
+                    try:
+                        pty_proc.kill()
+                    except Exception:
+                        pass
+                proc = None  # no subprocess.Popen on Windows
 
             # Start WS server for terminal I/O (same pattern as websockify for VNC)
             import hashlib as _hashlib
@@ -568,7 +577,7 @@ class RelayThread:
                 try:
                     client, _ = srv_sock.accept()
                 except socket.timeout:
-                    proc.kill()
+                    _kill()
                     srv_sock.close()
                     return
                 srv_sock.close()
@@ -579,7 +588,7 @@ class RelayThread:
                     chunk = client.recv(4096)
                     if not chunk:
                         client.close()
-                        proc.kill()
+                        _kill()
                         return
                     data += chunk
 
@@ -673,7 +682,7 @@ class RelayThread:
                 finally:
                     _stop.set()
                     try:
-                        proc.kill()
+                        _kill()
                     except Exception:
                         pass
                     try:

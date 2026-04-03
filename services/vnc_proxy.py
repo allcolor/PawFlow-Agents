@@ -239,6 +239,36 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
     return False
 
 
+def _check_http_session_auth(pending_req) -> bool:
+    """Check session auth for direct HTTP callbacks (not flow-based).
+
+    Returns True if authenticated, False otherwise (sends 401).
+    """
+    try:
+        from core.security import SecurityManager
+        sm = SecurityManager.get_instance()
+        if not sm.auth_enabled:
+            return True
+        token = None
+        cookie_header = pending_req.headers.get("Cookie", "") or pending_req.headers.get("cookie", "")
+        for part in cookie_header.split(";"):
+            part = part.strip()
+            if part.startswith("pawflow_token="):
+                token = part[len("pawflow_token="):]
+                break
+        if not token:
+            auth_header = pending_req.headers.get("Authorization", "") or pending_req.headers.get("authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                token = auth_header[7:].strip()
+        if not token or (not sm.get_session(token) and not sm.validate_api_key(token)):
+            pending_req.complete(401, {"Content-Type": "application/json"},
+                                 b'{"error": "Unauthorized"}')
+            return False
+    except Exception:
+        pass
+    return True
+
+
 def vnc_http_proxy(pending_req):
     """HTTP proxy callback for noVNC static files.
 
@@ -247,6 +277,9 @@ def vnc_http_proxy(pending_req):
     returns 405 (websockify without --web) or is unreachable.
     Route pattern: /vnc/{session_id}/{path}
     """
+    if not _check_http_session_auth(pending_req):
+        return
+
     import urllib.request
     import urllib.error
 

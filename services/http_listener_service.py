@@ -204,6 +204,33 @@ class _RequestHandler(BaseHTTPRequestHandler):
         path = self.path.split('?', 1)[0]
         query = self.path.split('?', 1)[1] if '?' in self.path else ""
 
+        # Session auth for all routes except /auth/* (login, callback, logout)
+        if not path.startswith("/auth/"):
+            try:
+                from core.security import SecurityManager
+                sm = SecurityManager.get_instance()
+                if sm.auth_enabled:
+                    token = None
+                    cookie_header = self.headers.get("Cookie", "")
+                    if cookie_header:
+                        for part in cookie_header.split(";"):
+                            part = part.strip()
+                            if part.startswith("pawflow_token="):
+                                token = part[len("pawflow_token="):]
+                                break
+                    if not token:
+                        auth_header = self.headers.get("Authorization", "")
+                        if auth_header and auth_header.lower().startswith("bearer "):
+                            token = auth_header[7:].strip()
+                    if not token or (not sm.get_session(token) and not sm.validate_api_key(token)):
+                        self.send_response(401)
+                        self.send_header("Content-Type", "application/json")
+                        self.end_headers()
+                        self.wfile.write(b'{"error": "Unauthorized"}')
+                        return
+            except Exception:
+                pass
+
         # WebSocket upgrades are intercepted in _HTTPServerWithRegistry.process_request
         # BEFORE reaching this handler — so no WS detection needed here.
 

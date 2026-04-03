@@ -67,6 +67,11 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
         # Also try background tool cancel
         import core.background_tool as _bg
         _bg.cancel(tc_id)
+        # For MCP tools (executed via tool relay with a random request_id,
+        # NOT the tc_id), cancel by (conversation_id) — kills only the
+        # in-flight relay tool, not the Claude Code subprocess.
+        if conv_id:
+            ToolRelayService.cancel_agent(conv_id, agent_name="")
         flowfile.set_content(json.dumps({"ok": True, "tc_id": tc_id}).encode())
         return [flowfile]
 

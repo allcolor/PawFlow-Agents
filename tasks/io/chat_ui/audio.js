@@ -115,17 +115,6 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 2400; // 50ms
-
-    // Proportional speed-up only — NEVER slow down (causes audible tempo drops)
-    let step = 1.0;
-    if (available > 96000) {
-      this.sabRPos = wPos - TARGET;
-  _processSAB(out) {
-    const ring = this.sabRing;
-    const len = ring.length;
-    const wPos = Atomics.load(this.sabCtrl, 0);
-    const available = wPos - Math.floor(this.sabRPos);
     const TARGET = 3360; // 70ms — absorbs main-thread decode jitter
 
     // Proportional speed-up only — NEVER slow down

@@ -507,6 +507,31 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                     k, v = line.split(":", 1)
                     headers[k.strip()] = v.strip()
 
+            # Private gateway check for WebSocket connections
+            try:
+                from services.private_gateway import is_enabled, is_banned, _verify_cookie, _COOKIE_NAME
+                if is_enabled():
+                    ip = client_address[0] if client_address else "0.0.0.0"
+                    if is_banned(ip):
+                        sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                        sock.close()
+                        return
+                    cookie_header = headers.get("Cookie", "")
+                    gw_ok = False
+                    for part in cookie_header.split(";"):
+                        part = part.strip()
+                        if part.startswith(_COOKIE_NAME + "="):
+                            cookie_val = part[len(_COOKIE_NAME) + 1:]
+                            if _verify_cookie(cookie_val, ip):
+                                gw_ok = True
+                                break
+                    if not gw_ok:
+                        sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                        sock.close()
+                        return
+            except Exception:
+                pass
+
             # Match route
             result = self._route_registry.match("GET", path)
             if result is None or not result[0].ws_handler:

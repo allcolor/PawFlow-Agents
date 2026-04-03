@@ -1370,14 +1370,18 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_pulse)
                     _time_mod.sleep(0.5)
-                    # Verify sink rate
-                    try:
-                        _pactl_out = subprocess.check_output(
-                            ["pactl", "list", "short", "sinks"],
-                            env=_user_env, timeout=5, text=True)
-                        sys.stderr.write(f"[FSRelay] PA sinks: {_pactl_out.strip()}\n")
-                    except Exception:
-                        pass
+                    # Verify sink rate and daemon config
+                    for _pa_cmd, _pa_label in [
+                        (["pactl", "info"], "PA info"),
+                        (["pactl", "list", "sinks"], "PA sinks"),
+                        (["pactl", "list", "short", "sources"], "PA sources"),
+                    ]:
+                        try:
+                            _pa_out = subprocess.check_output(
+                                _pa_cmd, env=_user_env, timeout=5, text=True)
+                            sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
+                        except Exception as _pa_err:
+                            sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
                     # Audio capture server (Opus over TCP)
                     _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
                     _audio_script = Path("/opt/pawflow/audio_capture.py")

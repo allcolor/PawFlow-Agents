@@ -59,6 +59,10 @@ function clearAllStreams() {
   streams = {};
   streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
 }
+function clearAllStreamsKeepDOM() {
+  streams = {};
+  streamingEl = null; streamingText = ''; streamingChunks = []; streamingAgent = '';
+}
 let permissionMode = 'default';  // current tool permission mode
 
 function setPermissionMode(mode) {

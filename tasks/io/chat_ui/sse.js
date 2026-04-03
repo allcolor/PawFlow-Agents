@@ -797,13 +797,17 @@ function connectSSE(cid) {
         if (el.dataset.finalizedAgent === cancelAgent.toLowerCase()) el.remove();
       });
     }
-    // Remove streaming chunks for the cancelled agent(s)
+    // Finalize streaming chunks instead of removing them (preserve visible text)
     if (cancelAgent === 'all') {
-      clearAllStreams();
+      for (const a of Object.keys(streams)) {
+        const s = streams[a];
+        if (s.el && s.el.parentNode) s.el.classList.remove('streaming');
+      }
+      clearAllStreamsKeepDOM();
     } else {
       const cs = streams[cancelAgent.toLowerCase()];
       if (cs) {
-        for (const c of cs.chunks) { if (c && c.parentNode) c.remove(); }
+        if (cs.el && cs.el.parentNode) cs.el.classList.remove('streaming');
         clearStream(cancelAgent);
       }
     }

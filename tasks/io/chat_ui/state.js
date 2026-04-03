@@ -153,6 +153,19 @@ function toggleSidebar() {
 
 
 
+function _setInputEnabled(enabled) {
+  var inp = document.getElementById('input');
+  var btn = document.getElementById('sendBtn');
+  if (inp) {
+    inp.disabled = !enabled;
+    inp.placeholder = enabled
+      ? 'Type a message... (Enter to send, Shift+Enter for newline)'
+      : 'Create a conversation first (click + Nouveau)';
+    inp.style.opacity = enabled ? '1' : '0.4';
+  }
+  if (btn) { btn.disabled = !enabled; btn.style.opacity = enabled ? '1' : '0.4'; }
+}
+
 function _doNewChat() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   stopPollTimer();
@@ -192,6 +205,7 @@ async function newChat() {
   action$('create_conversation', params).subscribe(data => {
     if (data.conversation_id) {
       conversationId = data.conversation_id;
+      _setInputEnabled(true);
       connectSSE(conversationId);
       loadResources();
       loadPermissionMode();

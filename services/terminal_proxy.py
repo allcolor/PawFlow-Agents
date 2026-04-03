@@ -204,14 +204,22 @@ def _terminal_ws_direct(browser_sock, session_id, host_addr):
     _stop = threading.Event()
 
     def _host_to_browser():
-        """Forward host WS frames → browser WS."""
+        """Forward host WS frames → browser WS (raw bytes → JSON terminal_data)."""
+        import base64 as _b64h
         try:
             while not _stop.is_set():
                 opcode, payload = _ws_recv(host_sock)
                 if opcode == 0x08:
                     break
-                # Forward as-is to browser
-                _ws_send(browser_sock, payload, opcode=opcode)
+                if not payload:
+                    continue
+                # Convert raw PTY bytes to JSON terminal_data (same format as relay mode)
+                msg = json.dumps({
+                    "type": "terminal_data",
+                    "session_id": session_id,
+                    "data": _b64h.b64encode(payload).decode("ascii"),
+                }).encode("utf-8")
+                _ws_send(browser_sock, msg, opcode=0x01)  # text frame
         except Exception:
             pass
         finally:
@@ -221,7 +229,7 @@ def _terminal_ws_direct(browser_sock, session_id, host_addr):
                            name=f"term-h2b-{session_id}")
     h2b.start()
 
-    # Browser → host
+    # Browser → host (JSON terminal_input → raw bytes to PTY)
     try:
         while not _stop.is_set():
             opcode, payload = _ws_recv(browser_sock)
@@ -230,7 +238,23 @@ def _terminal_ws_direct(browser_sock, session_id, host_addr):
             if opcode == 0x09:  # ping from browser
                 _ws_send(browser_sock, payload, opcode=0x0A)
                 continue
-            # Forward to host (client frames must be masked per RFC 6455)
+            # Parse browser JSON message
+            if opcode == 0x01:  # text
+                try:
+                    msg = json.loads(payload.decode("utf-8"))
+                    msg_type = msg.get("type", "")
+                    if msg_type == "terminal_input":
+                        import base64 as _b64b
+                        raw = _b64b.b64decode(msg.get("data", ""))
+                        _ws_send_masked(host_sock, raw, opcode=0x02)  # binary to host
+                        continue
+                    elif msg_type == "terminal_resize":
+                        # Forward resize as JSON to host
+                        _ws_send_masked(host_sock, payload, opcode=0x01)
+                        continue
+                except (json.JSONDecodeError, Exception):
+                    pass
+            # Fallback: forward as-is
             _ws_send_masked(host_sock, payload, opcode=opcode)
     except Exception:
         pass

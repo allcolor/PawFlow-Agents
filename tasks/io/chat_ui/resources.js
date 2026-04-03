@@ -150,11 +150,17 @@ function _doRelayLink(btn) {
   }
 }
 
+var _loadResourcesTimer = null;
 async function loadResources() {
+  // Debounce: coalesce rapid calls into one (300ms window)
+  if (_loadResourcesTimer) clearTimeout(_loadResourcesTimer);
+  _loadResourcesTimer = setTimeout(_loadResourcesNow, 300);
+}
+function _loadResourcesNow() {
+  _loadResourcesTimer = null;
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
   action$('list_resources', {}).subscribe(data => _renderResourcesFromSSE(data));
-  // Load tool schemas
   if (!window._cachedTools) {
     action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
   }

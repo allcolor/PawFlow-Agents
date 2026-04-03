@@ -572,7 +572,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             from gui.services.deployment_registry import DeploymentRegistry
             flows = []
             dr = DeploymentRegistry.get_instance()
-            dr.sync_with_executors()
+            # sync_with_executors removed from request path — too expensive.
+            # DeploymentRegistry syncs on its own schedule.
             uid = user_id or "anonymous"
             _is_admin = (flowfile.get_attribute("http.auth.roles") or "") == "admin"
             for iid, inst in dr.get_all().items():

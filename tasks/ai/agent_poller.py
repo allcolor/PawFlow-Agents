@@ -101,6 +101,7 @@ class AgentPollerMixin:
         _dt_ckpt = time.time() - _pt0
         if _dt_ckpt > 0.05: logger.warning(f"[poller-timing] checkpoint: {_dt_ckpt*1000:.0f}ms")
         _pt1 = time.time()
+        _pt1 = time.time()
         # Watchdog: ensure active tasks always have a pending schedule
         try:
             self._ensure_tasks_scheduled()

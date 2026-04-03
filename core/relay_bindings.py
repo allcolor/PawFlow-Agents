@@ -84,12 +84,12 @@ def list_available_relays() -> List[Dict[str, Any]]:
         greg = GlobalServiceRegistry.get_instance()
         relays = []
         for sid, sdef in greg.get_all_definitions().items():
-            if getattr(sdef, "service_type", "") == "filesystem":
+            if getattr(sdef, "service_type", "") in ("filesystem", "relay"):
                 svc = greg.get_live_instance(sid)
                 connected = svc is not None and getattr(svc, '_relay_connected', False)
                 _ri = getattr(svc, '_relay_info', {}) or {} if svc else {}
                 relays.append({
-                    "id": sid,
+                    "relay_id": sid,
                     "connected": connected,
                     "user_id": getattr(sdef, "user_id", ""),
                     "root": _ri.get("root", ""),

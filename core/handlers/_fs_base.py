@@ -177,6 +177,8 @@ class BaseFsHandler(ToolHandler):
         """Find a filesystem service by name or auto-detect.
 
         Search order: injected _fs_service → find_fs_service (registries).
+        If _available_services is set (from relay bindings), only allow
+        services in that list — reject unlinked relays.
         """
         if self._fs_service:
             if not service_name or service_name == getattr(
@@ -185,6 +187,12 @@ class BaseFsHandler(ToolHandler):
 
         if service_name and service_name.lower() in ("workspace", "ws", "local"):
             return self._find_service("")
+
+        # Check against linked relays if available
+        if service_name and self._available_services:
+            allowed_ids = {s.get("id", "") for s in self._available_services}
+            if service_name not in allowed_ids:
+                return None  # relay not linked to this conversation
 
         return find_fs_service(self._user_id, service_name)
 

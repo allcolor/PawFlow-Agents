@@ -431,19 +431,21 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         relays = list_available_relays()
         if not relays:
             flowfile.set_content(json.dumps({
+                "relays": [],
                 "message": "No relay services found.",
             }).encode())
         else:
             lines = []
             for r in relays:
-                status = "✅" if r.get("connected") else "❌"
-                line = f"- `{r['id']}` {status}"
+                status = "\u2705" if r.get("connected") else "\u274c"
+                line = f"- `{r['relay_id']}` {status}"
                 if r.get('root'):
                     line += f"\n  docker: `{r['root']}`"
                 if r.get('host_root'):
                     line += f"\n  local: `{r['host_root']}`"
                 lines.append(line)
             flowfile.set_content(json.dumps({
+                "relays": relays,
                 "message": "## Available Relays\n" + "\n".join(lines),
             }).encode())
         return [flowfile]

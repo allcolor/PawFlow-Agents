@@ -75,8 +75,6 @@ class ServeFileTask(BaseTask):
             f'attachment; filename="{filename}"'
         )
         flowfile.set_attribute("http.response.header.Content-Length", str(len(content)))
-        # Allow loading under COEP: require-corp (needed for SharedArrayBuffer)
-        flowfile.set_attribute("http.response.header.Cross-Origin-Resource-Policy", "same-origin")
 
         logger.info(f"serveFile: serving '{filename}' ({len(content)} bytes)")
         return [flowfile]

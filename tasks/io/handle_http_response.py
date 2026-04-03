@@ -86,9 +86,6 @@ class HandleHTTPResponseTask(BaseTask):
         # Set Content-Type from config default
         if "Content-Type" not in headers:
             headers["Content-Type"] = self.config.get("content_type", "application/json")
-        # Default CORP for SharedArrayBuffer compatibility (COEP: require-corp)
-        if "Cross-Origin-Resource-Policy" not in headers:
-            headers["Cross-Origin-Resource-Policy"] = "same-origin"
         # Override with per-FlowFile header attributes
         for attr_key, attr_val in flowfile.get_attributes().items():
             if attr_key.startswith("http.response.header."):

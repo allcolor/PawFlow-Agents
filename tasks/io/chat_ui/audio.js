@@ -23,7 +23,7 @@ var _pcmFlushTimer = null;   // timer to flush partial batches
 var _preBuffer = [];          // array of Float32Array chunks
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 2400; // 50ms at 48kHz — minimal pre-buffer for low latency
+var _PRE_BUFFER_TARGET = 1440; // 30ms at 48kHz — minimal pre-buffer for tight A/V sync
 
 // Diagnostic stats
 var _audioStats = {
@@ -80,25 +80,23 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
     // Clock drift compensation via smooth resampling.
-    // Target fill: ~60ms (2880 samples) for low A/V latency.
+    // Target fill: ~40ms (1920 samples) for tight A/V sync.
     // Fractional step + linear interpolation = inaudible speed adjustment.
+    // NEVER slow down more than 0.5% — slowdowns are audible on music.
     let step = 1.0;
     if (available > 96000) {
-      // Extreme (>2s): hard skip to 60ms
-      this.rPos = this.wPos - 2880;
+      // Extreme (>2s): hard skip to 40ms
+      this.rPos = this.wPos - 1920;
       step = 1.0;
-    } else if (available > 7200) {
-      // >150ms: speed up ~4% to catch up fast
-      step = 1.04;
     } else if (available > 4800) {
-      // >100ms: speed up ~2%
+      // >100ms: speed up ~4%
+      step = 1.04;
+    } else if (available > 3360) {
+      // >70ms: speed up ~2%
       step = 1.02;
-    } else if (available < 960) {
-      // <20ms: slow down ~3% to avoid underrun
-      step = 0.97;
-    } else if (available < 1920) {
-      // <40ms: slow down ~1.5%
-      step = 0.985;
+    } else if (available < 480) {
+      // <10ms: gentle slow down ~0.5% (never more — audible on music)
+      step = 0.995;
     }
     if (available < out.length) {
       this.underruns++;

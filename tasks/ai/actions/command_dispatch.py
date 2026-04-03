@@ -1075,11 +1075,14 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         if sub == "list":
             return {"action": "relay_list_available", **base}
         if sub == "local":
-            # /relay local true|false [@agent]
+            # /relay local <relay_id> true|false [@agent]
             parts = rest.split()
-            val = parts[0].lower() in ("true", "1", "on", "yes") if parts else False
-            agent = parts[1].lstrip("@") if len(parts) > 1 else ""
-            return {"action": "relay_set_local", "local": val, "agent": agent, **base}
+            if len(parts) < 2:
+                return {"action": "relay_set_local", "error": "Usage: /relay local <relay_id> true|false [@agent]", **base}
+            rid = parts[0]
+            val = parts[1].lower() in ("true", "1", "on", "yes")
+            agent = parts[2].lstrip("@") if len(parts) > 2 else ""
+            return {"action": "relay_set_local", "relay_id": rid, "local": val, "agent": agent, **base}
         # Default: show linked relays
         return {"action": "relay_status", **base}
 

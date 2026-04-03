@@ -262,10 +262,10 @@ class AgentToolConfigMixin:
                 if fs_services:
                     h.set_available_services(fs_services)
                 # Set default_local for tool argument injection
-                if conversation_id:
+                if conversation_id and _default_relay:
                     try:
                         from core.relay_bindings import get_default_local
-                        _dl = get_default_local(conversation_id, agent=_agent_name)
+                        _dl = get_default_local(conversation_id, relay_id=_default_relay, agent=_agent_name)
                         if _dl is not None:
                             h._default_local = _dl
                     except Exception:

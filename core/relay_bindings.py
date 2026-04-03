@@ -156,31 +156,41 @@ def set_default_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     return True
 
 
-def get_default_local(cid: str, agent: str = "") -> Optional[bool]:
-    """Get the default local mode for a scope.
+def get_default_local(cid: str, relay_id: str = "", agent: str = "") -> Optional[bool]:
+    """Get the default local mode for a relay + scope.
 
-    Returns True (local), False (docker), or None (ask user).
-    Resolution: agent-specific → conv-wide → None.
+    Resolution: relay+agent → relay+conv → None.
+    Returns True (local), False (docker), or None (not set).
     """
     b = get_bindings(cid)
     dl = b.get("default_local", {})
+    # If relay_id specified, look up that relay's settings
+    rid = relay_id or get_default(cid, agent) or ""
+    if not rid:
+        return None
+    relay_dl = dl.get(rid, {})
+    if not isinstance(relay_dl, dict):
+        return None
     scope = agent if agent else _CONV
-    if scope and scope != _CONV and scope in dl:
-        return dl[scope]
-    if _CONV in dl:
-        return dl[_CONV]
+    if scope and scope != _CONV and scope in relay_dl:
+        return relay_dl[scope]
+    if _CONV in relay_dl:
+        return relay_dl[_CONV]
     return None
 
 
-def set_default_local(cid: str, local: bool, agent: str = "") -> bool:
-    """Set the default local mode for a scope."""
+def set_default_local(cid: str, relay_id: str, local: bool, agent: str = "") -> bool:
+    """Set the default local mode for a specific relay + scope."""
+    if not relay_id:
+        return False
     scope = agent if agent else _CONV
     b = get_bindings(cid)
     dl = b.setdefault("default_local", {})
-    dl[scope] = local
+    relay_dl = dl.setdefault(relay_id, {})
+    relay_dl[scope] = local
     _get_store().set_extra(cid, _EXTRA_KEY, b)
     scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
-    logger.info("Default local=%s set for %s in %s", local, scope_label, cid[:8])
+    logger.info("Relay '%s' default local=%s for %s in %s", relay_id, local, scope_label, cid[:8])
     return True
 
 

@@ -142,6 +142,7 @@ function _showRelayLinkDialog() {
 function _showRelayInfoDialog(relayId, details) {
   if (typeof details === 'string') try { details = JSON.parse(details); } catch(e) { details = {}; }
   var d = details || {};
+  var dl = d._default_local || {};
   var rows = [
     ['Relay ID', relayId],
     ['Connected', d.connected ? '\u{1F7E2} Yes' : '\u{1F534} No'],
@@ -151,18 +152,72 @@ function _showRelayInfoDialog(relayId, details) {
     ['Containerized', d.containerized ? 'Yes' : 'No'],
     ['Allow local', d.allow_local ? '\u2705 Yes' : '\u274c No'],
   ];
-  var html = rows.map(function(r) {
+  var infoHtml = '<table style="margin:8px 0;">' + rows.map(function(r) {
     return '<tr><td style="color:#888;padding:3px 12px 3px 0;font-size:12px;white-space:nowrap;">' + escapeHtml(r[0]) + '</td>'
       + '<td style="font-size:12px;">' + r[1] + '</td></tr>';
-  }).join('');
+  }).join('') + '</table>';
+
+  // Default local toggles (only if allow_local)
+  var localHtml = '';
+  if (d.allow_local) {
+    var convLocal = dl['*'];
+    var convLabel = convLocal === true ? 'Local' : convLocal === false ? 'Docker' : 'Not set';
+    var convColor = convLocal === true ? '#4ecdc4' : convLocal === false ? '#e94560' : '#555';
+    localHtml += '<div style="margin-top:8px;font-size:12px;font-weight:600;color:#6c5ce7;">Default execution mode</div>';
+    localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:6px 0;font-size:12px;">'
+      + '<span style="color:#888;min-width:80px;">Conversation:</span>'
+      + '<span style="color:' + convColor + ';">' + convLabel + '</span>'
+      + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#4ecdc4;cursor:pointer;" '
+      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'\')">Local</button>'
+      + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#e94560;cursor:pointer;" '
+      + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'\')">Docker</button>'
+      + '</div>';
+    // Per-agent toggles (from conversation agents)
+    try {
+      var agentEls = document.querySelectorAll('#_ncAgentsSel [data-id], .res-agent-name');
+      // Simpler: get agents from resource panel
+      var rpAgents = [];
+      document.querySelectorAll('[data-agent-name]').forEach(function(el) { rpAgents.push(el.dataset.agentName); });
+      if (!rpAgents.length) {
+        // Fallback: get from active_resources in cached data
+        var cachedAgents = window._lastResourceData && window._lastResourceData.agents;
+        if (cachedAgents) rpAgents = cachedAgents.filter(function(a) { return a.active; }).map(function(a) { return a.name; });
+      }
+      rpAgents.forEach(function(agentName) {
+        var aLocal = dl[agentName];
+        var aLabel = aLocal === true ? 'Local' : aLocal === false ? 'Docker' : 'Not set';
+        var aColor = aLocal === true ? '#4ecdc4' : aLocal === false ? '#e94560' : '#555';
+        localHtml += '<div style="display:flex;align-items:center;gap:8px;margin:3px 0;font-size:12px;">'
+          + '<span style="color:#888;min-width:80px;">@' + escapeHtml(agentName) + ':</span>'
+          + '<span style="color:' + aColor + ';">' + aLabel + '</span>'
+          + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#4ecdc4;cursor:pointer;" '
+          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',true,\'' + escapeHtml(agentName) + '\')">Local</button>'
+          + '<button style="font-size:10px;padding:2px 6px;border:1px solid #444;border-radius:3px;background:#1a1a2e;color:#e94560;cursor:pointer;" '
+          + 'onclick="_setRelayLocal(\'' + escapeHtml(relayId) + '\',false,\'' + escapeHtml(agentName) + '\')">Docker</button>'
+          + '</div>';
+      });
+    } catch(e) {}
+  }
+
   var overlay = document.createElement('div');
   overlay.className = 'exec-overlay';
-  overlay.innerHTML = '<div class="exec-dialog" style="min-width:300px;">'
+  overlay.innerHTML = '<div class="exec-dialog" style="min-width:340px;">'
     + '<h3>Relay: ' + escapeHtml(relayId) + '</h3>'
-    + '<table style="margin:8px 0;">' + html + '</table>'
+    + infoHtml + localHtml
     + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Close</button></div>'
     + '</div>';
   document.body.appendChild(overlay);
+}
+
+function _setRelayLocal(relayId, local, agent) {
+  action$('relay_set_local', {relay_id: relayId, local: local, agent: agent}).subscribe(function(data) {
+    if (data.error) { addMsg('error', data.error); return; }
+    addMsg('system', data.message || 'OK');
+    // Close dialog and refresh
+    var ov = document.querySelector('.exec-overlay');
+    if (ov) ov.remove();
+    setTimeout(loadResources, 300);
+  });
 }
 
 function _doRelayLink(btn) {
@@ -378,7 +433,9 @@ async function _renderResourcesData(data) {
           var pathInfo = '';
           if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
           if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
-          var _detJson = escapeHtml(JSON.stringify(det).replace(/'/g, "\\'"));
+          var _rbDefaultLocal = (_rb.default_local || {})[rid] || {};
+          var _detWithLocal = Object.assign({}, det, {_default_local: _rbDefaultLocal});
+          var _detJson = escapeHtml(JSON.stringify(_detWithLocal).replace(/'/g, "\\'"));
           html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(\'' + escapeHtml(rid) + '\',' + _detJson + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'

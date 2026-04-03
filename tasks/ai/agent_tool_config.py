@@ -228,15 +228,19 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
-                # Try conversation-scoped relay bindings first
+                # Try conversation-scoped relay bindings first (per-agent)
+                _agent_name = ctx.get("active_agent_name", "") if ctx else ""
                 _relay_svc = None
                 if conversation_id:
                     try:
                         from core.relay_bindings import get_default
-                        _default_relay = get_default(conversation_id)
+                        _default_relay = get_default(conversation_id, agent=_agent_name)
                         if _default_relay:
                             from gui.services.global_service_registry import GlobalServiceRegistry
                             _relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_default_relay)
+                            if not _relay_svc:
+                                from gui.services.user_service_registry import UserServiceRegistry
+                                _relay_svc = UserServiceRegistry.get_instance().get_live_instance(user_id, _default_relay)
                     except Exception:
                         pass
                 fs_svc = _relay_svc or self._find_filesystem_service(user_id)
@@ -244,12 +248,12 @@ class AgentToolConfigMixin:
                     if hasattr(fs_svc, 'set_user_id') and user_id:
                         fs_svc.set_user_id(user_id)
                     h.set_fs_service(fs_svc)
-                # Build available services from relay bindings + fallback
+                # Build available services from relay bindings (per-agent scope)
                 fs_services = []
                 if conversation_id:
                     try:
                         from core.relay_bindings import get_linked
-                        for _rid in get_linked(conversation_id):
+                        for _rid in get_linked(conversation_id, agent=_agent_name):
                             fs_services.append({"id": _rid, "type": "relay", "root": "?"})
                     except Exception:
                         pass

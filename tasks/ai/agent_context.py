@@ -783,18 +783,30 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             system_prompt += " 3) AGGRESSIVE: retry failures 3x, try alternatives, continue on minor issues."
 
         # Inject filesystem project context from conversation-linked relays
+        _current_agent = target_agent or "assistant"
         if conversation_id:
             try:
-                from core.relay_bindings import get_bindings
-                _rb = get_bindings(conversation_id)
-                _linked = _rb.get("linked", [])
-                _default = _rb.get("default")
+                from core.relay_bindings import get_linked, get_default
+                _linked = get_linked(conversation_id, agent=_current_agent)
+                _agent_default = get_default(conversation_id, agent=_current_agent)
                 if _linked:
                     from gui.services.global_service_registry import GlobalServiceRegistry
                     greg = GlobalServiceRegistry.get_instance()
+                    # Also check user registry for service resolution
+                    _ureg = None
+                    try:
+                        from gui.services.user_service_registry import UserServiceRegistry
+                        _ureg = UserServiceRegistry.get_instance()
+                    except Exception:
+                        pass
+                    def _get_svc(sid):
+                        s = greg.get_live_instance(sid)
+                        if not s and _ureg and user_id:
+                            s = _ureg.get_live_instance(user_id, sid)
+                        return s
                     # Inject project prompts from linked relays
                     for _sid in _linked:
-                        _svc = greg.get_live_instance(_sid)
+                        _svc = _get_svc(_sid)
                         if _svc and hasattr(_svc, "get_project_prompt"):
                             _fs_prompt = _svc.get_project_prompt()
                             if _fs_prompt:
@@ -802,8 +814,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     # Inject relay list into system prompt
                     _relay_lines = []
                     for _sid in _linked:
-                        _tag = " (default)" if _sid == _default else ""
-                        _svc = greg.get_live_instance(_sid)
+                        _tag = " (default)" if _sid == _agent_default else ""
+                        _svc = _get_svc(_sid)
                         _connected = _svc is not None and getattr(_svc, '_relay_connected', False)
                         _status = "connected" if _connected else "disconnected"
                         _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}

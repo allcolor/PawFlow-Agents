@@ -308,23 +308,49 @@ async function _renderResourcesData(data) {
         + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
         + '<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
         + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
-      var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:[], default:null};
-      if (_rb.linked.length) {
-        var _rbDetails = (_rb.details || (data.relay_bindings && data.relay_bindings.details)) || {};
-        _rb.linked.forEach(function(rid) {
-          var isDefault = rid === _rb.default;
-          var star = isDefault ? ' \u2605' : '';
-          var color = isDefault ? '#4ecdc4' : '#8888aa';
-          var icon = isDefault ? '\u25C9' : '\u25CB';
-          var titleText = isDefault ? 'Default relay' : 'Set as default';
-          var clickDefault = isDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
+      var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:{}, default:{}};
+      var _rbLinked = _rb.linked || {};
+      var _rbDefaults = _rb.default || {};
+      var _rbDetails = _rb.details || {};
+      // Collect all unique relay IDs and which scopes they belong to
+      var _allRelays = {};  // relay_id → [scope1, scope2, ...]
+      Object.keys(_rbLinked).forEach(function(scope) {
+        (_rbLinked[scope] || []).forEach(function(rid) {
+          if (!_allRelays[rid]) _allRelays[rid] = [];
+          _allRelays[rid].push(scope);
+        });
+      });
+      var _relayIds = Object.keys(_allRelays);
+      if (_relayIds.length) {
+        _relayIds.forEach(function(rid) {
+          var scopes = _allRelays[rid];
+          var isConvDefault = _rbDefaults['*'] === rid;
+          var agentDefaults = [];
+          Object.keys(_rbDefaults).forEach(function(scope) {
+            if (scope !== '*' && _rbDefaults[scope] === rid) agentDefaults.push(scope);
+          });
+          var star = isConvDefault ? ' \u2605' : '';
+          var agentTags = '';
+          scopes.forEach(function(s) {
+            if (s !== '*') agentTags += ' <span style="font-size:9px;color:#6c5ce7;background:#1a1a3e;padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
+          });
+          agentDefaults.forEach(function(a) {
+            agentTags += ' <span style="font-size:9px;color:#4ecdc4;" title="Default for ' + escapeHtml(a) + '">\u2605' + escapeHtml(a) + '</span>';
+          });
+          var color = isConvDefault ? '#4ecdc4' : '#8888aa';
+          var icon = isConvDefault ? '\u25C9' : '\u25CB';
+          var titleText = isConvDefault ? 'Default relay' : 'Set as default';
+          var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
           var det = _rbDetails[rid] || {};
+          var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
           var pathInfo = '';
           if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
           if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
           html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
+            + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
+            + agentTags
             + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"'
             + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
             + '</div>' + pathInfo;

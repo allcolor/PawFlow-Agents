@@ -453,53 +453,59 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
     if action == "relay_link":
         conv_id = body.get("conversation_id", "")
         relay_id = body.get("relay_id", "").strip()
+        agent = body.get("agent", "").strip()
         if not conv_id or not relay_id:
-            flowfile.set_content(json.dumps({"error": "Usage: /relay link <relay_id>"}).encode())
+            flowfile.set_content(json.dumps({"error": "Usage: /relay link <relay_id> [agent]"}).encode())
             return [flowfile]
         from core.relay_bindings import link_relay
-        added = link_relay(conv_id, relay_id)
+        added = link_relay(conv_id, relay_id, agent=agent)
+        scope = f"agent `{agent}`" if agent else "conversation"
         if added:
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": f"Relay `{relay_id}` linked to this conversation.",
+                "message": f"Relay `{relay_id}` linked to {scope}.",
             }).encode())
         else:
             flowfile.set_content(json.dumps({
-                "message": f"Relay `{relay_id}` is already linked.",
+                "message": f"Relay `{relay_id}` is already linked to {scope}.",
             }).encode())
         return [flowfile]
 
     if action == "relay_unlink":
         conv_id = body.get("conversation_id", "")
         relay_id = body.get("relay_id", "").strip()
+        agent = body.get("agent", "").strip()
         if not conv_id or not relay_id:
-            flowfile.set_content(json.dumps({"error": "Usage: /relay unlink <relay_id>"}).encode())
+            flowfile.set_content(json.dumps({"error": "Usage: /relay unlink <relay_id> [agent]"}).encode())
             return [flowfile]
         from core.relay_bindings import unlink_relay
-        removed = unlink_relay(conv_id, relay_id)
+        removed = unlink_relay(conv_id, relay_id, agent=agent)
+        scope = f"agent `{agent}`" if agent else "conversation"
         if removed:
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": f"Relay `{relay_id}` unlinked from this conversation.",
+                "message": f"Relay `{relay_id}` unlinked from {scope}.",
             }).encode())
         else:
             flowfile.set_content(json.dumps({
-                "message": f"Relay `{relay_id}` was not linked.",
+                "message": f"Relay `{relay_id}` was not linked to {scope}.",
             }).encode())
         return [flowfile]
 
     if action == "relay_default":
         conv_id = body.get("conversation_id", "")
         relay_id = body.get("relay_id", "").strip()
+        agent = body.get("agent", "").strip()
         if not conv_id or not relay_id:
-            flowfile.set_content(json.dumps({"error": "Usage: /relay default <relay_id>"}).encode())
+            flowfile.set_content(json.dumps({"error": "Usage: /relay default <relay_id> [agent]"}).encode())
             return [flowfile]
         from core.relay_bindings import set_default_relay
-        ok = set_default_relay(conv_id, relay_id)
+        ok = set_default_relay(conv_id, relay_id, agent=agent)
+        scope = f"agent `{agent}`" if agent else "conversation"
         if ok:
             flowfile.set_content(json.dumps({
                 "ok": True,
-                "message": f"Default relay set to `{relay_id}`.",
+                "message": f"Default relay for {scope} set to `{relay_id}`.",
             }).encode())
         else:
             flowfile.set_content(json.dumps({

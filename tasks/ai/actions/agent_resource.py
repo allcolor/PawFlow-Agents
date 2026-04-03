@@ -515,36 +515,47 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["services"] = svcs
         except Exception:
             result["services"] = []
-        # Relay bindings for this conversation
+        # Relay bindings for this conversation (new per-agent format)
         if conv_id:
             try:
                 from core.relay_bindings import get_bindings
                 _rb = get_bindings(conv_id)
-                _linked_ids = _rb.get("linked", [])
+                # Collect all unique relay IDs across all scopes
+                _all_ids = set()
+                for scope_list in (_rb.get("linked") or {}).values():
+                    _all_ids.update(scope_list)
                 _relay_details = {}
                 try:
                     from gui.services.global_service_registry import GlobalServiceRegistry
                     _greg2 = GlobalServiceRegistry.get_instance()
-                    for _rid in _linked_ids:
+                    _ureg2 = None
+                    try:
+                        from gui.services.user_service_registry import UserServiceRegistry
+                        _ureg2 = UserServiceRegistry.get_instance()
+                    except Exception:
+                        pass
+                    for _rid in _all_ids:
                         _rsvc = _greg2.get_live_instance(_rid)
+                        if not _rsvc and _ureg2 and user_id:
+                            _rsvc = _ureg2.get_live_instance(user_id, _rid)
                         _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
-                        if _ri2:
-                            _relay_details[_rid] = {
-                                "root": _ri2.get("root", ""),
-                                "host_root": _ri2.get("host_root", ""),
-                                "platform": _ri2.get("platform", ""),
-                                "containerized": _ri2.get("containerized", False),
-                                "allow_local": _ri2.get("allow_local", False),
-                            }
+                        _relay_details[_rid] = {
+                            "root": _ri2.get("root", ""),
+                            "host_root": _ri2.get("host_root", ""),
+                            "platform": _ri2.get("platform", ""),
+                            "containerized": _ri2.get("containerized", False),
+                            "allow_local": _ri2.get("allow_local", False),
+                            "connected": _rsvc is not None and getattr(_rsvc, '_relay_connected', False),
+                        }
                 except Exception:
                     pass
                 result["relay_bindings"] = {
-                    "linked": _linked_ids,
-                    "default": _rb.get("default"),
+                    "linked": _rb.get("linked", {}),
+                    "default": _rb.get("default", {}),
                     "details": _relay_details,
                 }
             except Exception:
-                result["relay_bindings"] = {"linked": [], "default": None}
+                result["relay_bindings"] = {"linked": {}, "default": {}}
         # Deployed flows (global=readonly, user+conv visible)
         try:
             from gui.services.deployment_registry import DeploymentRegistry

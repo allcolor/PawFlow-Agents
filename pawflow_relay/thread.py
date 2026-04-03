@@ -217,7 +217,7 @@ class RelayThread:
                 "--allow-exec",
                 "--allow-automation",
                 "--allow-local-screen",
-            ]
+            ] + (["--allow-local"] if self.allow_local else [])
             _start_time = time.time()
             try:
                 self._docker_proc = _sp.Popen(

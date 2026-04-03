@@ -57,13 +57,15 @@ class PawCode:
 
     def __init__(self, server_url: str, directory: str,
                  docker_image: str = "", gateway_cookie: str = "",
-                 docker_cpus: str = "", docker_memory: str = ""):
+                 docker_cpus: str = "", docker_memory: str = "",
+                 allow_local: bool = False):
         self.server_url = server_url
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
         self.docker_cpus = docker_cpus
         self.docker_memory = docker_memory
+        self.allow_local = allow_local
 
         self.renderer = TerminalRenderer()
         self.api: AgentAPIClient = None
@@ -84,6 +86,14 @@ class PawCode:
         self._approval_queue = queue.Queue()  # background → main thread approval requests
         self._approval_response = queue.Queue()  # main thread → background approval responses
         self._active_agents = {}  # server-polled active agents (single source of truth for typing)
+
+    def _on_relay_token_refresh(self, new_token):
+        """Called when the server sends a refreshed session token via relay."""
+        self.session_token = new_token
+        from pawflow_cli.config import save_session
+        save_session(new_token, self.username, self.server_url,
+                     __import__('time').time() + 8 * 3600)
+        sys.stderr.write("[PawCode] Session token refreshed\n")
 
     def start(self):
         """Initialize auth, relay, and start the main loop."""
@@ -787,6 +797,8 @@ class PawCode:
             self.directory,
             docker_image=self.docker_image,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
+            allow_local=self.allow_local,
+            on_token_refresh=self._on_relay_token_refresh,
         )
         self.relay.start()
 
@@ -906,6 +918,8 @@ class PawCode:
             docker_image=self.docker_image,
             gateway_cookie=self.gateway_cookie,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
+            allow_local=self.allow_local,
+            on_token_refresh=self._on_relay_token_refresh,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""
@@ -937,6 +951,8 @@ def main():
                         help="CPU limit for Docker relay (default: 2, env: PAWFLOW_RELAY_CPUS)")
     parser.add_argument("--docker-memory", default="",
                         help="Memory limit for Docker relay (default: 4g, env: PAWFLOW_RELAY_MEMORY)")
+    parser.add_argument("--allow-local", action="store_true", default=False,
+                        help="Allow tools to execute on the host machine (not just Docker)")
     parser.add_argument("--login", action="store_true",
                         help="Force re-authentication")
     parser.add_argument("-p", "--prompt", nargs="?", const="-", default=None,
@@ -989,6 +1005,7 @@ def main():
         gateway_cookie=gateway_cookie,
         docker_cpus=args.docker_cpus,
         docker_memory=args.docker_memory,
+        allow_local=args.allow_local,
     )
 
     if args.login:

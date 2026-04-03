@@ -506,3 +506,49 @@ function cmdUsageDeprecated() {
   addMsg('system', '/usage is deprecated. Use /cost <agent|ALL> instead.');
   return true;
 }
+
+function cmdRelay(text, parts) {
+  var sub = (parts[1] || '').toLowerCase();
+  if (!sub || sub === 'status') {
+    action$('relay_status').subscribe(function(data) {
+      if (data.error) { addMsg('error', data.error); return; }
+      addMsg('system', data.message || JSON.stringify(data, null, 2));
+    });
+  } else if (sub === 'list') {
+    action$('relay_list_available').subscribe(function(data) {
+      if (data.error) { addMsg('error', data.error); return; }
+      var relays = data.relays || [];
+      if (!relays.length) { addMsg('system', 'No relays available.'); return; }
+      var lines = ['**Available relays:**'];
+      relays.forEach(function(r) {
+        var info = r.relay_id;
+        if (r.host_root) info += ' — local: ' + r.host_root;
+        if (r.root) info += ' — docker: ' + r.root;
+        if (r.allow_local) info += ' (allow_local)';
+        lines.push('  ' + info);
+      });
+      addMsg('system', lines.join('\n'));
+    });
+  } else if (sub === 'link') {
+    var rid = parts[2];
+    if (!rid) { _showRelayLinkDialog(); return true; }
+    fireAction('relay_link', {relay_id: rid});
+    setTimeout(loadResources, 500);
+    addMsg('system', 'Linking relay ' + rid + '...');
+  } else if (sub === 'unlink') {
+    var rid2 = parts[2];
+    if (!rid2) { addMsg('error', 'Usage: /relay unlink <relay_id>'); return true; }
+    fireAction('relay_unlink', {relay_id: rid2});
+    setTimeout(loadResources, 500);
+    addMsg('system', 'Unlinking relay ' + rid2 + '...');
+  } else if (sub === 'default') {
+    var rid3 = parts[2];
+    if (!rid3) { addMsg('error', 'Usage: /relay default <relay_id>'); return true; }
+    fireAction('relay_default', {relay_id: rid3});
+    setTimeout(loadResources, 500);
+    addMsg('system', 'Setting default relay to ' + rid3 + '...');
+  } else {
+    addMsg('error', 'Unknown /relay subcommand: ' + sub + '. Use: status, list, link, unlink, default');
+  }
+  return true;
+}

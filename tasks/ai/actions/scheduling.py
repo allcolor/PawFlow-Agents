@@ -118,7 +118,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 prompt=sched_reason,
                 user_id=user_id,
             )
-            store.set_status(conv_id, "active")
             flowfile.set_content(json.dumps({
                 "scheduled": True, "recurring": True,
                 "interval": int(loop_seconds), "key": loop_key,
@@ -126,7 +125,6 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             }).encode())
         else:
             scheduler.schedule(conv_id, recheck_at, user_id, sched_reason)
-            store.set_status(conv_id, "active")
             flowfile.set_content(json.dumps({"scheduled": True, "at": recheck_at}).encode())
         return [flowfile]
 

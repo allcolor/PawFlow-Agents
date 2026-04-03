@@ -114,29 +114,10 @@ class TestConversationStore(unittest.TestCase):
         meta = store.get_metadata("c1")
         assert meta["status"] == "idle"
 
-    def test_set_status(self):
-        store = ConversationStore.instance()
-        store.save("c1", [{"role": "user", "content": "hi"}])
-        assert store.set_status("c1", "active") is True
-        meta = store.get_metadata("c1")
-        assert meta["status"] == "active"
-
-    def test_set_status_invalid(self):
-        store = ConversationStore.instance()
-        store.save("c1", [])
-        assert store.set_status("c1", "bogus") is False
-
-    def test_set_status_user_check(self):
-        store = ConversationStore.instance()
-        store.save("c1", [], user_id="alice")
-        assert store.set_status("c1", "active", user_id="bob") is False
-        assert store.set_status("c1", "active", user_id="alice") is True
-
     def test_get_metadata(self):
         store = ConversationStore.instance()
         store.save("c1", [{"role": "user", "content": "hi"}],
                    user_id="alice")
-        store.set_status("c1", "active")
         meta = store.get_metadata("c1")
         assert meta is not None
         assert meta["user_id"] == "alice"

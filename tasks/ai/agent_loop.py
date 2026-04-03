@@ -594,7 +594,6 @@ class AgentLoopTask(
 
         # Reset status
         from core.conversation_store import ConversationStore
-        ConversationStore.instance().set_status(conversation_id, "idle")
         # _active_contexts cleanup happens in _run_agent_loop finally
         logger.info(f"[agent:{conversation_id[:8]}] cancelled by user"
                     f"{f' (agent: {agent_name})' if _is_named else ' (all)'}")
@@ -637,7 +636,6 @@ class AgentLoopTask(
                 _cc_client.cancel_claude_code(force=True)
             # Force cleanup
             from core.conversation_store import ConversationStore as _CS_int
-            _CS_int.instance().set_status(conversation_id, "idle")
             from core.conversation_event_bus import ConversationEventBus as _CEB_int
             _CEB_int.instance().publish_event(
                 conversation_id, "done", {
@@ -696,7 +694,6 @@ class AgentLoopTask(
                         "interrupted": True,
                     })
                 from core.conversation_store import ConversationStore
-                ConversationStore.instance().set_status(conversation_id, "idle")
                 return
 
         # Double-check: if the agent's provider is claude-code, skip synthesis
@@ -720,7 +717,6 @@ class AgentLoopTask(
                             "agent_name": agent_name or "",
                             "interrupted": True,
                         })
-                    _CS_chk.instance().set_status(conversation_id, "idle")
                     return
         except Exception:
             pass
@@ -864,7 +860,6 @@ class AgentLoopTask(
                     "source": {"type": "agent", "name": agent_name or ""},
                     "interrupted": True,
                 })
-                store.set_status(conversation_id, "idle")
                 self._track_tokens(
                     user_id or "anonymous", resp.tokens_in, resp.tokens_out,
                     model=resp.model, agent_name=agent_name or "")
@@ -876,10 +871,6 @@ class AgentLoopTask(
                     "all_msg_ids": [_synth_msg_id],
                     "agent_name": agent_name or "",
                 })
-                try:
-                    ConversationStore.instance().set_status(conversation_id, "idle")
-                except Exception:
-                    pass
             finally:
                 with self._active_contexts_lock:
                     self._active_contexts.pop(_synth_ctx_key, None)

@@ -515,12 +515,65 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             result["services"] = svcs
         except Exception:
             result["services"] = []
+        # Relay bindings for this conversation (new per-agent format)
+        if conv_id:
+            try:
+                from core.relay_bindings import get_bindings
+                _rb = get_bindings(conv_id)
+                # Collect all unique relay IDs across all scopes
+                _all_ids = set()
+                for scope_list in (_rb.get("linked") or {}).values():
+                    _all_ids.update(scope_list)
+                _relay_details = {}
+                try:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    _greg2 = GlobalServiceRegistry.get_instance()
+                    _ureg2 = None
+                    try:
+                        from gui.services.user_service_registry import UserServiceRegistry
+                        _ureg2 = UserServiceRegistry.get_instance()
+                    except Exception:
+                        pass
+                    for _rid in _all_ids:
+                        _rsvc = None
+                        _connected = False
+                        # Same logic as service list: use registry.is_connected
+                        try:
+                            _connected = _greg2.is_connected(_rid)
+                            _rsvc = _greg2.get_live_instance(_rid)
+                        except Exception:
+                            pass
+                        if not _rsvc and _ureg2 and user_id:
+                            try:
+                                _connected = _ureg2.is_connected(user_id, _rid)
+                                _rsvc = _ureg2.get_live_instance(user_id, _rid)
+                            except Exception:
+                                pass
+                        _ri2 = getattr(_rsvc, '_relay_info', {}) or {} if _rsvc else {}
+                        _relay_details[_rid] = {
+                            "root": _ri2.get("root", ""),
+                            "host_root": _ri2.get("host_root", ""),
+                            "platform": _ri2.get("platform", ""),
+                            "containerized": _ri2.get("containerized", False),
+                            "allow_local": _ri2.get("allow_local", False),
+                            "connected": _connected,
+                        }
+                except Exception:
+                    pass
+                result["relay_bindings"] = {
+                    "linked": _rb.get("linked", {}),
+                    "default": _rb.get("default", {}),
+                    "details": _relay_details,
+                }
+            except Exception:
+                result["relay_bindings"] = {"linked": {}, "default": {}}
         # Deployed flows (global=readonly, user+conv visible)
         try:
             from gui.services.deployment_registry import DeploymentRegistry
             flows = []
             dr = DeploymentRegistry.get_instance()
-            dr.sync_with_executors()
+            # sync_with_executors removed from request path — too expensive.
+            # DeploymentRegistry syncs on its own schedule.
             uid = user_id or "anonymous"
             _is_admin = (flowfile.get_attribute("http.auth.roles") or "") == "admin"
             for iid, inst in dr.get_all().items():
@@ -894,6 +947,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         store.save(new_id, [], user_id=uid)
         active_res = {"agents": valid_agents, "agent": valid_agents[0]}
         store.set_extra(new_id, "active_resources", active_res)
+        # Title
+        title = body.get("title", "")
+        if title:
+            store.set_extra(new_id, "title", title)
+        # Relay bindings
+        relay_ids = body.get("relays", [])
+        default_relay = body.get("default_relay", "")
+        if relay_ids:
+            from core.relay_bindings import link_relay, set_default_relay
+            for rid in relay_ids:
+                link_relay(new_id, rid)
+            if default_relay and default_relay in relay_ids:
+                set_default_relay(new_id, default_relay)
         flowfile.set_content(json.dumps({
             "conversation_id": new_id,
             "agents": valid_agents,

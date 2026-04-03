@@ -25,7 +25,6 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DIR = "data/conversations"
-CONV_STATUSES = ("idle", "active", "complete", "blocked")
 
 
 class ConversationStore:
@@ -803,12 +802,6 @@ class ConversationStore:
         return {"user_id": c.get("user_id", ""), "status": c.get("status", "idle"),
                 "created_at": c.get("created_at", 0), "updated_at": c.get("updated_at", 0),
                 "expires_at": c.get("expires_at", 0), "message_count": c.get("msg_count", 0)}
-
-    def set_status(self, cid: str, status: str, user_id: str = "") -> bool:
-        if status not in CONV_STATUSES or not self.exists(cid):
-            return False
-        self._commit(cid, [{"op": "status", "status": status}])
-        return True
 
     # ── Extras ────────────────────────────────────────────────────────
 

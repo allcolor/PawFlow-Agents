@@ -153,6 +153,19 @@ function toggleSidebar() {
 
 
 
+function _setInputEnabled(enabled) {
+  var inp = document.getElementById('input');
+  var btn = document.getElementById('sendBtn');
+  if (inp) {
+    inp.disabled = !enabled;
+    inp.placeholder = enabled
+      ? 'Type a message... (Enter to send, Shift+Enter for newline)'
+      : 'Create a conversation first (click + Nouveau)';
+    inp.style.opacity = enabled ? '1' : '0.4';
+  }
+  if (btn) { btn.disabled = !enabled; btn.style.opacity = enabled ? '1' : '0.4'; }
+}
+
 function _doNewChat() {
   if (eventSource) { eventSource.close(); eventSource = null; }
   stopPollTimer();
@@ -182,13 +195,17 @@ function _doNewChat() {
 }
 
 async function newChat() {
-  // Show agent picker to pre-assign agents to the new conversation
-  const agents = await _pickAgentsForNewConv();
-  if (!agents || agents.length === 0) return;  // cancelled
+  var result = await _pickAgentsForNewConv();
+  if (!result || !result.agents || result.agents.length === 0) return;
   _doNewChat();
-  action$('create_conversation', { agents: agents }).subscribe(data => {
+  var params = { agents: result.agents };
+  if (result.title) params.title = result.title;
+  if (result.relays && result.relays.length) params.relays = result.relays;
+  if (result.default_relay) params.default_relay = result.default_relay;
+  action$('create_conversation', params).subscribe(data => {
     if (data.conversation_id) {
       conversationId = data.conversation_id;
+      _setInputEnabled(true);
       connectSSE(conversationId);
       loadResources();
       loadPermissionMode();
@@ -200,57 +217,190 @@ async function newChat() {
   });
 }
 
-// Show a dialog to pick 1+ agents from repo for a new conversation.
-// Returns array of agent names, or null if skipped/cancelled.
+// Fetch agents + relays, then show the new conversation dialog.
+// Returns {agents: [...], relays: [...], default_relay: "...", title: "..."} or null.
 async function _pickAgentsForNewConv() {
   return new Promise((resolve) => {
+    // Fetch agents and relays in parallel
+    var agents = [], relays = [];
+    var done = 0;
+    function check() {
+      if (++done < 2) return;
+      if (agents.length === 0) { resolve(null); return; }
+      _showNewConvDialog(agents, relays, resolve);
+    }
     action$('list_repo_agents', { conversation_id: '' }).subscribe(d => {
-      const repoAgents = d.agents || [];
-      if (repoAgents.length === 0) { resolve(null); return; }
-      _showAgentPickerDialog(repoAgents, resolve);
+      agents = d.agents || [];
+      check();
+    });
+    action$('relay_list_available').subscribe(d => {
+      relays = (d.relays || []).filter(r => r.connected);
+      check();
     });
   });
 }
-function _showAgentPickerDialog(repoAgents, resolve) {
 
-    const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
+function _showNewConvDialog(repoAgents, availableRelays, resolve) {
+  var overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9999;display:flex;align-items:center;justify-content:center';
 
-    const box = document.createElement('div');
-    box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:320px;max-width:480px;max-height:70vh;display:flex;flex-direction:column;gap:12px';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:var(--bg2,#1e1e2e);border:1px solid var(--border,#444);border-radius:8px;padding:20px;min-width:580px;max-width:700px;max-height:85vh;display:flex;flex-direction:column;gap:14px;overflow-y:auto';
 
-    const listHtml = repoAgents.map(a => {
-      const desc = a.description ? ` — ${a.description}` : '';
-      const scope = a.scope ? `<span style="font-size:0.8em;opacity:0.5;margin-left:4px">${a.scope}</span>` : '';
-      return `<label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:4px 6px;border-radius:4px" data-name="${a.name.toLowerCase()}"><input type="checkbox" value="${a.name}" style="accent-color:var(--accent,#7c6af7)"><span><strong>${a.name}</strong>${desc}${scope}</span></label>`;
-    }).join('');
+  var _css = 'style="width:100%;min-height:80px;max-height:192px;overflow-y:auto;border:1px solid var(--border,#444);border-radius:4px;padding:4px;background:var(--bg,#141420);"';
+  var _itemCss = 'style="padding:3px 6px;cursor:pointer;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"';
+  var _btnCss = 'style="padding:4px 10px;border:1px solid var(--border,#444);border-radius:4px;background:var(--bg2,#1e1e2e);color:inherit;cursor:pointer;font-size:16px;font-weight:600;"';
 
-    box.innerHTML = `
-      <div style="font-weight:600;font-size:1.05em">Choose agents for this conversation</div>
-      <input id="_ncAgentSearch" type="text" placeholder="Search agents..." style="padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em">
-      <div id="_ncAgentList" style="overflow-y:auto;max-height:300px;display:flex;flex-direction:column;gap:6px">${listHtml}</div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px">
-        <button id="_ncSkipBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer">Skip</button>
-        <button id="_ncOkBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600">Start conversation</button>
-      </div>`;
+  box.innerHTML =
+    '<div style="font-weight:600;font-size:1.1em;">New Conversation</div>'
+    // Title
+    + '<div><label style="font-size:11px;color:#888;">Title (optional)</label>'
+    + '<input id="_ncTitle" type="text" placeholder="Auto-generated if empty" style="width:100%;padding:6px 10px;border-radius:5px;border:1px solid var(--border,#444);background:var(--bg,#141420);color:inherit;font-size:0.95em;box-sizing:border-box;"></div>'
+    // Agents
+    + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Agents</div>'
+    + '<div style="display:flex;gap:8px;align-items:stretch;">'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_ncAgentsAvail" ' + _css + '></div></div>'
+    +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
+    +     '<button id="_ncAgentAdd" ' + _btnCss + ' title="Add">\u25B6</button>'
+    +     '<button id="_ncAgentRem" ' + _btnCss + ' title="Remove">\u25C0</button>'
+    +   '</div>'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Selected</div><div id="_ncAgentsSel" ' + _css + '></div></div>'
+    + '</div>'
+    // Relays
+    + '<div style="font-size:12px;font-weight:600;color:#6c5ce7;">Relays</div>'
+    + '<div style="display:flex;gap:8px;align-items:stretch;">'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Available</div><div id="_ncRelaysAvail" ' + _css + '></div></div>'
+    +   '<div style="display:flex;flex-direction:column;justify-content:center;gap:4px;">'
+    +     '<button id="_ncRelayAdd" ' + _btnCss + ' title="Link">\u25B6</button>'
+    +     '<button id="_ncRelayRem" ' + _btnCss + ' title="Unlink">\u25C0</button>'
+    +   '</div>'
+    +   '<div style="flex:1;"><div style="font-size:10px;color:#888;margin-bottom:2px;">Linked <span style="font-size:9px;color:#4ecdc4;">\u2605 = default</span></div><div id="_ncRelaysSel" ' + _css + '></div></div>'
+    + '</div>'
+    // Buttons
+    + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:4px;">'
+    +   '<button id="_ncCancelBtn" style="padding:6px 14px;border-radius:5px;border:1px solid var(--border,#444);background:transparent;color:inherit;cursor:pointer;">Cancel</button>'
+    +   '<button id="_ncCreateBtn" style="padding:6px 14px;border-radius:5px;border:none;background:var(--accent,#7c6af7);color:#fff;cursor:pointer;font-weight:600;opacity:0.4;" disabled>Create</button>'
+    + '</div>';
 
-    overlay.appendChild(box);
-    document.body.appendChild(overlay);
+  overlay.appendChild(box);
+  document.body.appendChild(overlay);
 
-    document.getElementById('_ncAgentSearch').addEventListener('input', function() {
-      const q = this.value.toLowerCase();
-      document.querySelectorAll('#_ncAgentList label').forEach(lbl => {
-        lbl.style.display = !q || lbl.dataset.name.includes(q) ? '' : 'none';
-      });
-    });
+  // State
+  var selAgents = [], selRelays = [], defaultRelay = '';
 
-    const cleanup = (val) => { overlay.remove(); resolve(val); };
-    document.getElementById('_ncSkipBtn').onclick = () => cleanup(null);
-    document.getElementById('_ncOkBtn').onclick = () => {
-      const checked = [...document.querySelectorAll('#_ncAgentList input[type=checkbox]:checked')].map(c => c.value);
-      cleanup(checked.length > 0 ? checked : null);
+  function _makeItem(text, id, extra) {
+    var d = document.createElement('div');
+    d.textContent = text;
+    d.dataset.id = id;
+    if (extra) d.title = extra;
+    d.style.cssText = 'padding:3px 6px;cursor:pointer;border-radius:3px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+    d.onmouseenter = function() { d.style.background = 'rgba(124,106,247,0.15)'; };
+    d.onmouseleave = function() { if (!d.classList.contains('_sel')) d.style.background = ''; };
+    d.onclick = function() {
+      d.parentNode.querySelectorAll('div').forEach(function(x) { x.classList.remove('_sel'); x.style.background = ''; });
+      d.classList.add('_sel'); d.style.background = 'rgba(124,106,247,0.3)';
     };
-    overlay.addEventListener('click', e => { if (e.target === overlay) cleanup(null); });
+    return d;
+  }
+
+  function _renderAgents() {
+    var avail = document.getElementById('_ncAgentsAvail');
+    var sel = document.getElementById('_ncAgentsSel');
+    avail.innerHTML = ''; sel.innerHTML = '';
+    repoAgents.forEach(function(a) {
+      if (selAgents.indexOf(a.name) >= 0) return;
+      var label = a.name + (a.description ? ' \u2014 ' + a.description : '');
+      avail.appendChild(_makeItem(label, a.name));
+    });
+    selAgents.forEach(function(name) {
+      sel.appendChild(_makeItem(name, name));
+    });
+    // Enable/disable create button
+    document.getElementById('_ncCreateBtn').disabled = selAgents.length === 0;
+    document.getElementById('_ncCreateBtn').style.opacity = selAgents.length === 0 ? '0.4' : '1';
+  }
+
+  function _renderRelays() {
+    var avail = document.getElementById('_ncRelaysAvail');
+    var sel = document.getElementById('_ncRelaysSel');
+    avail.innerHTML = ''; sel.innerHTML = '';
+    availableRelays.forEach(function(r) {
+      if (selRelays.indexOf(r.relay_id) >= 0) return;
+      var label = r.relay_id + (r.host_root ? ' (' + r.host_root + ')' : r.root ? ' (' + r.root + ')' : '');
+      avail.appendChild(_makeItem(label, r.relay_id));
+    });
+    selRelays.forEach(function(rid) {
+      var d = _makeItem(rid, rid);
+      var isDefault = rid === defaultRelay;
+      var radio = document.createElement('span');
+      radio.innerHTML = isDefault ? '\u2605' : '\u2606';
+      radio.style.cssText = 'cursor:pointer;color:' + (isDefault ? '#4ecdc4' : '#555') + ';margin-right:4px;font-size:14px;';
+      radio.title = 'Set as default';
+      radio.onclick = function(e) { e.stopPropagation(); defaultRelay = rid; _renderRelays(); };
+      d.insertBefore(radio, d.firstChild);
+      sel.appendChild(d);
+    });
+  }
+
+  _renderAgents();
+  _renderRelays();
+
+  // Arrow buttons
+  document.getElementById('_ncAgentAdd').onclick = function() {
+    var s = document.querySelector('#_ncAgentsAvail ._sel');
+    if (s) { selAgents.push(s.dataset.id); _renderAgents(); }
+  };
+  document.getElementById('_ncAgentRem').onclick = function() {
+    var s = document.querySelector('#_ncAgentsSel ._sel');
+    if (s) { selAgents = selAgents.filter(function(x) { return x !== s.dataset.id; }); _renderAgents(); }
+  };
+  document.getElementById('_ncRelayAdd').onclick = function() {
+    var s = document.querySelector('#_ncRelaysAvail ._sel');
+    if (s) {
+      selRelays.push(s.dataset.id);
+      if (selRelays.length === 1) defaultRelay = s.dataset.id;
+      _renderRelays();
+    }
+  };
+  document.getElementById('_ncRelayRem').onclick = function() {
+    var s = document.querySelector('#_ncRelaysSel ._sel');
+    if (s) {
+      selRelays = selRelays.filter(function(x) { return x !== s.dataset.id; });
+      if (defaultRelay === s.dataset.id) defaultRelay = selRelays[0] || '';
+      _renderRelays();
+    }
+  };
+
+  // Double-click to transfer
+  document.getElementById('_ncAgentsAvail').ondblclick = function(e) {
+    var t = e.target.closest('[data-id]');
+    if (t) { selAgents.push(t.dataset.id); _renderAgents(); }
+  };
+  document.getElementById('_ncAgentsSel').ondblclick = function(e) {
+    var t = e.target.closest('[data-id]');
+    if (t) { selAgents = selAgents.filter(function(x) { return x !== t.dataset.id; }); _renderAgents(); }
+  };
+  document.getElementById('_ncRelaysAvail').ondblclick = function(e) {
+    var t = e.target.closest('[data-id]');
+    if (t) { selRelays.push(t.dataset.id); if (selRelays.length === 1) defaultRelay = t.dataset.id; _renderRelays(); }
+  };
+  document.getElementById('_ncRelaysSel').ondblclick = function(e) {
+    var t = e.target.closest('[data-id]');
+    if (t) { selRelays = selRelays.filter(function(x) { return x !== t.dataset.id; }); if (defaultRelay === t.dataset.id) defaultRelay = selRelays[0] || ''; _renderRelays(); }
+  };
+
+  var cleanup = function(val) { overlay.remove(); resolve(val); };
+  document.getElementById('_ncCancelBtn').onclick = function() { cleanup(null); };
+  overlay.addEventListener('click', function(e) { if (e.target === overlay) cleanup(null); });
+  document.getElementById('_ncCreateBtn').onclick = function() {
+    if (selAgents.length === 0) return;
+    cleanup({
+      agents: selAgents,
+      relays: selRelays,
+      default_relay: defaultRelay,
+      title: (document.getElementById('_ncTitle').value || '').trim(),
+    });
+  };
 }
 
 function updateDeleteBtn() {

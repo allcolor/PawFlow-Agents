@@ -200,6 +200,16 @@ const HELP_DATA = {
       + '  Shortcut: /fwd',
   },
   '/fwd': { alias: '/port-forward' },
+  '/relay': {
+    usage: '/relay [status|list|link|unlink|default] [relay_id]',
+    short: 'Manage relay bindings for this conversation',
+    detail: 'View and manage which relays are linked to the current conversation.\n\n'
+      + '  /relay              \u2014 Show linked relays (status)\n'
+      + '  /relay list         \u2014 List all available relays\n'
+      + '  /relay link <id>    \u2014 Link a relay to this conversation\n'
+      + '  /relay unlink <id>  \u2014 Unlink a relay\n'
+      + '  /relay default <id> \u2014 Set a relay as default for this conversation',
+  },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',
     short: 'Manage LLM and external services',
@@ -628,6 +638,7 @@ const _CMD_HANDLERS = {
   '/clr':                 (text, parts) => cmdClaudeLoginRelay(parts),
   '/claude-login-credentials': (text, parts, cmd) => cmdClaudeLoginCredentials(text, parts),
   '/clc':                 (text, parts, cmd) => cmdClaudeLoginCredentials(text, parts),
+  '/relay':       (text, parts, cmd) => cmdRelay(text, parts),
   '/flow':        (text, parts, cmd) => cmdFlow(text, parts),
   '/prompt':      (text, parts, cmd) => cmdPrompt(text, parts),
   '/install':     (text, parts, cmd) => cmdInstall(),

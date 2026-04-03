@@ -101,6 +101,7 @@ class AgentPollerMixin:
         _dt_ckpt = time.time() - _pt0
         if _dt_ckpt > 0.05: logger.warning(f"[poller-timing] checkpoint: {_dt_ckpt*1000:.0f}ms")
         _pt1 = time.time()
+        _pt1 = time.time()
         # Watchdog: ensure active tasks always have a pending schedule
         try:
             self._ensure_tasks_scheduled()
@@ -356,7 +357,6 @@ class AgentPollerMixin:
                 self._active_thoughts.add(entry_key)
 
             logger.info(f"[poller] Waking thought {entry_key} (agent={_thought_agent})")
-            store.set_status(cid, "active")
             bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
 
             # Each thought agent gets its own gen_key so multiple thoughts
@@ -743,15 +743,15 @@ class AgentPollerMixin:
             steps_text += "\n"
 
         return (
-            f"[System: Plan step execution — {plan['title']}]\n\n"
-            f"**Plan:** {plan_id} — {plan['title']}\n"
-            f"**Step {step_num}/{total}:** {step['description']}\n\n"
+            f"The plan \"{plan['title']}\" has been approved. "
+            f"Execute step {step_num}/{total} now: {step['description']}\n\n"
+            f"Plan: {plan_id}\n"
             f"All steps:\n{steps_text}\n"
-            f"Execute step {step_num} now. When done, call:\n"
+            f"When done, call:\n"
             f"  update_plan(plan_id=\"{plan_id}\", updates=[{{\"step\": {step_num}, "
             f"\"status\": \"done\", \"note\": \"what you did\"}}])\n\n"
             f"If the step fails, set status to \"error\" with a note explaining why.\n"
-            f"Do NOT skip ahead to other steps. Do NOT respond with [NO_PENDING_WORK]."
+            f"Do NOT skip ahead to other steps. Do NOT respond with text only — take action."
         )
 
     def _build_plan_verify_checkin(self, conversation_id: str,
@@ -807,11 +807,11 @@ class AgentPollerMixin:
         executor_note = step.get("note", "No note provided.")
 
         return (
-            f"[System: Plan step verification — {plan['title']}]\n\n"
-            f"**Plan:** {plan_id} — {plan['title']}\n"
-            f"**Step {step_num}/{total}:** {step['description']}\n"
-            f"**Executed by:** {executor}\n"
-            f"**Executor's note:** {executor_note}\n\n"
+            f"Verify step {step_num}/{total} of plan \"{plan['title']}\": "
+            f"{step['description']}\n\n"
+            f"Plan: {plan_id}\n"
+            f"Executed by: {executor}\n"
+            f"Executor's note: {executor_note}\n\n"
             f"All steps:\n{steps_text}\n"
             f"Review step {step_num}. Verify the work was done correctly.\n"
             f"When done, call:\n"
@@ -820,7 +820,7 @@ class AgentPollerMixin:
             f"If the step needs rework:\n"
             f"  verify_plan_step(plan_id=\"{plan_id}\", step={step_num}, "
             f"approved=false, reason=\"what needs to be fixed\")\n\n"
-            f"Do NOT respond with [NO_PENDING_WORK]."
+            f"Do NOT respond with text only — verify and call the tool."
         )
 
     def _reschedule_active_tasks(self):

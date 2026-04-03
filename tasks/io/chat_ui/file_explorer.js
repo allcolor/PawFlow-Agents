@@ -386,5 +386,7 @@ action$('list_conversations', {}).subscribe(data => {
   renderConvList(convs);
   if (convs.length && !conversationId) {
     resumeConv(convs[0].conversation_id);
+  } else if (!convs.length) {
+    _setInputEnabled(false);
   }
 });

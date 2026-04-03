@@ -14,7 +14,8 @@ function renderConvList(convs) {
   const list = document.getElementById('convList');
   list.innerHTML = '';
   if (convs.length === 0) {
-    list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">No conversations yet</div>';
+    list.innerHTML = '<div style="padding:20px;text-align:center;color:#6c6c8a;font-size:13px;">No conversations yet.<br>Click <b>+ Nouveau</b> to start.</div>';
+    if (!conversationId) _setInputEnabled(false);
   }
   for (const c of convs) {
     const el = document.createElement('div');
@@ -78,9 +79,9 @@ function resumeConv(cid, force) {
   // Prepare UI
   if (eventSource) { eventSource.close(); eventSource = null; }
   conversationId = cid;
+  _setInputEnabled(true);
   clearAllStreams();
   sending = false;
-  document.getElementById('sendBtn').disabled = false;
   _expectingClear = true;
   document.getElementById('messages').innerHTML = '';
   _expectingClear = false;

@@ -1,0 +1,264 @@
+"""Relay Bindings — conversation-scoped, per-agent relay management.
+
+Relays are linked to a conversation and optionally to a specific agent.
+Each scope (conv-wide or per-agent) can have its own default relay.
+
+Storage: conversation extras key 'relay_bindings'
+  {
+    "linked": {"*": ["relay_a", "relay_b"], "claude": ["relay_c"]},
+    "default": {"*": "relay_a", "claude": "relay_c"}
+  }
+
+"*" = conversation-wide scope (all agents).
+Named agent = only that agent can use the relay.
+
+Resolution order for get_default/get_linked:
+  1. Agent-specific bindings
+  2. Conv-wide ("*") bindings
+"""
+
+import logging
+from typing import Any, Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
+
+_EXTRA_KEY = "relay_bindings"
+_CONV = "*"  # conv-wide scope key
+
+
+def _get_store():
+    from core.conversation_store import ConversationStore
+    return ConversationStore.instance()
+
+
+def _migrate(raw: Any) -> Dict[str, Any]:
+    """Migrate old format to new. Called once at load time.
+
+    Old: {"linked": ["a", "b"], "default": "a"}
+    New: {"linked": {"*": ["a", "b"]}, "default": {"*": "a"}}
+    """
+    if not isinstance(raw, dict) or "linked" not in raw:
+        return {"linked": {}, "default": {}}
+    linked = raw["linked"]
+    default = raw.get("default")
+    if isinstance(linked, list):
+        # Old format → convert
+        new = {
+            "linked": {_CONV: linked},
+            "default": {_CONV: default} if default else {},
+        }
+        return new
+    # Already new format
+    if not isinstance(linked, dict):
+        return {"linked": {}, "default": {}}
+    if not isinstance(raw.get("default"), dict):
+        raw["default"] = {_CONV: raw["default"]} if raw.get("default") else {}
+    return raw
+
+
+def get_bindings(cid: str) -> Dict[str, Any]:
+    """Get relay bindings for a conversation (migrated to new format)."""
+    store = _get_store()
+    raw = store.get_extra_cached(cid, _EXTRA_KEY, default=None)
+    b = _migrate(raw)
+    # Persist migration if format changed
+    if raw is not None and raw != b:
+        store.set_extra(cid, _EXTRA_KEY, b)
+    return b
+
+
+def get_linked(cid: str, agent: str = "") -> List[str]:
+    """Get relay IDs available to an agent.
+
+    Returns agent-specific relays + conv-wide relays (union, deduped).
+    """
+    b = get_bindings(cid)
+    linked = b.get("linked", {})
+    result = list(linked.get(_CONV, []))
+    if agent and agent != _CONV:
+        for rid in linked.get(agent, []):
+            if rid not in result:
+                result.append(rid)
+    return result
+
+
+def get_default(cid: str, agent: str = "") -> Optional[str]:
+    """Get the default relay for an agent.
+
+    Resolution: agent-specific default → conv-wide default.
+    """
+    b = get_bindings(cid)
+    defaults = b.get("default", {})
+    if agent and agent != _CONV:
+        d = defaults.get(agent)
+        if d:
+            return d
+    return defaults.get(_CONV)
+
+
+def link_relay(cid: str, relay_id: str, agent: str = "") -> bool:
+    """Link a relay to a conversation (optionally to a specific agent)."""
+    scope = agent if agent else _CONV
+    b = get_bindings(cid)
+    linked = b.setdefault("linked", {})
+    scope_list = linked.setdefault(scope, [])
+    if relay_id in scope_list:
+        return False
+    scope_list.append(relay_id)
+    # Auto-set default if first relay in this scope
+    defaults = b.setdefault("default", {})
+    if scope not in defaults:
+        defaults[scope] = relay_id
+    _get_store().set_extra(cid, _EXTRA_KEY, b)
+    scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
+    logger.info("Relay '%s' linked to %s in %s", relay_id, scope_label, cid[:8])
+    return True
+
+
+def unlink_relay(cid: str, relay_id: str, agent: str = "") -> bool:
+    """Unlink a relay from a conversation (optionally from a specific agent)."""
+    scope = agent if agent else _CONV
+    b = get_bindings(cid)
+    linked = b.get("linked", {})
+    scope_list = linked.get(scope, [])
+    if relay_id not in scope_list:
+        return False
+    scope_list.remove(relay_id)
+    if not scope_list:
+        linked.pop(scope, None)
+    defaults = b.get("default", {})
+    if defaults.get(scope) == relay_id:
+        defaults[scope] = scope_list[0] if scope_list else None
+        if defaults[scope] is None:
+            defaults.pop(scope, None)
+    _get_store().set_extra(cid, _EXTRA_KEY, b)
+    scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
+    logger.info("Relay '%s' unlinked from %s in %s", relay_id, scope_label, cid[:8])
+    return True
+
+
+def set_default_relay(cid: str, relay_id: str, agent: str = "") -> bool:
+    """Set the default relay for a scope. Must be linked first."""
+    scope = agent if agent else _CONV
+    b = get_bindings(cid)
+    linked = b.get("linked", {})
+    # Relay must be linked in this scope or conv-wide
+    all_linked = set(linked.get(_CONV, []))
+    if scope != _CONV:
+        all_linked.update(linked.get(scope, []))
+    if relay_id not in all_linked:
+        return False
+    defaults = b.setdefault("default", {})
+    defaults[scope] = relay_id
+    _get_store().set_extra(cid, _EXTRA_KEY, b)
+    scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
+    logger.info("Relay '%s' set as default for %s in %s", relay_id, scope_label, cid[:8])
+    return True
+
+
+def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
+    """List all connected relay services (global + user scope)."""
+    relays = []
+    _seen = set()
+
+    def _add_relay(registry, sid, sdef, scope_user_id=""):
+        _seen.add(sid)
+        try:
+            if scope_user_id:
+                connected = registry.is_connected(scope_user_id, sid)
+                svc = registry.get_live_instance(scope_user_id, sid)
+            else:
+                connected = registry.is_connected(sid)
+                svc = registry.get_live_instance(sid)
+        except Exception:
+            connected = False
+            svc = None
+        _ri = getattr(svc, '_relay_info', {}) or {} if svc else {}
+        relays.append({
+            "relay_id": sid,
+            "connected": connected,
+            "user_id": scope_user_id or getattr(sdef, "user_id", ""),
+            "root": _ri.get("root", ""),
+            "host_root": _ri.get("host_root", ""),
+            "allow_local": bool(_ri.get('allow_local', False)),
+            "allow_local_screen": bool(_ri.get('allow_local_screen', False)),
+        })
+
+    # Global services
+    try:
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        greg = GlobalServiceRegistry.get_instance()
+        for sid, sdef in greg.get_all_definitions().items():
+            if sid in _seen:
+                continue
+            if getattr(sdef, "service_type", "") not in ("filesystem", "relay"):
+                continue
+            _add_relay(greg, sid, sdef)
+    except Exception:
+        pass
+
+    # User services
+    if user_id:
+        try:
+            from gui.services.user_service_registry import UserServiceRegistry
+            ureg = UserServiceRegistry.get_instance()
+            for sid, sdef in ureg.get_all_for_user(user_id).items():
+                if sid in _seen:
+                    continue
+                if getattr(sdef, "service_type", "") not in ("filesystem", "relay"):
+                    continue
+                _add_relay(ureg, sid, sdef, scope_user_id=user_id)
+        except Exception:
+            pass
+
+    return relays
+
+
+def resolve_relay(cid: str, relay_param: Optional[str] = None,
+                  agent: str = "") -> Tuple[str, Any]:
+    """Resolve a relay for a conversation + agent.
+
+    Resolution order:
+      1. Explicit relay_param (must be linked)
+      2. Agent-specific default
+      3. Conv-wide default
+      4. Single linked relay (unambiguous)
+    """
+    linked = get_linked(cid, agent)
+    default = get_default(cid, agent)
+
+    if relay_param:
+        if relay_param not in linked:
+            raise ValueError(f"Relay '{relay_param}' is not linked to this conversation. "
+                             f"Use /relay link {relay_param} first.")
+        relay_id = relay_param
+    elif default and default in linked:
+        relay_id = default
+    elif len(linked) == 1:
+        relay_id = linked[0]
+    elif len(linked) == 0:
+        raise ValueError("No relay linked to this conversation. Use /relay link <relay_id>.")
+    else:
+        names = ", ".join(linked)
+        raise ValueError(f"Multiple relays linked ({names}) but no default set. "
+                         f"Use /relay default <relay_id> or pass relay= explicitly.")
+
+    # Resolve service instance (try user registry first, then global)
+    svc = None
+    try:
+        from gui.services.user_service_registry import UserServiceRegistry
+        ureg = UserServiceRegistry.get_instance()
+        # We don't have user_id here, try all
+        svc = ureg.get_live_instance("", relay_id)
+    except Exception:
+        pass
+    if svc is None:
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            svc = GlobalServiceRegistry.get_instance().get_live_instance(relay_id)
+        except Exception:
+            pass
+    if svc is None:
+        raise ValueError(f"Relay '{relay_id}' is linked but not connected.")
+
+    return relay_id, svc

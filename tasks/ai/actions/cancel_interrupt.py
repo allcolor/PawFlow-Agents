@@ -116,7 +116,6 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
             if t.is_alive() and (t.name == f"agent-stream-{conv_id}" or
                     t.name.startswith(f"agent-stream-{conv_id}:")):
                 _killed += 1
-        store.set_status(conv_id, "idle")
         from core.conversation_event_bus import ConversationEventBus
         ConversationEventBus.instance().publish_event(
             conv_id, "done", {

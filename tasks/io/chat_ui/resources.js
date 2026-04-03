@@ -109,11 +109,58 @@ function _sectionHeader(title, rtype) {
 }
 function _sectionFooter() { return '</div>'; }
 
+function _showRelayLinkDialog() {
+  action$('relay_list_available').subscribe(data => {
+    if (data.error) { addMsg('error', data.error); return; }
+    var relays = data.relays || [];
+    if (!relays.length) { addMsg('system', 'No relays available. Connect a relay first (PawCode or VS Code extension).'); return; }
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    var options = relays.map(function(r) {
+      var label = r.relay_id;
+      if (r.host_root) label += ' \u2014 ' + r.host_root;
+      else if (r.root) label += ' \u2014 ' + r.root;
+      var status = r.connected ? '\u{1F7E2}' : '\u{1F534}';
+      return '<option value="' + escapeHtml(r.relay_id) + '">' + status + ' ' + escapeHtml(label) + '</option>';
+    }).join('');
+    overlay.innerHTML =
+      '<div class="exec-dialog" style="min-width:350px;">'
+      + '<h3>Link Relay</h3>'
+      + '<div style="margin:12px 0;">'
+      + '<select id="_relayLinkSelect" style="width:100%;padding:8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:13px;">'
+      + options
+      + '</select>'
+      + '</div>'
+      + '<div class="exec-btns">'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Cancel</button>'
+      + '<button class="exec-approve" onclick="_doRelayLink(this)">Link</button>'
+      + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+  });
+}
+function _doRelayLink(btn) {
+  var overlay = btn.closest('.exec-overlay');
+  var sel = overlay.querySelector('#_relayLinkSelect');
+  var rid = sel ? sel.value : '';
+  overlay.remove();
+  if (rid) {
+    fireAction('relay_link', {relay_id: rid});
+    setTimeout(loadResources, 500);
+  }
+}
+
+var _loadResourcesTimer = null;
 async function loadResources() {
+  // Debounce: coalesce rapid calls into one (300ms window)
+  if (_loadResourcesTimer) clearTimeout(_loadResourcesTimer);
+  _loadResourcesTimer = setTimeout(_loadResourcesNow, 300);
+}
+function _loadResourcesNow() {
+  _loadResourcesTimer = null;
   if (!conversationId) { document.getElementById('resourcesPanel').style.display = 'none'; return; }
   document.getElementById('resourcesPanel').style.display = 'block';
   action$('list_resources', {}).subscribe(data => _renderResourcesFromSSE(data));
-  // Load tool schemas
   if (!window._cachedTools) {
     action$('get_tool_schemas', {}).subscribe(data => _renderResourcesFromSSE(data));
   }
@@ -256,6 +303,69 @@ async function _renderResourcesData(data) {
       html += '<div style="color:#555;font-size:10px;margin-left:8px;">No services installed</div>';
     }
     html += _sectionFooter();
+    // Relay bindings for this conversation (always show section)
+    {
+      if (!('_relay' in _collapsedSections)) _collapsedSections['_relay'] = false;
+      var rbCollapsed = _collapsedSections['_relay'] || false;
+      var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
+      var rbDisplay = rbCollapsed ? 'none' : 'block';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        + '<span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">'
+        + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
+        + '<span style="cursor:pointer;font-size:13px;color:#6c5ce7;padding:0 4px;" onclick="_showRelayLinkDialog()" title="Link relay">+</span>'
+        + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
+      var _rb = (data.relay_bindings && data.relay_bindings.linked) ? data.relay_bindings : {linked:{}, default:{}};
+      var _rbLinked = _rb.linked || {};
+      var _rbDefaults = _rb.default || {};
+      var _rbDetails = _rb.details || {};
+      // Collect all unique relay IDs and which scopes they belong to
+      var _allRelays = {};  // relay_id → [scope1, scope2, ...]
+      Object.keys(_rbLinked).forEach(function(scope) {
+        (_rbLinked[scope] || []).forEach(function(rid) {
+          if (!_allRelays[rid]) _allRelays[rid] = [];
+          _allRelays[rid].push(scope);
+        });
+      });
+      var _relayIds = Object.keys(_allRelays);
+      if (_relayIds.length) {
+        _relayIds.forEach(function(rid) {
+          var scopes = _allRelays[rid];
+          var isConvDefault = _rbDefaults['*'] === rid;
+          var agentDefaults = [];
+          Object.keys(_rbDefaults).forEach(function(scope) {
+            if (scope !== '*' && _rbDefaults[scope] === rid) agentDefaults.push(scope);
+          });
+          var star = isConvDefault ? ' \u2605' : '';
+          var agentTags = '';
+          scopes.forEach(function(s) {
+            if (s !== '*') agentTags += ' <span style="font-size:9px;color:#6c5ce7;background:#1a1a3e;padding:1px 4px;border-radius:3px;">' + escapeHtml(s) + '</span>';
+          });
+          agentDefaults.forEach(function(a) {
+            agentTags += ' <span style="font-size:9px;color:#4ecdc4;" title="Default for ' + escapeHtml(a) + '">\u2605' + escapeHtml(a) + '</span>';
+          });
+          var color = isConvDefault ? '#4ecdc4' : '#8888aa';
+          var icon = isConvDefault ? '\u25C9' : '\u25CB';
+          var titleText = isConvDefault ? 'Default relay' : 'Set as default';
+          var clickDefault = isConvDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
+          var det = _rbDetails[rid] || {};
+          var connDot = det.connected ? '\u{1F7E2}' : '\u{1F534}';
+          var pathInfo = '';
+          if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
+          if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
+          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+            + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
+            + '<span style="font-size:11px;">' + connDot + '</span>'
+            + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
+            + agentTags
+            + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"'
+            + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
+            + '</div>' + pathInfo;
+        });
+      } else {
+        html += '<div style="color:#555;font-size:10px;margin-left:8px;">No relays linked</div>';
+      }
+      html += _sectionFooter();
+    }
     // Deployed flows (always show section for [+] deploy button)
     html += _sectionHeader('Flows', '_flow');
     if (data.flows && data.flows.length) {

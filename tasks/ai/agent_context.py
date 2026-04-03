@@ -459,6 +459,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "BUG: no conversation_id after generate_id() — this should never happen"
             )
 
+        # NOTE: no auto-link of relays here. The user decides what to link
+        # via /relay link or the [+] button in the resource panel.
+        # Server relays spawned via /workspace auto-link in server_relay_manager.
+
         # target_agent: temporary agent override for /agent msg (not persisted)
         _target_agent = body_json.get("target_agent", "") if body_json else ""
         if _target_agent and conversation_id:
@@ -778,19 +782,92 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         elif resilience == "aggressive":
             system_prompt += " 3) AGGRESSIVE: retry failures 3x, try alternatives, continue on minor issues."
 
-        # Inject filesystem project context (all connected FS services)
-        try:
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for _sid, _sdef in greg.get_all_definitions().items():
-                if getattr(_sdef, "service_type", "") == "filesystem":
-                    _svc = greg.get_live_instance(_sid)
-                    if _svc and hasattr(_svc, "get_project_prompt"):
-                        _fs_prompt = _svc.get_project_prompt()
-                        if _fs_prompt:
-                            system_prompt += _fs_prompt
-        except Exception:
-            pass
+        # Inject filesystem project context from conversation-linked relays
+        _current_agent = target_agent or "assistant"
+        if conversation_id:
+            try:
+                from core.relay_bindings import get_linked, get_default
+                _linked = get_linked(conversation_id, agent=_current_agent)
+                _agent_default = get_default(conversation_id, agent=_current_agent)
+                if _linked:
+                    from gui.services.global_service_registry import GlobalServiceRegistry
+                    greg = GlobalServiceRegistry.get_instance()
+                    # Also check user registry for service resolution
+                    _ureg = None
+                    try:
+                        from gui.services.user_service_registry import UserServiceRegistry
+                        _ureg = UserServiceRegistry.get_instance()
+                    except Exception:
+                        pass
+                    def _get_svc(sid):
+                        s = greg.get_live_instance(sid)
+                        if not s and _ureg and user_id:
+                            s = _ureg.get_live_instance(user_id, sid)
+                        return s
+                    # Inject project prompts from linked relays
+                    for _sid in _linked:
+                        _svc = _get_svc(_sid)
+                        if _svc and hasattr(_svc, "get_project_prompt"):
+                            _fs_prompt = _svc.get_project_prompt()
+                            if _fs_prompt:
+                                system_prompt += _fs_prompt
+                    # Inject relay list into system prompt
+                    _relay_lines = []
+                    for _sid in _linked:
+                        _tag = " (default)" if _sid == _agent_default else ""
+                        _svc = _get_svc(_sid)
+                        _connected = False
+                        try:
+                            _connected = greg.is_connected(_sid)
+                        except Exception:
+                            pass
+                        if not _connected and _ureg and user_id:
+                            try:
+                                _connected = _ureg.is_connected(user_id, _sid)
+                            except Exception:
+                                pass
+                        _status = "connected" if _connected else "disconnected"
+                        _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
+                        _parts = [f"- **{_sid}**{_tag} — {_status}"]
+                        if _ri.get('root'):
+                            _parts.append(f"  docker_root: `{_ri['root']}`")
+                        if _ri.get('host_root'):
+                            _parts.append(f"  local_root: `{_ri['host_root']}`")
+                        if _ri.get('allow_local'):
+                            _parts.append(f"  allow_local: true")
+                        _relay_lines.append("\n".join(_parts))
+                    system_prompt += (
+                        "\n\n## Connected Relays\n"
+                        + "\n".join(_relay_lines)
+                        + "\n\nWhen using file/exec tools (read, write, bash, screen, etc.):\n"
+                        "- `relay`: relay ID (optional if default is set)\n"
+                        "- `local`: true = execute on the host machine, false = execute in Docker container (default)\n"
+                        "  Use local=true for: accessing host files, host screen, host clipboard\n"
+                        "  Use local=false (default) for: sandboxed execution, desktop apps, web browsing"
+                    )
+            except Exception:
+                pass
+        _has_relay_bindings = False
+        if conversation_id:
+            try:
+                from core.relay_bindings import get_bindings as _gb
+                _has_relay_bindings = bool(_gb(conversation_id).get("linked"))
+            except Exception:
+                pass
+        if not _has_relay_bindings:
+            # Fallback: inject project context from all connected FS services
+            try:
+                from gui.services.global_service_registry import GlobalServiceRegistry
+                greg = GlobalServiceRegistry.get_instance()
+                for _sid, _sdef in greg.get_all_definitions().items():
+                    if getattr(_sdef, "service_type", "") == "filesystem":
+                        _svc = greg.get_live_instance(_sid)
+                        if _svc and hasattr(_svc, "get_project_prompt"):
+                            _fs_prompt = _svc.get_project_prompt()
+                            if _fs_prompt:
+                                system_prompt += _fs_prompt
+            except Exception:
+                pass
 
         # Build ephemeral identity suffix (injected into system prompt at call
         # time, NEVER persisted — each agent gets its own identity per request)
@@ -855,25 +932,36 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             logger.info("Claude-code provider: tools via MCP, clearing %d tool_defs from prompt",
                         len(tool_defs))
             tool_defs = []
-            # Find available filesystem services for this user
+            # Find available relay services from conversation bindings
             _fs_services_info = ""
             try:
-                _fs_svcs = []
-                from gui.services.user_service_registry import UserServiceRegistry
-                _ureg = UserServiceRegistry.get_instance()
-                _uid = ctx.get("user_id", "") if hasattr(ctx, 'get') else user_id
-                if _uid:
-                    for _sid, _sdef in _ureg.get_all_for_user(_uid).items():
-                        if getattr(_sdef, "service_type", "") in (
-                            "relay", "filesystem"):
-                            _fs_svcs.append(_sid)
-                if _fs_svcs:
-                    _fs_services_info = (
-                        "\n- Available filesystem services: "
-                        + ", ".join(f"'{s}'" for s in _fs_svcs)
-                        + ". Use the 'service' parameter with this exact name "
-                        "for filesystem operations."
-                    )
+                if conversation_id:
+                    from core.relay_bindings import get_bindings as _gb_cc
+                    _rb_cc = _gb_cc(conversation_id)
+                    _linked_cc = _rb_cc.get("linked", [])
+                    _default_cc = _rb_cc.get("default")
+                    if _linked_cc:
+                        _fs_services_info = (
+                            "\n- The user's files are ONLY accessible through the MCP pawflow tools."
+                        )
+                if not _fs_services_info:
+                    # Fallback: list all relay services for this user
+                    _fs_svcs = []
+                    from gui.services.user_service_registry import UserServiceRegistry
+                    _ureg = UserServiceRegistry.get_instance()
+                    _uid = ctx.get("user_id", "") if hasattr(ctx, 'get') else user_id
+                    if _uid:
+                        for _sid, _sdef in _ureg.get_all_for_user(_uid).items():
+                            if getattr(_sdef, "service_type", "") in (
+                                "relay", "filesystem"):
+                                _fs_svcs.append(_sid)
+                    if _fs_svcs:
+                        _fs_services_info = (
+                            "\n- Available filesystem services: "
+                            + ", ".join(f"'{s}'" for s in _fs_svcs)
+                            + ". Use the 'service' parameter with this exact name "
+                            "for filesystem operations."
+                        )
             except Exception:
                 pass
 

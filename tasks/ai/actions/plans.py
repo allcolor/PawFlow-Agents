@@ -502,6 +502,24 @@ def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
                      plan_id, next_step["index"], agent)
         return "continue"
 
+    # Write a real user message into the transcript so CC sees it as
+    # a user instruction (not a [System:] hint it can ignore).
+    total = len(plan["steps"])
+    _user_msg = (
+        f"Plan approved — execute step {next_step['index']}/{total}: "
+        f"{next_step['description']}"
+    )
+    try:
+        from core.conversation_writer import ConversationWriter
+        import uuid as _uuid_plan
+        _msg_id = _uuid_plan.uuid4().hex[:12]
+        ConversationWriter.for_conversation(conv_id).enqueue(
+            [{"type": "msg", "role": "user", "content": _user_msg,
+              "msg_id": _msg_id, "source": {"type": "plan", "plan_id": plan_id}}],
+            user_id=user_id, context_agent=agent)
+    except Exception as e:
+        logger.warning("Failed to write plan step user message: %s", e)
+
     try:
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(

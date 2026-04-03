@@ -1044,12 +1044,13 @@ function _scheduleSSEReconnect(cid) {
 }
 
 // ── Fallback Poll (30s) ──────────────────────────────────────────
+// ── Fallback Poll (15s) ──────────────────────────────────────────────────────
 function startPollTimer() {
   stopPollTimer();
   pollTimer = setInterval(() => {
     if (!conversationId) return;
     _recoverConversation(conversationId);
-  }, 30000);
+  }, 15000);
   // Refresh resources panel every 30s (no-op if content unchanged)
   if (!resourcesTimer) {
     resourcesTimer = setInterval(() => {

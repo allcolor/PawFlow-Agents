@@ -23,7 +23,7 @@ var _pcmFlushTimer = null;   // timer to flush partial batches
 var _preBuffer = [];          // array of Float32Array chunks
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 2400; // 50ms at 48kHz
+var _PRE_BUFFER_TARGET = 4800; // 100ms at 48kHz — enough to absorb initial jitter
 
 // Diagnostic stats
 var _audioStats = {
@@ -44,13 +44,13 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     super();
     this.ring = new Float32Array(48000 * 8); // 8s ring buffer
     this.wPos = 0;
-    this.rPos = 0;
+    this.rPos = 0.0; // fractional read position for smooth resampling
     this.underruns = 0;
     this.port.onmessage = (e) => {
       if (e.data === 'stats') {
         this.port.postMessage({
           type: 'stats',
-          fill: this.wPos - this.rPos,
+          fill: this.wPos - Math.floor(this.rPos),
           underruns: this.underruns,
         });
         this.underruns = 0;
@@ -58,7 +58,7 @@ class AudioRingProcessor extends AudioWorkletProcessor {
       }
       if (e.data === 'reset') {
         this.wPos = 0;
-        this.rPos = 0;
+        this.rPos = 0.0;
         this.underruns = 0;
         return;
       }
@@ -68,27 +68,51 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         this.ring[this.wPos % len] = samples[i];
         this.wPos++;
       }
-      // Overflow protection: skip reader ahead
+      // Overflow protection: hard skip only at ring capacity
       if (this.wPos - this.rPos > len) {
-        this.rPos = this.wPos - len + 4800;
+        this.rPos = this.wPos - len + 7200;
       }
     };
   }
   process(inputs, outputs) {
     const out = outputs[0][0];
     const len = this.ring.length;
-    const available = this.wPos - this.rPos;
-    // Cap latency: if ring has >200ms, skip ahead to ~80ms
-    if (available > 9600) {
-      this.rPos = this.wPos - 3840;
+    const irPos = Math.floor(this.rPos);
+    const available = this.wPos - irPos;
+    // Clock drift compensation via smooth resampling.
+    // Target fill: ~120ms (5760 samples). Adjust playback speed
+    // by using a fractional step size (linear interpolation).
+    // This is inaudible unlike sample-dropping.
+    let step = 1.0;
+    if (available > 96000) {
+      // Extreme (>2s): hard skip to 150ms
+      this.rPos = this.wPos - 7200;
+      step = 1.0;
+    } else if (available > 14400) {
+      // >300ms: speed up ~4% to catch up
+      step = 1.04;
+    } else if (available > 9600) {
+      // >200ms: speed up ~2%
+      step = 1.02;
+    } else if (available < 1920) {
+      // <40ms: slow down ~3% to avoid underrun
+      step = 0.97;
+    } else if (available < 3840) {
+      // <80ms: slow down ~1.5%
+      step = 0.985;
     }
     if (available < out.length) {
       this.underruns++;
     }
+    // Read with linear interpolation for smooth resampling
     for (let i = 0; i < out.length; i++) {
-      if (this.rPos < this.wPos) {
-        out[i] = this.ring[this.rPos % len];
-        this.rPos++;
+      const ri = Math.floor(this.rPos);
+      if (ri < this.wPos) {
+        const frac = this.rPos - ri;
+        const s0 = this.ring[ri % len];
+        const s1 = (ri + 1 < this.wPos) ? this.ring[(ri + 1) % len] : s0;
+        out[i] = s0 + frac * (s1 - s0);
+        this.rPos += step;
       } else {
         out[i] = 0;
       }

@@ -227,12 +227,13 @@ function _recoverConversation(cid) {
         return;
       }
       serverMsgCount = data.message_count || serverMsgCount;
-      const _anyAgentActive = Object.keys(activeInteractions || {}).length > 0;
       const msgContainer = document.getElementById('messages');
+      let rendered = 0;
       for (const m of newMsgs) {
         const mType = m.type || m.role;
         if (mType === 'tool_call' || mType === 'tool_result' || mType === 'thinking') continue;
-        if (_anyAgentActive && mType === 'assistant') continue;
+        // Use msg_id dedup — if already rendered via SSE, skip
+        if (m.msg_id && _seenMsgIds.has(m.msg_id)) continue;
         if (mType === 'user') {
           const existing = msgContainer.querySelectorAll('.msg.user');
           const lastUserEl = existing.length > 0 ? existing[existing.length - 1] : null;
@@ -249,6 +250,7 @@ function _recoverConversation(cid) {
         }
         if (mType === 'assistant') {
           if (m.source && m.source.btw) continue;
+          // Content-based dedup: check if the last displayed assistant message matches
           const existing = msgContainer.querySelectorAll('.msg.assistant, .msg.subagent');
           const lastEl = existing.length > 0 ? existing[existing.length - 1] : null;
           if (lastEl && lastEl.dataset.rawText) {
@@ -261,7 +263,9 @@ function _recoverConversation(cid) {
           pollContent = pollContent.replace(/^\[[^\]]+\]:\s*/, '');
         }
         addMsg(mType, pollContent, m);
+        rendered++;
       }
+      if (rendered > 0) console.log('[poll] rendered', rendered, 'recovered messages');
       const last = newMsgs[newMsgs.length - 1];
       const lastType = last ? (last.type || last.role) : '';
       if (lastType === 'user' || lastType === 'tool_call' || lastType === 'tool_result') {

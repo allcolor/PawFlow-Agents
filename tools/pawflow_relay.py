@@ -752,7 +752,7 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
 
 def _make_handler_class(root_dir: str, secret: str, readonly: bool,
                         allow_exec: bool = False, allow_automation: bool = False,
-                        allow_local_screen: bool = False):
+                        allow_local_screen: bool = False, allow_local: bool = False):
     """Create a handler class with bound config (avoids lambda issues)."""
 
     class ConfiguredHandler(FSRelayHandler):
@@ -764,13 +764,14 @@ def _make_handler_class(root_dir: str, secret: str, readonly: bool,
     ConfiguredHandler.allow_exec = allow_exec
     ConfiguredHandler.allow_automation = allow_automation
     ConfiguredHandler.allow_local_screen = allow_local_screen
+    ConfiguredHandler.allow_local = allow_local
     return ConfiguredHandler
 
 
 # ── WS Reverse client ─────────────────────────────────────────────
 
 def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=False,
-                allow_automation=False, allow_local_screen=False):
+                allow_automation=False, allow_local_screen=False, allow_local=False):
     """Connect to the PawFlow server via WebSocket and process filesystem commands."""
     import ssl
     import base64 as b64
@@ -792,9 +793,15 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     def _is_containerized():
         return os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
 
+    # host_root: the original path on the user's machine (before Docker mount)
+    _host_root = os.environ.get("PAWFLOW_HOST_WORKDIR", "")
+    if not _host_root and not _is_containerized():
+        _host_root = root_dir  # not in Docker — root IS the host path
+
     info = {
         "platform": sys.platform,
         "root": root_dir,
+        "host_root": _host_root,
         "mode": mode,
         "shells": list(_shells.keys()),
         "containerized": _is_containerized(),
@@ -803,6 +810,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         "allow_exec": allow_exec,
         "allow_automation": allow_automation,
         "allow_local_screen": allow_local_screen,
+        "allow_local": allow_local,
     }
 
     def _resolve(rel_path):
@@ -822,6 +830,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     MockHandler.allow_exec = allow_exec
     MockHandler.allow_automation = allow_automation
     MockHandler.allow_local_screen = allow_local_screen
+    MockHandler.allow_local = allow_local
     mock = MockHandler()
 
     def _ws_frame_send(sock, data_bytes, opcode=0x01):
@@ -2084,7 +2093,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                 _ws_connect(_url, _tok, _sec, _rid, _root,
                                             readonly=readonly, allow_exec=allow_exec,
                                             allow_automation=allow_automation,
-                                            allow_local_screen=allow_local_screen)
+                                            allow_local_screen=allow_local_screen,
+                                            allow_local=allow_local)
                             except Exception as _ce:
                                 sys.stderr.write(f"[FSRelay] Child {_rid} died: {_ce}\n")
                             finally:
@@ -2459,6 +2469,8 @@ def main():
                         help="Allow screen automation (screenshot, click, type — disabled by default)")
     parser.add_argument("--allow-local-screen", action="store_true",
                         help="Allow local screen access — actions execute on this machine's display (disabled by default)")
+    parser.add_argument("--allow-local", action="store_true",
+                        help="Allow local exec — commands run on the host, not in Docker (disabled by default)")
     # Auto-registration params
     parser.add_argument("--login-url", default="http://localhost:9090",
                         help="PawFlow chat UI URL for OAuth login (default: http://localhost:9090)")
@@ -2516,6 +2528,7 @@ def main():
         f"  Exec:      {'enabled' if args.allow_exec else 'disabled'}\n"
         f"  Automation:{'enabled' if args.allow_automation else 'disabled'}\n"
         f"  Local scr: {'enabled' if args.allow_local_screen else 'disabled'}\n"
+        f"  Local exec:{'enabled' if args.allow_local else 'disabled'}\n"
         f"  Token:     {masked}\n"
         f"  Auto-reg:  {'no (manual)' if args.server else 'yes'}\n"
         f"  Gateway:   {'key provided' if args.gateway_key else 'none'}\n\n"
@@ -2625,7 +2638,8 @@ def main():
             _ws_connect(ws_url, token, token, args.relay_id,
                          root_dir, args.readonly, allow_exec=args.allow_exec,
                          allow_automation=args.allow_automation,
-                         allow_local_screen=args.allow_local_screen)
+                         allow_local_screen=args.allow_local_screen,
+                         allow_local=args.allow_local)
         finally:
             _cleanup()
 

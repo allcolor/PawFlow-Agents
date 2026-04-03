@@ -294,6 +294,17 @@ HELP: Dict[str, Dict[str, str]] = {
             "  /workspace destroy  — Stop container and delete workspace volume"
         ),
     },
+    "/relay": {
+        "usage": "/relay [list | link <id> | unlink <id> | default <id>]",
+        "short": "Manage relay bindings for this conversation",
+        "detail": (
+            "  /relay              — List relays linked to this conversation\n"
+            "  /relay list         — List all available relays\n"
+            "  /relay link <id>    — Link a relay to this conversation\n"
+            "  /relay unlink <id>  — Unlink a relay from this conversation\n"
+            "  /relay default <id> — Set the default relay for this conversation"
+        ),
+    },
     "/flow": {
         "usage": "/flow list | templates | deploy | start | stop | undeploy | promote",
         "short": "Manage data flows",
@@ -1050,6 +1061,22 @@ def _parse_command(text: str, conversation_id: str, user_id: str,
         # Default: create (idempotent)
         return {"action": "create_server_workspace", **base}
 
+    # ── Relay bindings ──
+    if cmd == "/relay":
+        p = arg.strip().split(None, 1)
+        sub = (p[0] if p else "").lower()
+        rest = p[1].strip() if len(p) > 1 else ""
+        if sub == "link":
+            return {"action": "relay_link", "relay_id": rest, **base}
+        if sub == "unlink":
+            return {"action": "relay_unlink", "relay_id": rest, **base}
+        if sub == "default":
+            return {"action": "relay_default", "relay_id": rest, **base}
+        if sub == "list":
+            return {"action": "relay_list_available", **base}
+        # Default: show linked relays
+        return {"action": "relay_status", **base}
+
     # ── Client-only (not handled server-side) ──
     if cmd in ("/clear-ui", "/connect", "/disconnect", "/exit", "/quit",
                "/copy", "/paste", "/upload", "/files"):
@@ -1324,7 +1351,7 @@ def _handle_help(topic: str, flowfile: FlowFile) -> list:
                                     "/add-variable"],
             "Scheduling": ["/schedules", "/autoconv", "/loop"],
             "Files": ["/files", "/upload", "/paste", "/copy", "/view",
-                      "/run", "/diff"],
+                      "/run", "/diff", "/relay", "/workspace"],
             "Mode": ["/plan", "/hooks", "/permission"],
             "Activation": ["/activate", "/deactivate", "/share", "/link"],
             "Session": ["/login", "/help", "/doctor", "/add-dir"],

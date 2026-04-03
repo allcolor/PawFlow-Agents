@@ -234,6 +234,12 @@ class ServerRelayManager:
             "audio_host_port": audio_host_port,
         }
         store.set_extra(conv_id, "server_relay", metadata)
+        # Auto-link this relay to the conversation
+        try:
+            from core.relay_bindings import link_relay
+            link_relay(conv_id, relay_id)
+        except Exception as e:
+            logger.warning("Failed to auto-link relay %s to conv %s: %s", relay_id, conv_id, e)
         logger.info("Server relay spawned for conv %s: %s", conv_id, relay_id)
         return metadata
 
@@ -268,6 +274,13 @@ class ServerRelayManager:
         if relay_id and user_id:
             self._uninstall_relay_service(user_id, relay_id)
 
+        # Unlink relay from conversation bindings
+        if relay_id:
+            try:
+                from core.relay_bindings import unlink_relay
+                unlink_relay(conv_id, relay_id)
+            except Exception:
+                pass
         # Clear metadata
         store.set_extra(conv_id, "server_relay", None)
         logger.info("Server relay destroyed for conv %s", conv_id)

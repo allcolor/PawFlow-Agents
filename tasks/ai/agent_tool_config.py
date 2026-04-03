@@ -228,12 +228,33 @@ class AgentToolConfigMixin:
                     h.set_user_id(user_id)
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
-                fs_svc = self._find_filesystem_service(user_id)
+                # Try conversation-scoped relay bindings first
+                _relay_svc = None
+                if conversation_id:
+                    try:
+                        from core.relay_bindings import get_default
+                        _default_relay = get_default(conversation_id)
+                        if _default_relay:
+                            from gui.services.global_service_registry import GlobalServiceRegistry
+                            _relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_default_relay)
+                    except Exception:
+                        pass
+                fs_svc = _relay_svc or self._find_filesystem_service(user_id)
                 if fs_svc:
                     if hasattr(fs_svc, 'set_user_id') and user_id:
                         fs_svc.set_user_id(user_id)
                     h.set_fs_service(fs_svc)
-                fs_services = self._list_available_services(user_id, "filesystem")
+                # Build available services from relay bindings + fallback
+                fs_services = []
+                if conversation_id:
+                    try:
+                        from core.relay_bindings import get_linked
+                        for _rid in get_linked(conversation_id):
+                            fs_services.append({"id": _rid, "type": "relay", "root": "?"})
+                    except Exception:
+                        pass
+                if not fs_services:
+                    fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
                     h.set_available_services(fs_services)
             elif isinstance(h, SecurityScanHandler):

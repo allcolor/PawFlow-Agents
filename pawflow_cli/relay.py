@@ -283,6 +283,7 @@ class RelayThread:
                     "--publish", f"{self._desktop_host_port}:6080",
                     "--publish", f"{self._audio_host_port}:6180",
                     "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+                    "-e", f"PAWFLOW_HOST_WORKDIR={self.directory}",
                     self.docker_image,
                     "python3", "/opt/pawflow/pawflow_relay.py",
                     "--server", ws_url,

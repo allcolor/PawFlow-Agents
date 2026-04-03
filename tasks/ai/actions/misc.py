@@ -393,6 +393,118 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    # ── /relay ──
+    if action == "relay_status":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "No conversation"}).encode())
+            return [flowfile]
+        from core.relay_bindings import get_bindings
+        b = get_bindings(conv_id)
+        linked = b.get("linked", [])
+        default = b.get("default")
+        if not linked:
+            flowfile.set_content(json.dumps({
+                "message": "No relays linked to this conversation.\nUse `/relay link <id>` or `/relay list` to see available relays.",
+            }).encode())
+        else:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            _greg = GlobalServiceRegistry.get_instance()
+            lines = []
+            for rid in linked:
+                tag = " ★ (default)" if rid == default else ""
+                _svc = _greg.get_live_instance(rid)
+                _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
+                line = f"- `{rid}`{tag}"
+                if _ri.get('root'):
+                    line += f"\n  docker: `{_ri['root']}`"
+                if _ri.get('host_root'):
+                    line += f"\n  local: `{_ri['host_root']}`"
+                lines.append(line)
+            flowfile.set_content(json.dumps({
+                "message": "## Linked Relays\n" + "\n".join(lines),
+            }).encode())
+        return [flowfile]
+
+    if action == "relay_list_available":
+        from core.relay_bindings import list_available_relays
+        relays = list_available_relays()
+        if not relays:
+            flowfile.set_content(json.dumps({
+                "message": "No relay services found.",
+            }).encode())
+        else:
+            lines = []
+            for r in relays:
+                status = "✅" if r.get("connected") else "❌"
+                line = f"- `{r['id']}` {status}"
+                if r.get('root'):
+                    line += f"\n  docker: `{r['root']}`"
+                if r.get('host_root'):
+                    line += f"\n  local: `{r['host_root']}`"
+                lines.append(line)
+            flowfile.set_content(json.dumps({
+                "message": "## Available Relays\n" + "\n".join(lines),
+            }).encode())
+        return [flowfile]
+
+    if action == "relay_link":
+        conv_id = body.get("conversation_id", "")
+        relay_id = body.get("relay_id", "").strip()
+        if not conv_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Usage: /relay link <relay_id>"}).encode())
+            return [flowfile]
+        from core.relay_bindings import link_relay
+        added = link_relay(conv_id, relay_id)
+        if added:
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Relay `{relay_id}` linked to this conversation.",
+            }).encode())
+        else:
+            flowfile.set_content(json.dumps({
+                "message": f"Relay `{relay_id}` is already linked.",
+            }).encode())
+        return [flowfile]
+
+    if action == "relay_unlink":
+        conv_id = body.get("conversation_id", "")
+        relay_id = body.get("relay_id", "").strip()
+        if not conv_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Usage: /relay unlink <relay_id>"}).encode())
+            return [flowfile]
+        from core.relay_bindings import unlink_relay
+        removed = unlink_relay(conv_id, relay_id)
+        if removed:
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Relay `{relay_id}` unlinked from this conversation.",
+            }).encode())
+        else:
+            flowfile.set_content(json.dumps({
+                "message": f"Relay `{relay_id}` was not linked.",
+            }).encode())
+        return [flowfile]
+
+    if action == "relay_default":
+        conv_id = body.get("conversation_id", "")
+        relay_id = body.get("relay_id", "").strip()
+        if not conv_id or not relay_id:
+            flowfile.set_content(json.dumps({"error": "Usage: /relay default <relay_id>"}).encode())
+            return [flowfile]
+        from core.relay_bindings import set_default_relay
+        ok = set_default_relay(conv_id, relay_id)
+        if ok:
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Default relay set to `{relay_id}`.",
+            }).encode())
+        else:
+            flowfile.set_content(json.dumps({
+                "error": f"Relay `{relay_id}` is not linked. Link it first with `/relay link {relay_id}`.",
+            }).encode())
+        return [flowfile]
+
     # ── /feedback ──
     if action == "feedback":
         report = body.get("report", "").strip()

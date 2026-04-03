@@ -253,12 +253,14 @@ export class RelayManager implements vscode.Disposable {
           info: {
             platform: process.platform,
             root: this.rootDir,
+            host_root: this.rootDir,
             mode: 'readwrite',
             containerized: !!this.dockerImage,
             docker_image: this.dockerImage || '',
             allow_exec: true,
             allow_automation: true,
             allow_local_screen: true,
+            allow_local: false,
           },
         });
         this._wsSend(socket, regMsg);

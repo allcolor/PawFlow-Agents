@@ -256,6 +256,43 @@ async function _renderResourcesData(data) {
       html += '<div style="color:#555;font-size:10px;margin-left:8px;">No services installed</div>';
     }
     html += _sectionFooter();
+    // Relay bindings for this conversation
+    if (data.relay_bindings && data.relay_bindings.linked && data.relay_bindings.linked.length) {
+      if (!('_relay' in _collapsedSections)) _collapsedSections['_relay'] = false;
+      var _rb = data.relay_bindings;
+      var rbCollapsed = _collapsedSections['_relay'] || false;
+      var rbArrow = rbCollapsed ? '\u25B6' : '\u25BC';
+      var rbDisplay = rbCollapsed ? 'none' : 'block';
+      html += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">'
+        + '<span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">' 
+        + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
+        + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
+      _rb.linked.forEach(function(rid) {
+        var isDefault = rid === _rb.default;
+        var star = isDefault ? ' \u2605' : '';
+        var color = isDefault ? '#4ecdc4' : '#8888aa';
+        var icon = isDefault ? '\u25C9' : '\u25CB';
+      var _rbDetails = _rb.details || {};
+      _rb.linked.forEach(function(rid) {
+        var isDefault = rid === _rb.default;
+        var star = isDefault ? ' ★' : '';
+        var color = isDefault ? '#4ecdc4' : '#8888aa';
+        var icon = isDefault ? '◉' : '○';
+        var titleText = isDefault ? 'Default relay' : 'Set as default';
+        var clickDefault = isDefault ? '' : ' onclick="fireAction(\'relay_default\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)"';
+        var det = _rbDetails[rid] || {};
+        var pathInfo = '';
+        if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
+        if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
+        html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
+          + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'
+          + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Unlink"'
+          + ' onclick="fireAction(\'relay_unlink\',{relay_id:\'' + escapeHtml(rid) + '\'}); setTimeout(loadResources, 500)">&times;</span>'
+          + '</div>' + pathInfo;
+      });
+      html += _sectionFooter();
+    }
     // Deployed flows (always show section for [+] deploy button)
     html += _sectionHeader('Flows', '_flow');
     if (data.flows && data.flows.length) {

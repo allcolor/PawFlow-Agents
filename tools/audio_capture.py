@@ -155,7 +155,7 @@ def _capture_loop(source: str):
 
             proc = subprocess.Popen(
                 ["parec", "--format=s16le", "--rate=48000", "--channels=1",
-                 "-d", monitor, "--latency-msec=20"],
+                 "-d", monitor, "--latency-msec=10"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
             # Non-blocking pipe so we can detect and drain backlog
@@ -188,9 +188,9 @@ def _capture_loop(source: str):
                         break
                     continue
 
-                # If we have more than 3 frames buffered (>60ms),
+                # If we have more than 2 frames buffered (>40ms),
                 # skip to the last frame — discard stale audio
-                if len(_buf) > frame_bytes * 3:
+                if len(_buf) > frame_bytes * 2:
                     _stale = len(_buf) - frame_bytes
                     logger.info("Audio capture: discarding %d bytes (%.0fms) of stale audio",
                                 _stale, _stale / (48000 * 2) * 1000)

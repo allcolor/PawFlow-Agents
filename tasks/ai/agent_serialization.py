@@ -151,11 +151,14 @@ class AgentSerializationMixin:
                 # Thinking block (before tool calls, same as SSE live order)
                 _thinking = m.get("thinking", "")
                 if _thinking:
-                    result.append({
+                    _think_entry = {
                         "type": "thinking", "role": "assistant",
                         "content": _thinking,
                         "source": m.get("source"),
-                    })
+                    }
+                    if m.get("timestamp"):
+                        _think_entry["timestamp"] = m["timestamp"]
+                    result.append(_think_entry)
                 # Assistant message that contains tool calls
                 if content:
                     _tc_entry = {
@@ -208,7 +211,7 @@ class AgentSerializationMixin:
                         _display = f"🔧 [{_src_label}] {_tc_name}"
                         if _args_preview:
                             _display += f"({_args_preview})"
-                    result.append({
+                    _tc_entry2 = {
                         "type": "tool_call", "role": "assistant",
                         "content": _display,
                         "tool_name": _tc_name,
@@ -216,7 +219,10 @@ class AgentSerializationMixin:
                         "tc_id": tc.get("id", ""),
                         "arguments": _tc_args,
                         "source": _tc_source,
-                    })
+                    }
+                    if m.get("timestamp"):
+                        _tc_entry2["timestamp"] = m["timestamp"]
+                    result.append(_tc_entry2)
             elif role == "tool" and tool_call_id:
                 # Skip results for hidden meta tools
                 if _tc_id_to_name.get(tool_call_id) in _META_TOOLS:
@@ -244,6 +250,8 @@ class AgentSerializationMixin:
                     _tr_entry["tool_name"] = _tc_id_to_name[tool_call_id]
                 if m.get("source"):
                     _tr_entry["source"] = m["source"]
+                if m.get("timestamp"):
+                    _tr_entry["timestamp"] = m["timestamp"]
                 result.append(_tr_entry)
             elif role in ("tool_call", "tool_result", "narration", "thinking"):
                 # Skip meta tools from display

@@ -817,6 +817,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                 "agent_name": agent_name,
                                 "llm_service": getattr(self, '_agent_service', ""),
                                 "via": "claude-code",
+                                "ts": time.time(),
                             }
                             if _parent_tc_id:
                                 _tc_event["parent_tc_id"] = _parent_tc_id

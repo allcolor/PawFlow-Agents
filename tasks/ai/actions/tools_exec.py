@@ -231,6 +231,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                 "arguments": _call_tool_args,
                 "agent_name": "user",
                 "llm_service": "",
+                "ts": time.time(),
             })
             # Execute
             try:

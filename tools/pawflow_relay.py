@@ -1228,7 +1228,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
 
         # ── Forward local screen/desktop to host helper if in Docker ────
         _explicitly_local = action in (
-            "start_local_desktop", "stop_local_desktop", "local_screen_check")
+            "start_local_desktop", "stop_local_desktop", "local_screen_check",
+            "open_local_terminal", "start_local_code_server")
         _screen_with_flag = action.startswith("screen_") and msg.get("local_screen", False)
         _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
         if (_explicitly_local or _screen_with_flag) and _host_helper:

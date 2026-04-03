@@ -336,6 +336,16 @@ class RelayThread:
                         "local_screen_check") or action.startswith("screen_"):
             self._handle_host_screen_action(conn, req, action)
 
+        elif action == "open_local_terminal":
+            result = self._host_open_local_terminal(req)
+            resp = json.dumps({"type": "result", "data": result}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+
+        elif action == "start_local_code_server":
+            result = self._host_start_local_code_server(req)
+            resp = json.dumps({"type": "result", "data": result}) + "\n"
+            conn.sendall(resp.encode("utf-8"))
+
         else:
             resp = json.dumps({"type": "error", "error": f"Unknown action: {action}"}) + "\n"
             conn.sendall(resp.encode("utf-8"))
@@ -476,3 +486,37 @@ class RelayThread:
             sys.path.insert(0, tools_dir)
         from screen_actions import handle_screen_action
         return handle_screen_action(action, req)
+
+    def _host_open_local_terminal(self, req):
+        """Open a PTY terminal on the host machine."""
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        try:
+            from fs_actions import ACTIONS
+            handler = ACTIONS.get("open_terminal")
+            if not handler:
+                return {"error": "open_terminal action not available on host"}
+            cols = req.get("cols", 80)
+            rows = req.get("rows", 24)
+            shell = req.get("shell")
+            result = handler(self.directory, cols=cols, rows=rows,
+                             **({"shell": shell} if shell else {}))
+            return result if isinstance(result, dict) else {"session_id": str(result)}
+        except Exception as e:
+            return {"error": f"Failed to open local terminal: {e}"}
+
+    def _host_start_local_code_server(self, req):
+        """Start code-server on the host machine."""
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        try:
+            from fs_actions import ACTIONS
+            handler = ACTIONS.get("start_code_server")
+            if not handler:
+                return {"error": "start_code_server action not available on host"}
+            result = handler(self.directory)
+            return result if isinstance(result, dict) else {"port": result}
+        except Exception as e:
+            return {"error": f"Failed to start local code-server: {e}"}

@@ -1431,6 +1431,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "open_terminal":
         relay_id = body.get("relay_id", "")
+        local = body.get("local", False)
         cols = body.get("cols", 80)
         rows = body.get("rows", 24)
         shell = body.get("shell")  # None = relay default
@@ -1442,7 +1443,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            result = svc._request("open_terminal", cols=cols, rows=rows,
+            _term_action = "open_local_terminal" if local else "open_terminal"
+            result = svc._request(_term_action, cols=cols, rows=rows,
                                   **(dict(shell=shell) if shell else {}))
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
 
@@ -1510,6 +1512,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
 
     if action == "open_code_server":
         relay_id = body.get("relay_id", "")
+        local = body.get("local", False)
         if not relay_id:
             flowfile.set_content(json.dumps({"error": "Missing relay_id"}).encode())
             return [flowfile]
@@ -1518,8 +1521,9 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             if not svc:
                 flowfile.set_content(json.dumps({"error": f"Relay '{relay_id}' not found"}).encode())
                 return [flowfile]
-            logger.info("[open_code_server] Starting code-server on relay %s", relay_id)
-            result = svc._request("start_code_server")
+            _cs_action = "start_local_code_server" if local else "start_code_server"
+            logger.info("[open_code_server] Starting %s on relay %s", _cs_action, relay_id)
+            result = svc._request(_cs_action)
             logger.debug("[open_code_server] start_code_server result: %s", result)
             port = result.get("port") if isinstance(result, dict) else None
             if not port:

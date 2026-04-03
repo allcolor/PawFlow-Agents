@@ -621,7 +621,22 @@ class RelayService(BaseService):
             evt.set()
 
     def _dispatch_progress(self, msg: dict):
-        """Forward progress messages to registered callback."""
+        """Forward progress messages to registered callback or terminal proxy."""
+        data = msg.get("data", {})
+
+        # Terminal data/exit from local terminal (forwarded via host helper progress)
+        if isinstance(data, dict) and data.get("type") in ("terminal_data", "terminal_exit"):
+            try:
+                if data["type"] == "terminal_data":
+                    from services.terminal_proxy import dispatch_terminal_data
+                    dispatch_terminal_data(data.get("session_id", ""), data.get("data", ""))
+                elif data["type"] == "terminal_exit":
+                    from services.terminal_proxy import dispatch_terminal_exit
+                    dispatch_terminal_exit(data.get("session_id", ""))
+            except Exception:
+                pass
+            return
+
         request_id = msg.get("request_id", "")
         with self._pending_lock:
             entry = self._pending.get(request_id)
@@ -630,7 +645,7 @@ class RelayService(BaseService):
             cb = holder.get("_on_progress")
             if cb:
                 try:
-                    cb(msg.get("data", {}))
+                    cb(data)
                 except Exception:
                     pass
 

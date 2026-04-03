@@ -1449,15 +1449,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             session_id = result.get("session_id", "") if isinstance(result, dict) else str(result)
 
             # Register terminal session for WS proxy
+            # Both Docker and local terminals use the same relay WS path
+            # (local terminal data arrives via host helper → relay → progress → dispatch)
             from services.terminal_proxy import register_terminal, terminal_ws_handler
-            _local_ws_port = result.get("ws_port") if isinstance(result, dict) else None
-            if _local_ws_port:
-                # Local terminal: direct WS bridge on host
-                _relay_addr = getattr(svc, '_relay_addr', None) or '127.0.0.1'
-                register_terminal(session_id, relay_id, relay_service=svc,
-                                  direct_ws=f"{_relay_addr}:{_local_ws_port}")
-            else:
-                register_terminal(session_id, relay_id, relay_service=svc)
+            register_terminal(session_id, relay_id, relay_service=svc)
 
             # Register WS route (once)
             _owner = "_terminal_proxy"

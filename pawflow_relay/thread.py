@@ -337,9 +337,29 @@ class RelayThread:
             self._handle_host_screen_action(conn, req, action)
 
         elif action == "open_local_terminal":
-            result = self._host_open_local_terminal(req)
-            resp = json.dumps({"type": "result", "data": result}) + "\n"
-            conn.sendall(resp.encode("utf-8"))
+            # Open PTY, send result, then stream terminal_data as progress
+            # The relay's _forward_to_host_helper will forward progress to the server WS
+            self._host_terminal_persistent(conn, req)
+            return  # conn managed by _host_terminal_persistent
+
+        elif action in ("write_terminal", "resize_terminal", "close_terminal"):
+            sid = req.get("session_id", "")
+            if hasattr(self, '_local_terminals') and sid in self._local_terminals:
+                t = self._local_terminals[sid]
+                if action == "write_terminal":
+                    import base64 as _b64w
+                    raw = _b64w.b64decode(req.get("data", ""))
+                    t["write"](raw)
+                elif action == "resize_terminal":
+                    t["resize"](req.get("cols", 80), req.get("rows", 24))
+                elif action == "close_terminal":
+                    t["kill"]()
+                    self._local_terminals.pop(sid, None)
+                resp = json.dumps({"type": "result", "data": {"ok": True}}) + "\n"
+                conn.sendall(resp.encode("utf-8"))
+            else:
+                resp = json.dumps({"type": "error", "error": f"Terminal session {sid} not found"}) + "\n"
+                conn.sendall(resp.encode("utf-8"))
 
         elif action == "start_local_code_server":
             result = self._host_start_local_code_server(req)
@@ -487,12 +507,16 @@ class RelayThread:
         from screen_actions import handle_screen_action
         return handle_screen_action(action, req)
 
-    def _host_open_local_terminal(self, req):
-        """Open a terminal on the host with a WS bridge for I/O.
+    def _host_terminal_persistent(self, conn, req):
+        """Open a PTY on the host, stream terminal_data as progress on the TCP conn.
 
-        Same approach as VNC local: start the PTY + a local WS server,
-        return the port. The terminal proxy on the PawFlow server connects
-        to this WS port for bidirectional I/O.
+        Same mechanism as the Docker relay terminal — the PTY reader sends
+        terminal_data messages, and write_terminal/resize_terminal come as
+        separate host helper calls on new TCP connections.
+
+        The relay's _forward_to_host_helper forwards progress messages
+        to the server WS, where dispatch_terminal_data sends them to
+        the browser — exactly like the Docker terminal path.
         """
         import subprocess as _sp
         import shutil
@@ -514,57 +538,55 @@ class RelayThread:
                 shell = os.environ.get("SHELL", "/bin/bash")
 
         session_id = f"local_term_{_uuid.uuid4().hex[:8]}"
-        ws_port = find_free_port()
 
         try:
-            # Launch PTY
             if sys.platform != "win32":
-                import pty, fcntl, struct, termios
-                master, slave = pty.openpty()
+                import pty as _pty_mod, fcntl, struct, termios
+                master, slave = _pty_mod.openpty()
                 winsize = struct.pack("HHHH", rows, cols, 0, 0)
                 fcntl.ioctl(slave, termios.TIOCSWINSZ, winsize)
+                env = os.environ.copy()
+                env["TERM"] = "xterm-256color"
                 proc = _sp.Popen(
                     [shell], stdin=slave, stdout=slave, stderr=slave,
-                    cwd=self.directory, preexec_fn=os.setsid, close_fds=True)
+                    cwd=self.directory, preexec_fn=os.setsid,
+                    close_fds=True, env=env)
                 os.close(slave)
-                master_fd = master
 
-                def _read_pty():
-                    return os.read(master_fd, 4096)
+                def _read():
+                    return os.read(master, 4096)
 
-                def _write_pty(data):
-                    os.write(master_fd, data)
+                def _write(data):
+                    os.write(master, data)
 
-                def _resize_pty(c, r):
-                    winsize = struct.pack("HHHH", r, c, 0, 0)
-                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                def _resize(c, r):
+                    ws = struct.pack("HHHH", r, c, 0, 0)
+                    fcntl.ioctl(master, termios.TIOCSWINSZ, ws)
 
                 def _kill():
                     proc.kill()
             else:
-                # Windows: use ConPTY via pywinpty
                 from winpty import PtyProcess
                 pty_proc = PtyProcess.spawn([shell], cwd=self.directory,
                                             dimensions=(rows, cols))
 
-                def _read_pty():
-                    # pywinpty read() always blocks. Use the underlying
-                    # socket with a timeout for non-blocking reads.
+                def _read():
                     pty_proc.fileobj.settimeout(0.1)
                     try:
                         data = pty_proc.fileobj.recv(4096)
                         if not data:
-                            raise EOFError("PTY closed")
+                            raise EOFError
                         return data
                     except socket.timeout:
                         return b""
                     except OSError:
-                        raise EOFError("PTY closed")
+                        raise EOFError
 
-                def _write_pty(data):
-                    pty_proc.write(data.decode("utf-8", errors="replace") if isinstance(data, bytes) else data)
+                def _write(data):
+                    pty_proc.write(data.decode("utf-8", errors="replace")
+                                   if isinstance(data, bytes) else data)
 
-                def _resize_pty(c, r):
+                def _resize(c, r):
                     pty_proc.setwinsize(r, c)
 
                 def _kill():
@@ -573,141 +595,73 @@ class RelayThread:
                         pty_proc.kill(_sig.SIGTERM)
                     except Exception:
                         pass
-                proc = None  # no subprocess.Popen on Windows
 
-            # Start WS server for terminal I/O (same pattern as websockify for VNC)
-            import hashlib as _hashlib
+            # Store session for write/resize/close from separate TCP calls
+            if not hasattr(self, '_local_terminals'):
+                self._local_terminals = {}
+            self._local_terminals[session_id] = {
+                "write": _write, "resize": _resize, "kill": _kill,
+            }
 
-            srv_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            srv_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            srv_sock.bind(("0.0.0.0", ws_port))
-            srv_sock.listen(1)
-            srv_sock.settimeout(30)
+            # Send result immediately
+            result_msg = json.dumps({
+                "type": "result",
+                "data": {"session_id": session_id},
+            }) + "\n"
+            conn.sendall(result_msg.encode("utf-8"))
 
-            def _ws_bridge():
-                """Accept one WS connection, bridge PTY I/O."""
+            # Stream terminal_data as progress messages on this TCP connection.
+            # The relay's _forward_to_host_helper reads these and forwards
+            # them to the server WS → dispatch_terminal_data → browser.
+            sys.stderr.write(f"[Relay] Local terminal {session_id} opened ({shell})\n")
+            try:
+                while True:
+                    try:
+                        data = _read()
+                    except EOFError:
+                        break
+                    if not data:
+                        continue
+                    progress = json.dumps({
+                        "type": "progress",
+                        "data": {
+                            "type": "terminal_data",
+                            "session_id": session_id,
+                            "data": base64.b64encode(data).decode("ascii"),
+                        },
+                    }) + "\n"
+                    try:
+                        conn.sendall(progress.encode("utf-8"))
+                    except (BrokenPipeError, OSError):
+                        break
+            finally:
+                _kill()
+                self._local_terminals.pop(session_id, None)
+                # Send terminal_exit
                 try:
-                    client, _ = srv_sock.accept()
-                except socket.timeout:
-                    _kill()
-                    srv_sock.close()
-                    return
-                srv_sock.close()
-
-                # WS handshake
-                data = b""
-                while b"\r\n\r\n" not in data:
-                    chunk = client.recv(4096)
-                    if not chunk:
-                        client.close()
-                        _kill()
-                        return
-                    data += chunk
-
-                headers = {}
-                for line in data.decode("latin-1").split("\r\n")[1:]:
-                    if ":" in line:
-                        k, v = line.split(":", 1)
-                        headers[k.strip()] = v.strip()
-
-                ws_key = headers.get("Sec-WebSocket-Key", "")
-                _MAGIC = b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
-                accept = base64.b64encode(
-                    _hashlib.sha1(ws_key.encode() + _MAGIC).digest()).decode()
-                resp = (f"HTTP/1.1 101 Switching Protocols\r\n"
-                        f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
-                        f"Sec-WebSocket-Accept: {accept}\r\n\r\n")
-                client.sendall(resp.encode())
-
-                def _ws_send(payload_bytes, opcode=0x02):
-                    """Send a WS frame (binary)."""
-                    length = len(payload_bytes)
-                    if length <= 125:
-                        header = bytes([0x80 | opcode, length])
-                    elif length <= 65535:
-                        header = bytes([0x80 | opcode, 126]) + length.to_bytes(2, 'big')
-                    else:
-                        header = bytes([0x80 | opcode, 127]) + length.to_bytes(8, 'big')
-                    client.sendall(header + payload_bytes)
-
-                def _ws_recv():
-                    """Receive a WS frame. Returns (opcode, payload)."""
-                    hdr = b""
-                    while len(hdr) < 2:
-                        hdr += client.recv(2 - len(hdr))
-                    opcode = hdr[0] & 0x0F
-                    masked = bool(hdr[1] & 0x80)
-                    length = hdr[1] & 0x7F
-                    if length == 126:
-                        raw = client.recv(2)
-                        length = int.from_bytes(raw, 'big')
-                    elif length == 127:
-                        raw = client.recv(8)
-                        length = int.from_bytes(raw, 'big')
-                    mask = client.recv(4) if masked else b""
-                    payload = b""
-                    while len(payload) < length:
-                        payload += client.recv(length - len(payload))
-                    if masked:
-                        payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
-                    return opcode, payload
-
-                # Reader thread: PTY → WS
-                _stop = threading.Event()
-
-                def _reader():
-                    while not _stop.is_set():
-                        try:
-                            data = _read_pty()
-                            if not data:
-                                break
-                            _ws_send(data)
-                        except (OSError, BrokenPipeError):
-                            break
-                    _stop.set()
-
-                reader_t = threading.Thread(target=_reader, daemon=True)
-                reader_t.start()
-
-                # Main loop: WS → PTY
-                try:
-                    while not _stop.is_set():
-                        opcode, payload = _ws_recv()
-                        if opcode == 0x08:  # close
-                            break
-                        if opcode == 0x09:  # ping
-                            _ws_send(payload, opcode=0x0A)
-                            continue
-                        if opcode == 0x01:  # text = JSON command
-                            try:
-                                msg = json.loads(payload.decode("utf-8"))
-                                if msg.get("type") == "terminal_resize":
-                                    _resize_pty(msg.get("cols", 80), msg.get("rows", 24))
-                                    continue
-                            except Exception:
-                                pass
-                        # Binary or text terminal input
-                        if payload:
-                            _write_pty(payload)
-                except (OSError, BrokenPipeError, ConnectionResetError):
+                    exit_msg = json.dumps({
+                        "type": "progress",
+                        "data": {
+                            "type": "terminal_exit",
+                            "session_id": session_id,
+                        },
+                    }) + "\n"
+                    conn.sendall(exit_msg.encode("utf-8"))
+                except Exception:
                     pass
-                finally:
-                    _stop.set()
-                    try:
-                        _kill()
-                    except Exception:
-                        pass
-                    try:
-                        client.close()
-                    except Exception:
-                        pass
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                sys.stderr.write(f"[Relay] Local terminal {session_id} closed\n")
 
-            threading.Thread(target=_ws_bridge, daemon=True,
-                             name=f"local-term-ws-{session_id}").start()
-
-            return {"session_id": session_id, "ws_port": ws_port, "local_terminal": True}
         except Exception as e:
-            return {"error": f"Failed to open local terminal: {e}"}
+            resp = json.dumps({"type": "error", "error": f"Failed: {e}"}) + "\n"
+            try:
+                conn.sendall(resp.encode("utf-8"))
+                conn.close()
+            except Exception:
+                pass
 
     def _host_start_local_code_server(self, req):
         """Start code-server on the host machine."""

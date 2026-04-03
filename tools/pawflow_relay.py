@@ -1230,6 +1230,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         _explicitly_local = action in (
             "start_local_desktop", "stop_local_desktop", "local_screen_check",
             "open_local_terminal", "start_local_code_server")
+        # Also forward terminal I/O for local terminal sessions
+        if not _explicitly_local and action in ("write_terminal", "resize_terminal", "close_terminal"):
+            _sid = msg.get("session_id", "")
+            if _sid.startswith("local_term_"):
+                _explicitly_local = True
         _screen_with_flag = action.startswith("screen_") and msg.get("local_screen", False)
         _host_helper = os.environ.get("PAWFLOW_HOST_HELPER", "")
         if (_explicitly_local or _screen_with_flag) and _host_helper:

@@ -188,14 +188,6 @@ def _capture_loop(source: str):
                         break
                     continue
 
-                # If we have more than 2 frames buffered (>40ms),
-                # skip to the last frame — discard stale audio
-                if len(_buf) > frame_bytes * 2:
-                    _stale = len(_buf) - frame_bytes
-                    logger.info("Audio capture: discarding %d bytes (%.0fms) of stale audio",
-                                _stale, _stale / (48000 * 2) * 1000)
-                    del _buf[:_stale]
-
                 # Process complete frames
                 while len(_buf) >= frame_bytes:
                     pcm = bytes(_buf[:frame_bytes])

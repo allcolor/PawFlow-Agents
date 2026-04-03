@@ -1,5 +1,6 @@
-// Audio streaming — WebCodecs decoder + AudioWorklet ring buffer.
-// Pipeline: WS → Opus → AudioDecoder → PCM batch → AudioWorklet ring buffer → speakers
+// Audio streaming — WebCodecs decoder + SharedArrayBuffer ring buffer.
+// Pipeline: WS → Opus → AudioDecoder → PCM → SharedArrayBuffer → AudioWorklet → speakers
+// SharedArrayBuffer eliminates postMessage latency — worklet reads directly from shared memory.
 
 var _audioCtx = null;
 var _audioWs = null;
@@ -13,17 +14,24 @@ var _audioWorkletNode = null;
 var _audioWorkletReady = false;
 var _audioWorkletModuleLoaded = false;
 
-// PCM batch accumulator (reduces postMessage frequency)
-var _pcmBatch = null;       // Float32Array(960) = 20ms
-var _pcmBatchPos = 0;
-var _PCM_BATCH_SIZE = 960;   // 20ms at 48kHz — one Opus frame, minimal latency
-var _pcmFlushTimer = null;   // timer to flush partial batches
+// SharedArrayBuffer ring buffer (shared between main thread and worklet)
+var _sharedBuf = null;       // SharedArrayBuffer
+var _sharedRing = null;      // Float32Array view of ring data
+var _sharedCtrl = null;      // Int32Array: [wPos, rPosFrac_hi, rPosFrac_lo, underruns]
+var _RING_SIZE = 48000 * 4;  // 4s ring buffer
+var _useSAB = typeof SharedArrayBuffer !== 'undefined' && typeof Atomics !== 'undefined';
 
-// Pre-buffer: accumulate before sending to worklet
-var _preBuffer = [];          // array of Float32Array chunks
+// Fallback: postMessage path (when SAB not available)
+var _pcmBatch = null;
+var _pcmBatchPos = 0;
+var _PCM_BATCH_SIZE = 960;
+var _pcmFlushTimer = null;
+
+// Pre-buffer
+var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 1440; // 30ms at 48kHz — minimal pre-buffer for tight A/V sync
+var _PRE_BUFFER_TARGET = 1440; // 30ms at 48kHz
 
 // Diagnostic stats
 var _audioStats = {
@@ -38,70 +46,121 @@ var _audioStats = {
 };
 var _statsInterval = null;
 
+// ── Worklet code (runs in AudioWorklet thread) ──────────────────────
 var _WORKLET_CODE = `
 class AudioRingProcessor extends AudioWorkletProcessor {
-  constructor() {
+  constructor(options) {
     super();
-    this.ring = new Float32Array(48000 * 8); // 8s ring buffer
-    this.wPos = 0;
-    this.rPos = 0.0; // fractional read position for smooth resampling
+    this.useSAB = false;
     this.underruns = 0;
+    // postMessage fallback ring
+    this.ring = new Float32Array(48000 * 4);
+    this.wPos = 0;
+    this.rPos = 0.0;
+
     this.port.onmessage = (e) => {
+      if (e.data && e.data.type === 'init-sab') {
+        // SharedArrayBuffer mode: receive shared buffers
+        this.sabRing = new Float32Array(e.data.ring);
+        this.sabCtrl = new Int32Array(e.data.ctrl);
+        this.useSAB = true;
+        this.sabRPos = 0.0;
+        return;
+      }
       if (e.data === 'stats') {
-        this.port.postMessage({
-          type: 'stats',
-          fill: this.wPos - Math.floor(this.rPos),
-          underruns: this.underruns,
-        });
+        const fill = this.useSAB
+          ? Atomics.load(this.sabCtrl, 0) - Math.floor(this.sabRPos)
+          : this.wPos - Math.floor(this.rPos);
+        this.port.postMessage({ type: 'stats', fill: fill, underruns: this.underruns });
         this.underruns = 0;
         return;
       }
       if (e.data === 'reset') {
-        this.wPos = 0;
-        this.rPos = 0.0;
+        if (this.useSAB) {
+          this.sabRPos = Atomics.load(this.sabCtrl, 0);
+        } else {
+          this.wPos = 0;
+          this.rPos = 0.0;
+        }
         this.underruns = 0;
         return;
       }
-      const samples = e.data;
-      const len = this.ring.length;
-      for (let i = 0; i < samples.length; i++) {
-        this.ring[this.wPos % len] = samples[i];
-        this.wPos++;
-      }
-      // Overflow protection: hard skip only at ring capacity
-      if (this.wPos - this.rPos > len) {
-        this.rPos = this.wPos - len + 7200;
+      // postMessage fallback: receive PCM samples
+      if (!this.useSAB) {
+        const samples = e.data;
+        const len = this.ring.length;
+        for (let i = 0; i < samples.length; i++) {
+          this.ring[this.wPos % len] = samples[i];
+          this.wPos++;
+        }
+        if (this.wPos - this.rPos > len) {
+          this.rPos = this.wPos - len + 2400;
+        }
       }
     };
   }
+
   process(inputs, outputs) {
     const out = outputs[0][0];
+    if (this.useSAB) {
+      this._processSAB(out);
+    } else {
+      this._processPostMsg(out);
+    }
+    return true;
+  }
+
+  _processSAB(out) {
+    const ring = this.sabRing;
+    const len = ring.length;
+    const wPos = Atomics.load(this.sabCtrl, 0);
+    const available = wPos - Math.floor(this.sabRPos);
+    const TARGET = 2400; // 50ms
+
+    // Proportional speed-up only — NEVER slow down (causes audible tempo drops)
+    let step = 1.0;
+    if (available > 96000) {
+      this.sabRPos = wPos - TARGET;
+      step = 1.0;
+    } else if (available > TARGET) {
+      // Speed up proportionally: +0.01 per 1000 samples above target, max +5%
+      step = 1.0 + Math.min((available - TARGET) * 0.00001, 0.05);
+    }
+    // Never step < 1.0 — if buffer is low, just play at normal speed.
+    // A micro-silence (underrun) is inaudible; a slowdown is not.
+
+    if (available < out.length) this.underruns++;
+
+    for (let i = 0; i < out.length; i++) {
+      const ri = Math.floor(this.sabRPos);
+      if (ri < wPos) {
+        const frac = this.sabRPos - ri;
+        const s0 = ring[ri % len];
+        const s1 = (ri + 1 < wPos) ? ring[(ri + 1) % len] : s0;
+        out[i] = s0 + frac * (s1 - s0);
+        this.sabRPos += step;
+      } else {
+        out[i] = 0;
+      }
+    }
+  }
+
+  _processPostMsg(out) {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    // Continuous proportional clock drift compensation.
-    // Target fill: 2400 samples (50ms). Step adjusts proportionally
-    // to distance from target — always correcting, never accumulating drift.
-    const TARGET = 2400; // 50ms
+    const TARGET = 2400;
+
     let step = 1.0;
     if (available > 96000) {
-      // Extreme (>2s): hard skip
       this.rPos = this.wPos - TARGET;
       step = 1.0;
-    } else {
-      // Proportional: +0.01 per 1000 samples above target (max +5%)
-      // Below target: -0.003 per 1000 samples below (max -0.5%)
-      const diff = available - TARGET;
-      if (diff > 0) {
-        step = 1.0 + Math.min(diff * 0.00001, 0.05);
-      } else {
-        step = 1.0 + Math.max(diff * 0.000003, -0.005);
-      }
+    } else if (available > TARGET) {
+      step = 1.0 + Math.min((available - TARGET) * 0.00001, 0.05);
     }
-    if (available < out.length) {
-      this.underruns++;
-    }
-    // Read with linear interpolation for smooth resampling
+
+    if (available < out.length) this.underruns++;
+
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.rPos);
       if (ri < this.wPos) {
@@ -114,14 +173,12 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         out[i] = 0;
       }
     }
-    return true;
   }
 }
 registerProcessor('audio-ring-processor', AudioRingProcessor);
 `;
 
-// Keep AudioContext alive — browsers suspend it on focus/visibility changes.
-// Periodic check + event handlers. Reset ring buffer after resume to skip stale audio.
+// Keep AudioContext alive
 function _resumeAudio() {
   if (_audioCtx && _audioCtx.state === 'suspended') {
     _audioCtx.resume().then(function() {
@@ -169,6 +226,24 @@ function audioConnect(sessionId) {
   _audioWorkletModuleLoaded = false;
   if (_audioCtx.state === 'suspended') _audioCtx.resume();
 
+  // Setup SharedArrayBuffer if available
+  if (_useSAB) {
+    try {
+      var ctrlBuf = new SharedArrayBuffer(16); // 4 x Int32
+      var ringBuf = new SharedArrayBuffer(_RING_SIZE * 4); // Float32
+      _sharedCtrl = new Int32Array(ctrlBuf);
+      _sharedRing = new Float32Array(ringBuf);
+      _sharedCtrl[0] = 0; // wPos
+      console.log('[audio] SharedArrayBuffer ring allocated (' + (_RING_SIZE * 4 / 1024) + 'KB)');
+    } catch(e) {
+      console.warn('[audio] SAB alloc failed, falling back to postMessage:', e.message);
+      _useSAB = false;
+      _sharedBuf = null;
+      _sharedRing = null;
+      _sharedCtrl = null;
+    }
+  }
+
   function _setupWorkletNode() {
     _audioWorkletNode = new AudioWorkletNode(_audioCtx, 'audio-ring-processor');
     _audioWorkletNode.connect(_audioGain);
@@ -178,8 +253,17 @@ function audioConnect(sessionId) {
         _audioStats.ringFill = e.data.fill;
       }
     };
+    // Send SAB references to worklet
+    if (_useSAB && _sharedCtrl && _sharedRing) {
+      _audioWorkletNode.port.postMessage({
+        type: 'init-sab',
+        ctrl: _sharedCtrl.buffer,
+        ring: _sharedRing.buffer,
+      });
+      console.log('[audio] SAB mode active — zero-copy ring buffer');
+    }
     _audioWorkletReady = true;
-    console.log('[audio] worklet ready');
+    console.log('[audio] worklet ready' + (_useSAB ? ' (SAB)' : ' (postMessage fallback)'));
   }
 
   if (!_audioWorkletModuleLoaded) {
@@ -212,7 +296,8 @@ function audioConnect(sessionId) {
         ' underruns=' + _audioStats.underruns +
         ' ring_fill=' + _audioStats.ringFill +
         ' (' + Math.round(_audioStats.ringFill / 48) + 'ms)' +
-        ' dec_queue=' + (_audioDecoder ? _audioDecoder.decodeQueueSize : 'N/A'));
+        ' dec_queue=' + (_audioDecoder ? _audioDecoder.decodeQueueSize : 'N/A') +
+        ' mode=' + (_useSAB ? 'SAB' : 'postMsg'));
       _audioStats.wsMessages = 0;
       _audioStats.decoderResets = 0;
       _audioStats.decoderErrors = 0;
@@ -235,12 +320,10 @@ function audioConnect(sessionId) {
     if (_audioMuted) return;
     if (!(evt.data instanceof ArrayBuffer) || evt.data.byteLength === 0) return;
     _audioStats.wsMessages++;
-    // Resume AudioContext if browser suspended it (tab switch, focus loss)
     if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
     if (!_audioDecoder) _createDecoder();
     if (!_audioDecoder || _audioDecoder.state !== 'configured') return;
 
-    // Reset decoder if queue is backing up
     if (_audioDecoder.decodeQueueSize > 10) {
       _audioDecoder.reset();
       _audioDecoder.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 1 });
@@ -301,14 +384,14 @@ function _onDecodedAudio(audioData) {
   audioData.copyTo(samples, { planeIndex: 0, format: 'f32-planar' });
   audioData.close();
 
-  // Pre-buffering phase: accumulate before sending anything
+  // Pre-buffering phase
   if (!_preBufferDone) {
     _preBuffer.push(samples);
     _preBufferSamples += samples.length;
     if (_preBufferSamples >= _PRE_BUFFER_TARGET) {
       _preBufferDone = true;
       for (var i = 0; i < _preBuffer.length; i++) {
-        _addToBatch(_preBuffer[i]);
+        _pushSamples(_preBuffer[i]);
       }
       _preBuffer = [];
       console.log('[audio] pre-buffer filled (' + _preBufferSamples + ' samples)');
@@ -316,7 +399,25 @@ function _onDecodedAudio(audioData) {
     return;
   }
 
-  _addToBatch(samples);
+  _pushSamples(samples);
+}
+
+function _pushSamples(samples) {
+  if (!_audioWorkletReady || !_audioWorkletNode) return;
+
+  if (_useSAB && _sharedRing && _sharedCtrl) {
+    // SAB path: write directly to shared ring buffer (zero-copy to worklet)
+    var wPos = Atomics.load(_sharedCtrl, 0);
+    var len = _sharedRing.length;
+    for (var i = 0; i < samples.length; i++) {
+      _sharedRing[(wPos + i) % len] = samples[i];
+    }
+    Atomics.store(_sharedCtrl, 0, wPos + samples.length);
+    _audioStats.batchesSent++;
+  } else {
+    // postMessage fallback
+    _addToBatch(samples);
+  }
 }
 
 function _addToBatch(samples) {
@@ -378,6 +479,8 @@ function audioDisconnect() {
   _pcmBatchPos = 0;
   _preBuffer = [];
   _preBufferDone = false;
+  _sharedRing = null;
+  _sharedCtrl = null;
   _audioSessionId = null;
   _updateAudioUI(false);
 }

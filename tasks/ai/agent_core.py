@@ -13,6 +13,30 @@ from tasks.ai.agent_exceptions import AgentCancelled, _InterruptComplete
 
 logger = logging.getLogger(__name__)
 
+# Context-ack phrases injected as pre-filled assistant messages.
+# The LLM sometimes echoes them as its first output — strip them.
+_CONTEXT_ACK_PATTERNS = (
+    "Understood. I'll continue from where I left off.",
+    "Understood. I have the summary and will continue from the recent messages.",
+    "Understood. I'll read the conversation history file to get full context, then continue from the recent messages.",
+    "Understood, continuing.",
+    "Understood.",
+)
+
+def _strip_context_ack(text: str) -> str:
+    """Remove known context-ack prefixes that the LLM may echo."""
+    if not text:
+        return text
+    stripped = text.strip()
+    for pat in _CONTEXT_ACK_PATTERNS:
+        if stripped == pat:
+            return ""
+        if stripped.startswith(pat):
+            after = stripped[len(pat):].lstrip()
+            if after:
+                return after
+    return text
+
 
 def _apply_bg_results(messages, conversation_id):
     """Apply completed background tool results to in-memory messages."""
@@ -601,6 +625,10 @@ class AgentCoreMixin:
                         # representation (tool_call, tool_result, thinking) from them.
                         # Persisting display_only would create duplicates at reload.
 
+                        # Strip context-ack echoes the LLM may produce after compaction
+                        _had_text = bool(text and text.strip())
+                        text = _strip_context_ack(text)
+
                         if text:
                             msg = LLMMessage(
                                 role="assistant", content=text, source=_src)
@@ -609,18 +637,24 @@ class AgentCoreMixin:
                             client._last_turn_msg_id = getattr(msg, "msg_id", "")
 
                         # Finalize streaming element — next turn creates a new one
-                        if text or tool_calls:
+                        # If text was suppressed (context-ack), still send turn_complete
+                        # with suppress=true so the frontend removes the streaming element.
+                        _suppressed = _had_text and not text
+                        if text or tool_calls or _suppressed:
                             # Estimate tokens from text length (real values come in done)
                             _cpt = ctx.get("chars_per_token", 0) or 3.5
                             _est_out = int(len(text) / _cpt) if text else 0
-                            _bus.publish_event(_cid, "turn_complete", {
+                            _tc_evt = {
                                 "agent_name": _agent,
                                 "msg_id": client._last_turn_msg_id if text else "",
                                 "source": _src,
                                 "model": _src.get("model", ""),
                                 "provider": _src.get("provider", ""),
                                 "tokens_out": _est_out,
-                            })
+                            }
+                            if _suppressed:
+                                _tc_evt["suppress"] = True
+                            _bus.publish_event(_cid, "turn_complete", _tc_evt)
 
                         if tool_calls:
                             # Extract thinking from first tool_call (claude-code bundles it there)

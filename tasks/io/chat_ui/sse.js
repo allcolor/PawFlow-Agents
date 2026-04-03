@@ -204,12 +204,31 @@ function connectSSE(cid) {
 
   // Turn complete: finalize streaming element between Claude Code turns
   // so each turn looks like a proper message (badge, background, border)
+  // Context-ack patterns that should never be displayed (LLM echoing pre-filled context)
+  const _CONTEXT_ACKS = new Set([
+    "Understood. I'll continue from where I left off.",
+    "Understood. I'll read the conversation history file to get full context, then continue from the recent messages.",
+    "Understood. I have the summary and will continue from the recent messages.",
+    "Understood, continuing.",
+    "Understood.",
+    "No response requested.",
+  ]);
+
   eventSource.addEventListener('turn_complete', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     const agent = data.agent_name || '';
     const s = streams[agent.toLowerCase()];
     if (s && s.el) {
+      // Suppress: context-ack echo stripped server-side OR detected client-side
+      const _streamedText = (s.text || '').trim();
+      if (data.suppress || _CONTEXT_ACKS.has(_streamedText)) {
+        s.el.remove();
+        s.el = null;
+        s.text = '';
+        s.chunks = [];
+        return;
+      }
       // Finalize: proper message class + keep as permanent element
       s.el.classList.remove('streaming');
       s.el.classList.add('finalized');
@@ -677,6 +696,8 @@ function connectSSE(cid) {
     let resp = data.response || '';
     resp = resp.replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
     resp = resp.replace(/^\[[^\]]+\]:\s*/, '');
+    // Strip context-ack echoes from done response too
+    if (_CONTEXT_ACKS.has(resp.trim())) resp = '';
     const finalText = resp || s.text.replace(/^\[[^\]]+\]:\s*/, '') || '';
     // Build metadata — these fields ALWAYS exist for every message
     const extra = {};

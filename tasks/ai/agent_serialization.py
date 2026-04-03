@@ -275,6 +275,10 @@ class AgentSerializationMixin:
                 # Skip internal system instructions injected as user messages
                 if role == "user" and content.startswith("[System:"):
                     continue
+                # Skip synthetic context messages (compaction acks, resume acks)
+                _src = m.get("source") or {}
+                if isinstance(_src, dict) and _src.get("type") == "context":
+                    continue
                 # Thinking block on assistant text messages (no tool_calls)
                 if role == "assistant" and m.get("thinking"):
                     result.append({

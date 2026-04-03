@@ -816,7 +816,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     for _sid in _linked:
                         _tag = " (default)" if _sid == _agent_default else ""
                         _svc = _get_svc(_sid)
-                        _connected = _svc is not None and getattr(_svc, '_relay_connected', False)
+                        _connected = False
+                        try:
+                            _connected = greg.is_connected(_sid)
+                        except Exception:
+                            pass
+                        if not _connected and _ureg and user_id:
+                            try:
+                                _connected = _ureg.is_connected(user_id, _sid)
+                            except Exception:
+                                pass
                         _status = "connected" if _connected else "disconnected"
                         _ri = getattr(_svc, '_relay_info', {}) or {} if _svc else {}
                         _parts = [f"- **{_sid}**{_tag} — {_status}"]

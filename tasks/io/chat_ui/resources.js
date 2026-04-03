@@ -267,11 +267,6 @@ async function _renderResourcesData(data) {
         + '<span style="cursor:pointer;color:#6c5ce7;font-weight:600;user-select:none;" onclick="_toggleSection(\'_relay\')">' 
         + '<span id="res-arrow-_relay">' + rbArrow + '</span> Relays</span>'
         + '</div><div id="res-section-_relay" style="display:' + rbDisplay + ';">';
-      _rb.linked.forEach(function(rid) {
-        var isDefault = rid === _rb.default;
-        var star = isDefault ? ' \u2605' : '';
-        var color = isDefault ? '#4ecdc4' : '#8888aa';
-        var icon = isDefault ? '\u25C9' : '\u25CB';
       var _rbDetails = _rb.details || {};
       _rb.linked.forEach(function(rid) {
         var isDefault = rid === _rb.default;

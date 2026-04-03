@@ -513,6 +513,22 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
             }).encode())
         return [flowfile]
 
+    if action == "relay_set_local":
+        conv_id = body.get("conversation_id", "")
+        agent = body.get("agent", "").strip()
+        local_val = body.get("local", False)
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        from core.relay_bindings import set_default_local
+        set_default_local(conv_id, bool(local_val), agent=agent)
+        scope = f"agent `{agent}`" if agent else "conversation"
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": f"Default local mode for {scope} set to `{local_val}`.",
+        }).encode())
+        return [flowfile]
+
     # ── /feedback ──
     if action == "feedback":
         report = body.get("report", "").strip()

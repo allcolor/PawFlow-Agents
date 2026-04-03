@@ -139,6 +139,32 @@ function _showRelayLinkDialog() {
     document.body.appendChild(overlay);
   });
 }
+function _showRelayInfoDialog(relayId, details) {
+  if (typeof details === 'string') try { details = JSON.parse(details); } catch(e) { details = {}; }
+  var d = details || {};
+  var rows = [
+    ['Relay ID', relayId],
+    ['Connected', d.connected ? '\u{1F7E2} Yes' : '\u{1F534} No'],
+    ['Docker root', d.root || '\u2014'],
+    ['Local root', d.host_root || '\u2014'],
+    ['Platform', d.platform || '\u2014'],
+    ['Containerized', d.containerized ? 'Yes' : 'No'],
+    ['Allow local', d.allow_local ? '\u2705 Yes' : '\u274c No'],
+  ];
+  var html = rows.map(function(r) {
+    return '<tr><td style="color:#888;padding:3px 12px 3px 0;font-size:12px;white-space:nowrap;">' + escapeHtml(r[0]) + '</td>'
+      + '<td style="font-size:12px;">' + r[1] + '</td></tr>';
+  }).join('');
+  var overlay = document.createElement('div');
+  overlay.className = 'exec-overlay';
+  overlay.innerHTML = '<div class="exec-dialog" style="min-width:300px;">'
+    + '<h3>Relay: ' + escapeHtml(relayId) + '</h3>'
+    + '<table style="margin:8px 0;">' + html + '</table>'
+    + '<div class="exec-btns"><button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Close</button></div>'
+    + '</div>';
+  document.body.appendChild(overlay);
+}
+
 function _doRelayLink(btn) {
   var overlay = btn.closest('.exec-overlay');
   var sel = overlay.querySelector('#_relayLinkSelect');
@@ -352,7 +378,8 @@ async function _renderResourcesData(data) {
           var pathInfo = '';
           if (det.root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">docker: <code>' + escapeHtml(det.root) + '</code></div>';
           if (det.host_root) pathInfo += '<div style="font-size:10px;color:#666;margin-left:20px;">local: <code>' + escapeHtml(det.host_root) + '</code></div>';
-          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+          var _detJson = escapeHtml(JSON.stringify(det).replace(/'/g, "\\'"));
+          html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="_showRelayInfoDialog(\'' + escapeHtml(rid) + '\',' + _detJson + ');return false;">'
             + '<span style="color:' + color + ';font-size:11px;cursor:pointer;" title="' + titleText + '"' + clickDefault + '>' + icon + '</span>'
             + '<span style="font-size:11px;">' + connDot + '</span>'
             + '<span style="color:' + color + ';font-size:12px;">' + escapeHtml(rid) + star + '</span>'

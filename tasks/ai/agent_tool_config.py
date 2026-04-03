@@ -261,6 +261,15 @@ class AgentToolConfigMixin:
                     fs_services = self._list_available_services(user_id, "filesystem")
                 if fs_services:
                     h.set_available_services(fs_services)
+                # Set default_local for tool argument injection
+                if conversation_id:
+                    try:
+                        from core.relay_bindings import get_default_local
+                        _dl = get_default_local(conversation_id, agent=_agent_name)
+                        if _dl is not None:
+                            h._default_local = _dl
+                    except Exception:
+                        pass
             elif isinstance(h, SecurityScanHandler):
                 if user_id:
                     h.set_user_id(user_id)

@@ -156,6 +156,34 @@ def set_default_relay(cid: str, relay_id: str, agent: str = "") -> bool:
     return True
 
 
+def get_default_local(cid: str, agent: str = "") -> Optional[bool]:
+    """Get the default local mode for a scope.
+
+    Returns True (local), False (docker), or None (ask user).
+    Resolution: agent-specific → conv-wide → None.
+    """
+    b = get_bindings(cid)
+    dl = b.get("default_local", {})
+    scope = agent if agent else _CONV
+    if scope and scope != _CONV and scope in dl:
+        return dl[scope]
+    if _CONV in dl:
+        return dl[_CONV]
+    return None
+
+
+def set_default_local(cid: str, local: bool, agent: str = "") -> bool:
+    """Set the default local mode for a scope."""
+    scope = agent if agent else _CONV
+    b = get_bindings(cid)
+    dl = b.setdefault("default_local", {})
+    dl[scope] = local
+    _get_store().set_extra(cid, _EXTRA_KEY, b)
+    scope_label = f"agent '{scope}'" if scope != _CONV else "conversation"
+    logger.info("Default local=%s set for %s in %s", local, scope_label, cid[:8])
+    return True
+
+
 def list_available_relays(user_id: str = "") -> List[Dict[str, Any]]:
     """List all connected relay services (global + user scope)."""
     relays = []

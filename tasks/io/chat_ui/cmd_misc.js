@@ -547,8 +547,17 @@ function cmdRelay(text, parts) {
     fireAction('relay_default', {relay_id: rid3});
     setTimeout(loadResources, 500);
     addMsg('system', 'Setting default relay to ' + rid3 + '...');
+  } else if (sub === 'local') {
+    // /relay local true|false [@agent]
+    var val = (parts[2] || '').toLowerCase();
+    if (val !== 'true' && val !== 'false') { addMsg('error', 'Usage: /relay local true|false [@agent]'); return true; }
+    var agent = (parts[3] || '').replace(/^@/, '');
+    action$('relay_set_local', {local: val === 'true', agent: agent}).subscribe(function(data) {
+      if (data.error) addMsg('error', data.error);
+      else addMsg('system', data.message || 'OK');
+    });
   } else {
-    addMsg('error', 'Unknown /relay subcommand: ' + sub + '. Use: status, list, link, unlink, default');
+    addMsg('error', 'Unknown /relay subcommand: ' + sub + '. Use: status, list, link, unlink, default, local');
   }
   return true;
 }

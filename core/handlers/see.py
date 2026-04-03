@@ -115,7 +115,7 @@ class SeeHandler(BaseFsHandler):
         local=true  → relay (user's actual desktop)
         local=false → Docker virtual screen (local capture)
         """
-        local = bool(arguments.get("local", False))
+        local = self._resolve_local(arguments)
         source = arguments.get("source", "")
 
         if local:

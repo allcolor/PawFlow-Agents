@@ -108,6 +108,7 @@ class BaseFsHandler(ToolHandler):
         self._tool_result_max_chars = 50000
         self._workdir = ""
         self._is_claude_code = False
+        self._default_local = None  # None=ask, True=local, False=docker
 
     # ── Setters (called by tool_relay_service and agent_tool_config) ──
 
@@ -131,6 +132,14 @@ class BaseFsHandler(ToolHandler):
 
     def set_is_claude_code(self, val: bool):
         self._is_claude_code = val
+
+    def _resolve_local(self, arguments: dict) -> bool:
+        """Resolve the 'local' flag: explicit argument > default > False."""
+        if "local" in arguments:
+            return bool(arguments["local"])
+        if self._default_local is not None:
+            return self._default_local
+        return False
 
     # ── Service resolution ──
 

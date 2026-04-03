@@ -208,7 +208,8 @@ const HELP_DATA = {
       + '  /relay list         \u2014 List all available relays\n'
       + '  /relay link <id>    \u2014 Link a relay to this conversation\n'
       + '  /relay unlink <id>  \u2014 Unlink a relay\n'
-      + '  /relay default <id> \u2014 Set a relay as default for this conversation',
+      + '  /relay default <id> \u2014 Set a relay as default for this conversation\n'
+      + '  /relay local true|false [@agent] \u2014 Set default execution mode (local=host, false=docker)',
   },
   '/service': {
     usage: '/service list | install <type> <name> [config] | uninstall <name> | enable <name> | disable <name>',

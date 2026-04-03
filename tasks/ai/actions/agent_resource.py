@@ -563,6 +563,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 result["relay_bindings"] = {
                     "linked": _rb.get("linked", {}),
                     "default": _rb.get("default", {}),
+                    "default_local": _rb.get("default_local", {}),
                     "details": _relay_details,
                 }
             except Exception:

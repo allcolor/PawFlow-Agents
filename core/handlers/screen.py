@@ -95,7 +95,7 @@ class ScreenHandler(ToolHandler):
             return "Error: missing action parameter"
 
         relay_name = arguments.get("relay", "")
-        local = bool(arguments.get("local", False))
+        local = self._resolve_local(arguments)
 
         if local:
             # Route to relay — user's actual desktop

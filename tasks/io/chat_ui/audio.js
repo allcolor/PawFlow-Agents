@@ -119,11 +119,6 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const available = wPos - Math.floor(this.sabRPos);
     const TARGET = 7200; // 150ms at 48kHz — absorbs delivery jitter
 
-    // Constant step — NEVER change playback speed (preserves pitch always).
-    // Drop samples to drain excess buffer instead of speeding up.
-    const step = this.baseStep;
-    if (available > TARGET * 3) {
-      // Buffer way too full (>450ms): snap to TARGET
     // PLL: smoothly track source rate with imperceptible speed adjustment.
     // Max ±0.2% pitch deviation — inaudible. No snaps, no drops.
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
@@ -167,8 +162,14 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const available = this.wPos - irPos;
     const TARGET = 7200;
 
-    const step = this.baseStep;
-    if (available > TARGET * 3) {
+    // PLL: same as SAB path
+    if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
+    const error = available - TARGET;
+    this._pmSmoothStep += error * 0.000002;
+    this._pmSmoothStep = Math.max(this.baseStep - 0.002, Math.min(this.baseStep + 0.002, this._pmSmoothStep));
+    const step = this._pmSmoothStep;
+
+    if (available > 96000) {
       this.rPos = this.wPos - TARGET;
     }
 

@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
 """Audio capture server — captures system audio and streams Opus over TCP.
 
+Uses parec (PulseAudio) for PCM capture and libopus (via ctypes) for encoding.
+No ffmpeg — direct frame-by-frame encoding with immediate flush.
+
 Protocol: each packet is 2-byte big-endian length + Opus data.
 """
 
 import argparse
+import ctypes
+import ctypes.util
 import logging
 import platform
 import socket
@@ -15,6 +20,86 @@ import time
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+# ── Opus encoder via ctypes ─────────────────────────────────────────
+
+OPUS_APPLICATION_AUDIO = 2049
+OPUS_OK = 0
+OPUS_SET_BITRATE_REQUEST = 4002
+OPUS_SET_VBR_REQUEST = 4006
+
+
+def _load_opus():
+    """Load libopus shared library."""
+    path = ctypes.util.find_library("opus")
+    if not path:
+        # Try common locations
+        for candidate in ["/usr/lib/x86_64-linux-gnu/libopus.so.0",
+                          "/usr/lib/libopus.so.0", "libopus.so.0"]:
+            try:
+                return ctypes.cdll.LoadLibrary(candidate)
+            except OSError:
+                continue
+        raise RuntimeError("libopus not found")
+    return ctypes.cdll.LoadLibrary(path)
+
+
+class OpusEncoder:
+    """Minimal Opus encoder wrapping libopus via ctypes."""
+
+    def __init__(self, sample_rate=48000, channels=1, bitrate=64000,
+                 frame_duration_ms=20, application=OPUS_APPLICATION_AUDIO):
+        self._lib = _load_opus()
+        self._sample_rate = sample_rate
+        self._channels = channels
+        self._frame_size = sample_rate * frame_duration_ms // 1000  # samples per frame
+
+        # opus_encoder_create
+        err = ctypes.c_int(0)
+        self._lib.opus_encoder_create.restype = ctypes.c_void_p
+        self._enc = self._lib.opus_encoder_create(
+            ctypes.c_int(sample_rate), ctypes.c_int(channels),
+            ctypes.c_int(application), ctypes.byref(err))
+        if err.value != OPUS_OK or not self._enc:
+            raise RuntimeError(f"opus_encoder_create failed: {err.value}")
+
+        # Set bitrate
+        self._lib.opus_encoder_ctl(self._enc,
+                                   ctypes.c_int(OPUS_SET_BITRATE_REQUEST),
+                                   ctypes.c_int(bitrate))
+        # Enable VBR
+        self._lib.opus_encoder_ctl(self._enc,
+                                   ctypes.c_int(OPUS_SET_VBR_REQUEST),
+                                   ctypes.c_int(1))
+
+    def encode(self, pcm_bytes: bytes) -> bytes:
+        """Encode one frame of PCM (s16le) to Opus. Returns Opus packet bytes."""
+        pcm_buf = ctypes.create_string_buffer(pcm_bytes)
+        out_buf = ctypes.create_string_buffer(4000)  # max opus packet
+        self._lib.opus_encode.restype = ctypes.c_int
+        n = self._lib.opus_encode(
+            self._enc,
+            ctypes.cast(pcm_buf, ctypes.POINTER(ctypes.c_int16)),
+            ctypes.c_int(self._frame_size),
+            out_buf, ctypes.c_int(4000))
+        if n < 0:
+            raise RuntimeError(f"opus_encode failed: {n}")
+        return out_buf.raw[:n]
+
+    @property
+    def frame_bytes(self) -> int:
+        """PCM bytes needed per frame (s16le)."""
+        return self._frame_size * self._channels * 2
+
+    def __del__(self):
+        if hasattr(self, '_enc') and self._enc:
+            try:
+                self._lib.opus_encoder_destroy(self._enc)
+            except Exception:
+                pass
+
+
+# ── TCP broadcast ───────────────────────────────────────────────────
 
 _clients = []
 _clients_lock = threading.Lock()
@@ -39,9 +124,12 @@ def _broadcast(opus_packet: bytes):
                 pass
 
 
+# ── PulseAudio capture ──────────────────────────────────────────────
+
 def _detect_pulse_monitor() -> str:
     try:
-        out = subprocess.check_output(["pactl", "list", "short", "sources"], text=True, timeout=5)
+        out = subprocess.check_output(
+            ["pactl", "list", "short", "sources"], text=True, timeout=5)
         for line in out.strip().split("\n"):
             parts = line.split("\t")
             if len(parts) >= 2 and ".monitor" in parts[1]:
@@ -51,71 +139,51 @@ def _detect_pulse_monitor() -> str:
     return "default.monitor"
 
 
-def _start_ffmpeg_pulse(source_name: str) -> subprocess.Popen:
-    cmd = [
-        "ffmpeg", "-hide_banner", "-loglevel", "warning",
-        "-f", "pulse", "-i", source_name,
-        "-ac", "1", "-ar", "48000",
-        "-c:a", "libopus", "-b:a", "64k",
-        "-frame_duration", "20", "-vbr", "on", "-application", "audio",
-        "-f", "ogg", "-page_duration", "20000",
-        "pipe:1"
-    ]
-    logger.info("Starting ffmpeg: %s", " ".join(cmd))
-    return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-
-def _parse_ogg_pages(stream):
-    pages_seen = 0
-    while True:
-        sync = stream.read(4)
-        if len(sync) < 4:
-            return
-        if sync != b"OggS":
-            buf = sync
-            while True:
-                b = stream.read(1)
-                if not b:
-                    return
-                buf = buf[1:] + b
-                if buf == b"OggS":
-                    break
-        hdr = stream.read(23)
-        if len(hdr) < 23:
-            return
-        n_segments = hdr[22]
-        seg_table = stream.read(n_segments)
-        if len(seg_table) < n_segments:
-            return
-        payload_size = sum(seg_table)
-        payload = stream.read(payload_size)
-        if len(payload) < payload_size:
-            return
-        pages_seen += 1
-        if pages_seen <= 2:
-            continue
-        yield payload
-
-
 def _capture_loop(source: str):
+    if platform.system() == "Windows":
+        logger.error("Windows not supported (use WASAPI capture)")
+        return
+
+    encoder = OpusEncoder(sample_rate=48000, channels=1, bitrate=64000,
+                          frame_duration_ms=20)
+    frame_bytes = encoder.frame_bytes  # 1920 bytes (960 samples * 2)
+
     while True:
         try:
-            if source in ("pulse", "auto") and platform.system() != "Windows":
-                monitor = _detect_pulse_monitor()
-                logger.info("Using PulseAudio monitor: %s", monitor)
-                proc = _start_ffmpeg_pulse(monitor)
-            else:
-                logger.error("Unsupported source '%s' on %s", source, platform.system())
-                return
-            for opus_packet in _parse_ogg_pages(proc.stdout):
-                _broadcast(opus_packet)
+            monitor = _detect_pulse_monitor() if source in ("pulse", "auto") else source
+            logger.info("Using PulseAudio monitor: %s", monitor)
+
+            proc = subprocess.Popen(
+                ["parec", "--format=s16le", "--rate=48000", "--channels=1",
+                 "-d", monitor, "--latency-msec=20"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+            logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
+            _pkt_count = 0
+            _interval_start = time.monotonic()
+
+            while True:
+                pcm = proc.stdout.read(frame_bytes)
+                if not pcm or len(pcm) < frame_bytes:
+                    break
+                opus_pkt = encoder.encode(pcm)
+                _broadcast(opus_pkt)
+                _pkt_count += 1
+                _now = time.monotonic()
+                if _now - _interval_start >= 10.0:
+                    logger.info("Audio capture: %d pkts/10s", _pkt_count)
+                    _pkt_count = 0
+                    _interval_start = _now
+
             proc.wait()
-            logger.warning("ffmpeg exited (code %d)", proc.returncode)
+            logger.warning("parec exited (code %s)", proc.returncode)
         except Exception as e:
             logger.error("Capture error: %s", e)
         logger.info("Restarting capture in 2s...")
         time.sleep(2)
 
+
+# ── TCP server ──────────────────────────────────────────────────────
 
 def _tcp_server(port: int):
     srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -134,7 +202,7 @@ def _tcp_server(port: int):
 def main():
     parser = argparse.ArgumentParser(description="Audio capture server")
     parser.add_argument("--port", type=int, default=5800)
-    parser.add_argument("--source", default="auto", choices=["pulse", "wasapi", "auto"])
+    parser.add_argument("--source", default="auto", choices=["pulse", "auto"])
     args = parser.parse_args()
     threading.Thread(target=_tcp_server, args=(args.port,), daemon=True).start()
     _capture_loop(args.source)

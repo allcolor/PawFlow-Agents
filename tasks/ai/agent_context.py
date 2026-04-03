@@ -277,7 +277,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _early_agent = _early_target or _early_res.get("agent", "")
             except Exception:
                 pass
-        _context_agent = _early_agent or "assistant"
+        _context_agent = _early_agent
 
         # ── Resolve active agent + LLM service EARLY ──
         # Needed before message loading to know if we should skip compact

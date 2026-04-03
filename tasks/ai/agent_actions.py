@@ -259,8 +259,9 @@ class AgentActionsMixin:
         # If no agent specified, use the currently selected agent for this conversation
         if not agent_name and conv_id:
             active_res = store.get_extra(conv_id, "active_resources") or {}
-            agent_name = active_res.get("agent", "") or "assistant"
-        agent_name = agent_name or "assistant"
+            agent_name = active_res.get("agent", "")
+        if not agent_name:
+            raise RuntimeError("No agent resolved for this conversation. Add an agent first.")
         # Resolve nickname â†’ real name (case-insensitive)
         if agent_name:
             agent_name = self._resolve_agent_name(agent_name, conv_id)

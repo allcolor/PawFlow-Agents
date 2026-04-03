@@ -214,7 +214,7 @@ class AssignTaskHandler(ToolHandler):
         import time as _t
         target = arguments.get("agent", "")
         if target == "self":
-            target = self._agent_name or "assistant"
+            target = self._agent_name or ""
         task_def_name = arguments.get("task_def_name", "")
 
         if not task_def_name:
@@ -402,7 +402,7 @@ class CompleteTaskHandler(ToolHandler):
         if not self._conversation_id:
             return "Error: no conversation context"
 
-        agent = self._agent_name or "assistant"
+        agent = self._agent_name or ""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
         # Tasks are stored in the PARENT conversation's extras.

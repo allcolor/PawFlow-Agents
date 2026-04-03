@@ -49,7 +49,7 @@ class AgentSideChannelsMixin:
             if not agent_name:
                 # Fall back to active agent for this conversation
                 active_res = store.get_extra(conversation_id, "active_resources") or {}
-                agent_name = active_res.get("agent", "") or "assistant"
+                agent_name = active_res.get("agent", "")
             rs = ResourceStore.instance()
             adef = rs.get_any("agent", agent_name, user_id)
             if not adef:

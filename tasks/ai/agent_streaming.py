@@ -517,7 +517,9 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         if "[random_thought]" in _r and "(" in _r:
                             _agents.add(_r.rsplit("(", 1)[-1].rstrip(")"))
                     if not _agents:
-                        _agents = {ctx.get("active_agent_name") or "assistant"}
+                        _an = ctx.get("active_agent_name", "")
+                        if _an:
+                            _agents = {_an}
                     _store = ConversationStore.instance()
                     for _ag in _agents:
                         _cfg = _store.get_extra(conversation_id, f"random_thought::{_ag.lower()}")

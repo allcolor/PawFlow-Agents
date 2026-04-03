@@ -704,7 +704,7 @@ class AgentLoopTask(
             _meta = _CS_chk.instance().get_metadata(conversation_id)
             _uid = _meta.get("user_id", "") if _meta else ""
             _, _svc_id, _ = self._resolve_agent_client(
-                agent_name or "assistant", _uid, conversation_id)
+                agent_name or "", _uid, conversation_id)
             if _svc_id:
                 _c, _s = self._resolve_llm_service(_svc_id, _uid)
                 if _c and getattr(_c, 'provider', '') == 'claude-code':
@@ -738,7 +738,7 @@ class AgentLoopTask(
         def _synthesis():
             _synth_gen_key = f"{conversation_id}:__synth__"
             # Mark synthesis as active in _active_contexts
-            _synth_ctx = {"active_agent_name": agent_name or "assistant",
+            _synth_ctx = {"active_agent_name": agent_name or "",
                           "conversation_id": conversation_id}
             _synth_ctx_key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with self._active_contexts_lock:
@@ -749,7 +749,7 @@ class AgentLoopTask(
                 # Resolve user_id from conversation metadata
                 _meta = store.get_metadata(conversation_id)
                 user_id = _meta.get("user_id", "") if _meta else ""
-                _agent = agent_name or "assistant"
+                _agent = agent_name or ""
                 ctx_data = store.load_agent_context(conversation_id, _agent)
                 if not ctx_data:
                     ctx_data = store.load(conversation_id) or []

@@ -946,6 +946,19 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         store.save(new_id, [], user_id=uid)
         active_res = {"agents": valid_agents, "agent": valid_agents[0]}
         store.set_extra(new_id, "active_resources", active_res)
+        # Title
+        title = body.get("title", "")
+        if title:
+            store.set_extra(new_id, "title", title)
+        # Relay bindings
+        relay_ids = body.get("relays", [])
+        default_relay = body.get("default_relay", "")
+        if relay_ids:
+            from core.relay_bindings import link_relay, set_default_relay
+            for rid in relay_ids:
+                link_relay(new_id, rid)
+            if default_relay and default_relay in relay_ids:
+                set_default_relay(new_id, default_relay)
         flowfile.set_content(json.dumps({
             "conversation_id": new_id,
             "agents": valid_agents,

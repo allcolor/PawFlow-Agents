@@ -50,7 +50,7 @@ class SeeHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "File path to view. Use 'screen' or 'screenshot' to capture the screen."},
                 "source": {"type": "string", "description": "Filesystem service name. Omit for default."},
                 "max_frames": {"type": "integer", "description": "Max frames to extract from video (default: 5)"},
-                "local_screen": {"type": "boolean", "description": "If true, capture from the user's local screen (not Docker). Default false."},
+                "local": {"type": "boolean", "description": "If true, capture from the user's local screen (not Docker). Default false."},
             },
             "required": ["path"],
         }
@@ -62,7 +62,7 @@ class SeeHandler(BaseFsHandler):
         if not path:
             return "Error: 'path' is required"
 
-        # Screen capture shortcut: see(path="screen", local_screen=true)
+        # Screen capture shortcut: see(path="screen", local=true)
         if path.lower() in ("screen", "screenshot"):
             return self._see_screen(arguments)
 
@@ -112,13 +112,13 @@ class SeeHandler(BaseFsHandler):
     def _see_screen(self, arguments: Dict[str, Any]) -> str:
         """Capture screen and return as multimodal image.
 
-        local_screen=true  → relay (user's actual desktop)
-        local_screen=false → Docker virtual screen (local capture)
+        local=true  → relay (user's actual desktop)
+        local=false → Docker virtual screen (local capture)
         """
-        local_screen = bool(arguments.get("local_screen", False))
+        local = bool(arguments.get("local", False))
         source = arguments.get("source", "")
 
-        if local_screen:
+        if local:
             # Route to relay for user's desktop
             from core.handlers._fs_base import find_fs_service
             svc = find_fs_service(self._user_id, source) if source else (
@@ -126,7 +126,7 @@ class SeeHandler(BaseFsHandler):
             if not svc:
                 return "Error: no relay connected for local screen capture."
             try:
-                result = svc._request("screen_screenshot", ".", local_screen=True)
+                result = svc._request("screen_screenshot", ".", local=True)
             except Exception as e:
                 return f"Error: screen capture failed: {e}"
         else:

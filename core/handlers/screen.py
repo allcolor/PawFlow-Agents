@@ -14,8 +14,8 @@ class ScreenHandler(ToolHandler):
     Routes screen_* actions to a filesystem relay (user's PC) or
     executes locally on the Docker virtual screen.
 
-    local_screen=true  → relay (user's actual desktop)
-    local_screen=false → Docker Xvfb virtual screen
+    local=true  → relay (user's actual desktop)
+    local=false → Docker Xvfb virtual screen
     """
 
     _fs_service = None
@@ -33,8 +33,8 @@ class ScreenHandler(ToolHandler):
             "Take screenshots to see what's on screen, click elements, type text, "
             "press keys, scroll. Useful for GUI testing, visual verification, "
             "or when you need to see what the user sees.\n"
-            "IMPORTANT: Set local_screen=true to act on the user's real PC display, "
-            "or local_screen=false (default) for the Docker virtual screen.\n"
+            "IMPORTANT: Set local=true to act on the user's real PC display, "
+            "or local=false (default) for the Docker virtual screen.\n"
             "COORDINATES: x,y are in physical pixels matching the screenshot resolution. "
             "Always take a screenshot first — the result includes the screen resolution "
             "(e.g. 2560x1440). Use those pixel dimensions to calculate click/move coordinates."
@@ -64,7 +64,7 @@ class ScreenHandler(ToolHandler):
                 "button": {"type": "string", "description": "Mouse button: left (default), right, middle"},
                 "amount": {"type": "integer", "description": "Scroll amount (positive=down, negative=up, default 3)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit to auto-select."},
-                "local_screen": {"type": "boolean", "description": "If true, execute on the user's local desktop (via relay). If false, use the Docker virtual screen. Default false."},
+                "local": {"type": "boolean", "description": "If true, execute on the user's local desktop (via relay). If false, use the Docker virtual screen. Default false."},
             },
             "required": ["action"],
         }
@@ -95,9 +95,9 @@ class ScreenHandler(ToolHandler):
             return "Error: missing action parameter"
 
         relay_name = arguments.get("relay", "")
-        local_screen = bool(arguments.get("local_screen", False))
+        local = bool(arguments.get("local", False))
 
-        if local_screen:
+        if local:
             # Route to relay — user's actual desktop
             svc = self._find_relay(relay_name)
             if not svc:
@@ -141,7 +141,7 @@ class ScreenHandler(ToolHandler):
             return "Error: screen automation not available in this environment (missing fs_screen)."
 
         req = {k: v for k, v in arguments.items()
-               if k not in ("action", "relay", "local_screen")}
+               if k not in ("action", "relay", "local")}
 
         _actions = {
             "screenshot": action_screen_screenshot,

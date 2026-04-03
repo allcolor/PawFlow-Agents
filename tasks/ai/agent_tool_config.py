@@ -229,7 +229,7 @@ class AgentToolConfigMixin:
                 if conversation_id:
                     h.set_conversation_id(conversation_id)
                 # Try conversation-scoped relay bindings first (per-agent)
-                _agent_name = ctx.get("active_agent_name", "") if ctx else ""
+                _agent_name = agent_name
                 _relay_svc = None
                 if conversation_id:
                     try:

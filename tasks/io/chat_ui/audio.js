@@ -11,18 +11,19 @@ var _audioDecoder = null;
 var _audioTimestamp = 0;
 var _audioWorkletNode = null;
 var _audioWorkletReady = false;
+var _audioWorkletModuleLoaded = false;
 
 // PCM batch accumulator (reduces postMessage frequency)
-var _pcmBatch = null;       // Float32Array(4800) = 100ms
+var _pcmBatch = null;       // Float32Array(1920) = 40ms
 var _pcmBatchPos = 0;
-var _PCM_BATCH_SIZE = 4800;  // 100ms at 48kHz
+var _PCM_BATCH_SIZE = 1920;  // 40ms at 48kHz
 var _pcmFlushTimer = null;   // timer to flush partial batches
 
 // Pre-buffer: accumulate before sending to worklet
 var _preBuffer = [];          // array of Float32Array chunks
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 14400; // 300ms at 48kHz
+var _PRE_BUFFER_TARGET = 2400; // 50ms at 48kHz
 
 // Diagnostic stats
 var _audioStats = {
@@ -55,6 +56,12 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         this.underruns = 0;
         return;
       }
+      if (e.data === 'reset') {
+        this.wPos = 0;
+        this.rPos = 0;
+        this.underruns = 0;
+        return;
+      }
       const samples = e.data;
       const len = this.ring.length;
       for (let i = 0; i < samples.length; i++) {
@@ -71,6 +78,10 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const out = outputs[0][0];
     const len = this.ring.length;
     const available = this.wPos - this.rPos;
+    // Cap latency: if ring has >200ms, skip ahead to ~80ms
+    if (available > 9600) {
+      this.rPos = this.wPos - 3840;
+    }
     if (available < out.length) {
       this.underruns++;
     }
@@ -87,6 +98,26 @@ class AudioRingProcessor extends AudioWorkletProcessor {
 }
 registerProcessor('audio-ring-processor', AudioRingProcessor);
 `;
+
+// Keep AudioContext alive — browsers suspend it on focus/visibility changes.
+// Periodic check + event handlers. Reset ring buffer after resume to skip stale audio.
+function _resumeAudio() {
+  if (_audioCtx && _audioCtx.state === 'suspended') {
+    _audioCtx.resume().then(function() {
+      console.log('[audio] resumed AudioContext');
+      if (_audioWorkletNode && _audioWorkletReady) {
+        _audioWorkletNode.port.postMessage('reset');
+      }
+    });
+  }
+}
+setInterval(_resumeAudio, 500);
+document.addEventListener('visibilitychange', function() {
+  if (!document.hidden) _resumeAudio();
+});
+window.addEventListener('focus', _resumeAudio);
+window.addEventListener('click', _resumeAudio);
+window.addEventListener('keydown', _resumeAudio);
 
 function audioConnect(sessionId) {
   if (_audioWs) audioDisconnect();
@@ -114,10 +145,7 @@ function audioConnect(sessionId) {
   }
   if (_audioCtx.state === 'suspended') _audioCtx.resume();
 
-  var blob = new Blob([_WORKLET_CODE], { type: 'application/javascript' });
-  var blobUrl = URL.createObjectURL(blob);
-  _audioCtx.audioWorklet.addModule(blobUrl).then(function() {
-    URL.revokeObjectURL(blobUrl);
+  function _setupWorkletNode() {
     _audioWorkletNode = new AudioWorkletNode(_audioCtx, 'audio-ring-processor');
     _audioWorkletNode.connect(_audioGain);
     _audioWorkletNode.port.onmessage = function(e) {
@@ -128,9 +156,21 @@ function audioConnect(sessionId) {
     };
     _audioWorkletReady = true;
     console.log('[audio] worklet ready');
-  }).catch(function(e) {
-    console.error('[audio] worklet init failed:', e);
-  });
+  }
+
+  if (!_audioWorkletModuleLoaded) {
+    var blob = new Blob([_WORKLET_CODE], { type: 'application/javascript' });
+    var blobUrl = URL.createObjectURL(blob);
+    _audioCtx.audioWorklet.addModule(blobUrl).then(function() {
+      URL.revokeObjectURL(blobUrl);
+      _audioWorkletModuleLoaded = true;
+      _setupWorkletNode();
+    }).catch(function(e) {
+      console.error('[audio] worklet init failed:', e);
+    });
+  } else {
+    _setupWorkletNode();
+  }
 
   _createDecoder();
 
@@ -171,6 +211,8 @@ function audioConnect(sessionId) {
     if (_audioMuted) return;
     if (!(evt.data instanceof ArrayBuffer) || evt.data.byteLength === 0) return;
     _audioStats.wsMessages++;
+    // Resume AudioContext if browser suspended it (tab switch, focus loss)
+    if (_audioCtx && _audioCtx.state === 'suspended') _audioCtx.resume();
     if (!_audioDecoder) _createDecoder();
     if (!_audioDecoder || _audioDecoder.state !== 'configured') return;
 
@@ -274,7 +316,7 @@ function _addToBatch(samples) {
     }
   }
   if (_pcmBatchPos > 0) {
-    _pcmFlushTimer = setTimeout(_flushPartialBatch, 40);
+    _pcmFlushTimer = setTimeout(_flushPartialBatch, 15);
   }
 }
 

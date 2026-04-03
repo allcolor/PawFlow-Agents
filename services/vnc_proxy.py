@@ -227,7 +227,10 @@ def _serve_novnc_local(pending_req, sub_path: str) -> bool:
                     body = f.read()
                 ext = os.path.splitext(full_path)[1].lower()
                 content_type = _MIME_TYPES.get(ext, "application/octet-stream")
-                pending_req.complete(200, {"Content-Type": content_type}, body)
+                pending_req.complete(200, {
+                "Content-Type": content_type,
+                "Cross-Origin-Resource-Policy": "same-origin",
+            }, body)
                 return True
             except Exception:
                 return False
@@ -261,7 +264,10 @@ def vnc_http_proxy(pending_req):
         with urllib.request.urlopen(req, timeout=10) as resp:
             body = resp.read()
             content_type = resp.headers.get("Content-Type", "application/octet-stream")
-            pending_req.complete(200, {"Content-Type": content_type}, body)
+            pending_req.complete(200, {
+                "Content-Type": content_type,
+                "Cross-Origin-Resource-Policy": "same-origin",
+            }, body)
     except urllib.error.HTTPError as e:
         if e.code == 405 and _serve_novnc_local(pending_req, sub_path):
             return

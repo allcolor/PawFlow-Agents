@@ -143,6 +143,10 @@ class ServeChatUITask(BaseTask):
         flowfile.set_attribute("http.response.header.Content-Type",
                                "text/html; charset=utf-8")
         flowfile.set_attribute("http.response.header.Cache-Control", "no-cache")
+        # Enable SharedArrayBuffer for AudioWorklet zero-copy ring buffer.
+        # credentialless allows cross-origin iframes (noVNC) without CORP headers.
+        flowfile.set_attribute("http.response.header.Cross-Origin-Opener-Policy", "same-origin")
+        flowfile.set_attribute("http.response.header.Cross-Origin-Embedder-Policy", "credentialless")
         return [flowfile]
 
 

@@ -106,6 +106,8 @@ class ServeAssetsTask(BaseTask):
         cache_control = self.config.get("cache_control", "public, max-age=3600")
         if cache_control:
             flowfile.set_attribute("http.response.cache-control", cache_control)
+        # Allow loading under COEP: require-corp (needed for SharedArrayBuffer)
+        flowfile.set_attribute("http.response.header.Cross-Origin-Resource-Policy", "same-origin")
 
         return [flowfile]
 

@@ -373,6 +373,19 @@ pre code.hljs{background:transparent!important;padding:0!important}
 /* Tab content panels */
 .tab-content { display: none; flex: 1; flex-direction: column; min-width: 0; overflow: hidden; }
 .tab-content.active { display: flex; }
+/* Fullscreen desktop mode */
+body.desktop-fullscreen .sidebar,
+body.desktop-fullscreen .tab-bar,
+body.desktop-fullscreen .header { display: none !important; }
+body.desktop-fullscreen .main { margin: 0; width: 100vw; height: 100vh; }
+body.desktop-fullscreen .tab-content.active { position: fixed; inset: 0; z-index: 9999; background: #000; }
+body.desktop-fullscreen .tab-content.active iframe {
+  width: 100% !important; height: 100% !important;
+}
+.desktop-fs-btn { position: absolute; top: 6px; right: 6px; z-index: 10; background: rgba(0,0,0,0.6);
+  color: #fff; border: 1px solid rgba(255,255,255,0.3); border-radius: 4px; padding: 4px 8px;
+  cursor: pointer; font-size: 14px; opacity: 0.5; transition: opacity 0.2s; }
+.desktop-fs-btn:hover { opacity: 1; background: rgba(0,0,0,0.8); }
 /* ── Action dropdown menu ── */
 .action-menu-wrap { position: relative; }
 .action-menu-btn { background: #0f3460; color: #e0e0e0; border: 1px solid #e94560;

@@ -174,6 +174,14 @@ function addDesktopTab(relayId, iframeSrc) {
   panel.id = 'tabContent_' + tabId;
   panel.dataset.tab = tabId;
   panel.dataset.relayId = relayId;
+  panel.style.position = 'relative';
+
+  const fsBtn = document.createElement('button');
+  fsBtn.className = 'desktop-fs-btn';
+  fsBtn.innerHTML = '\u26F6';
+  fsBtn.title = 'Fullscreen (Escape to exit)';
+  fsBtn.onclick = function() { toggleDesktopFullscreen(tabId); };
+  panel.appendChild(fsBtn);
 
   const iframe = document.createElement('iframe');
   iframe.src = iframeSrc;
@@ -278,3 +286,56 @@ function closeActionMenu() {
   const menu = document.getElementById('actionMenu');
   if (menu) menu.classList.remove('open');
 }
+
+/** Toggle desktop fullscreen mode. */
+var _desktopFullscreenTab = null;
+function toggleDesktopFullscreen(tabId) {
+  if (document.body.classList.contains('desktop-fullscreen')) {
+    // Exit fullscreen
+    document.body.classList.remove('desktop-fullscreen');
+    _desktopFullscreenTab = null;
+    if (document.fullscreenElement) document.exitFullscreen().catch(function(){});
+    var panel = document.getElementById('tabContent_' + tabId);
+    if (panel) {
+      var btn = panel.querySelector('.desktop-fs-btn');
+      if (btn) btn.innerHTML = '\u26F6';
+      var ifr = panel.querySelector('iframe');
+      if (ifr) ifr.style.transform = '';
+    }
+  } else {
+    // Enter fullscreen
+    document.body.classList.add('desktop-fullscreen');
+    _desktopFullscreenTab = tabId;
+    document.documentElement.requestFullscreen().catch(function(){});
+    var panel = document.getElementById('tabContent_' + tabId);
+    if (panel) {
+      var btn = panel.querySelector('.desktop-fs-btn');
+      if (btn) btn.innerHTML = '\u2716';
+      // Scale iframe to cover viewport (eliminate bands from aspect ratio mismatch)
+      var ifr = panel.querySelector('iframe');
+      if (ifr) {
+        var vr = screen.width / screen.height;
+        var dr = 1280 / 800; // desktop ratio
+        var s = Math.max(vr, dr) / Math.min(vr, dr);
+        if (s > 1.01) ifr.style.transform = 'scale(' + s + ')';
+      }
+    }
+  }
+}
+
+// Exit desktop fullscreen when browser exits fullscreen (Escape key)
+document.addEventListener('fullscreenchange', function() {
+  if (!document.fullscreenElement && document.body.classList.contains('desktop-fullscreen')) {
+    document.body.classList.remove('desktop-fullscreen');
+    if (_desktopFullscreenTab) {
+      var panel = document.getElementById('tabContent_' + _desktopFullscreenTab);
+      if (panel) {
+        var btn = panel.querySelector('.desktop-fs-btn');
+        if (btn) btn.innerHTML = '\u26F6';
+        var ifr = panel.querySelector('iframe');
+        if (ifr) ifr.style.transform = '';
+      }
+    }
+    _desktopFullscreenTab = null;
+  }
+});

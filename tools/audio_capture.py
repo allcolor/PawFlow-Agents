@@ -155,46 +155,22 @@ def _capture_loop(source: str):
 
             proc = subprocess.Popen(
                 ["parec", "--format=s16le", "--rate=48000", "--channels=1",
-                 "-d", monitor, "--latency-msec=10"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-
-            # Non-blocking pipe so we can detect and drain backlog
-            import fcntl, os, select
-            _fd = proc.stdout.fileno()
-            _fl = fcntl.fcntl(_fd, fcntl.F_GETFL)
-            fcntl.fcntl(_fd, fcntl.F_SETFL, _fl | os.O_NONBLOCK)
+                 "-d", monitor, "--latency-msec=20"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                bufsize=frame_bytes)
 
             logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
             _pkt_count = 0
             _interval_start = time.monotonic()
-            _buf = bytearray()
 
             while True:
-                # Wait for data (up to 100ms)
-                select.select([_fd], [], [], 0.1)
-
-                # Read ALL available data from the pipe
-                while True:
-                    try:
-                        chunk = os.read(_fd, 65536)
-                        if not chunk:
-                            break
-                        _buf.extend(chunk)
-                    except BlockingIOError:
-                        break
-
-                if not _buf:
-                    if proc.poll() is not None:
-                        break
-                    continue
-
-                # Process complete frames
-                while len(_buf) >= frame_bytes:
-                    pcm = bytes(_buf[:frame_bytes])
-                    del _buf[:frame_bytes]
-                    opus_pkt = encoder.encode(pcm)
-                    _broadcast(opus_pkt)
-                    _pkt_count += 1
+                # Blocking read of exactly one frame (20ms at 48kHz)
+                pcm = proc.stdout.read(frame_bytes)
+                if not pcm or len(pcm) < frame_bytes:
+                    break
+                opus_pkt = encoder.encode(pcm)
+                _broadcast(opus_pkt)
+                _pkt_count += 1
 
                 _now = time.monotonic()
                 if _now - _interval_start >= 10.0:

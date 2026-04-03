@@ -124,7 +124,8 @@ class RelayThread:
     def __init__(self, server_url: str, session_token: str, username: str,
                  directory: str, docker_image: str = "",
                  gateway_cookie: str = "",
-                 docker_cpus: str = "", docker_memory: str = ""):
+                 docker_cpus: str = "", docker_memory: str = "",
+                 allow_local: bool = False):
         self.server_url = server_url
         self.session_token = session_token
         self.username = username
@@ -133,6 +134,7 @@ class RelayThread:
         self.gateway_cookie = gateway_cookie
         self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
         self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
+        self.allow_local = allow_local
         self.relay_id = generate_relay_id(username, self.directory)
         self.port = 0
         self.ws_token = ""
@@ -172,6 +174,8 @@ class RelayThread:
         config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
         if self.docker_image:
             config_str += f",docker_image={self.docker_image}"
+        if self.allow_local:
+            config_str += ",allow_local=true"
         _api_call(self.server_url, "POST", "/api/agent",
                   body={
                       "action": "service_install",

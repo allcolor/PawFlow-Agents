@@ -87,6 +87,14 @@ class PawCode:
         self._approval_response = queue.Queue()  # main thread → background approval responses
         self._active_agents = {}  # server-polled active agents (single source of truth for typing)
 
+    def _on_relay_token_refresh(self, new_token):
+        """Called when the server sends a refreshed session token via relay."""
+        self.session_token = new_token
+        from pawflow_cli.config import save_session
+        save_session(new_token, self.username, self.server_url,
+                     __import__('time').time() + 8 * 3600)
+        sys.stderr.write("[PawCode] Session token refreshed\n")
+
     def start(self):
         """Initialize auth, relay, and start the main loop."""
         # Wire status callback for bottom toolbar
@@ -790,6 +798,7 @@ class PawCode:
             docker_image=self.docker_image,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
+            on_token_refresh=self._on_relay_token_refresh,
         )
         self.relay.start()
 
@@ -910,6 +919,7 @@ class PawCode:
             gateway_cookie=self.gateway_cookie,
             docker_cpus=self.docker_cpus, docker_memory=self.docker_memory,
             allow_local=self.allow_local,
+            on_token_refresh=self._on_relay_token_refresh,
         )
         self.relay.start()
         _mode = f" (Docker: {self.docker_image})" if self.docker_image else ""

@@ -219,6 +219,13 @@ function _recoverConversation(cid) {
       const newMsgs = data.new_messages || [];
       if (newMsgs.length === 0) return;
       console.log('[poll] recovering', newMsgs.length, 'new messages');
+      // If many messages missed, reload the full conversation to avoid ordering bugs
+      if (newMsgs.length > 10) {
+        console.log('[poll] too many missed messages, doing full reload');
+        serverMsgCount = data.message_count || serverMsgCount;
+        resumeConv(cid);
+        return;
+      }
       serverMsgCount = data.message_count || serverMsgCount;
       const _anyAgentActive = Object.keys(activeInteractions || {}).length > 0;
       const msgContainer = document.getElementById('messages');

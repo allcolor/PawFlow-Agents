@@ -391,6 +391,7 @@ function connectSSE(cid) {
     if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     // Finalize thinking block before showing tool call
     finalizeThinking(data.agent_name || '');
+    if (data.message_count) serverMsgCount = data.message_count;
     console.log('[SSE] tool_call received:', data.tool, data.agent_name, data.llm_service, JSON.stringify(data.arguments || {}).substring(0, 200));
     // Finalize streaming for THIS agent before showing tool call
     const tcAgent = data.agent_name || '';

@@ -100,6 +100,37 @@ RUN pip install numpy pandas torch
 RUN npm install -g @angular/cli
 ```
 
+## WSL2: Clock Drift and Audio Sync
+
+> **Important for Windows/WSL2 users with desktop audio enabled.**
+
+WSL2's kernel clock can drift significantly from the Windows host clock (up to 10-20%). This causes:
+- Desktop audio playing too fast/slow relative to the video stream
+- The AudioWorklet rate measurement (`curStep` in browser console) deviating from 1.0
+
+PawFlow's audio pipeline automatically compensates via adaptive rate measurement, but this introduces pitch shift proportional to the drift.
+
+**Fix — install `chrony` in your WSL2 distro (not inside Docker):**
+
+```bash
+# In WSL2 terminal (not in a Docker container)
+sudo apt install -y chrony
+```
+
+Chrony starts automatically and keeps the clock synced with NTP. Verify:
+
+```bash
+# Should show ~0 seconds fast/slow
+chronyc tracking | grep "System time"
+
+# Should show exactly 10 second difference
+date +%s; sleep 10; date +%s
+```
+
+After fixing, `curStep` in the browser console audio stats will converge to `1.00000` — no pitch shift, perfect sync.
+
+> Native Linux hosts and macOS (Docker Desktop) are not affected — their clocks are hardware-synced.
+
 ## 3. Exec Shell Selection
 
 The `exec` action supports a `shell` parameter:

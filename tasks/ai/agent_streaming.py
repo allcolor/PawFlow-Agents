@@ -457,8 +457,12 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             use_conv_store = ctx.get("use_conv_store", False)
 
             # Check for pending user messages — even after poll runs
+            # Skip for CC: preempted messages are handled inline by CC,
+            # the tail may show user messages without a separate assistant
+            # response but CC already answered them in its turn.
             _was_interrupted = not self._is_current_generation(gen_key, my_generation)
-            if use_conv_store and conversation_id and not _was_interrupted and not _had_error:
+            _is_cc = ctx.get("_is_claude_code", False)
+            if use_conv_store and conversation_id and not _was_interrupted and not _had_error and not _is_cc:
                 try:
                     # Flush writer — ensure all messages from this turn are on disk
                     from core.conversation_writer import ConversationWriter

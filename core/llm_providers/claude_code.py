@@ -964,16 +964,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "num_turns": event.get("num_turns", _turn_count),
                             "duration_ms": event.get("duration_ms", 0),
                         })
-                    # result = end of one CC turn. If preempt messages
-                    # were injected, CC will start new turns for them —
-                    # do NOT break, keep streaming until all preempts are
-                    # consumed (each one produces its own result event).
+                    # result = CC is done with ALL pending work (including
+                    # any preempted messages). Always break — CC processes
+                    # all preempts in the same session before emitting result.
                     _pending = getattr(self, '_preempt_pending', 0)
                     if _pending > 0:
-                        self._preempt_pending = _pending - 1
-                        logger.info("[claude-code] result event, %d preempt(s) remaining "
-                                    "— continuing stream", _pending - 1)
-                        continue
+                        logger.info("[claude-code] result event, clearing %d preempt(s)", _pending)
+                        self._preempt_pending = 0
                     break
 
         finally:

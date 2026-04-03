@@ -352,7 +352,6 @@ class AgentActionsMixin:
                     reason=f"[random_thought] manual trigger ({_tgt})",
                     user_id=user_id,
                 )
-            store.set_status(conv_id, "active")
             flowfile.set_content(json.dumps({
                 "ok": True, "agent": agent_name, "triggered": True,
                 "agents": target_agents,

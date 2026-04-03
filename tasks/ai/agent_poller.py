@@ -357,7 +357,6 @@ class AgentPollerMixin:
                 self._active_thoughts.add(entry_key)
 
             logger.info(f"[poller] Waking thought {entry_key} (agent={_thought_agent})")
-            store.set_status(cid, "active")
             bus.publish_event(cid, "thought_firing", {"agent": _thought_agent})
 
             # Each thought agent gets its own gen_key so multiple thoughts

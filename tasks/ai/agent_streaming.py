@@ -280,7 +280,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
         with self._active_lock:
             self._active_conversations[conversation_id] = self._active_conversations.get(conversation_id, 0) + 1
             self._user_active_conversations.add(conversation_id)
-        ConversationStore.instance().set_status(conversation_id, "active")
 
         if _target:
             bus.publish_event(conversation_id, "thinking", {
@@ -324,7 +323,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 with self._active_lock:
                     self._active_conversations[conversation_id] = max(0,
                         self._active_conversations.get(conversation_id, 1) - 1)
-                ConversationStore.instance().set_status(conversation_id, "idle")
                 return
 
             _gen_key = f"{conversation_id}:{_target}" if _target else conversation_id
@@ -441,7 +439,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                 _had_error = getattr(result, "finish_reason", "") == "error"
 
             # Set idle status
-            ConversationStore.instance().set_status(conversation_id, "idle")
 
             # ── Auto-generate conversation title ──
             if not _had_error:
@@ -449,10 +446,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         except Exception:
             _had_error = True
-            try:
-                ConversationStore.instance().set_status(conversation_id, "idle")
-            except Exception:
-                pass
         finally:
             use_conv_store = ctx.get("use_conv_store", False)
 
@@ -538,7 +531,6 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             bus.publish_event(conversation_id, "thought_scheduled", {
                                 "agent": _ag, "delay": _delay,
                                 "frequency": _cfg.get("frequency", "")})
-                    _store.set_status(conversation_id, "idle")
                 except Exception as e:
                     logger.warning(f"[agent] Failed to reschedule thought: {e}")
 

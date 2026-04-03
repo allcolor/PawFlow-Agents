@@ -19,6 +19,19 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
 
     if action == "list_conversations":
         convs = store.list_conversations(user_id=user_id)
+        # Override persisted status with real-time active agent state
+        try:
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if inst:
+                _active_cids = set()
+                with inst._active_contexts_lock:
+                    for k in inst._active_contexts:
+                        _active_cids.add(k.split(":")[0])
+                for c in convs:
+                    c["status"] = "active" if c["conversation_id"] in _active_cids else "idle"
+        except Exception:
+            pass
         result = json.dumps({"conversations": convs}, ensure_ascii=False)
         flowfile.set_content(result.encode("utf-8"))
         return [flowfile]

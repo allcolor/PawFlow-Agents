@@ -114,17 +114,40 @@ function _showRelayLinkDialog() {
     if (data.error) { addMsg('error', data.error); return; }
     var relays = data.relays || [];
     if (!relays.length) { addMsg('system', 'No relays available. Connect a relay first (PawCode or VS Code extension).'); return; }
-    var labels = relays.map(function(r, i) {
-      return (i + 1) + '. ' + r.relay_id + (r.host_root ? ' (' + r.host_root + ')' : r.root ? ' (' + r.root + ')' : '');
-    });
-    var choice = prompt('Link relay to conversation:\\n\\n' + labels.join('\\n') + '\\n\\nEnter number or relay ID:');
-    if (!choice) return;
-    choice = choice.trim();
-    var idx = parseInt(choice, 10);
-    var rid = (idx >= 1 && idx <= relays.length) ? relays[idx - 1].relay_id : choice;
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    var options = relays.map(function(r) {
+      var label = r.relay_id;
+      if (r.host_root) label += ' \u2014 ' + r.host_root;
+      else if (r.root) label += ' \u2014 ' + r.root;
+      var status = r.connected ? '\u{1F7E2}' : '\u{1F534}';
+      return '<option value="' + escapeHtml(r.relay_id) + '">' + status + ' ' + escapeHtml(label) + '</option>';
+    }).join('');
+    overlay.innerHTML =
+      '<div class="exec-dialog" style="min-width:350px;">'
+      + '<h3>Link Relay</h3>'
+      + '<div style="margin:12px 0;">'
+      + '<select id="_relayLinkSelect" style="width:100%;padding:8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:13px;">'
+      + options
+      + '</select>'
+      + '</div>'
+      + '<div class="exec-btns">'
+      + '<button class="exec-deny" onclick="this.closest(\'.exec-overlay\').remove()">Cancel</button>'
+      + '<button class="exec-approve" onclick="_doRelayLink(this)">Link</button>'
+      + '</div>'
+      + '</div>';
+    document.body.appendChild(overlay);
+  });
+}
+function _doRelayLink(btn) {
+  var overlay = btn.closest('.exec-overlay');
+  var sel = overlay.querySelector('#_relayLinkSelect');
+  var rid = sel ? sel.value : '';
+  overlay.remove();
+  if (rid) {
     fireAction('relay_link', {relay_id: rid});
     setTimeout(loadResources, 500);
-  });
+  }
 }
 
 async function loadResources() {

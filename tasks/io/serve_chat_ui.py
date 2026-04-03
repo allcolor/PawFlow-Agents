@@ -146,7 +146,7 @@ class ServeChatUITask(BaseTask):
         # Enable SharedArrayBuffer for AudioWorklet zero-copy ring buffer.
         # Both parent AND iframes (noVNC) must send matching COOP/COEP.
         flowfile.set_attribute("http.response.header.Cross-Origin-Opener-Policy", "same-origin")
-        flowfile.set_attribute("http.response.header.Cross-Origin-Embedder-Policy", "credentialless")
+        flowfile.set_attribute("http.response.header.Cross-Origin-Embedder-Policy", "require-corp")
         return [flowfile]
 
 

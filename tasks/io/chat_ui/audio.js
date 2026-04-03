@@ -79,24 +79,24 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    // Clock drift compensation via smooth resampling.
-    // Target fill: ~40ms (1920 samples) for tight A/V sync.
-    // Fractional step + linear interpolation = inaudible speed adjustment.
-    // NEVER slow down more than 0.5% — slowdowns are audible on music.
+    // Continuous proportional clock drift compensation.
+    // Target fill: 2400 samples (50ms). Step adjusts proportionally
+    // to distance from target — always correcting, never accumulating drift.
+    const TARGET = 2400; // 50ms
     let step = 1.0;
     if (available > 96000) {
-      // Extreme (>2s): hard skip to 40ms
-      this.rPos = this.wPos - 1920;
+      // Extreme (>2s): hard skip
+      this.rPos = this.wPos - TARGET;
       step = 1.0;
-    } else if (available > 4800) {
-      // >100ms: speed up ~4%
-      step = 1.04;
-    } else if (available > 3360) {
-      // >70ms: speed up ~2%
-      step = 1.02;
-    } else if (available < 480) {
-      // <10ms: gentle slow down ~0.5% (never more — audible on music)
-      step = 0.995;
+    } else {
+      // Proportional: +0.01 per 1000 samples above target (max +5%)
+      // Below target: -0.003 per 1000 samples below (max -0.5%)
+      const diff = available - TARGET;
+      if (diff > 0) {
+        step = 1.0 + Math.min(diff * 0.00001, 0.05);
+      } else {
+        step = 1.0 + Math.max(diff * 0.000003, -0.005);
+      }
     }
     if (available < out.length) {
       this.underruns++;

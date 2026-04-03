@@ -735,6 +735,47 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
                     data = resp.get("data", {})
                     if "error" in data:
                         return {"ok": False, "error": data["error"]}
+                    # If this is a persistent stream (e.g. terminal),
+                    # continue reading progress in a background thread
+                    # instead of closing the socket.
+                    _is_persistent = isinstance(data, dict) and (
+                        data.get("session_id", "").startswith("local_term_"))
+                    if _is_persistent:
+                        _remaining = buf  # leftover data after result line
+
+                        def _bg_progress_reader():
+                            _buf = _remaining
+                            try:
+                                while True:
+                                    chunk = sock.recv(4096)
+                                    if not chunk:
+                                        break
+                                    _buf += chunk
+                                    while b"\n" in _buf:
+                                        line, _buf = _buf.split(b"\n", 1)
+                                        r = json.loads(line)
+                                        if r.get("type") == "progress" and ws_sock:
+                                            p = json.dumps({
+                                                "type": "progress",
+                                                "request_id": request_id,
+                                                "data": r.get("data", {}),
+                                            }).encode("utf-8")
+                                            try:
+                                                ws_send_fn(ws_sock, p)
+                                            except Exception:
+                                                break
+                            except Exception:
+                                pass
+                            finally:
+                                try:
+                                    sock.close()
+                                except Exception:
+                                    pass
+                        import threading as _th
+                        sock._bg_owned = True
+                        _th.Thread(target=_bg_progress_reader, daemon=True,
+                                   name=f"host-helper-stream-{request_id[:8]}").start()
+                        return {"ok": True, "data": data}
                     return {"ok": True, "data": data}
                 elif resp.get("type") == "error":
                     return {"ok": False, "error": resp.get("error", "Unknown error")}
@@ -745,7 +786,13 @@ def _forward_to_host_helper(host_helper, msg, ws_sock, ws_send_fn):
     except Exception as e:
         return {"ok": False, "error": f"Host helper communication failed: {e}"}
     finally:
-        sock.close()
+        # Socket closed by bg reader for persistent streams,
+        # or here for non-persistent commands
+        if not hasattr(sock, '_bg_owned'):
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 
 # ── Main ──────────────────────────────────────────────────────────

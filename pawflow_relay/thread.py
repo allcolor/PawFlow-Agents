@@ -504,7 +504,11 @@ class RelayThread:
         # Detect shell
         if not shell:
             if sys.platform == "win32":
-                shell = shutil.which("pwsh") or shutil.which("powershell") or "cmd.exe"
+                shell = (shutil.which("pwsh")
+                         or shutil.which("powershell")
+                         or shutil.which("git-bash")
+                         or shutil.which("bash")  # git bash or WSL
+                         or "cmd.exe")
             else:
                 shell = os.environ.get("SHELL", "/bin/bash")
 

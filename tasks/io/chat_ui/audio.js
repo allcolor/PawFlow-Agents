@@ -14,16 +14,16 @@ var _audioWorkletReady = false;
 var _audioWorkletModuleLoaded = false;
 
 // PCM batch accumulator (reduces postMessage frequency)
-var _pcmBatch = null;       // Float32Array(1920) = 40ms
+var _pcmBatch = null;       // Float32Array(960) = 20ms
 var _pcmBatchPos = 0;
-var _PCM_BATCH_SIZE = 1920;  // 40ms at 48kHz
+var _PCM_BATCH_SIZE = 960;   // 20ms at 48kHz — one Opus frame, minimal latency
 var _pcmFlushTimer = null;   // timer to flush partial batches
 
 // Pre-buffer: accumulate before sending to worklet
 var _preBuffer = [];          // array of Float32Array chunks
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 4800; // 100ms at 48kHz — enough to absorb initial jitter
+var _PRE_BUFFER_TARGET = 2400; // 50ms at 48kHz — minimal pre-buffer for low latency
 
 // Diagnostic stats
 var _audioStats = {
@@ -80,25 +80,24 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
     // Clock drift compensation via smooth resampling.
-    // Target fill: ~120ms (5760 samples). Adjust playback speed
-    // by using a fractional step size (linear interpolation).
-    // This is inaudible unlike sample-dropping.
+    // Target fill: ~60ms (2880 samples) for low A/V latency.
+    // Fractional step + linear interpolation = inaudible speed adjustment.
     let step = 1.0;
     if (available > 96000) {
-      // Extreme (>2s): hard skip to 150ms
-      this.rPos = this.wPos - 7200;
+      // Extreme (>2s): hard skip to 60ms
+      this.rPos = this.wPos - 2880;
       step = 1.0;
-    } else if (available > 14400) {
-      // >300ms: speed up ~4% to catch up
+    } else if (available > 7200) {
+      // >150ms: speed up ~4% to catch up fast
       step = 1.04;
-    } else if (available > 9600) {
-      // >200ms: speed up ~2%
+    } else if (available > 4800) {
+      // >100ms: speed up ~2%
       step = 1.02;
-    } else if (available < 1920) {
-      // <40ms: slow down ~3% to avoid underrun
+    } else if (available < 960) {
+      // <20ms: slow down ~3% to avoid underrun
       step = 0.97;
-    } else if (available < 3840) {
-      // <80ms: slow down ~1.5%
+    } else if (available < 1920) {
+      // <40ms: slow down ~1.5%
       step = 0.985;
     }
     if (available < out.length) {

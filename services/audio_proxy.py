@@ -105,7 +105,7 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         """Send queued packets to browser WS, batched for fewer syscalls."""
         try:
             while not stop.is_set():
-                queue_event.wait(timeout=0.018)  # ~1 frame period
+                queue_event.wait(timeout=0.005)  # low-latency: forward ASAP
                 queue_event.clear()
                 # Drain all available packets into one batch
                 batch = []

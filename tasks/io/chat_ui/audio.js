@@ -73,7 +73,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         const fill = this.useSAB
           ? Atomics.load(this.sabCtrl, 0) - Math.floor(this.sabRPos)
           : this.wPos - Math.floor(this.rPos);
-        this.port.postMessage({ type: 'stats', fill: fill, underruns: this.underruns, sampleRate: sampleRate, baseStep: this.baseStep });
+        const curStep = this.useSAB ? (this._smoothStep || this.baseStep) : (this._pmSmoothStep || this.baseStep);
+        this.port.postMessage({ type: 'stats', fill: fill, underruns: this.underruns, sampleRate: sampleRate, baseStep: this.baseStep, curStep: curStep });
         this.underruns = 0;
         return;
       }
@@ -119,11 +120,11 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const available = wPos - Math.floor(this.sabRPos);
     const TARGET = 4800; // 100ms at 48kHz — absorbs jitter
 
-    // PLL: track source rate — ±2% max pitch deviation (inaudible for speech)
+    // PLL: track source rate — converge to actual input rate
     if (this._smoothStep === undefined) this._smoothStep = this.baseStep;
     const error = available - TARGET;
-    this._smoothStep += error * 0.0002;
-    this._smoothStep = Math.max(this.baseStep - 0.02, Math.min(this.baseStep + 0.02, this._smoothStep));
+    this._smoothStep += error * 0.00005;
+    this._smoothStep = Math.max(this.baseStep * 0.92, Math.min(this.baseStep * 1.08, this._smoothStep));
     const step = this._smoothStep;
 
     // Snap forward if buffer > 500ms (24000 samples) — emergency only
@@ -171,8 +172,8 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     // PLL: same as SAB path
     if (this._pmSmoothStep === undefined) this._pmSmoothStep = this.baseStep;
     const error = available - TARGET;
-    this._pmSmoothStep += error * 0.0002;
-    this._pmSmoothStep = Math.max(this.baseStep - 0.02, Math.min(this.baseStep + 0.02, this._pmSmoothStep));
+    this._pmSmoothStep += error * 0.00005;
+    this._pmSmoothStep = Math.max(this.baseStep * 0.92, Math.min(this.baseStep * 1.08, this._pmSmoothStep));
     const step = this._pmSmoothStep;
 
     if (available > 24000) {
@@ -286,6 +287,7 @@ function audioConnect(sessionId) {
         _audioStats.ringFill = e.data.fill;
         if (e.data.sampleRate) _audioStats.hwRate = e.data.sampleRate;
         if (e.data.baseStep) _audioStats.baseStep = e.data.baseStep;
+        if (e.data.curStep) _audioStats.curStep = e.data.curStep;
       }
     };
     // Send SAB references to worklet
@@ -334,7 +336,8 @@ function audioConnect(sessionId) {
         ' dec_queue=' + (_audioDecoder ? _audioDecoder.decodeQueueSize : 'N/A') +
         ' mode=' + (_useSAB ? 'SAB' : 'postMsg') +
         ' hw_rate=' + (_audioStats.hwRate || '?') +
-        ' baseStep=' + (_audioStats.baseStep || '?'));
+        ' baseStep=' + (_audioStats.baseStep || '?') +
+        ' curStep=' + ((_audioStats.curStep || 0).toFixed(5)));
       _audioStats.wsMessages = 0;
       _audioStats.decoderResets = 0;
       _audioStats.decoderErrors = 0;

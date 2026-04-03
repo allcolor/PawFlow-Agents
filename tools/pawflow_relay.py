@@ -1344,6 +1344,24 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 import shutil as _shutil
                 _audio_port = 0
                 if _shutil.which("pulseaudio"):
+                    # Write daemon.conf to force 48kHz — PA defaults to 44100
+                    _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
+                    _pa_conf_dir.mkdir(parents=True, exist_ok=True)
+                    (_pa_conf_dir / "daemon.conf").write_text(
+                        "default-sample-rate = 48000\n"
+                        "alternate-sample-rate = 48000\n"
+                    )
+                    if _desktop_user:
+                        import subprocess as _sp_chown
+                        _sp_chown.run(["chown", "-R",
+                                       f"{_desktop_uid}:{_desktop_gid}",
+                                       str(_pa_conf_dir)], check=False)
+                    # Kill any stale PA — --start ignores --load if PA is already running
+                    subprocess.run(
+                        ["pulseaudio", "--kill"],
+                        env=_user_env, preexec_fn=_as_user,
+                        stdout=_log_d, stderr=_log_d, timeout=5)
+                    _time_mod.sleep(0.3)
                     _p_pulse = subprocess.Popen(
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
                          "--load=module-null-sink sink_name=virtual_out rate=48000",
@@ -1352,6 +1370,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_pulse)
                     _time_mod.sleep(0.5)
+                    # Verify sink rate
+                    try:
+                        _pactl_out = subprocess.check_output(
+                            ["pactl", "list", "short", "sinks"],
+                            env=_user_env, timeout=5, text=True)
+                        sys.stderr.write(f"[FSRelay] PA sinks: {_pactl_out.strip()}\n")
+                    except Exception:
+                        pass
                     # Audio capture server (Opus over TCP)
                     _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
                     _audio_script = Path("/opt/pawflow/audio_capture.py")

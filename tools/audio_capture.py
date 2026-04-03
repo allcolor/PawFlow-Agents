@@ -158,17 +158,52 @@ def _capture_loop(source: str):
                  "-d", monitor, "--latency-msec=20"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
+            # Non-blocking pipe so we can detect and drain backlog
+            import fcntl, os, select
+            _fd = proc.stdout.fileno()
+            _fl = fcntl.fcntl(_fd, fcntl.F_GETFL)
+            fcntl.fcntl(_fd, fcntl.F_SETFL, _fl | os.O_NONBLOCK)
+
             logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
             _pkt_count = 0
             _interval_start = time.monotonic()
+            _buf = bytearray()
 
             while True:
-                pcm = proc.stdout.read(frame_bytes)
-                if not pcm or len(pcm) < frame_bytes:
-                    break
-                opus_pkt = encoder.encode(pcm)
-                _broadcast(opus_pkt)
-                _pkt_count += 1
+                # Wait for data (up to 100ms)
+                select.select([_fd], [], [], 0.1)
+
+                # Read ALL available data from the pipe
+                while True:
+                    try:
+                        chunk = os.read(_fd, 65536)
+                        if not chunk:
+                            break
+                        _buf.extend(chunk)
+                    except BlockingIOError:
+                        break
+
+                if not _buf:
+                    if proc.poll() is not None:
+                        break
+                    continue
+
+                # If we have more than 3 frames buffered (>60ms),
+                # skip to the last frame — discard stale audio
+                if len(_buf) > frame_bytes * 3:
+                    _stale = len(_buf) - frame_bytes
+                    logger.info("Audio capture: discarding %d bytes (%.0fms) of stale audio",
+                                _stale, _stale / (48000 * 2) * 1000)
+                    del _buf[:_stale]
+
+                # Process complete frames
+                while len(_buf) >= frame_bytes:
+                    pcm = bytes(_buf[:frame_bytes])
+                    del _buf[:frame_bytes]
+                    opus_pkt = encoder.encode(pcm)
+                    _broadcast(opus_pkt)
+                    _pkt_count += 1
+
                 _now = time.monotonic()
                 if _now - _interval_start >= 10.0:
                     logger.info("Audio capture: %d pkts/10s", _pkt_count)

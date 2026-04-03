@@ -459,17 +459,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 "BUG: no conversation_id after generate_id() — this should never happen"
             )
 
-        # Auto-link relays: if no relays are linked, link all connected relays
-        if use_conv_store and conversation_id:
-            try:
-                from core.relay_bindings import get_bindings, link_relay, list_available_relays
-                _rb = get_bindings(conversation_id)
-                if not _rb.get("linked"):
-                    for _r in list_available_relays():
-                        if _r.get("connected"):
-                            link_relay(conversation_id, _r["id"])
-            except Exception:
-                pass
+        # NOTE: no auto-link of relays here. The user decides what to link
+        # via /relay link or the [+] button in the resource panel.
+        # Server relays spawned via /workspace auto-link in server_relay_manager.
 
         # target_agent: temporary agent override for /agent msg (not persisted)
         _target_agent = body_json.get("target_agent", "") if body_json else ""

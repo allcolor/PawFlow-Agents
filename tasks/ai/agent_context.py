@@ -783,7 +783,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             system_prompt += " 3) AGGRESSIVE: retry failures 3x, try alternatives, continue on minor issues."
 
         # Inject filesystem project context from conversation-linked relays
-        _current_agent = target_agent or "assistant"
+        _current_agent = _target_agent or "assistant"
         if conversation_id:
             try:
                 from core.relay_bindings import get_linked, get_default

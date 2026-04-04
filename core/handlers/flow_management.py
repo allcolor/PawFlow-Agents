@@ -844,14 +844,15 @@ class UpdatePlanHandler(ToolHandler):
             and not any(sv[0] == int(u.get("step", 0)) for sv in _needs_verify)
             for u in updates
         )
+        _next_scheduled = False
         if _any_done and plan["status"] != "completed" and self._conversation_id:
             try:
                 from tasks.ai.actions.plans import _trigger_next_plan_step
                 from core.conversation_store import ConversationStore
                 store = ConversationStore.instance()
                 _trigger_next_plan_step(
-                    self._conversation_id, plan_id, plan, store, "",
-                    current_agent=self._agent_name)
+                    self._conversation_id, plan_id, plan, store, "")
+                _next_scheduled = True
             except Exception:
                 pass
 
@@ -860,11 +861,15 @@ class UpdatePlanHandler(ToolHandler):
         total = len(plan["steps"])
         lines = [f"**{plan['title']}** — {done_count}/{total} done [{plan['status']}]"]
         for s in plan["steps"]:
-            icon = {"pending": "○", "in_progress": "◔", "done": "✓",
-                    "skipped": "–", "error": "✗",
-                    "pending_verification": "⚐"}.get(s["status"], "○")
-            note = f' — {s["note"]}' if s.get("note") else ""
+            icon = {"pending": "\u25cb", "in_progress": "\u25d4", "done": "\u2713",
+                    "skipped": "\u2013", "error": "\u2717",
+                    "pending_verification": "\u2690"}.get(s["status"], "\u25cb")
+            note = f' \u2014 {s["note"]}' if s.get("note") else ""
             lines.append(f"  {icon} {s['index']}. {s['description']}{note}")
+        if _next_scheduled:
+            lines.append("\nNext step scheduled. STOP here — do NOT continue to the next step yourself.")
+        elif plan["status"] == "completed":
+            lines.append("\nPlan completed.")
         return "\n".join(lines)
 
 

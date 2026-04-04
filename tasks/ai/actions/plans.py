@@ -496,17 +496,11 @@ def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
         plans[plan_id] = plan
         store.set_extra(conv_id, "plans", plans, user_id=user_id)
 
-    # Same agent → return 'continue' so caller can keep going
-    if current_agent and agent == current_agent:
-        logger.info("Plan %s step %d continues with same agent '%s'",
-                     plan_id, next_step["index"], agent)
-        return "continue"
-
-    # Write a real user message into the transcript so CC sees it as
-    # a user instruction (not a [System:] hint it can ignore).
+    # Always schedule the next step — even for the same agent.
+    # The agent must receive a user message to start the next step.
     total = len(plan["steps"])
     _user_msg = (
-        f"Plan approved — execute step {next_step['index']}/{total}: "
+        f"Execute step {next_step['index']}/{total}: "
         f"{next_step['description']}"
     )
     try:

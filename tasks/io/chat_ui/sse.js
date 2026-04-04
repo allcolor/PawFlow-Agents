@@ -15,17 +15,18 @@ function connectSSE(cid) {
   function _getTaskBlock(taskId, agentName) {
     if (!taskId) return null;
     if (_taskBlocks[taskId]) {
-      // Reopen existing block (e.g. new iteration of same task)
       const existing = _taskBlocks[taskId];
-      existing.el.setAttribute('open', '');
       const statusEl = existing.summary.querySelector('.task-block-status');
+      const wasDone = statusEl && statusEl.textContent.includes('done');
+      existing.el.setAttribute('open', '');
       if (statusEl) { statusEl.textContent = '\u25cf running'; statusEl.style.color = '#888'; }
-      // Add iteration separator
-      const sep = document.createElement('div');
-      sep.style.cssText = 'border-top:1px dashed #444;margin:8px 0 4px;font-size:10px;color:#6c5ce7;opacity:0.7;';
-      sep.textContent = '\u2500\u2500 next iteration \u2500\u2500';
-      existing.content.appendChild(sep);
-      scrollBottom();
+      // Add iteration separator only when reopening after done (new iteration)
+      if (wasDone) {
+        const sep = document.createElement('div');
+        sep.style.cssText = 'border-top:1px dashed #444;margin:8px 0 4px;font-size:10px;color:#6c5ce7;opacity:0.7;';
+        sep.textContent = '\u2500\u2500 next iteration \u2500\u2500';
+        existing.content.appendChild(sep);
+      }
       return existing;
     }
     const details = document.createElement('details');

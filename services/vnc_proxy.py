@@ -98,12 +98,12 @@ def vnc_ws_proxy(client_sock, path_params: dict, meta: dict):
             while not stop.is_set():
                 data = src.recv(65536)
                 if not data:
-                    logger.debug("VNC proxy: %s EOF after %d bytes", name, _bytes)
+                    logger.info("VNC proxy: %s EOF after %d bytes", name, _bytes)
                     break
                 _bytes += len(data)
                 dst.sendall(data)
         except Exception as _e:
-            logger.debug("VNC proxy: %s error after %d bytes: %s", name, _bytes, _e)
+            logger.info("VNC proxy: %s error after %d bytes: %s", name, _bytes, _e)
         finally:
             stop.set()
 

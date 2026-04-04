@@ -89,13 +89,15 @@ function resumeConv(cid, force) {
   highlightConv(cid);
   // Connect SSE first
   connectSSE(cid);
-  startPollTimer();
   updateDeleteBtn();
   document.getElementById('sidebar').classList.add('collapsed');
   _syncToggleBtn();
-  // Load history via action$ — result renders when it arrives
+  // Load history — start poll timer AFTER so serverMsgCount is set
   action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-    .subscribe(data => _renderHistory(data));
+    .subscribe(data => {
+      _renderHistory(data);
+      startPollTimer();
+    });
 }
 
 function _renderHistory(data) {
@@ -220,11 +222,9 @@ function _recoverConversation(cid) {
       const newMsgs = data.new_messages || [];
       if (newMsgs.length === 0) return;
       console.log('[poll] recovering', newMsgs.length, 'new messages');
-      // If many messages missed, reload the full conversation to avoid ordering bugs
-      if (newMsgs.length > 10) {
-        console.log('[poll] too many missed messages, doing full reload');
+      if (newMsgs.length > 50) {
+        // Too many missed — just update count, don't try to render them all
         serverMsgCount = data.message_count || serverMsgCount;
-        resumeConv(cid);
         return;
       }
       serverMsgCount = data.message_count || serverMsgCount;

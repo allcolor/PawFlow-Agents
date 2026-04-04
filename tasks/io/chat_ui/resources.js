@@ -1396,8 +1396,45 @@ function _renderServiceActions(actions, serviceId) {
 // -- Slash command handlers for claude login --
 
 function cmdClaudeLoginServer(parts) {
+  const sub = (parts[1] || '').toLowerCase();
+
+  // /cls pool [@service] — list credentials
+  if (sub === 'pool') {
+    var svcId = stripTarget(parts[2]) || 'claude_code_llm_service';
+    action$('claude_pool_list', { service_id: svcId }).subscribe(data => {
+      if (!data.pool || !data.pool.length) { addMsg('system', 'No credentials in pool.'); return; }
+      var lines = ['**Credentials Pool** (' + data.count + '):'];
+      data.pool.forEach(function(c) {
+        lines.push('  ' + c.index + '. ' + (c.account || '(unknown)') + ' — expires: ' + c.expires_in);
+      });
+      addMsg('system', lines.join('\n'));
+    });
+    return true;
+  }
+
+  // /cls reset [@service] — clear all credentials
+  if (sub === 'reset') {
+    var svcId2 = stripTarget(parts[2]) || 'claude_code_llm_service';
+    action$('claude_pool_reset', { service_id: svcId2 }).subscribe(data => {
+      addMsg('system', data.message || data.error || 'Done');
+    });
+    return true;
+  }
+
+  // /cls remove <index> [@service] — remove one credential
+  if (sub === 'remove') {
+    var idx = parseInt(parts[2] || '-1', 10);
+    var svcId3 = stripTarget(parts[3]) || 'claude_code_llm_service';
+    if (idx < 0) { addMsg('error', 'Usage: /cls remove <index> [@service]'); return true; }
+    action$('claude_pool_remove', { service_id: svcId3, index: idx }).subscribe(data => {
+      addMsg('system', data.message || data.error || 'Done');
+    });
+    return true;
+  }
+
+  // /cls <service> — login (add credential to pool)
   const serviceId = stripTarget(parts[1]);
-  if (!serviceId) { addMsg('error', 'Usage: /claude-login-server <service_name>'); return true; }
+  if (!serviceId) { addMsg('error', 'Usage: /cls <service> | /cls pool | /cls reset | /cls remove <N>'); return true; }
   fireAction('claude_code_server_login', { service_id: serviceId });
   return true;
 }

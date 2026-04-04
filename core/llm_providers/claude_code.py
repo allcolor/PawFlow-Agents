@@ -443,7 +443,23 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
         workdir = self._get_session_workdir(conv_id, agent_name, user_id)
-        self._setup_credentials(workdir)
+        # Resume with same credential that created the session (approach 3)
+        _resume_pool_idx = -1
+        if session_id and conv_id:
+            try:
+                _resume_pool_idx = int(ConversationStore.instance().get_extra(
+                    conv_id, f"claude_pool_idx:{agent_name or 'default'}") or -1)
+            except Exception:
+                pass
+        self._setup_credentials(workdir, pool_index=_resume_pool_idx)
+        # Store pool index for this session
+        if conv_id and hasattr(self, '_current_pool_index'):
+            try:
+                ConversationStore.instance().set_extra(
+                    conv_id, f"claude_pool_idx:{agent_name or 'default'}",
+                    self._current_pool_index)
+            except Exception:
+                pass
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
         _containerize = getattr(self, 'containerize', False)
 

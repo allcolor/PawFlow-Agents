@@ -28,44 +28,15 @@ _oauth_pending: Dict[str, Dict[str, str]] = {}
 
 
 def _store_claude_tokens(service_id, access_token, refresh_token, expires_at):
-    """Store Claude Code tokens in global secrets (encrypted) and update
-    the service config to reference them via ${expression}.
+    """Add Claude Code tokens to the credentials pool (encrypted).
 
-    Also updates the live client instance in memory.
+    Each /cls login adds a new credential to the pool.
     """
-    from pathlib import Path
-    from core.secrets import get_secrets_manager
-
-    sm = get_secrets_manager()
-    prefix = service_id.replace("-", "_")
-
-    # Write to global secrets (encrypted)
-    secrets_path = Path("config/global_secrets.json")
-    secrets_path.parent.mkdir(parents=True, exist_ok=True)
-    existing = {}
-    if secrets_path.exists():
-        existing = json.loads(secrets_path.read_text(encoding="utf-8"))
-    existing[f"{prefix}_access_token"] = sm.encrypt(access_token)
-    existing[f"{prefix}_refresh_token"] = sm.encrypt(refresh_token)
-    existing[f"{prefix}_expires_at"] = str(int(expires_at))
-    secrets_path.write_text(
-        json.dumps(existing, indent=2, ensure_ascii=False), encoding="utf-8")
-
-    # Update service config to use ${expression} references
-    try:
-        from gui.services.global_service_registry import GlobalServiceRegistry
-        greg = GlobalServiceRegistry.get_instance()
-        sdef = greg.get_definition(service_id)
-        if sdef:
-            sdef.config["claude_access_token"] = f"${{{prefix}_access_token}}"
-            sdef.config["claude_refresh_token"] = f"${{{prefix}_refresh_token}}"
-            sdef.config["claude_expires_at"] = f"${{{prefix}_expires_at}}"
-            greg._save_to_disk()
-
-    except Exception as e:
-        logger.warning("Failed to update service config for '%s': %s", service_id, e)
-
-    logger.info("Claude Code tokens stored (encrypted) for '%s'", service_id)
+    from core.llm_providers.claude_code_session import add_credential_to_pool
+    add_credential_to_pool(
+        access_token, refresh_token, expires_at,
+        service_id=service_id)
+    logger.info("Claude Code credential added to pool for '%s'", service_id)
 
 
 def _handle_service_flow(self, action, body, store, user_id, flowfile):
@@ -225,6 +196,54 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             }, ensure_ascii=False).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
+    if action == "claude_pool_list":
+        svc_id = body.get("service_id", "")
+        from core.llm_providers.claude_code_session import _load_credentials_pool
+        pool = _load_credentials_pool(svc_id)
+        import time as _time
+        entries = []
+        for i, cred in enumerate(pool):
+            exp = cred.get("expires_at", 0)
+            exp_s = exp / 1000 if exp > 1e12 else exp
+            remaining = exp_s - _time.time() if exp_s else 0
+            entries.append({
+                "index": i,
+                "account": cred.get("account", ""),
+                "expires_in": f"{remaining/3600:.1f}h" if remaining > 0 else "expired",
+                "added_at": cred.get("added_at", 0),
+            })
+        flowfile.set_content(json.dumps({
+            "pool": entries,
+            "count": len(entries),
+            "message": f"{len(entries)} credential(s) in pool for {svc_id or 'default CC service'}",
+        }).encode())
+        return [flowfile]
+
+    if action == "claude_pool_reset":
+        svc_id = body.get("service_id", "")
+        from core.llm_providers.claude_code_session import reset_credentials_pool
+        reset_credentials_pool(svc_id)
+        flowfile.set_content(json.dumps({
+            "ok": True,
+            "message": f"Credentials pool cleared for {svc_id or 'default CC service'}.",
+        }).encode())
+        return [flowfile]
+
+    if action == "claude_pool_remove":
+        svc_id = body.get("service_id", "")
+        idx = int(body.get("index", -1))
+        from core.llm_providers.claude_code_session import remove_credential_from_pool
+        if remove_credential_from_pool(idx, svc_id):
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Credential {idx} removed from pool.",
+            }).encode())
+        else:
+            flowfile.set_content(json.dumps({
+                "error": f"Invalid index {idx}.",
+            }).encode())
         return [flowfile]
 
     if action == "service_uninstall":

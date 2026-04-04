@@ -157,6 +157,7 @@ function _renderHistory(data) {
     const el = addMsg(m.type || m.role, content, m);
     // task_id can be top-level (SSE) or in source (stored messages)
     const _taskId = m.task_id || (m.source && m.source.task_id) || '';
+    console.log('[hist]', m.type || m.role, 'task_id=', _taskId, 'source=', JSON.stringify(m.source || {}).substring(0, 100), 'el=', !!el);
     if (_taskId && el) {
       const agentName = (m.source && m.source.name) || '';
       const tb = _getHistTaskBlock(_taskId, agentName);
@@ -226,10 +227,11 @@ function loadMoreMessages() {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
+        const _taskId = m.task_id || (m.source && m.source.task_id) || '';
+        console.log('[loadMore]', m.type || m.role, 'task_id=', _taskId, 'source=', JSON.stringify(m.source || {}).substring(0, 100), 'el=', !!el);
         if (!el) continue;
         // Remove from container (addMsg appended it at the end)
         if (el.parentNode) el.parentNode.removeChild(el);
-        const _taskId = m.task_id || (m.source && m.source.task_id) || '';
         if (_taskId) {
           const agentName = (m.source && m.source.name) || '';
           let tb = _histTaskBlocks[_taskId];

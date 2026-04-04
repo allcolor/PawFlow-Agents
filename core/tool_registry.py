@@ -158,7 +158,7 @@ class ToolRegistry:
                 _schema = handler.parameters_schema
                 _known = set((_schema.get("properties") or {}).keys())
                 if _known:
-                    _unknown = [k for k in args if k not in _known]
+                    _unknown = [k for k in args if k not in _known and not k.startswith("_")]
                     if _unknown:
                         return (f"Error: unknown argument(s) {_unknown} for tool '{name}'. "
                                 f"Valid arguments: {sorted(_known)}")

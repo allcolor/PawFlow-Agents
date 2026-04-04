@@ -229,8 +229,7 @@ class RelayThread:
                         for line in self._docker_proc.stderr:
                             msg = line.decode("utf-8", errors="replace").rstrip()
                             if msg and "[FSRelay]" in msg:
-                                if any(k in msg for k in ("connect", "disconnect", "error", "Reconnect")):
-                                    sys.stderr.write(f"[Relay] {msg}\n")
+                                sys.stderr.write(f"[Relay] {msg}\n")
                     except Exception:
                         pass
                 threading.Thread(target=_read_relay_logs, daemon=True,

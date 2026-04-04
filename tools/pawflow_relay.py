@@ -1901,7 +1901,16 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
     while True:
         try:
             sys.stderr.write(f"[FSRelay] Connecting to {url} ...\n")
-            sock = socket.create_connection((host, port))
+            sock = socket.create_connection((host, port), timeout=10)
+            # TCP keepalive: detect dead connections at OS level
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+            try:
+                # Linux: start probing after 30s idle, every 10s, fail after 3 misses
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 30)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)
+            except (AttributeError, OSError):
+                pass  # not available on all platforms
             if use_ssl:
                 ctx = ssl.create_default_context()
                 # Accept self-signed ephemeral certs from the PawFlow service
@@ -1968,12 +1977,32 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     sys.stderr.write(f"[FSRelay] Registered as '{reg_resp.get('relay_id')}'\n")
 
             reconnect_delay = 1
-            _KEEPALIVE_INTERVAL = 60
+            _KEEPALIVE_INTERVAL = 30
+            _DEAD_TIMEOUT = 90  # force reconnect if no data for this long
             sock.settimeout(_KEEPALIVE_INTERVAL)
             ws_sock_ref = [sock]  # mutable ref for _execute_command closures
+            _last_activity = [time.time()]  # updated on any recv
             import threading as _threading
             from concurrent.futures import ThreadPoolExecutor
             _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="relay-cmd")
+
+            # Watchdog: force-close socket if no activity for _DEAD_TIMEOUT
+            _watchdog_stop = _threading.Event()
+            def _watchdog():
+                while not _watchdog_stop.is_set():
+                    _watchdog_stop.wait(15)
+                    if _watchdog_stop.is_set():
+                        break
+                    idle = time.time() - _last_activity[0]
+                    if idle > _DEAD_TIMEOUT:
+                        sys.stderr.write(f"[FSRelay] Watchdog: no activity for {idle:.0f}s, forcing reconnect\n")
+                        try:
+                            sock.close()
+                        except Exception:
+                            pass
+                        break
+            _wd_thread = _threading.Thread(target=_watchdog, daemon=True, name="relay-watchdog")
+            _wd_thread.start()
             _send_lock = _threading.Lock()
             _child_relays = {}  # relay_id → thread (child relay instances)
             _terminal_sessions = {}  # session_id → {master_fd, pid, reader}
@@ -2067,8 +2096,13 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             while True:
                 try:
                     opcode, payload = _ws_frame_recv(sock)
+                    _last_activity[0] = time.time()
                 except socket.timeout:
-                    _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
+                    # Send app-level ping to keep connection alive
+                    try:
+                        _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
+                    except Exception:
+                        break  # send failed → connection dead
                     continue
 
                 if opcode == 0x08:
@@ -2244,6 +2278,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
             sys.stderr.write(f"[FSRelay] Connection error: {e}\n")
         finally:
             _close_all_terminals()
+            # Stop watchdog
+            try:
+                _watchdog_stop.set()
+            except Exception:
+                pass
             # Always close socket before reconnecting — prevents socket leak
             try:
                 sock.close()

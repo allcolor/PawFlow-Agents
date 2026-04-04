@@ -12,23 +12,20 @@ function connectSSE(cid) {
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
 
-  // _currentTaskKey tracks the active block key per task_id
-  // so events go to the current iteration's block
-  const _currentTaskKey = {};  // taskId → blockKey
-
-  function _getTaskBlock(taskId, agentName) {
+  function _getTaskBlock(taskId, iteration, agentName) {
     if (!taskId) return null;
-    const blockKey = _currentTaskKey[taskId] || taskId;
+    const blockKey = taskId + '::iter' + (iteration || 0);
     if (_taskBlocks[blockKey]) return _taskBlocks[blockKey];
-    // Create new block for this iteration
+    // First event for this iteration — create the block
     const details = document.createElement('details');
     details.className = 'msg task-block';
     details.setAttribute('open', '');
     details.style.cssText = 'margin:6px 0;border:1px solid #333;border-radius:8px;padding:0;background:#1a1a2e;';
     const summary = document.createElement('summary');
     summary.style.cssText = 'cursor:pointer;padding:8px 12px;font-size:12px;color:#6c5ce7;user-select:none;font-weight:600;display:flex;align-items:center;gap:6px;';
+    const iterLabel = (iteration || 0) > 1 ? ' iter ' + iteration : '';
     summary.innerHTML = '\u{1F4CB} Task <span style="color:#e0e0e0;font-weight:normal">' + escapeHtml(taskId) + '</span>'
-      + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + ')</span>' : '')
+      + (agentName ? ' <span style="color:#888;font-weight:normal">(' + escapeHtml(displayAgentName(agentName)) + iterLabel + ')</span>' : '')
       + ' <span class="task-block-status" style="margin-left:auto;font-size:11px;color:#888">\u25cf running</span>';
     details.appendChild(summary);
     const content = document.createElement('div');
@@ -40,27 +37,7 @@ function connectSSE(cid) {
     else container.appendChild(details);
     scrollBottom();
     _taskBlocks[blockKey] = {el: details, content: content, summary: summary, agent: agentName, taskId: taskId};
-    _currentTaskKey[taskId] = blockKey;
     return _taskBlocks[blockKey];
-  }
-
-  function _startNewTaskIteration(taskId, iteration) {
-    // Close current block, create new key for new iteration
-    const oldKey = _currentTaskKey[taskId];
-    if (oldKey && _taskBlocks[oldKey]) {
-      _finalizeTaskBlock(oldKey);
-    }
-    const newKey = taskId + '::iter' + iteration;
-    _currentTaskKey[taskId] = newKey;
-    // Launch note
-    const container = document.getElementById('messages');
-    const typingEl = document.getElementById('typing');
-    const launchNote = document.createElement('div');
-    launchNote.className = 'msg system task-lifecycle';
-    launchNote.innerHTML = '\u25B6 <b>task ' + escapeHtml(taskId) + '</b> iteration ' + iteration;
-    launchNote.style.cssText = 'font-size:12px;opacity:0.7;color:#6c5ce7;';
-    if (typingEl) container.insertBefore(launchNote, typingEl);
-    else container.appendChild(launchNote);
   }
 
   function _taskBlockAppend(taskId, childEl) {
@@ -71,22 +48,12 @@ function connectSSE(cid) {
     }
   }
 
-  function _finalizeTaskBlock(blockKey) {
+  function _finalizeTaskBlock(taskId, iteration, status, color) {
+    const blockKey = taskId + '::iter' + (iteration || 0);
     const block = _taskBlocks[blockKey];
     if (block) {
       const statusEl = block.summary.querySelector('.task-block-status');
-      if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
-      block.el.removeAttribute('open');
-      block._iterCount = (block._iterCount || 0) + 1;
-    }
-  }
-
-  function _finalizeCurrentTaskBlock(taskId, status, color) {
-    const curKey = _currentTaskKey[taskId];
-    if (curKey && _taskBlocks[curKey]) {
-      const block = _taskBlocks[curKey];
-      const statusEl = block.summary.querySelector('.task-block-status');
-      if (statusEl) { statusEl.textContent = status; statusEl.style.color = color; }
+      if (statusEl) { statusEl.textContent = status || '\u2713 done'; statusEl.style.color = color || '#4ecdc4'; }
       block.el.removeAttribute('open');
     }
   }
@@ -98,7 +65,7 @@ function connectSSE(cid) {
     // Task events: just ensure the block exists, don't create new iterations
     // New iterations are triggered by task_progress with iteration number
     if (data.task_id) {
-      _getTaskBlock(data.task_id, agentName);
+      _getTaskBlock(data.task_id, data.task_iteration, agentName);
       return;
     }
     // New turn starting — clear cancel suppression so tool events show again
@@ -131,7 +98,7 @@ function connectSSE(cid) {
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
       details.appendChild(content);
       if (data.task_id) {
-        const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
+        const tb = _getTaskBlock(data.task_id, data.task_iteration, agent);
         if (tb) { tb.content.appendChild(details); scrollBottom(); }
         else { document.getElementById('messages').appendChild(details); }
       } else {
@@ -187,7 +154,7 @@ function connectSSE(cid) {
         if (s.msg_id) s.el.dataset.msgid = s.msg_id;
         // Move into task block if this is a task event
         if (data.task_id) {
-          const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
+          const tb = _getTaskBlock(data.task_id, data.task_iteration, agent);
           if (tb) { tb.content.appendChild(s.el); scrollBottom(); }
         }
       }
@@ -305,7 +272,7 @@ function connectSSE(cid) {
     el.innerHTML = makeTimeHtml() + badge + '<em>' + escapeHtml(data.text || '') + '</em>';
     // Route into task block if this is a task event
     if (data.task_id) {
-      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
+      const tb = _getTaskBlock(data.task_id, data.task_iteration, agent);
       if (tb) { tb.content.appendChild(el); scrollBottom(); }
       else document.getElementById('messages').appendChild(el);
     } else {
@@ -461,7 +428,7 @@ function connectSSE(cid) {
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
-      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, tcAgent);
+      const tb = _getTaskBlock(data.task_id, data.task_iteration, tcAgent);
       if (tb) { tb.content.appendChild(tcEl); scrollBottom(); }
     }
     // Group under parent agent tool_call if this is a sub-agent tool
@@ -508,7 +475,7 @@ function connectSSE(cid) {
     });
     // Route into task block if this is a task event
     if (data.task_id && trEl) {
-      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, data.agent_name || '');
+      const tb = _getTaskBlock(data.task_id, data.task_iteration, data.agent_name || '');
       if (tb) { tb.content.appendChild(trEl); scrollBottom(); }
     }
   });
@@ -563,14 +530,13 @@ function connectSSE(cid) {
     } else if (data.done) {
       addMsg('system', '\u2705 Task complete (' + agent + '): ' + (data.result || data.progress || ''));
       if (data.task_id) {
-        _finalizeCurrentTaskBlock(data.task_id, '\u2713 done', '#4ecdc4');
+        _finalizeTaskBlock(data.task_id, data.iterations, '\u2713 done', '#4ecdc4');
       }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
-      // Prepare next iteration block — this progress event means the current
-      // iteration is done. The next thinking event will use the new block.
-      if (data.task_id && data.iterations) {
-        _startNewTaskIteration(data.task_id, data.iterations + 1);
+      // Finalize current iteration block (next event with new iteration will create a new one)
+      if (data.task_id) {
+        _finalizeTaskBlock(data.task_id, data.iterations, '\u2713 done', '#4ecdc4');
       }
     }
     scrollBottom();
@@ -580,9 +546,17 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id) {
-      _finalizeCurrentTaskBlock(data.task_id,
-        data.force ? '\u2718 stopped' : '\u23F8 paused',
-        data.force ? '#e94560' : '#f39c12');
+      // Stop all iteration blocks for this task
+      for (const [key, block] of Object.entries(_taskBlocks)) {
+        if (key.startsWith(data.task_id + '::')) {
+          const s = block.summary.querySelector('.task-block-status');
+          if (s && s.textContent.includes('running')) {
+            s.textContent = data.force ? '\u2718 stopped' : '\u23F8 paused';
+            s.style.color = data.force ? '#e94560' : '#f39c12';
+            block.el.removeAttribute('open');
+          }
+        }
+      }
       clearStream(data.agent_name || '');
     }
   });
@@ -591,12 +565,12 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id && data.from === 'user') {
-      const block = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id];
+      const block = _getTaskBlock(data.task_id, data.task_iteration, '');
       if (block) {
         const el = document.createElement('div');
         el.className = 'msg user';
         el.textContent = data.message;
-        _taskBlockAppend(data.task_id, el);
+        block.content.appendChild(el);
       }
     }
   });
@@ -702,14 +676,13 @@ function connectSSE(cid) {
       // Show agent's final message inside the task block before closing it
       let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
       taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
-      const curKey = _currentTaskKey[data.task_id] || data.task_id;
-      const block = _taskBlocks[curKey];
+      const block = _getTaskBlock(data.task_id, data.task_iteration, doneAgent);
       if (taskResp && block) {
         const src = data.source || {type: 'agent', name: doneAgent};
         const msgEl = addMsg('assistant', taskResp, {source: src, msg_id: data.msg_id || ''});
         if (msgEl) block.content.appendChild(msgEl);
       }
-      _finalizeCurrentTaskBlock(data.task_id, '\u2713 done', '#4ecdc4');
+      _finalizeTaskBlock(data.task_id, data.task_iteration, '\u2713 done', '#4ecdc4');
       clearStream(doneAgent);
       return;
     }

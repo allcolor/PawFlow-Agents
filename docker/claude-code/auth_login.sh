@@ -45,11 +45,10 @@ export CHROMIUM_FLAGS="$CHROME_FLAGS"
 # Clear stale credentials
 rm -f "$CLAUDE_CONFIG_DIR/.credentials.json" "$HOME/.claude/.credentials.json" 2>/dev/null
 
-# Open xterm for manual testing — run "claude auth login" in the terminal
+# Open xterm for debugging alongside claude auth login
 xterm -fa Monospace -fs 14 -bg black -fg white -e bash &
 
-# Wait for user to finish
-wait
+claude auth login || true
 
 echo "[auth-login] claude auth login completed"
 

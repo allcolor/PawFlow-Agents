@@ -4,6 +4,13 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 
+# ── System user (created early so Rust/Go install into /home/pawflow) ──
+RUN apt-get update && apt-get install -y --no-install-recommends sudo \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -m -s /bin/bash -G sudo pawflow \
+    && echo 'pawflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pawflow \
+    && chmod 440 /etc/sudoers.d/pawflow
+
 # ── Core tools ──────────────────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl wget ca-certificates gnupg2 software-properties-common \
@@ -64,26 +71,28 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
        prisma drizzle-kit knex typeorm \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Rust ────────────────────────────────────────────────────────────
+# ── Rust (installed as pawflow user → /home/pawflow/.cargo) ────────
+USER pawflow
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-    sh -s -- -y --default-toolchain stable --profile default \
-    && echo 'source $HOME/.cargo/env' >> /etc/profile.d/cargo.sh
-ENV PATH="/root/.cargo/bin:${PATH}"
-# Rust dev tools
+    sh -s -- -y --default-toolchain stable --profile default
+ENV PATH="/home/pawflow/.cargo/bin:C:\Program Files\PowerShell\7;C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot\bin;C:\Python314\Scripts\;C:\Python314\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\nodejs\;C:\ProgramData\chocolatey\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd;C:\Program Files\PowerShell\7\;C:\Users\quent\.pyenv\pyenv-win\bin;C:\Users\quent\.pyenv\pyenv-win\shims;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\PowerShell\7\;C:\Program Files\Git\cmd;C:\Users\quent\AppData\Local\Microsoft\WindowsApps;C:\Users\quent\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\quent\.pyenv\bin;C:\Users\quent\.pyenv\shims;C:\Users\quent\AppData\Roaming\npm;C:\Users\quent\AppData\Local\Programs\Ollama;C:\Users\quent\.local\bin;C:\Users\quent\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin;"
 RUN cargo install cargo-watch cargo-edit cargo-expand \
     && rustup component add clippy rustfmt rust-analyzer
+USER root
 
 # ── Go ──────────────────────────────────────────────────────────────
 RUN curl -fsSL https://go.dev/dl/go1.23.6.linux-amd64.tar.gz | \
     tar -C /usr/local -xzf -
-ENV PATH="/usr/local/go/bin:${PATH}"
-ENV GOPATH="/root/go"
-ENV PATH="${GOPATH}/bin:${PATH}"
-# Go dev tools
+ENV PATH="/usr/local/go/bin:C:\Program Files\PowerShell\7;C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot\bin;C:\Python314\Scripts\;C:\Python314\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\nodejs\;C:\ProgramData\chocolatey\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd;C:\Program Files\PowerShell\7\;C:\Users\quent\.pyenv\pyenv-win\bin;C:\Users\quent\.pyenv\pyenv-win\shims;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\PowerShell\7\;C:\Program Files\Git\cmd;C:\Users\quent\AppData\Local\Microsoft\WindowsApps;C:\Users\quent\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\quent\.pyenv\bin;C:\Users\quent\.pyenv\shims;C:\Users\quent\AppData\Roaming\npm;C:\Users\quent\AppData\Local\Programs\Ollama;C:\Users\quent\.local\bin;C:\Users\quent\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin;"
+ENV GOPATH="/home/pawflow/go"
+ENV PATH="${GOPATH}/bin:C:\Program Files\PowerShell\7;C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot\bin;C:\Python314\Scripts\;C:\Python314\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\nodejs\;C:\ProgramData\chocolatey\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd;C:\Program Files\PowerShell\7\;C:\Users\quent\.pyenv\pyenv-win\bin;C:\Users\quent\.pyenv\pyenv-win\shims;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\PowerShell\7\;C:\Program Files\Git\cmd;C:\Users\quent\AppData\Local\Microsoft\WindowsApps;C:\Users\quent\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\quent\.pyenv\bin;C:\Users\quent\.pyenv\shims;C:\Users\quent\AppData\Roaming\npm;C:\Users\quent\AppData\Local\Programs\Ollama;C:\Users\quent\.local\bin;C:\Users\quent\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin;"
+# Go dev tools (as pawflow so binaries land in /home/pawflow/go/bin)
+USER pawflow
 RUN go install golang.org/x/tools/gopls@latest \
     && go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest \
     && go install gotest.tools/gotestsum@latest \
     && go install github.com/air-verse/air@latest
+USER root
 
 # ── Java (OpenJDK) + Kotlin ─────────────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -92,7 +101,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Kotlin
 RUN curl -fsSL https://github.com/JetBrains/kotlin/releases/download/v2.1.10/kotlin-compiler-2.1.10.zip \
     -o /tmp/kotlin.zip && unzip -q /tmp/kotlin.zip -d /opt && rm /tmp/kotlin.zip
-ENV PATH="/opt/kotlinc/bin:${PATH}"
+ENV PATH="/opt/kotlinc/bin:C:\Program Files\PowerShell\7;C:\Program Files\Eclipse Adoptium\jdk-25.0.2.10-hotspot\bin;C:\Python314\Scripts\;C:\Python314\;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\nodejs\;C:\ProgramData\chocolatey\bin;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd;C:\Program Files\PowerShell\7\;C:\Users\quent\.pyenv\pyenv-win\bin;C:\Users\quent\.pyenv\pyenv-win\shims;C:\WINDOWS\system32;C:\WINDOWS;C:\WINDOWS\System32\Wbem;C:\WINDOWS\System32\WindowsPowerShell\v1.0\;C:\WINDOWS\System32\OpenSSH\;C:\Program Files\NVIDIA Corporation\NVIDIA app\NvDLISR;C:\Program Files (x86)\NVIDIA Corporation\PhysX\Common;C:\Program Files\PowerShell\7\;C:\Program Files\Git\cmd;C:\Users\quent\AppData\Local\Microsoft\WindowsApps;C:\Users\quent\AppData\Local\Programs\Microsoft VS Code\bin;C:\Users\quent\.pyenv\bin;C:\Users\quent\.pyenv\shims;C:\Users\quent\AppData\Roaming\npm;C:\Users\quent\AppData\Local\Programs\Ollama;C:\Users\quent\.local\bin;C:\Users\quent\AppData\Local\Microsoft\WinGet\Packages\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\ffmpeg-8.1-full_build\bin;"
 
 # ── C# / .NET ──────────────────────────────────────────────────────
 RUN curl -fsSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 9.0 --install-dir /usr/share/dotnet \
@@ -135,13 +144,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL https://code-server.dev/install.sh | sh
 
 ENV PAWFLOW_DOCKER_IMAGE="pawflow-relay-dev:latest"
-
-# ── Desktop user (non-root — required for Chromium & XFCE) ────────
-RUN apt-get update && apt-get install -y --no-install-recommends sudo \
-    && rm -rf /var/lib/apt/lists/* \
-    && useradd -m -s /bin/bash -G sudo pawflow \
-    && echo 'pawflow ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/pawflow \
-    && chmod 440 /etc/sudoers.d/pawflow
 
 # ── Desktop environment (VNC + audio) ───────────────────────────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -204,8 +206,9 @@ RUN apt-get clean && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 # Refresh desktop menu cache so all .desktop files appear in XFCE
 RUN update-desktop-database /usr/share/applications 2>/dev/null || true
 
-# Give pawflow user ownership of workspace (volumes are root by default)
-RUN mkdir -p /workspace && chown pawflow:pawflow /workspace
+# Give pawflow user ownership of workspace and docker group
+RUN mkdir -p /workspace && chown pawflow:pawflow /workspace \
+    && (groupadd -f docker; usermod -aG docker pawflow) 2>/dev/null || true
 
 # ── PawFlow relay + SDK (LAST — changes often, don't bust cache) ──
 COPY pawflow_relay.py /opt/pawflow/pawflow_relay.py
@@ -217,5 +220,8 @@ COPY pawflow.py /opt/pawflow/pawflow.py
 COPY audio_capture.py /opt/pawflow/audio_capture.py
 ENV PYTHONPATH="/opt/pawflow"
 
+# ── Run as pawflow ──────────────────────────────────────────────────
+USER pawflow
+ENV HOME="/home/pawflow"
 WORKDIR /workspace
 CMD ["bash"]

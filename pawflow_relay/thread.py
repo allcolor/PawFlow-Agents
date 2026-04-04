@@ -190,6 +190,7 @@ class RelayThread:
                 "run", "--rm",
                 "--name", self._docker_container,
                 "-v", f"{translate_path(to_host_path(self.directory))}:/workspace",
+                "-v", f"pawflow_home_{self.relay_id}:/home/pawflow",
                 "--add-host", "host.docker.internal:host-gateway",
                 "--cpus", self.docker_cpus, "--memory", self.docker_memory,
                 "--shm-size", "512m",

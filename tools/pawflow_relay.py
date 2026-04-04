@@ -1334,45 +1334,22 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     _s.bind(("", 0)); _novnc_port = _s.getsockname()[1]
             try:
                 import time as _time_mod
-                import pwd as _pwd_mod
                 _log_d = open("/tmp/desktop.log", "w")
                 _procs = []
 
-                # Detect desktop user (non-root preferred)
-                _desktop_user = "pawflow"
-                try:
-                    _pw = _pwd_mod.getpwnam(_desktop_user)
-                    _desktop_uid = _pw.pw_uid
-                    _desktop_gid = _pw.pw_gid
-                    _desktop_home = _pw.pw_dir
-                except KeyError:
-                    _desktop_user = None  # fall back to current user
-                    _desktop_uid = os.getuid()
-                    _desktop_gid = os.getgid()
-                    _desktop_home = os.environ.get("HOME", "/root")
-
-                def _as_user():
-                    """Pre-exec: switch to desktop user."""
-                    if _desktop_user:
-                        os.setgid(_desktop_gid)
-                        os.setuid(_desktop_uid)
+                # Desktop runs as current user (pawflow via Dockerfile USER)
+                _desktop_user = os.environ.get("USER", "pawflow")
+                _desktop_home = os.environ.get("HOME", "/home/pawflow")
 
                 _user_env = {
                     **os.environ,
                     "DISPLAY": _display,
                     "HOME": _desktop_home,
-                    "USER": _desktop_user or "root",
+                    "USER": _desktop_user,
                     "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/tmp/dbus-desktop",
-                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user or 'root'}",
+                    "XDG_RUNTIME_DIR": f"/tmp/xdg-{_desktop_user}",
                 }
                 os.makedirs(_user_env["XDG_RUNTIME_DIR"], mode=0o700, exist_ok=True)
-                if _desktop_user:
-                    os.chown(_user_env["XDG_RUNTIME_DIR"], _desktop_uid, _desktop_gid)
-                    # Make workspace accessible to desktop user
-                    _ws = Path(root_dir)
-                    if _ws.exists() and _ws.stat().st_uid == 0:
-                        subprocess.run(["chown", "-R", f"{_desktop_user}:{_desktop_user}", str(_ws)],
-                                       timeout=30, capture_output=True)
 
                 # 1. Xvfb
                 _p_xvfb = subprocess.Popen(
@@ -1387,14 +1364,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _p_dbus = subprocess.Popen(
                     ["dbus-daemon", "--session", "--nofork",
                      f"--address=unix:path=/tmp/dbus-desktop"],
-                    env=_user_env, preexec_fn=_as_user,
+                    env=_user_env,
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_dbus)
                 _time_mod.sleep(0.3)
 
                 # 3. XFCE desktop session (as non-root user)
                 _p_wm = subprocess.Popen(
-                    ["startxfce4"], env=_user_env, preexec_fn=_as_user,
+                    ["startxfce4"], env=_user_env,
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_wm)
                 _time_mod.sleep(1)
@@ -1433,14 +1410,14 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     # Kill any stale PA — --start ignores --load if PA is already running
                     subprocess.run(
                         ["pulseaudio", "--kill"],
-                        env=_user_env, preexec_fn=_as_user,
+                        env=_user_env,
                         stdout=_log_d, stderr=_log_d, timeout=5)
                     _time_mod.sleep(0.3)
                     _p_pulse = subprocess.Popen(
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
                          "--load=module-null-sink sink_name=virtual_out rate=48000",
                          "--load=module-always-sink"],
-                        env=_user_env, preexec_fn=_as_user,
+                        env=_user_env,
                         stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_pulse)
                     _time_mod.sleep(0.5)
@@ -1463,7 +1440,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _p_audio = subprocess.Popen(
                             [sys.executable, str(_audio_script),
                              "--port", str(_audio_port), "--source", "pulse"],
-                            env=_user_env, preexec_fn=_as_user,
+                            env=_user_env,
                             stdout=_log_d, stderr=_log_d)
                         _procs.append(_p_audio)
                         sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")

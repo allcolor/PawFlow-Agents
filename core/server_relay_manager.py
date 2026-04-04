@@ -169,6 +169,7 @@ class ServerRelayManager:
             "--detach",
             "--name", container_name,
             "--volume", f"{volume}:{relay_workspace}",
+            "--volume", f"pawflow_home_{relay_id}:/home/pawflow",
             "--volume", f"{tools_host}:{_TOOLS_IN_CONTAINER}:ro",
             "--add-host", "host.docker.internal:host-gateway",
             "--cpus", relay_cpus,

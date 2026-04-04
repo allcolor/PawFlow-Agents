@@ -255,7 +255,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
         # Inject scheme hint when connection is TLS (auto-detect)
         import ssl as _ssl_mod
         _sock = getattr(self, 'request', None) or getattr(self, 'connection', None)
-        _is_tls = isinstance(_sock, _ssl_mod.SSLSocket)
+        # Unwrap _PrefixedSocket to check the real socket
+        _raw_sock = getattr(_sock, '_sock', _sock)
+        _is_tls = isinstance(_raw_sock, _ssl_mod.SSLSocket)
         if _is_tls:
             if not any(k.lower() == 'x-forwarded-proto' for k in headers):
                 headers['x-forwarded-proto'] = 'https'

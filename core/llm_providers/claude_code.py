@@ -151,11 +151,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # Pool mode: release slot (don't kill the container)
         _pool_name = getattr(self, '_pool_container_name', None)
         if _pool_name:
-            try:
-                from core.claude_code_pool import ClaudeCodePool
-                ClaudeCodePool.instance().release(_pool_name)
-            except Exception:
-                pass
+            self._pool_release(_pool_name)
             self._pool_container_name = None
         # Kill process FIRST so pipes become readable (no more blocking)
         try:
@@ -184,13 +180,44 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
     # ── Non-streaming (complete) ────────────────────────────────────
 
+    def _pool_popen(self, workdir: str, cmd: list, **popen_kwargs) -> tuple:
+        """Launch claude in a pool container or locally.
+
+        Returns (proc, pool_container_name). Caller must release pool_container
+        when done (if not None).
+        """
+        _containerize = getattr(self, 'containerize', False)
+        if _containerize:
+            from core.claude_code_pool import ClaudeCodePool
+            pool = ClaudeCodePool.instance()
+            container = pool.acquire()
+            _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
+            _session_dir = f"/cc_sessions/{_rel}"
+            proc = pool.exec_claude(
+                container, _session_dir, cmd[1:],  # skip 'claude' binary
+                **popen_kwargs)
+            return proc, container
+        else:
+            proc = subprocess.Popen(
+                cmd, cwd=workdir, env=self._claude_code_env(workdir),
+                **popen_kwargs)
+            return proc, None
+
+    def _pool_release(self, container_name):
+        """Release a pool container slot."""
+        if container_name:
+            try:
+                from core.claude_code_pool import ClaudeCodePool
+                ClaudeCodePool.instance().release(container_name)
+            except Exception:
+                pass
+
     def _complete_claude_code(
         self, messages, model, temperature, max_tokens, tools=None,
     ):
         """Run claude CLI in simple prompt mode (no MCP, no tools).
 
         Used for summarization, narration, and other non-interactive calls.
-        Supports containerization (same Docker path as streaming).
         """
         from core.llm_client import LLMClientError, LLMResponse
 
@@ -199,12 +226,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         conv_id = getattr(self, '_conversation_id', "") or "default"
         agent_name = getattr(self, '_agent_name', "") or "default"
-
         user_id = getattr(self, '_user_id', "") or "default"
         workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         self._setup_credentials(workdir)
 
-        # Simple prompt mode: no MCP, no tools, max 1 turn
         cmd = [
             self.claude_binary, "-p",
             "--output-format", "json",
@@ -219,32 +244,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
 
         _pool_container = None
         try:
-            if _containerize:
-                from core.claude_code_pool import ClaudeCodePool
-                pool = ClaudeCodePool.instance()
-                _pool_container = pool.acquire()
-                # Compute container-side session dir (symlinked to /workspace by exec_claude)
-                _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
-                _container_session_dir = f"/cc_sessions/{_rel}"
-                _claude_args = cmd[1:]  # skip 'claude' binary — exec_claude adds it
-                proc = pool.exec_claude(
-                    _pool_container, _container_session_dir, _claude_args,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                )
-                stdout, stderr_out = proc.communicate(
-                    input=stdin_text, timeout=self.timeout)
-                result = subprocess.CompletedProcess(
-                    args=cmd, returncode=proc.returncode,
-                    stdout=stdout, stderr=stderr_out)
-            else:
-                result = subprocess.run(
-                    cmd, input=stdin_text, capture_output=True, text=True,
-                    timeout=self.timeout, cwd=workdir,
-                    env=self._claude_code_env(workdir), encoding="utf-8")
+            proc, _pool_container = self._pool_popen(workdir, cmd,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, text=True, encoding="utf-8")
+            stdout, stderr_out = proc.communicate(
+                input=stdin_text, timeout=self.timeout)
+            result = subprocess.CompletedProcess(
+                args=cmd, returncode=proc.returncode,
+                stdout=stdout, stderr=stderr_out)
         except FileNotFoundError:
             raise LLMClientError(
                 f"Claude CLI binary '{self.claude_binary}' not found. "
@@ -252,8 +259,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         except subprocess.TimeoutExpired:
             raise LLMClientError(f"Claude CLI timed out after {self.timeout}s")
         finally:
-            if _pool_container:
-                ClaudeCodePool.instance().release(_pool_container)
+            self._pool_release(_pool_container)
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
@@ -483,30 +489,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         self._pool_container_name = None
 
         try:
-            if _containerize:
-                from core.claude_code_pool import ClaudeCodePool
-                pool = ClaudeCodePool.instance()
-                container = pool.acquire()
-                self._pool_container_name = container
-                proc = pool.exec_claude(
-                    container, _container_workdir, cmd[1:],  # skip 'claude' binary — exec_claude adds it
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    encoding="utf-8",
-                )
-            else:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdin=subprocess.PIPE,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    cwd=workdir,
-                    env=self._claude_code_env(workdir),
-                    encoding="utf-8",
-                )
+            proc, self._pool_container_name = self._pool_popen(
+                workdir, cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+            )
             self._claude_proc = proc
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary

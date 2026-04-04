@@ -111,6 +111,20 @@ def add_credential_to_pool(access_token: str, refresh_token: str,
     """Add a credential to the pool."""
     import time
     pool = _load_credentials_pool(service_id)
+    # Dedup: if same refresh_token exists, update it (same account re-login)
+    for i, existing in enumerate(pool):
+        if existing.get("refresh_token") == refresh_token:
+            pool[i] = {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "expires_at": int(expires_at),
+                "account": account or existing.get("account", ""),
+                "added_at": int(time.time()),
+            }
+            _save_credentials_pool(pool, service_id)
+            logger.info("[claude-code] credential updated in pool (slot %d) for '%s'",
+                        i, _find_cc_service_id(service_id))
+            return
     pool.append({
         "access_token": access_token,
         "refresh_token": refresh_token,

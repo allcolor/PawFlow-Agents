@@ -618,24 +618,20 @@ class ToolRelayService(BaseService):
         except Exception as e:
             logger.warning("Tool approval check failed: %s", e)
 
-        # Resolve secrets for env injection + redaction
+        # Resolve env vars (all variables + secrets) and secret values (for redaction)
         _secret_values = set()
-        _secret_names = {}  # value → varname for informative redaction markers
+        _secret_names = {}
         _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
         if user_id and isinstance(arguments, dict):
             try:
-                _secret_env = self._resolve_secrets_env(user_id, _secret_cid)
-                if _secret_env:
-                    # Collect values for redaction (skip short values to avoid false positives)
-                    for _sk, _sv in _secret_env.items():
-                        if _sv and len(_sv) >= 4:
-                            _secret_values.add(_sv)
-                            _secret_names[_sv] = _sk
-                    # Inject env vars for exec-capable tools
-                    if tool_name in {"bash", "execute_script"}:
-                        arguments["_secret_env"] = _secret_env
+                # All variables + secrets → env injection for exec tools
+                _all_env = resolve_secrets_env(user_id, _secret_cid)
+                if _all_env and tool_name in {"bash", "execute_script"}:
+                    arguments["_secret_env"] = _all_env
+                # Only secrets → redaction
+                _secret_values, _secret_names = resolve_secret_values(user_id, _secret_cid)
             except Exception as _se:
-                logger.warning("[tool-relay] failed to inject secrets: %s", _se)
+                logger.warning("[tool-relay] failed to resolve env/secrets: %s", _se)
 
         try:
             logger.debug("[tool-relay] execute %s [req=%s]", tool_name, request_id)
@@ -661,28 +657,94 @@ class ToolRelayService(BaseService):
 
 
 def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
-    """Resolve user/global secrets into a flat dict for env injection.
+    """Resolve ALL variables + secrets into a flat dict for env injection.
 
-    Cascade: conversation → user → global (same as expression resolver).
-    Keys are uppercased with PAWFLOW_ prefix to avoid collisions.
+    Cascade: global → user → conversation (later overrides earlier).
+    Both params (variables) AND secrets are included.
+    Returns dict of {KEY: value}. Keys are uppercased.
     """
     from pathlib import Path
     from core.config_store import ConfigStore
 
     env = {}
 
-    # Global secrets
-    _global_path = Path("config/global_secrets.json")
-    for k, cv in ConfigStore.load_secrets(_global_path).items():
+    # ── Global variables ──
+    _global_params = Path("config/global_params.json")
+    for k, cv in ConfigStore.load_params(_global_params).items():
         env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
-    # User secrets (override global)
+    # ── Global secrets ──
+    _global_secrets = Path("config/global_secrets.json")
+    for k, cv in ConfigStore.load_secrets(_global_secrets).items():
+        env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+
+    # ── User variables (override global) ──
     if user_id:
-        _user_path = Path("config/users") / user_id / "secrets.json"
-        for k, cv in ConfigStore.load_secrets(_user_path).items():
+        _user_params = Path("config/users") / user_id / "params.json"
+        for k, cv in ConfigStore.load_params(_user_params).items():
             env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
 
-    # Conversation secrets (override user)
+    # ── User secrets (override global) ──
+    if user_id:
+        _user_secrets = Path("config/users") / user_id / "secrets.json"
+        for k, cv in ConfigStore.load_secrets(_user_secrets).items():
+            env[k.upper()] = cv.value if hasattr(cv, 'value') else str(cv)
+
+    # ── Conversation variables + secrets (override user) ──
+    if conversation_id:
+        try:
+            from core.conversation_store import ConversationStore
+            from core.secrets import get_secrets_manager
+            store = ConversationStore.instance()
+            sm = get_secrets_manager()
+
+            # Conv params (variables)
+            _conv_params = store.get_extra(conversation_id, "conv_params") or {}
+            for k, v in _conv_params.items():
+                env[k.upper()] = str(v)
+
+            # Conv secrets
+            _conv_secrets = store.get_extra(conversation_id, "conv_secrets") or {}
+            for k, v in _conv_secrets.items():
+                try:
+                    env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
+                except Exception:
+                    env[k.upper()] = str(v)
+        except Exception:
+            pass
+
+    return env
+
+
+def resolve_secret_values(user_id: str, conversation_id: str) -> tuple:
+    """Resolve ONLY secret values for redaction (not variables).
+
+    Returns (secret_values: set, secret_names: dict{value→key}).
+    """
+    from pathlib import Path
+    from core.config_store import ConfigStore
+
+    values = set()
+    names = {}
+
+    # Global secrets
+    _global_secrets = Path("config/global_secrets.json")
+    for k, cv in ConfigStore.load_secrets(_global_secrets).items():
+        v = cv.value if hasattr(cv, 'value') else str(cv)
+        if v and len(v) >= 4:
+            values.add(v)
+            names[v] = k.upper()
+
+    # User secrets
+    if user_id:
+        _user_secrets = Path("config/users") / user_id / "secrets.json"
+        for k, cv in ConfigStore.load_secrets(_user_secrets).items():
+            v = cv.value if hasattr(cv, 'value') else str(cv)
+            if v and len(v) >= 4:
+                values.add(v)
+                names[v] = k.upper()
+
+    # Conversation secrets
     if conversation_id:
         try:
             from core.conversation_store import ConversationStore
@@ -692,13 +754,16 @@ def resolve_secrets_env(user_id: str, conversation_id: str) -> dict:
             sm = get_secrets_manager()
             for k, v in _raw.items():
                 try:
-                    env[k.upper()] = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
+                    v = sm.decrypt(v) if isinstance(v, str) and v.startswith("enc:") else str(v)
                 except Exception:
-                    env[k.upper()] = str(v)
+                    v = str(v)
+                if v and len(v) >= 4:
+                    values.add(v)
+                    names[v] = k.upper()
         except Exception:
             pass
 
-    return env
+    return values, names
 
 
 # Register with ServiceFactory

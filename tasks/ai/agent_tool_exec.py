@@ -40,18 +40,14 @@ class AgentToolExecMixin:
 
         Returns list of (tool_call, result_text) in original order.
         """
-        # Load secret values for output redaction
+        # Load secret values for output redaction (secrets only, not variables)
         _secret_values = set()
-        _secret_names = {}  # value → varname for informative redaction markers
+        _secret_names = {}
         if user_id:
             try:
-                from services.tool_relay_service import resolve_secrets_env, _redact_secrets
+                from services.tool_relay_service import resolve_secret_values, _redact_secrets
                 _scid = conversation_id.split('::task::')[0] if '::task::' in conversation_id else conversation_id
-                _senv = resolve_secrets_env(user_id, _scid)
-                for _sk, _sv in _senv.items():
-                    if _sv and len(_sv) >= 4:
-                        _secret_values.add(_sv)
-                        _secret_names[_sv] = _sk
+                _secret_values, _secret_names = resolve_secret_values(user_id, _scid)
             except Exception:
                 pass
 

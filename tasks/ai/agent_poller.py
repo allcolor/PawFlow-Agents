@@ -404,9 +404,10 @@ class AgentPollerMixin:
                     "poll": True,
                     "agent_name": _thought_agent,
                 }
-                # Include task_id so the UI creates a task block
+                # Include task_id + iteration so the UI creates the right task block
                 if _is_task:
                     _thinking_evt["task_id"] = _task_id
+                    _thinking_evt["task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
                 bus.publish_event(cid, "thinking", _thinking_evt)
 
                 # For task entries, use the sub-conversation ID so messages

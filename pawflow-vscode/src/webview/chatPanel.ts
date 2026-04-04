@@ -201,7 +201,11 @@ export class ChatPanelProvider implements vscode.WebviewViewProvider {
       }
       this.postMessage({ type: 'actionResult', action: command, data: resp });
     } catch (e: any) {
-      this.postMessage({ type: 'error', message: e.message });
+      // Silent for polling commands — network errors are expected
+      const silentCommands = ['list_active', 'poll', 'ping'];
+      if (!silentCommands.includes(command)) {
+        this.postMessage({ type: 'error', message: e.message });
+      }
     }
   }
 

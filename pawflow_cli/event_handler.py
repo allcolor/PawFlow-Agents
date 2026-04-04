@@ -147,7 +147,8 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
             data.get("model", ""),
         )
         # Optimistic removal from active agents (poller will confirm on next tick)
-        agent_key = agent.lower()
+        _tid = data.get("task_id", "")
+        agent_key = (agent.lower() + "::" + _tid) if _tid else agent.lower()
         if agent_key in app._active_agents:
             del app._active_agents[agent_key]
         if not app._active_agents and not app.renderer._streams:
@@ -166,7 +167,8 @@ def dispatch_event(app, event, streaming_agent, thinking_agent):
         agent = data.get('agent_name', '?')
         app.renderer.print_system(f"[{agent}] Cancelled")
         # Optimistic removal from active agents
-        agent_key = agent.lower()
+        _tid = data.get("task_id", "")
+        agent_key = (agent.lower() + "::" + _tid) if _tid else agent.lower()
         if agent_key in app._active_agents:
             del app._active_agents[agent_key]
         if not app._active_agents and not app.renderer._streams:

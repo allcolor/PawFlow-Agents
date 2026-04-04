@@ -95,39 +95,120 @@ function scrollToMsg(rawIndex) {
   }
 }
 
+// ── Active agents — server poll is single source of truth ──
+// SSE events provide optimistic removal on done/cancelled only.
+// All agent additions come from list_active polling (like webchat).
+var _activeSyncTimer = null;
+
+function _agentKey(name) { return (name || '').toLowerCase(); }
+
 function updateActiveAgents(agent, status) {
   if (!agent) return;
   if (status === 'done' || status === 'cancelled') {
-    delete activeAgents[agent];
-  } else {
-    activeAgents[agent] = { status: status, ts: Date.now() };
+    // Optimistic removal — server confirms on next poll
+    var key = _agentKey(agent);
+    delete activeAgents[key];
+    _renderActiveAgents();
+  }
+  // Other statuses are NO-OPs — server poll is the source of truth
+}
+
+function startActiveSync() {
+  if (_activeSyncTimer) return;
+  _activeSyncTimer = setInterval(_syncActiveFromServer, 3000);
+}
+function stopActiveSync() {
+  if (_activeSyncTimer) { clearInterval(_activeSyncTimer); _activeSyncTimer = null; }
+  activeAgents = {};
+  _renderActiveAgents();
+}
+
+function _syncActiveFromServer() {
+  if (!currentHistoryConvId) return;
+  sendCmd('list_active', '');
+}
+
+function _handleListActiveResult(data) {
+  var serverActive = (data && data.active) || [];
+  var serverKeys = {};
+  for (var i = 0; i < serverActive.length; i++) {
+    var a = serverActive[i];
+    var k = a.task_id ? _agentKey(a.agent_name + '::' + a.task_id) : _agentKey(a.agent_name);
+    serverKeys[k] = true;
+  }
+  // Remove agents server doesn't know about
+  for (var key in activeAgents) {
+    if (!serverKeys[key]) delete activeAgents[key];
+  }
+  // Add/update from server
+  var now = Date.now();
+  for (var j = 0; j < serverActive.length; j++) {
+    var sa = serverActive[j];
+    var sk = sa.task_id ? _agentKey(sa.agent_name + '::' + sa.task_id) : _agentKey(sa.agent_name);
+    var existing = activeAgents[sk] || {};
+    activeAgents[sk] = {
+      name: sa.agent_name,
+      taskId: sa.task_id || '',
+      startedAt: existing.startedAt || now - ((sa.duration_s || 0) * 1000),
+      iteration: sa.iteration || (existing.iteration || 0),
+      round: sa.round || 0,
+      maxRounds: sa.max_rounds || 0,
+      lastTool: sa.last_tool || (existing.lastTool || ''),
+      totalTools: sa.total_tools || (existing.totalTools || 0),
+      status: sa.status || (existing.status || 'thinking'),
+      msgPreview: sa.message_preview || '',
+    };
   }
   _renderActiveAgents();
 }
+
 function _renderActiveAgents() {
-  var now = Date.now();
-  for (var k in activeAgents) {
-    if (now - (activeAgents[k].ts || 0) > 300000) delete activeAgents[k];
-  }
   var el = document.getElementById('activeAgents');
   var keys = Object.keys(activeAgents);
   if (keys.length === 0) {
     el.style.display = 'none';
-    statusEl.textContent = '';
-  } else {
-    el.style.display = 'flex';
-    el.innerHTML = keys.map(function(a) {
-      var color = agentColor(a);
-      var s = activeAgents[a].status || '';
-      return '<span style="margin-right:10px;display:inline-flex;align-items:center;gap:3px">'
-        + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + color + '"></span>'
-        + '<strong>' + esc(a) + '</strong> ' + esc(s)
-        + '</span>';
-    }).join('');
-    // Typing indicator driven solely by active agents
-    var parts = keys.map(function(a) { return a + ' ' + (activeAgents[a].status || ''); });
-    statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... ' + esc(parts.join(', ')) + '</span>';
+    // Don't clear statusEl — other handlers (done, compact) set their own status
+    return;
   }
+  el.style.display = 'block';
+  var now = Date.now();
+  el.innerHTML = keys.map(function(key) {
+    var info = activeAgents[key];
+    var displayName = info.name;
+    if (info.taskId) displayName += ' [task:' + info.taskId + ']';
+    var color = agentColor(info.name);
+    // Elapsed time
+    var secs = Math.round((now - (info.startedAt || now)) / 1000);
+    var timeStr = secs < 60 ? secs + 's' : Math.floor(secs / 60) + 'm' + (secs % 60) + 's';
+    // Status details
+    var parts = [];
+    if (info.iteration) parts.push('iter ' + info.iteration);
+    if (info.round && info.maxRounds > 1) parts.push('round ' + info.round + '/' + info.maxRounds);
+    if (info.totalTools > 0) parts.push(info.totalTools + ' tools');
+    if (info.lastTool) parts.push('[' + info.lastTool + ']');
+    var statusText = parts.length > 0 ? parts.join(' \u00b7 ') : 'thinking...';
+    return '<div style="display:flex;align-items:center;gap:4px;padding:1px 0">'
+      + '<span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:' + color + ';animation:pulse 1.2s ease-in-out infinite"></span>'
+      + '<strong style="color:' + color + '">' + esc(displayName) + '</strong>'
+      + '<span style="color:var(--vscode-descriptionForeground)">' + esc(statusText) + '</span>'
+      + '<span style="color:var(--vscode-descriptionForeground);margin-left:auto">' + timeStr + '</span>'
+      + '<button title="Interrupt" onclick="sendCmd(\'interrupt\',JSON.stringify({agent_name:\'' + esc(info.name).replace(/'/g, "\\'") + '\'' + (info.taskId ? ',task_id:\'' + esc(info.taskId).replace(/'/g, "\\'") + '\'' : '') + '}))" style="background:none;border:none;color:var(--vscode-descriptionForeground);cursor:pointer;font-size:10px;padding:0 2px" title="Interrupt">\u23F8</button>'
+      + '<button title="Stop" onclick="_stopAgent(\'' + esc(info.name).replace(/'/g, "\\'") + '\',\'' + esc(info.taskId || '').replace(/'/g, "\\'") + '\')" style="background:none;border:none;color:#e94560;cursor:pointer;font-size:10px;padding:0 2px">\u25A0</button>'
+      + '</div>';
+  }).join('');
+  // Update status bar
+  var agentParts = keys.map(function(key) {
+    var info = activeAgents[key];
+    return info.name + (info.lastTool ? ' [' + info.lastTool + ']' : '');
+  });
+  statusEl.innerHTML = '<span class="thinking">' + randomVerb() + '... ' + esc(agentParts.join(', ')) + '</span>';
+}
+
+function _stopAgent(agentName, taskId) {
+  sendCmd('cancel', JSON.stringify({ agent_name: agentName, force: true, task_id: taskId || undefined }));
+  var key = taskId ? _agentKey(agentName + '::' + taskId) : _agentKey(agentName);
+  delete activeAgents[key];
+  _renderActiveAgents();
 }
 
 function deleteMsg(btn) {
@@ -181,6 +262,7 @@ function backToChat() { closePanel(); setActiveTab('tbChat'); }
 
 function newChat() {
   closePanel();
+  stopActiveSync();
   vscode.postMessage({ type: 'newConversation' });
   messagesEl.innerHTML = '<div class="msg system">New conversation</div>';
   currentHistoryConvId = null;
@@ -477,6 +559,7 @@ window.addEventListener('message', function(e) {
       statusEl.textContent = 'Agent: ' + msg.agent;
       break;
     case 'actionResult':
+      if (msg.action === 'list_active') break;  // handled via SSE command_result
       if (renderPanelResult(msg.action, msg.data)) break;
       if (msg.data && msg.data.error) { addMsg('error', msg.data.error); break; }
       var d = msg.data || {};
@@ -658,6 +741,7 @@ function handleSSE(event) {
       streaming[agent] = '';
       _hadToolCalls = false;
       updateActiveAgents(agent, 'done');
+      _syncActiveFromServer();  // immediate sync on done
       var tin2 = data.tokens_in || 0;
       var tout2 = data.tokens_out || 0;
       var model2 = data.model || '';
@@ -734,9 +818,19 @@ function handleSSE(event) {
       updateActiveAgents(agent, 'cancelled');
       break;
 
-    case 'iteration_status':
-      updateActiveAgents(agent, 'iter ' + data.iteration + ' \u00b7 ' + data.total_tools + ' tools');
+    case 'iteration_status': {
+      // Update existing agent data between polls (fast hint)
+      var itKey = _agentKey(agent);
+      if (activeAgents[itKey]) {
+        activeAgents[itKey].iteration = data.iteration || 0;
+        activeAgents[itKey].totalTools = data.total_tools || 0;
+        if (data.tools_called && data.tools_called.length > 0) {
+          activeAgents[itKey].lastTool = data.tools_called[data.tools_called.length - 1];
+        }
+        _renderActiveAgents();
+      }
       break;
+    }
 
     case 'exec_approval_request':
       showApproval('exec', data);
@@ -774,11 +868,13 @@ function handleSSE(event) {
 
     case 'command_result': {
       var crAction = data.action || '';
-      if (data.error) { addMsg('error', data.error); break; }
+      if (data.error && crAction !== 'list_active') { addMsg('error', data.error); break; }
       var crParsed = null;
       try { crParsed = typeof data.result === 'string' ? JSON.parse(data.result) : data.result; } catch(e) {}
+      // Route list_active results to active agents handler
+      if (crAction === 'list_active') { _handleListActiveResult(crParsed || {}); break; }
       // Silent data actions
-      var crSilent = ['list_active','list_params_secrets','list_links','list_conversations',
+      var crSilent = ['list_params_secrets','list_links','list_conversations',
         'list_resources','list_agents','list_tools','list_skills','get_tool_schemas',
         'get_permission_mode','get_context','get_plan','get_plans','get_cost','get_usage',
         'poll','ping','list_repo_agents','list_secrets','list_variables','list_schedules',
@@ -907,6 +1003,7 @@ function replayHistory(data) {
   _msgRawIndex = 0;
   currentHistoryConvId = data.conversation_id || currentHistoryConvId;
   currentHistoryOffset = data.raw_count || (data.messages || []).length;
+  startActiveSync();
 
   _addLoadMoreBanner(data);
   var msgs = data.messages || [];

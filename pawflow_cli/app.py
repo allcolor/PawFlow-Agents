@@ -552,7 +552,11 @@ class PawCode:
                 data = self.api.send_action("list_active",
                                              conversation_id=self.conversation_id)
                 server_active = data.get("active", [])
-                server_keys = {a.get("agent_name", "").lower() for a in server_active}
+                server_keys = set()
+                for _sa in server_active:
+                    _n = _sa.get("agent_name", "").lower()
+                    _t = _sa.get("task_id", "")
+                    server_keys.add((_n + "::" + _t) if _t else _n)
 
                 # Remove agents server doesn't know about
                 for key in list(self._active_agents.keys()):
@@ -561,10 +565,13 @@ class PawCode:
 
                 # Add/update from server
                 for a in server_active:
-                    key = a.get("agent_name", "").lower()
+                    _an = a.get("agent_name", "").lower()
+                    _tid = a.get("task_id", "")
+                    key = (_an + "::" + _tid) if _tid else _an
                     existing = self._active_agents.get(key, {})
                     self._active_agents[key] = {
                         "name": a.get("agent_name", ""),
+                        "task_id": a.get("task_id", ""),
                         "iteration": a.get("iteration", existing.get("iteration", 0)),
                         "round": a.get("round", 0),
                         "max_rounds": a.get("max_rounds", 0),
@@ -579,6 +586,8 @@ class PawCode:
                     parts = []
                     for info in self._active_agents.values():
                         name = info["name"]
+                        if info.get("task_id"):
+                            name += f" [task:{info['task_id']}]"
                         detail_parts = []
                         if info.get("iteration"):
                             detail_parts.append(f"iter {info['iteration']}")

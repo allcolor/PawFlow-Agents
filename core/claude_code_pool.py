@@ -152,15 +152,15 @@ class ClaudeCodePool:
         """
         host_ip = get_host_ip()
 
-        # Create symlink /workspace → session_dir so CC sees the same
-        # environment as the old per-container model (cwd=/workspace,
-        # HOME=/workspace, CLAUDE_CONFIG_DIR=/workspace).
+        # Bind-mount session_dir to /workspace so CC sees a real directory
+        # (not a symlink — CC resolves symlinks via realpath, exposing
+        # /cc_sessions/... paths which break file references in tool calls).
         _setup = subprocess.run(
             docker_cmd() + ["exec", "--user", "root", container_name, "bash", "-c",
-                            f"rm -rf /workspace && ln -sfn {session_dir} /workspace && chown -h 1000:1000 /workspace"],
+                            f"mkdir -p /workspace && mount --bind {session_dir} /workspace && chown 1000:1000 /workspace"],
             capture_output=True, timeout=5)
         if _setup.returncode != 0:
-            logger.warning("Pool: symlink setup failed: %s", _setup.stderr)
+            logger.warning("Pool: bind mount failed: %s", _setup.stderr)
 
         exec_args = [
             "-i",
@@ -244,7 +244,7 @@ class ClaudeCodePool:
             # Security
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",
-            "--security-opt", "no-new-privileges",
+            "--cap-add", "SYS_ADMIN",  # needed for mount --bind in exec_claude
             # Override entrypoint: keep alive (full path — PATH may be dirty)
             "--entrypoint", "/usr/bin/sleep",
             self.image,

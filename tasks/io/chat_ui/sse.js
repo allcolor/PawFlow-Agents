@@ -14,7 +14,20 @@ function connectSSE(cid) {
 
   function _getTaskBlock(taskId, agentName) {
     if (!taskId) return null;
-    if (_taskBlocks[taskId]) return _taskBlocks[taskId];
+    if (_taskBlocks[taskId]) {
+      // Reopen existing block (e.g. new iteration of same task)
+      const existing = _taskBlocks[taskId];
+      existing.el.setAttribute('open', '');
+      const statusEl = existing.summary.querySelector('.task-block-status');
+      if (statusEl) { statusEl.textContent = '\u25cf running'; statusEl.style.color = '#888'; }
+      // Add iteration separator
+      const sep = document.createElement('div');
+      sep.style.cssText = 'border-top:1px dashed #444;margin:8px 0 4px;font-size:10px;color:#6c5ce7;opacity:0.7;';
+      sep.textContent = '\u2500\u2500 next iteration \u2500\u2500';
+      existing.content.appendChild(sep);
+      existing.content.scrollTop = existing.content.scrollHeight;
+      return existing;
+    }
     const details = document.createElement('details');
     details.className = 'msg task-block';
     details.setAttribute('open', '');
@@ -30,17 +43,15 @@ function connectSSE(cid) {
     details.appendChild(content);
     const container = document.getElementById('messages');
     const typingEl = document.getElementById('typing');
-    if (typingEl) container.insertBefore(details, typingEl);
-    else container.appendChild(details);
-    scrollBottom();
-    _taskBlocks[taskId] = {el: details, content: content, summary: summary, agent: agentName};
     // Show compact launch message in chat
     const launchNote = document.createElement('div');
     launchNote.className = 'msg system task-lifecycle';
     launchNote.innerHTML = '\u25B6 <b>task ' + escapeHtml(taskId) + '</b> launching' + (agentName ? ' (' + escapeHtml(displayAgentName(agentName)) + ')' : '');
     launchNote.style.cssText = 'font-size:12px;opacity:0.7;color:#6c5ce7;';
-    if (typingEl) container.insertBefore(launchNote, details);
-    else container.insertBefore(launchNote, details);
+    if (typingEl) { container.insertBefore(launchNote, typingEl); container.insertBefore(details, typingEl); }
+    else { container.appendChild(launchNote); container.appendChild(details); }
+    scrollBottom();
+    _taskBlocks[taskId] = {el: details, content: content, summary: summary, agent: agentName};
     return _taskBlocks[taskId];
   }
 
@@ -59,13 +70,8 @@ function connectSSE(cid) {
       const statusEl = block.summary.querySelector('.task-block-status');
       if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
       block.el.removeAttribute('open');
-      // Show compact ended message in chat
-      const endNote = document.createElement('div');
-      endNote.className = 'msg system task-lifecycle';
-      endNote.innerHTML = '\u2713 <b>task ' + escapeHtml(taskId) + '</b> ended';
-      endNote.style.cssText = 'font-size:12px;opacity:0.7;color:#4ecdc4;';
-      block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
-      delete _taskBlocks[taskId];
+      // Keep block in _taskBlocks — next iteration will reopen it.
+      // Only show "ended" note if this is a final done (not between iterations).
     }
   }
 
@@ -539,6 +545,21 @@ function connectSSE(cid) {
       addMsg('system', icon + ' Task for ' + agent + (data.approved ? ' approved' : ' rejected') + ' by ' + verifier + (data.reason ? ': ' + data.reason : ''));
     } else if (data.done) {
       addMsg('system', '\u2705 Task complete (' + agent + '): ' + (data.result || data.progress || ''));
+      // Finalize and close the task block
+      if (data.task_id) {
+        const block = _taskBlocks[data.task_id];
+        if (block) {
+          const statusEl = block.summary.querySelector('.task-block-status');
+          if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
+          block.el.removeAttribute('open');
+          const endNote = document.createElement('div');
+          endNote.className = 'msg system task-lifecycle';
+          endNote.innerHTML = '\u2713 <b>task ' + escapeHtml(data.task_id) + '</b> ended';
+          endNote.style.cssText = 'font-size:12px;opacity:0.7;color:#4ecdc4;';
+          block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
+          delete _taskBlocks[data.task_id];
+        }
+      }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
     }
@@ -549,12 +570,17 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id) {
-      // Update task block status
       const block = _taskBlocks[data.task_id];
       if (block) {
         const statusEl = block.summary.querySelector('.task-block-status');
         if (statusEl) { statusEl.textContent = data.force ? '\u2718 stopped' : '\u23F8 paused'; statusEl.style.color = data.force ? '#e94560' : '#f39c12'; }
         block.el.removeAttribute('open');
+        // Task truly ended — show end note and remove from cache
+        const endNote = document.createElement('div');
+        endNote.className = 'msg system task-lifecycle';
+        endNote.innerHTML = (data.force ? '\u2718' : '\u23F8') + ' <b>task ' + escapeHtml(data.task_id) + '</b> ' + (data.force ? 'stopped' : 'paused');
+        endNote.style.cssText = 'font-size:12px;opacity:0.7;color:' + (data.force ? '#e94560' : '#f39c12') + ';';
+        block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
         delete _taskBlocks[data.task_id];
       }
       clearStream(data.agent_name || '');

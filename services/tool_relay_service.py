@@ -34,31 +34,36 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
-def _redact_secrets(text: str, secret_values: set) -> str:
+def _redact_secrets(text: str, secret_values: set,
+                    secret_names: dict = None) -> str:
     """Replace occurrences of secret values in text with a redaction marker.
+
+    Args:
+        secret_values: Set of secret values to redact.
+        secret_names: Optional dict {value: varname} for informative markers.
 
     Also catches partial matches (prefixes/suffixes of secrets >= 8 chars)
     to handle truncated output (e.g. head -c 20).
     """
     if len(text) > 1_000_000 or '\x00' in text:
         return text
-    _MARKER = "<****secret****>"
+    _names = secret_names or {}
     _MIN_PARTIAL = 8
     for val in secret_values:
+        _varname = _names.get(val, "")
+        _marker = f"<****Redacted — use ${_varname}****>" if _varname else "<****Redacted****>"
         if val in text:
-            text = text.replace(val, _MARKER)
+            text = text.replace(val, _marker)
         elif len(val) >= _MIN_PARTIAL:
-            # Check if any prefix of the secret (>= 8 chars) appears in text
             for plen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
                 prefix = val[:plen]
                 if prefix in text:
-                    text = text.replace(prefix, _MARKER)
+                    text = text.replace(prefix, _marker)
                     break
-            # Check if any suffix of the secret (>= 8 chars) appears in text
             for slen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
                 suffix = val[-slen:]
                 if suffix in text:
-                    text = text.replace(suffix, _MARKER)
+                    text = text.replace(suffix, _marker)
                     break
     return text
 
@@ -615,15 +620,17 @@ class ToolRelayService(BaseService):
 
         # Resolve secrets for env injection + redaction
         _secret_values = set()
+        _secret_names = {}  # value → varname for informative redaction markers
         _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
         if user_id and isinstance(arguments, dict):
             try:
                 _secret_env = self._resolve_secrets_env(user_id, _secret_cid)
                 if _secret_env:
                     # Collect values for redaction (skip short values to avoid false positives)
-                    for _sv in _secret_env.values():
+                    for _sk, _sv in _secret_env.items():
                         if _sv and len(_sv) >= 4:
                             _secret_values.add(_sv)
+                            _secret_names[_sv] = _sk
                     # Inject env vars for exec-capable tools
                     if tool_name in {"bash", "execute_script"}:
                         arguments["_secret_env"] = _secret_env
@@ -644,7 +651,8 @@ class ToolRelayService(BaseService):
 
         # Redact secret values from tool output
         if _secret_values:
-            result_str = _redact_secrets(result_str, _secret_values)
+            result_str = _redact_secrets(result_str, _secret_values,
+                                         secret_names=_secret_names)
 
         return {"type": "result", "request_id": request_id, "data": result_str}
 

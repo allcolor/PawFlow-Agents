@@ -403,6 +403,8 @@ function _renderToolOutput(text, toolHint, pathHint) {
 }
 
 function _attachToolResult(tcEl, resultText) {
+  // Guard: don't attach if result already present
+  if (tcEl.querySelector('.tc-result')) return;
   const bullet = tcEl.querySelector('.tc-bullet');
   if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
   // Remove BG/KL buttons (tool is done)

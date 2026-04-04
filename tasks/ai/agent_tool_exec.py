@@ -42,14 +42,16 @@ class AgentToolExecMixin:
         """
         # Load secret values for output redaction
         _secret_values = set()
+        _secret_names = {}  # value → varname for informative redaction markers
         if user_id:
             try:
                 from services.tool_relay_service import resolve_secrets_env, _redact_secrets
                 _scid = conversation_id.split('::task::')[0] if '::task::' in conversation_id else conversation_id
                 _senv = resolve_secrets_env(user_id, _scid)
-                for _sv in _senv.values():
+                for _sk, _sv in _senv.items():
                     if _sv and len(_sv) >= 4:
                         _secret_values.add(_sv)
+                        _secret_names[_sv] = _sk
             except Exception:
                 pass
 
@@ -146,7 +148,8 @@ class AgentToolExecMixin:
                 result = registry.execute(tc.name, tc.arguments) or ""
                 # Redact secrets from tool output
                 if _secret_values and isinstance(result, str):
-                    result = _redact_secrets(result, _secret_values)
+                    result = _redact_secrets(result, _secret_values,
+                                             secret_names=_secret_names)
                 # Post-hook execution
                 self._run_hook("post", tc.name, tc.arguments, conversation_id, user_id)
                 # Check for ask_user pause signal

@@ -74,6 +74,16 @@ class ReadHandler(BaseFsHandler):
             end_line = int(arguments["end_line"])
             if offset > 0 and end_line >= offset:
                 limit = end_line - offset + 1
+        # Support Claude Code 'ranges' format: "350-420" or "350-420,500-550"
+        if not offset and not limit and arguments.get("ranges"):
+            try:
+                _range = str(arguments["ranges"]).split(",")[0].strip()
+                _parts = _range.split("-")
+                offset = int(_parts[0])
+                if len(_parts) > 1 and _parts[1]:
+                    limit = int(_parts[1]) - offset + 1
+            except (ValueError, IndexError):
+                pass
 
         # FileStore
         if svc == "filestore":

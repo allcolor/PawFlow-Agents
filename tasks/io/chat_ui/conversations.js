@@ -5,7 +5,8 @@
 function loadConversations() {
   console.log('[loadConversations] sending list_conversations, conversationId=', conversationId);
   action$('list_conversations', {}).subscribe(data => {
-    console.log('[loadConversations] received', (data.conversations || []).length, 'conversations');
+      console.log('[loadConversations] received', (data.conversations || []).length, 'conversations',
+      (data.conversations || []).map(c => c.conversation_id + ':' + (c.title || c.preview || '').substring(0, 20)));
     const convs = data.conversations || [];
     renderConvList(convs);
   });

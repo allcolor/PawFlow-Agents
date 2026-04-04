@@ -2101,6 +2101,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     # Send app-level ping to keep connection alive
                     try:
                         _ws_frame_send(sock, json.dumps({"type": "ping"}).encode("utf-8"))
+                        _last_activity[0] = time.time()  # successful send = connection alive
                     except Exception:
                         break  # send failed → connection dead
                     continue

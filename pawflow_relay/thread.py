@@ -208,7 +208,7 @@ class RelayThread:
                 "--publish", f"{self._desktop_host_port}:6080",
                 "--publish", f"{self._audio_host_port}:6180",
                 "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
-                "-e", f"PAWFLOW_HOST_WORKDIR={self.directory}",
+                "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",
                 "-e", "HOME=/home/pawflow",
                 "-e", "USER=pawflow",
                 "-e", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

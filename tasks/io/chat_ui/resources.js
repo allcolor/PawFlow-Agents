@@ -1433,8 +1433,9 @@ function cmdClaudeLoginServer(parts) {
   }
 
   // /cls <service> — login (add credential to pool)
-  const serviceId = stripTarget(parts[1]);
-  if (!serviceId) { addMsg('error', 'Usage: /cls <service> | /cls pool | /cls reset | /cls remove <N>'); return true; }
+  var serviceId = stripTarget(sub);
+  if (!serviceId) { addMsg('error', 'Usage: /cls @<service> | /cls pool | /cls reset | /cls remove <N>'); return true; }
+  addMsg('system', 'Starting Claude Code login for ' + serviceId + '...');
   fireAction('claude_code_server_login', { service_id: serviceId });
   return true;
 }
@@ -1490,7 +1491,6 @@ function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
   header.innerHTML = '<span style="color:#aaa;font-size:13px;">Claude Code Login</span>'
     + '<button id="vnc-dialog-close" style="background:none;border:none;color:#e94560;font-size:18px;cursor:pointer;">&times;</button>';
   const vncUrl = '/vnc/' + sessionId + '/vnc.html?autoconnect=true&resize=scale'
-    + '&host=' + location.hostname + '&port=' + (location.port || (location.protocol === 'https:' ? '443' : '80'))
     + '&path=vnc/' + sessionId + '/websockify';
   const iframe = document.createElement('iframe');
   iframe.src = vncUrl;

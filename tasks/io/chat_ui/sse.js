@@ -12,23 +12,15 @@ function connectSSE(cid) {
   // ── Task block grouping ─────────────────────────────────────────
   const _taskBlocks = {};
 
+  // _currentTaskKey tracks the active block key per task_id
+  // so events go to the current iteration's block
+  const _currentTaskKey = {};  // taskId → blockKey
+
   function _getTaskBlock(taskId, agentName) {
     if (!taskId) return null;
-    if (_taskBlocks[taskId]) {
-      const existing = _taskBlocks[taskId];
-      const statusEl = existing.summary.querySelector('.task-block-status');
-      const wasDone = statusEl && statusEl.textContent.includes('done');
-      existing.el.setAttribute('open', '');
-      if (statusEl) { statusEl.textContent = '\u25cf running'; statusEl.style.color = '#888'; }
-      // Add iteration separator only when reopening after done (new iteration)
-      if (wasDone) {
-        const sep = document.createElement('div');
-        sep.style.cssText = 'border-top:1px dashed #444;margin:8px 0 4px;font-size:10px;color:#6c5ce7;opacity:0.7;';
-        sep.textContent = '\u2500\u2500 next iteration \u2500\u2500';
-        existing.content.appendChild(sep);
-      }
-      return existing;
-    }
+    const blockKey = _currentTaskKey[taskId] || taskId;
+    if (_taskBlocks[blockKey]) return _taskBlocks[blockKey];
+    // Create new block for this iteration
     const details = document.createElement('details');
     details.className = 'msg task-block';
     details.setAttribute('open', '');
@@ -44,16 +36,31 @@ function connectSSE(cid) {
     details.appendChild(content);
     const container = document.getElementById('messages');
     const typingEl = document.getElementById('typing');
-    // Show compact launch message in chat
+    if (typingEl) container.insertBefore(details, typingEl);
+    else container.appendChild(details);
+    scrollBottom();
+    _taskBlocks[blockKey] = {el: details, content: content, summary: summary, agent: agentName, taskId: taskId};
+    _currentTaskKey[taskId] = blockKey;
+    return _taskBlocks[blockKey];
+  }
+
+  function _startNewTaskIteration(taskId, iteration) {
+    // Close current block, create new key for new iteration
+    const oldKey = _currentTaskKey[taskId];
+    if (oldKey && _taskBlocks[oldKey]) {
+      _finalizeTaskBlock(oldKey);
+    }
+    const newKey = taskId + '::iter' + iteration;
+    _currentTaskKey[taskId] = newKey;
+    // Launch note
+    const container = document.getElementById('messages');
+    const typingEl = document.getElementById('typing');
     const launchNote = document.createElement('div');
     launchNote.className = 'msg system task-lifecycle';
-    launchNote.innerHTML = '\u25B6 <b>task ' + escapeHtml(taskId) + '</b> launching' + (agentName ? ' (' + escapeHtml(displayAgentName(agentName)) + ')' : '');
+    launchNote.innerHTML = '\u25B6 <b>task ' + escapeHtml(taskId) + '</b> iteration ' + iteration;
     launchNote.style.cssText = 'font-size:12px;opacity:0.7;color:#6c5ce7;';
-    if (typingEl) { container.insertBefore(launchNote, typingEl); container.insertBefore(details, typingEl); }
-    else { container.appendChild(launchNote); container.appendChild(details); }
-    scrollBottom();
-    _taskBlocks[taskId] = {el: details, content: content, summary: summary, agent: agentName};
-    return _taskBlocks[taskId];
+    if (typingEl) container.insertBefore(launchNote, typingEl);
+    else container.appendChild(launchNote);
   }
 
   function _taskBlockAppend(taskId, childEl) {
@@ -64,14 +71,23 @@ function connectSSE(cid) {
     }
   }
 
-  function _finalizeTaskBlock(taskId) {
-    const block = _taskBlocks[taskId];
+  function _finalizeTaskBlock(blockKey) {
+    const block = _taskBlocks[blockKey];
     if (block) {
       const statusEl = block.summary.querySelector('.task-block-status');
       if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
       block.el.removeAttribute('open');
-      // Keep block in _taskBlocks — next iteration will reopen it.
-      // Only show "ended" note if this is a final done (not between iterations).
+      block._iterCount = (block._iterCount || 0) + 1;
+    }
+  }
+
+  function _finalizeCurrentTaskBlock(taskId, status, color) {
+    const curKey = _currentTaskKey[taskId];
+    if (curKey && _taskBlocks[curKey]) {
+      const block = _taskBlocks[curKey];
+      const statusEl = block.summary.querySelector('.task-block-status');
+      if (statusEl) { statusEl.textContent = status; statusEl.style.color = color; }
+      block.el.removeAttribute('open');
     }
   }
 
@@ -79,8 +95,19 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
-    // Task events: create/update task block, don't touch main status bar
+    // Task events: thinking = start of a new LLM turn
+    // If current block is done → start new iteration block
     if (data.task_id) {
+      const curKey = _currentTaskKey[data.task_id];
+      const curBlock = curKey && _taskBlocks[curKey];
+      if (curBlock) {
+        const statusEl = curBlock.summary.querySelector('.task-block-status');
+        if (statusEl && (statusEl.textContent.includes('done') || statusEl.textContent.includes('stopped'))) {
+          // Previous iter finished → new block
+          const iterNum = (curBlock._iterCount || 1) + 1;
+          _startNewTaskIteration(data.task_id, iterNum);
+        }
+      }
       _getTaskBlock(data.task_id, agentName);
       return;
     }
@@ -114,7 +141,7 @@ function connectSSE(cid) {
       content.style.cssText = 'font-size:12px;color:#9ca3af;font-style:italic;white-space:pre-wrap;max-height:300px;overflow-y:auto;';
       details.appendChild(content);
       if (data.task_id) {
-        const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+        const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
         if (tb) { tb.content.appendChild(details); scrollBottom(); }
         else { document.getElementById('messages').appendChild(details); }
       } else {
@@ -170,7 +197,7 @@ function connectSSE(cid) {
         if (s.msg_id) s.el.dataset.msgid = s.msg_id;
         // Move into task block if this is a task event
         if (data.task_id) {
-          const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+          const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
           if (tb) { tb.content.appendChild(s.el); scrollBottom(); }
         }
       }
@@ -288,7 +315,7 @@ function connectSSE(cid) {
     el.innerHTML = makeTimeHtml() + badge + '<em>' + escapeHtml(data.text || '') + '</em>';
     // Route into task block if this is a task event
     if (data.task_id) {
-      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
+      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, agent);
       if (tb) { tb.content.appendChild(el); scrollBottom(); }
       else document.getElementById('messages').appendChild(el);
     } else {
@@ -444,7 +471,7 @@ function connectSSE(cid) {
     const tcEl = addMsg('tool_call', data.tool, tcExtra);
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
-      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, tcAgent);
+      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, tcAgent);
       if (tb) { tb.content.appendChild(tcEl); scrollBottom(); }
     }
     // Group under parent agent tool_call if this is a sub-agent tool
@@ -491,7 +518,7 @@ function connectSSE(cid) {
     });
     // Route into task block if this is a task event
     if (data.task_id && trEl) {
-      const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, data.agent_name || '');
+      const tb = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id] || _getTaskBlock(data.task_id, data.agent_name || '');
       if (tb) { tb.content.appendChild(trEl); scrollBottom(); }
     }
   });
@@ -545,20 +572,8 @@ function connectSSE(cid) {
       addMsg('system', icon + ' Task for ' + agent + (data.approved ? ' approved' : ' rejected') + ' by ' + verifier + (data.reason ? ': ' + data.reason : ''));
     } else if (data.done) {
       addMsg('system', '\u2705 Task complete (' + agent + '): ' + (data.result || data.progress || ''));
-      // Finalize and close the task block
       if (data.task_id) {
-        const block = _taskBlocks[data.task_id];
-        if (block) {
-          const statusEl = block.summary.querySelector('.task-block-status');
-          if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
-          block.el.removeAttribute('open');
-          const endNote = document.createElement('div');
-          endNote.className = 'msg system task-lifecycle';
-          endNote.innerHTML = '\u2713 <b>task ' + escapeHtml(data.task_id) + '</b> ended';
-          endNote.style.cssText = 'font-size:12px;opacity:0.7;color:#4ecdc4;';
-          block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
-          delete _taskBlocks[data.task_id];
-        }
+        _finalizeCurrentTaskBlock(data.task_id, '\u2713 done', '#4ecdc4');
       }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
@@ -570,19 +585,9 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id) {
-      const block = _taskBlocks[data.task_id];
-      if (block) {
-        const statusEl = block.summary.querySelector('.task-block-status');
-        if (statusEl) { statusEl.textContent = data.force ? '\u2718 stopped' : '\u23F8 paused'; statusEl.style.color = data.force ? '#e94560' : '#f39c12'; }
-        block.el.removeAttribute('open');
-        // Task truly ended — show end note and remove from cache
-        const endNote = document.createElement('div');
-        endNote.className = 'msg system task-lifecycle';
-        endNote.innerHTML = (data.force ? '\u2718' : '\u23F8') + ' <b>task ' + escapeHtml(data.task_id) + '</b> ' + (data.force ? 'stopped' : 'paused');
-        endNote.style.cssText = 'font-size:12px;opacity:0.7;color:' + (data.force ? '#e94560' : '#f39c12') + ';';
-        block.el.parentNode.insertBefore(endNote, block.el.nextSibling);
-        delete _taskBlocks[data.task_id];
-      }
+      _finalizeCurrentTaskBlock(data.task_id,
+        data.force ? '\u2718 stopped' : '\u23F8 paused',
+        data.force ? '#e94560' : '#f39c12');
       clearStream(data.agent_name || '');
     }
   });
@@ -591,7 +596,7 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     if (data.task_id && data.from === 'user') {
-      const block = _taskBlocks[data.task_id];
+      const block = _taskBlocks[_currentTaskKey[data.task_id] || data.task_id];
       if (block) {
         const el = document.createElement('div');
         el.className = 'msg user';
@@ -702,13 +707,14 @@ function connectSSE(cid) {
       // Show agent's final message inside the task block before closing it
       let taskResp = (data.response || '').replace(/\s*\[NO_PENDING_WORK\]/g, '').replace(/\s*\[RECHECK_IN:\d+\]/g, '').trim();
       taskResp = taskResp.replace(/^\[[^\]]+\]:\s*/, '');
-      const block = _taskBlocks[data.task_id];
+      const curKey = _currentTaskKey[data.task_id] || data.task_id;
+      const block = _taskBlocks[curKey];
       if (taskResp && block) {
         const src = data.source || {type: 'agent', name: doneAgent};
         const msgEl = addMsg('assistant', taskResp, {source: src, msg_id: data.msg_id || ''});
         if (msgEl) block.content.appendChild(msgEl);
       }
-      _finalizeTaskBlock(data.task_id);
+      _finalizeCurrentTaskBlock(data.task_id, '\u2713 done', '#4ecdc4');
       clearStream(doneAgent);
       return;
     }

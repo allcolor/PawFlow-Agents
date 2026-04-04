@@ -336,16 +336,42 @@ function _recoverConversation(cid) {
 
 function deleteConv(event, cid) {
   event.stopPropagation();
+  if (!confirm(t('confirmDelete'))) return;
+  var wasActive = (cid === conversationId);
   fireAction('delete_conversation', { conversation_id: cid });
-  if (cid === conversationId) newChat();
-  loadConversations();
+  if (wasActive) _switchAfterDelete(cid);
+  else loadConversations();
 }
 
 function deleteCurrentConv() {
   if (!conversationId) return;
   if (!confirm(t('confirmDelete'))) return;
-  fireAction('delete_conversation', { conversation_id: conversationId });
-  newChat();
+  var cid = conversationId;
+  fireAction('delete_conversation', { conversation_id: cid });
+  _switchAfterDelete(cid);
+}
+
+function _switchAfterDelete(deletedCid) {
+  // Find the conversation list and pick the next one
+  var items = document.querySelectorAll('#convList .conv-item');
+  var nextCid = null;
+  var foundDeleted = false;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].dataset.cid === deletedCid) {
+      foundDeleted = true;
+      // Pick the previous conv, or the next one if this was the first
+      if (i > 0) nextCid = items[i - 1].dataset.cid;
+      else if (i + 1 < items.length) nextCid = items[i + 1].dataset.cid;
+      break;
+    }
+  }
+  if (nextCid) {
+    resumeConv(nextCid);
+  } else {
+    // No other conv — clear chat and disable input
+    _doNewChat();
+    _setInputEnabled(false);
+  }
   loadConversations();
 }
 

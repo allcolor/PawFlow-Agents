@@ -499,9 +499,15 @@ def _trigger_next_plan_step(conv_id, plan_id, plan, store, user_id,
     # Always schedule the next step — even for the same agent.
     # The agent must receive a user message to start the next step.
     total = len(plan["steps"])
+    step_num = next_step["index"]
     _user_msg = (
-        f"Execute step {next_step['index']}/{total}: "
-        f"{next_step['description']}"
+        f"Execute step {step_num}/{total}: {next_step['description']}\n\n"
+        f"Plan: {plan_id}\n"
+        f"When done, call:\n"
+        f"  update_plan(plan_id=\"{plan_id}\", updates=[{{\"step\": {step_num}, "
+        f"\"status\": \"done\", \"note\": \"what you did\"}}])\n"
+        f"If the step fails, set status to \"error\" with a note explaining why.\n"
+        f"Do NOT skip ahead to other steps."
     )
     try:
         from core.conversation_writer import ConversationWriter

@@ -876,6 +876,9 @@ class ConversationStore:
     def delete(self, cid: str, user_id: str = "") -> bool:
         path = self._conv_path(cid)
         if not path.exists():
+            # File gone but cache entry may linger — clean it up
+            with self._cache_lock:
+                self._cache.pop(cid, None)
             return False
         lock = self._get_conv_lock(cid)
         with lock:

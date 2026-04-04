@@ -223,13 +223,12 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 from core.claude_code_pool import ClaudeCodePool
                 pool = ClaudeCodePool.instance()
                 _pool_container = pool.acquire()
-                # Compute container-side workdir
+                # Compute container-side session dir (symlinked to /workspace by exec_claude)
                 _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
-                _container_workdir = f"/cc_sessions/{_rel}"
-                # claude args only (no binary name for exec)
-                _claude_args = cmd[1:]  # skip 'claude' binary
+                _container_session_dir = f"/cc_sessions/{_rel}"
+                _claude_args = cmd[1:]  # skip 'claude' binary — exec_claude adds it
                 proc = pool.exec_claude(
-                    _pool_container, _container_workdir, _claude_args,
+                    _pool_container, _container_session_dir, _claude_args,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

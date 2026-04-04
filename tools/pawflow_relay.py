@@ -842,9 +842,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         return os.path.exists("/.dockerenv") or bool(os.environ.get("PAWFLOW_DOCKER_IMAGE"))
 
     # host_root: the original path on the user's machine (before Docker mount)
+    # Always use forward slashes (Windows backslashes break JSON display)
     _host_root = os.environ.get("PAWFLOW_HOST_WORKDIR", "")
     if not _host_root and not _is_containerized():
-        _host_root = root_dir  # not in Docker — root IS the host path
+        _host_root = root_dir
+    _host_root = _host_root.replace("\\", "/")
 
     info = {
         "platform": sys.platform,

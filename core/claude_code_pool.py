@@ -85,12 +85,13 @@ class ClaudeCodePool:
         self.memory_limit = os.environ.get("PAWFLOW_CC_MEM", "4g")
 
         # Sessions volume: host path for data/claude_sessions
-        self._sessions_host_path = to_host_path(
-            os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                "data", "claude_sessions",
-            )
+        _raw_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data", "claude_sessions",
         )
+        # translate_path converts Windows paths (C:\...) to WSL mount paths (/mnt/c/...)
+        from pawflow_relay.utils import translate_path
+        self._sessions_host_path = translate_path(to_host_path(_raw_path))
 
     # ── Public API ─────────────────────────────────────────────────
 

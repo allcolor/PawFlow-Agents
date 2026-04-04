@@ -70,7 +70,15 @@ function renameConvInline(e, cid) {
 }
 
 function reloadConv() {
-  if (conversationId) resumeConv(conversationId, true);
+  if (!conversationId) return;
+  // Don't close/reopen SSE — just reload the messages
+  _expectingClear = true;
+  document.getElementById('messages').innerHTML = '';
+  _expectingClear = false;
+  _seenMsgIds.clear();
+  serverMsgCount = 0;
+  action$('load_history', { conversation_id: conversationId, limit: displayWindow, offset: 0 })
+    .subscribe(data => _renderHistory(data));
 }
 
 function resumeConv(cid, force) {

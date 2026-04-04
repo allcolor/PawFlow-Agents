@@ -152,16 +152,26 @@ class ClaudeCodePool:
         """
         host_ip = get_host_ip()
 
+        # Create symlink /workspace → session_dir so CC sees the same
+        # environment as the old per-container model (cwd=/workspace,
+        # HOME=/workspace, CLAUDE_CONFIG_DIR=/workspace).
+        _setup = subprocess.run(
+            docker_cmd() + ["exec", container_name, "bash", "-c",
+                            f"rm -f /workspace && ln -sfn {session_dir} /workspace"],
+            capture_output=True, timeout=5)
+        if _setup.returncode != 0:
+            logger.warning("Pool: symlink setup failed: %s", _setup.stderr)
+
         exec_args = [
             "-i",
-            "-e", f"CLAUDE_CONFIG_DIR={session_dir}",
-            "-e", f"HOME={session_dir}",
+            "-e", "CLAUDE_CONFIG_DIR=/workspace",
+            "-e", "HOME=/workspace",
             "-e", "NODE_OPTIONS=--max-old-space-size=768",
             "-e", f"PAWFLOW_HOST={host_ip}",
             "-e", "GIT_CONFIG_COUNT=1",
             "-e", "GIT_CONFIG_KEY_0=safe.directory",
             "-e", "GIT_CONFIG_VALUE_0=/workspace",
-            "-w", session_dir,
+            "-w", "/workspace",
             container_name,
             "claude",
         ] + claude_args

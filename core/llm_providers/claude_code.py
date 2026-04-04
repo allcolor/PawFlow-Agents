@@ -466,11 +466,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         # In pool mode, MCP config path is inside /cc_sessions/...
         _mcp_arg = mcp_path
         if _containerize and mcp_path:
-            # Pool: workdir is on host, maps to /cc_sessions/<user>/<conv>/<agent>
-            # inside the container. Compute the container-side path.
-            _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
-            _container_workdir = f"/cc_sessions/{_rel}"
-            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
+            # Pool: symlink /workspace → /cc_sessions/<session_dir>
+            # CC sees /workspace just like the old per-container model
+            _mcp_arg = f"/workspace/{os.path.basename(mcp_path)}"
         else:
             _container_workdir = workdir
 

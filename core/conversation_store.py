@@ -147,10 +147,12 @@ class ConversationStore:
             elif op_type == "extra":
                 lines_to_append.append({
                     "t": "extra", "key": op["key"], "value": op["value"],
+                    "ts": time.time(),
                 })
             elif op_type == "status":
                 lines_to_append.append({
                     "t": "status", "status": op["status"],
+                    "ts": time.time(),
                 })
         if lines_to_append:
             try:
@@ -424,9 +426,10 @@ class ConversationStore:
 
     def save(self, cid: str, messages: List[Dict], ttl: int = 0,
              user_id: str = "", status: str = ""):
+        _now = time.time()
         lines = [{"t": "meta", "user_id": user_id, "status": status or "idle",
-                  "created_at": time.time(),
-                  "expires_at": time.time() + ttl if ttl > 0 else 0}]
+                  "created_at": _now, "ts": _now,
+                  "expires_at": _now + ttl if ttl > 0 else 0}]
         for m in messages:
             line = {"t": "msg", **m}
             if "ts" not in line and "timestamp" not in line:

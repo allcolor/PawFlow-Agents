@@ -203,14 +203,12 @@ async function newChat() {
   if (result.relays && result.relays.length) params.relays = result.relays;
   if (result.default_relay) params.default_relay = result.default_relay;
   action$('create_conversation', params).subscribe(data => {
-    console.log('[newChat] create_conversation result:', JSON.stringify(data));
     if (data.conversation_id) {
       // Now switch to the new conversation
       _doNewChat();
       conversationId = data.conversation_id;
       _setInputEnabled(true);
       connectSSE(conversationId, () => {
-        console.log('[newChat] SSE ready, loading conversations...');
         loadConversations();
         highlightConv(conversationId);
         loadResources();

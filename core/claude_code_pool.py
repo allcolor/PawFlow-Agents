@@ -156,8 +156,8 @@ class ClaudeCodePool:
         # environment as the old per-container model (cwd=/workspace,
         # HOME=/workspace, CLAUDE_CONFIG_DIR=/workspace).
         _setup = subprocess.run(
-            docker_cmd() + ["exec", container_name, "bash", "-c",
-                            f"rm -rf /workspace && ln -sfn {session_dir} /workspace"],
+            docker_cmd() + ["exec", "--user", "root", container_name, "bash", "-c",
+                            f"rm -rf /workspace && ln -sfn {session_dir} /workspace && chown -h 1000:1000 /workspace"],
             capture_output=True, timeout=5)
         if _setup.returncode != 0:
             logger.warning("Pool: symlink setup failed: %s", _setup.stderr)

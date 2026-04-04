@@ -9,21 +9,22 @@
 # Don't use set -e — keep container alive even if commands fail
 # (the user needs to see the error in the VNC display)
 
-# Force HOME — Docker Desktop on WSL2 may override ENV HOME with host value
+# Force HOME — Docker Desktop on WSL2 overrides ENV HOME with host value
 export HOME=/home/pawflow
 export CLAUDE_CONFIG_DIR=/workspace
+export USER=${USER:-pawflow}
+export XDG_RUNTIME_DIR="/tmp/xdg-${USER}"
+mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+
+# D-Bus session (Chromium needs it)
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/dbus-login"
+dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile 2>/dev/null || true
 
 # Skip Claude Code first-run interactive setup
-# (theme selection, etc.) by pre-creating config
 mkdir -p "$HOME/.claude"
 cat > "$HOME/.claude/settings.json" 2>/dev/null <<'SETTINGS' || true
 {"theme": "dark", "hasCompletedOnboarding": true}
 SETTINGS
-
-# Start D-Bus (Chromium needs it)
-mkdir -p /run/dbus
-dbus-daemon --system --fork 2>/dev/null || true
-eval $(dbus-launch --sh-syntax) 2>/dev/null || true
 
 # Start virtual display
 Xvfb :99 -screen 0 1280x800x24 -ac &

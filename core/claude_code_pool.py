@@ -237,16 +237,16 @@ class ClaudeCodePool:
             "--add-host", "host.docker.internal:host-gateway",
             # Run as non-root (Claude Code requirement)
             "--user", "1000:1000",
-            # Force clean env — Docker Desktop WSL2 injects host PATH/HOME
-            "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            # Force clean HOME/USER — PATH is set in docker exec, not here
+            # (setting PATH here breaks the entrypoint command resolution)
             "-e", "HOME=/home/pawflow",
             "-e", "USER=pawflow",
             # Security
             "--shm-size", "512m",
             "--tmpfs", "/tmp:rw,nosuid,size=512m",
             "--security-opt", "no-new-privileges",
-            # Override entrypoint: keep alive (not claude)
-            "--entrypoint", "sleep",
+            # Override entrypoint: keep alive (full path — PATH may be dirty)
+            "--entrypoint", "/usr/bin/sleep",
             self.image,
             "infinity",
         ]

@@ -70,8 +70,8 @@ class ExecuteScriptHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Execute Python code and return the result. "
-            "By default runs ON THE SERVER in a sandbox. "
-            "Set destination to a relay service name to execute on the user's machine. "
+            "Auto-detects execution target: uses the connected relay if available, "
+            "falls back to server sandbox. Set destination='sandbox' to force sandbox. "
             "File I/O uses URL schemes: "
             "open('filestore://name.zip', 'wb') to create downloadable files, "
             "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
@@ -93,8 +93,8 @@ class ExecuteScriptHandler(ToolHandler):
                 "destination": {
                     "type": "string",
                     "description": (
-                        "Where to execute: 'server' (default, sandbox) or "
-                        "relay service name to run on the user's machine"
+                        "Where to execute: auto (default — relay if connected, else sandbox), "
+                        "'sandbox' (force server sandbox), or relay service name"
                     ),
                 },
                 "max_output": {
@@ -110,16 +110,31 @@ class ExecuteScriptHandler(ToolHandler):
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         code = arguments.get("code", "")
-        destination = arguments.get("destination", "server")
+        destination = arguments.get("destination", "")
         if not code:
             return "Error: no code provided"
 
-        # If destination is a filesystem service, delegate to relay exec
+        # Explicit relay service name → execute remote
         _dest = destination.strip().lower()
         if _dest and _dest not in ("server", "sandbox", "local", ""):
             return self._execute_remote(code, _dest)
 
-        # Default: execute in server sandbox
+        # Explicit sandbox request
+        if _dest in ("server", "sandbox"):
+            return self._execute_sandbox(code)
+
+        # Auto-detect: if a relay is connected, use it; else sandbox
+        _relay_svc = self._find_default_relay()
+        if _relay_svc:
+            _svc_id = getattr(_relay_svc, '_service_id', '') or getattr(_relay_svc, 'name', '')
+            if _svc_id:
+                return self._execute_remote(code, _svc_id)
+
+        # Fallback: server sandbox
+        return self._execute_sandbox(code)
+
+    def _execute_sandbox(self, code: str) -> str:
+        """Execute in server-side sandbox."""
         from core.sandbox import execute_sandboxed
         try:
             with self._vfs_lock:
@@ -143,6 +158,24 @@ class ExecuteScriptHandler(ToolHandler):
                 _fid = _m.group(1) if _m else ""
                 output += f"- {url}" + (f" (file_id: {_fid})" if _fid else "") + "\n"
         return output
+
+    def _find_default_relay(self):
+        """Find the default relay service (same resolution as bash/fs tools)."""
+        if self._fs_resolver:
+            try:
+                svc = self._fs_resolver("")  # empty = auto-detect default
+                if svc and hasattr(svc, 'exec'):
+                    return svc
+            except Exception:
+                pass
+        try:
+            from core.handlers._fs_base import find_fs_service
+            svc = find_fs_service(self._user_id)
+            if svc and hasattr(svc, 'exec'):
+                return svc
+        except Exception:
+            pass
+        return None
 
     def _execute_remote(self, code: str, service_name: str) -> str:
         """Execute code on a remote filesystem service via relay."""

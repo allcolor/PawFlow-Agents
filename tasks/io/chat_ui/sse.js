@@ -25,7 +25,7 @@ function connectSSE(cid) {
       sep.style.cssText = 'border-top:1px dashed #444;margin:8px 0 4px;font-size:10px;color:#6c5ce7;opacity:0.7;';
       sep.textContent = '\u2500\u2500 next iteration \u2500\u2500';
       existing.content.appendChild(sep);
-      existing.content.scrollTop = existing.content.scrollHeight;
+      scrollBottom();
       return existing;
     }
     const details = document.createElement('details');
@@ -39,7 +39,7 @@ function connectSSE(cid) {
       + ' <span class="task-block-status" style="margin-left:auto;font-size:11px;color:#888">\u25cf running</span>';
     details.appendChild(summary);
     const content = document.createElement('div');
-    content.style.cssText = 'padding:4px 12px 8px;max-height:500px;overflow-y:auto;';
+    content.style.cssText = 'padding:4px 12px 8px;';
     details.appendChild(content);
     const container = document.getElementById('messages');
     const typingEl = document.getElementById('typing');
@@ -59,7 +59,6 @@ function connectSSE(cid) {
     const block = _taskBlocks[taskId];
     if (block && childEl) {
       block.content.appendChild(childEl);
-      block.content.scrollTop = block.content.scrollHeight;
       scrollBottom();
     }
   }
@@ -115,7 +114,7 @@ function connectSSE(cid) {
       details.appendChild(content);
       if (data.task_id) {
         const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-        if (tb) { tb.content.appendChild(details); tb.content.scrollTop = tb.content.scrollHeight; }
+        if (tb) { tb.content.appendChild(details); scrollBottom(); }
         else { document.getElementById('messages').appendChild(details); }
       } else {
         const _msgContainer = document.getElementById('messages');
@@ -171,7 +170,7 @@ function connectSSE(cid) {
         // Move into task block if this is a task event
         if (data.task_id) {
           const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-          if (tb) { tb.content.appendChild(s.el); tb.content.scrollTop = tb.content.scrollHeight; }
+          if (tb) { tb.content.appendChild(s.el); scrollBottom(); }
         }
       }
       s.chunks.push(s.el);
@@ -289,7 +288,7 @@ function connectSSE(cid) {
     // Route into task block if this is a task event
     if (data.task_id) {
       const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, agent);
-      if (tb) { tb.content.appendChild(el); tb.content.scrollTop = tb.content.scrollHeight; }
+      if (tb) { tb.content.appendChild(el); scrollBottom(); }
       else document.getElementById('messages').appendChild(el);
     } else {
       const _narContainer = document.getElementById('messages');
@@ -445,7 +444,7 @@ function connectSSE(cid) {
     // Move into task block if this is a task event
     if (data.task_id && tcEl && !data.parent_tc_id) {
       const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, tcAgent);
-      if (tb) { tb.content.appendChild(tcEl); tb.content.scrollTop = tb.content.scrollHeight; }
+      if (tb) { tb.content.appendChild(tcEl); scrollBottom(); }
     }
     // Group under parent agent tool_call if this is a sub-agent tool
     if (data.parent_tc_id && tcEl) {
@@ -492,7 +491,7 @@ function connectSSE(cid) {
     // Route into task block if this is a task event
     if (data.task_id && trEl) {
       const tb = _taskBlocks[data.task_id] || _getTaskBlock(data.task_id, data.agent_name || '');
-      if (tb) { tb.content.appendChild(trEl); tb.content.scrollTop = tb.content.scrollHeight; }
+      if (tb) { tb.content.appendChild(trEl); scrollBottom(); }
     }
   });
 

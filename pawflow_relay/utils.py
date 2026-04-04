@@ -137,10 +137,5 @@ def api_call(server_url, method, path, body=None, session_token="",
     conn.close()
 
     if resp.status >= 400:
-        import logging as _logging
-        _logging.getLogger("pawflow_relay.utils").warning(
-            "API %s %s -> %s (token=%s...): %s",
-            method, path, resp.status,
-            (session_token or "")[:16], data[:200])
         raise Exception(f"API {method} {path} -> {resp.status}: {data}")
     return json.loads(data) if data else {}

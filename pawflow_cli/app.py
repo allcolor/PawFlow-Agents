@@ -103,18 +103,8 @@ class PawCode:
         # Check auth — don't auto-open browser, let user /login manually
         self.renderer.print_banner(self.directory)
 
-        from pawflow_cli.auth import check_session, authenticate
+        from pawflow_cli.auth import check_session
         auth = check_session(self.server_url, gateway_cookie=self.gateway_cookie)
-        if not auth:
-            # Cached session invalid/expired and server silent refresh failed
-            # → auto-launch OAuth login
-            try:
-                self.renderer.print_system("Session expired — opening browser for login...")
-                auth = authenticate(self.server_url, force=True,
-                                    gateway_cookie=self.gateway_cookie)
-            except Exception as e:
-                self.renderer.print_error(f"Login failed: {e}")
-                auth = {}
         if auth:
             self.session_token = auth["token"]
             self.username = auth["username"]
@@ -123,7 +113,7 @@ class PawCode:
             self.session_token = ""
             self.username = ""
             self.renderer.print_system(
-                "Not logged in. Use /login to authenticate.")
+                "Not logged in. Use /login or run: pawcode auth login")
 
         # API client
         self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
@@ -136,7 +126,7 @@ class PawCode:
                     self.session_token = ""
                     self.username = ""
                     self.renderer.print_system(
-                        "Session expired. Use /login to authenticate.")
+                        "Session expired. Use /login or run: pawcode auth login")
                 else:
                     raise
 
@@ -967,6 +957,10 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="PawCode — Terminal chat frontend")
+    parser.add_argument("command", nargs="?", default=None,
+                        help="Subcommand: 'auth login' or 'auth status'")
+    parser.add_argument("subcommand", nargs="?", default=None,
+                        help=argparse.SUPPRESS)
     default_server = os.environ.get("PAWFLOW_SERVER", "http://localhost:9090")
     parser.add_argument("--server", default=default_server,
                         help=f"PawFlow server URL (env: PAWFLOW_SERVER, default: {default_server})")
@@ -1013,6 +1007,49 @@ def main():
             print("[PawCode] Gateway cookie acquired.", file=sys.stderr)
         else:
             print("[PawCode] Warning: gateway POST returned no cookie.", file=sys.stderr)
+
+    # ── Subcommands: pawcode auth login | pawcode auth status ──
+    if args.command == "auth":
+        _subcmd = args.subcommand or "status"
+        if _subcmd == "login":
+            from pawflow_cli.auth import authenticate
+            try:
+                auth = authenticate(args.server, force=True,
+                                    gateway_cookie=gateway_cookie)
+                print(f"Authenticated as {auth['username']}")
+                print(f"Token saved to ~/.pawflow/session.json (encrypted)")
+            except Exception as e:
+                print(f"Login failed: {e}", file=sys.stderr)
+                sys.exit(1)
+            sys.exit(0)
+        elif _subcmd == "status":
+            from pawflow_cli.auth import check_session
+            auth = check_session(args.server, gateway_cookie=gateway_cookie)
+            if auth:
+                print(f"Authenticated as {auth['username']}")
+                print(f"Server: {auth['server_url']}")
+                from pawflow_cli.config import load_session
+                raw = load_session(include_expired=True)
+                import datetime
+                exp = raw.get("expires_at", 0)
+                if exp:
+                    dt = datetime.datetime.fromtimestamp(exp)
+                    remaining = exp - time.time()
+                    if remaining > 0:
+                        h, m = divmod(int(remaining), 3600)
+                        print(f"Expires: {dt.strftime('%Y-%m-%d %H:%M')} ({h}h{m//60}m remaining)")
+                    else:
+                        print(f"Expired: {dt.strftime('%Y-%m-%d %H:%M')} (server may silently refresh)")
+            else:
+                print("Not authenticated.")
+                print(f"Run: pawcode auth login --server {args.server}"
+                      + (f" --gateway-key <key>" if not gateway_cookie else ""))
+                sys.exit(1)
+            sys.exit(0)
+        else:
+            print(f"Unknown auth subcommand: {_subcmd}", file=sys.stderr)
+            print("Usage: pawcode auth [login|status]", file=sys.stderr)
+            sys.exit(1)
 
     # Stream-json mode: Claude Code compatible NDJSON protocol
     if args.input_format == "stream-json" and args.output_format == "stream-json":

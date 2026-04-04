@@ -67,13 +67,10 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
                     conn = http.client.HTTPConnection(_rh, _rpt, timeout=5)
                 conn.request("POST", _rp.path or "/api/agent", body=_body, headers=_headers)
                 resp = conn.getresponse()
-        body_data = resp.read()
+        resp.read()
         # Server may send a refreshed token in header (silent OAuth refresh)
         new_token = resp.getheader("X-Session-Token")
         conn.close()
-        sys.stderr.write(f"[PawCode] check_session: status={resp.status}, "
-                         f"new_token={'yes' if new_token else 'no'}, "
-                         f"body={body_data[:200]}\n")
         if resp.status == 401 or resp.status == 403:
             clear_session()
             return {}
@@ -83,8 +80,7 @@ def check_session(server_url: str, gateway_cookie: str = "") -> dict:
                      time.time() + 8 * 3600)
         return {"token": token, "username": cached.get("username", ""),
                 "server_url": server_url}
-    except Exception as e:
-        sys.stderr.write(f"[PawCode] check_session exception: {e}\n")
+    except Exception:
         # Server unreachable — trust local cache if not expired
         expires = cached.get("expires_at", 0)
         if expires and time.time() < expires:

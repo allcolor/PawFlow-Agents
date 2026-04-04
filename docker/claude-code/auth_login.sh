@@ -9,6 +9,10 @@
 # Don't use set -e — keep container alive even if commands fail
 # (the user needs to see the error in the VNC display)
 
+# Force HOME — Docker Desktop on WSL2 may override ENV HOME with host value
+export HOME=/home/pawflow
+export CLAUDE_CONFIG_DIR=/workspace
+
 # Skip Claude Code first-run interactive setup
 # (theme selection, etc.) by pre-creating config
 mkdir -p "$HOME/.claude"

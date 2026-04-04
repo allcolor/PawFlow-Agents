@@ -207,10 +207,10 @@ async function newChat() {
       conversationId = data.conversation_id;
       _setInputEnabled(true);
       connectSSE(conversationId);
+      // Delay loadConversations until SSE is connected (command_result comes via SSE)
+      setTimeout(() => { loadConversations(); highlightConv(conversationId); }, 500);
       loadResources();
       loadPermissionMode();
-      loadConversations();
-      highlightConv(conversationId);
     } else {
       addMsg('error', data.error || 'Failed to create conversation');
     }

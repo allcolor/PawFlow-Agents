@@ -224,7 +224,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 pool = ClaudeCodePool.instance()
                 _pool_container = pool.acquire()
                 # Compute container-side workdir
-                _rel = os.path.relpath(workdir, _SESSIONS_BASE)
+                _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
                 _container_workdir = f"/cc_sessions/{_rel}"
                 # claude args only (no binary name for exec)
                 _claude_args = cmd[1:]  # skip 'claude' binary
@@ -468,7 +468,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         if _containerize and mcp_path:
             # Pool: workdir is on host, maps to /cc_sessions/<user>/<conv>/<agent>
             # inside the container. Compute the container-side path.
-            _rel = os.path.relpath(workdir, _SESSIONS_BASE)
+            _rel = os.path.relpath(workdir, _SESSIONS_BASE).replace("\\", "/")
             _container_workdir = f"/cc_sessions/{_rel}"
             _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
         else:

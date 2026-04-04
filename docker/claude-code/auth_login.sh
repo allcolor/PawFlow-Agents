@@ -6,8 +6,10 @@
 # Claude Code opens Chromium on the virtual display.
 # After authorization, .credentials.json is written to $CLAUDE_CONFIG_DIR.
 
-# Force HOME — Docker Desktop WSL2 may override with host value
-export HOME=/home/pawflow
+# Force clean env — Docker Desktop WSL2 injects host PATH/HOME/USER
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+export HOME="/home/pawflow"
+export USER="pawflow"
 export CLAUDE_CONFIG_DIR=/workspace
 
 # Skip Claude Code first-run setup

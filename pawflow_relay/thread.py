@@ -210,6 +210,8 @@ class RelayThread:
                 "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory}",
                 "-e", "HOME=/home/pawflow",
+                "-e", "USER=pawflow",
+                "-e", "PATH=/home/pawflow/.cargo/bin:/home/pawflow/go/bin:/usr/local/go/bin:/opt/kotlinc/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
                 self.docker_image,
                 "python3", "/opt/pawflow/pawflow_relay.py",
                 "--server", ws_url,

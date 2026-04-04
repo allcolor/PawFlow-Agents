@@ -1,7 +1,10 @@
 // Connect SSE for a conversation
-function connectSSE(cid) {
+var _sseOnReadyCallback = null;
+
+function connectSSE(cid, onReady) {
   if (eventSource) eventSource.close();
   if (sseReconnectTimer) { clearTimeout(sseReconnectTimer); sseReconnectTimer = null; }
+  _sseOnReadyCallback = onReady || null;
   startActiveSync();
   sseRetryCount = 0;  // reset so onopen doesn't think we're reconnecting
   const token = getToken();
@@ -1032,8 +1035,7 @@ function connectSSE(cid) {
 
   eventSource.onopen = () => {
     console.log('[SSE] connected for', cid, sseHadError ? '(reconnect)' : '(initial)');
-    // Only recover if we were previously connected and then lost the connection.
-    // This avoids re-fetching the user message on the initial connection hiccup.
+    if (_sseOnReadyCallback) { _sseOnReadyCallback(); _sseOnReadyCallback = null; }
     const wasDisconnected = sseEverConnected && sseHadError;
     sseEverConnected = true;
     sseRetryCount = 0;

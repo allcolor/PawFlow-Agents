@@ -6,7 +6,8 @@
 # Claude Code opens Chromium on the virtual display.
 # After authorization, .credentials.json is written to $CLAUDE_CONFIG_DIR.
 
-set -e
+# Don't use set -e — keep container alive even if commands fail
+# (the user needs to see the error in the VNC display)
 
 # Skip Claude Code first-run interactive setup
 # (theme selection, etc.) by pre-creating config

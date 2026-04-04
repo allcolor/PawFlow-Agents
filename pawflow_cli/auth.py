@@ -133,7 +133,12 @@ def authenticate(server_url: str, force: bool = False,
     auth_url = f"{server_url}/auth/login?relay_callback={quote(callback_url)}"
 
     sys.stderr.write(f"Opening browser for login...\n")
-    webbrowser.open(auth_url)
+    try:
+        webbrowser.open(auth_url)
+    except Exception:
+        pass
+    # Always print URL — browser may fail in headless/WSL/SSH environments
+    sys.stderr.write(f"\nIf the browser didn't open, visit this URL:\n{auth_url}\n\n")
 
     if not ready.wait(timeout=120):
         server.server_close()

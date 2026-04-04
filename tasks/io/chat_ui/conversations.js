@@ -221,44 +221,44 @@ function loadMoreMessages() {
       // Task messages go into their task block (existing or new).
       // Non-task messages go into the fragment for insertion.
       const frag = document.createDocumentFragment();
-      let _lmTotal = 0, _lmNull = 0, _lmTask = 0, _lmFrag = 0;
+      // Build elements first, then insert — prepending one-by-one reverses order
+      const _taskEls = {};  // taskId → [elements in order]
+      const _fragEls = [];
       for (const m of (data.messages || [])) {
-        _lmTotal++;
         let content = m.content || '';
         if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
         const _taskId = m.task_id || (m.source && m.source.task_id) || '';
-        if (!el) { _lmNull++; console.log('[loadMore] NULL el for', m.type || m.role, m.msg_id || '?'); continue; }
-        // Remove from container (addMsg appended it at the end)
+        if (!el) continue;
         if (el.parentNode) el.parentNode.removeChild(el);
         if (_taskId) {
-          _lmTask++;
-          const agentName = (m.source && m.source.name) || '';
-          let tb = _histTaskBlocks[_taskId];
-          if (tb) {
-            tb.content.insertBefore(el, tb.content.firstChild);
-          } else {
-            // New block — create it in the fragment at this position
-            tb = _getHistTaskBlock(_taskId, agentName);
-            // Move from container end into fragment
-            if (tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
-            tb.content.appendChild(el);
-            frag.appendChild(tb.el);
-          }
+          if (!_taskEls[_taskId]) _taskEls[_taskId] = [];
+          _taskEls[_taskId].push({el, agentName: (m.source && m.source.name) || ''});
         } else {
-          _lmFrag++;
-          frag.appendChild(el);
+          _fragEls.push(el);
         }
       }
-      container.insertBefore(frag, insertPoint);
-      console.log('[loadMore] total=', _lmTotal, 'null=', _lmNull, 'task=', _lmTask, 'frag=', _lmFrag);
-      for (const [tid, tb] of Object.entries(_histTaskBlocks)) {
-        console.log('[loadMore] block', tid, 'children=', tb.content.children.length,
-          'visible=', Array.from(tb.content.children).filter(c => c.style.display !== 'none').length,
-          'inDOM=', !!tb.el.parentNode);
+      // Prepend task elements in correct order (as a batch)
+      for (const [tid, entries] of Object.entries(_taskEls)) {
+        let tb = _histTaskBlocks[tid];
+        if (!tb) {
+          tb = _getHistTaskBlock(tid, entries[0].agentName);
+          if (tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
+          frag.appendChild(tb.el);
+        }
+        // Insert all entries before the current first child (in order)
+        const anchor = tb.content.firstChild;
+        for (const entry of entries) {
+          tb.content.insertBefore(entry.el, anchor);
+        }
       }
+      // Insert non-task elements
+      for (const el of _fragEls) {
+        frag.appendChild(el);
+      }
+      container.insertBefore(frag, insertPoint);
       container.scrollTop = container.scrollHeight - prevHeight;
       _updateLoadMoreBanner();
       loadingMore = false;

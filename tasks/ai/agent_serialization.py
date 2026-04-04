@@ -43,7 +43,8 @@ class AgentSerializationMixin:
         for m in messages:
             if m.source and m.source.get("type") == "ephemeral":
                 continue
-            entry: Dict[str, Any] = {"role": m.role, "content": m.content, "msg_id": m.msg_id}
+            entry: Dict[str, Any] = {"role": m.role, "content": m.content,
+                                     "msg_id": m.msg_id, "ts": m.timestamp}
             if m.tool_calls:
                 entry["tool_calls"] = [
                     {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
@@ -93,6 +94,7 @@ class AgentSerializationMixin:
                 source=entry.get("source"),
                 msg_id=entry.get("msg_id", ""),
                 display_only=entry.get("display_only", False),
+                timestamp=entry.get("ts", 0) or entry.get("timestamp", 0),
             ))
         return messages
 

@@ -90,11 +90,15 @@ class LLMMessage:
     display_only: bool = False  # True = visible in transcript, excluded from LLM context
     thinking: str = ""  # LLM thinking/reasoning output (part of context, visible in transcript)
     is_error: bool = False  # True = LLM error message (displayed as error in UI)
+    timestamp: float = 0.0  # creation time (epoch seconds)
 
     def __post_init__(self):
         if not self.msg_id:
             import uuid
             self.msg_id = uuid.uuid4().hex[:12]
+        if not self.timestamp:
+            import time
+            self.timestamp = time.time()
 
     @property
     def text_content(self) -> str:

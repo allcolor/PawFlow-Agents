@@ -510,9 +510,9 @@ class StreamEmitter(AgentEmitter):
 
         if "::task::" in self.conversation_id:
             _parent = self.conversation_id.split("::task::")[0]
-            # Write all task messages (public + private) to parent conv
-            # so tool calls are visible in transcript on reload
-            _task_msgs = public + private
+            # Write all task messages to parent conv in ORIGINAL order
+            # (not public+private which breaks chronological order)
+            _task_msgs = [m for m in all_serialized if m.get("role") != "system"]
             if _task_msgs:
                 # Deep copy to avoid mutating originals (shared with sub-conv write)
                 import copy as _copy

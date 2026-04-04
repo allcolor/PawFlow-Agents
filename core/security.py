@@ -299,10 +299,17 @@ class SecurityManager:
         session = self._sessions.get(session_id)
         if session and session.is_expired:
             del self._sessions[session_id]
+            self._save_sessions()
             return None
         # Sliding window: extend session on each access
         if session:
-            session.expires_at = time.time() + self._session_ttl
+            new_expiry = time.time() + self._session_ttl
+            # Persist if extended by more than 1 hour (avoid disk I/O on every request)
+            if new_expiry - session.expires_at > 3600:
+                session.expires_at = new_expiry
+                self._save_sessions()
+            else:
+                session.expires_at = new_expiry
         return session
 
     def logout(self, session_id: str):

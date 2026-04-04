@@ -567,9 +567,10 @@ function connectSSE(cid) {
       }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
-      // Start new iteration block if this is a recurring task with iteration > 1
-      if (data.task_id && data.iterations && data.iterations > 1) {
-        _startNewTaskIteration(data.task_id, data.iterations);
+      // Prepare next iteration block — this progress event means the current
+      // iteration is done. The next thinking event will use the new block.
+      if (data.task_id && data.iterations) {
+        _startNewTaskIteration(data.task_id, (data.iterations || 0) + 1);
       }
     }
     scrollBottom();

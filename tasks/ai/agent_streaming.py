@@ -562,7 +562,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                             continue
                         if _task.get("status") != "active":
                             continue
-                        _iters = _task.get("iterations_done", 0)
+                        _iters = _task.get("reschedule_count", 0)
                         _max = _task.get("max_iterations", 0)
                         if _max > 0 and _iters >= _max:
                             # Remove instance — only task_def + log remain

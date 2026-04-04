@@ -307,7 +307,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             tasks_out.append({
                 "task_id": tid, "agent": t.get("agent", ""),
                 "task": t.get("task", ""), "status": t.get("status", ""),
-                "iterations": t.get("iterations_done", 0),
+                "iterations": t.get("reschedule_count", 0),
                 "max_iterations": t.get("max_iterations", 50),
                 "last_result": t.get("last_result", ""),
                 "verifier": t.get("verifier", ""),

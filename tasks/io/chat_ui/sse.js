@@ -570,7 +570,7 @@ function connectSSE(cid) {
       // Prepare next iteration block — this progress event means the current
       // iteration is done. The next thinking event will use the new block.
       if (data.task_id && data.iterations) {
-        _startNewTaskIteration(data.task_id, (data.iterations || 0) + 1);
+        _startNewTaskIteration(data.task_id, data.iterations + 1);
       }
     }
     scrollBottom();

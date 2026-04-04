@@ -455,7 +455,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                     "agent": t.get("agent", ""),
                     "task": t.get("task", "")[:80],
                     "status": t.get("status", ""),
-                    "iterations": t.get("iterations_done", 0),
+                    "iterations": t.get("reschedule_count", 0),
                     "max_iterations": t.get("max_iterations", 50),
                     "task_def_name": t.get("task_def_name", ""),
                     "interval": t.get("interval", {}),

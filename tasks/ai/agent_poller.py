@@ -309,7 +309,6 @@ class AgentPollerMixin:
                     continue
                 # ── Increment reschedule_count (only real runs, not skipped) ──
                 _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
-                _task_entry["iterations_done"] = _task_entry.get("iterations_done", 0) + 1
                 _all_tasks[_task_id] = _task_entry
                 store.set_extra(cid, "agent_tasks", _all_tasks)
             elif "::" in entry_key:
@@ -384,8 +383,8 @@ class AgentPollerMixin:
                     ctx["conversation_id"] = entry_key
                     # Don't resume parent's Claude Code session
                     ctx["_claude_has_session"] = False
-                    # Track iteration number for transcript grouping
-                    ctx["_task_iteration"] = _task_entry.get("iterations_done", 1) if _task_entry else 1
+                    # Track iteration number for transcript grouping (reschedule_count = iteration number)
+                    ctx["_task_iteration"] = _task_entry.get("reschedule_count", 0) if _task_entry else 0
                 if ctx is None:
                     with self._active_lock:
                         rc = self._active_conversations.get(cid, 1) - 1
@@ -580,7 +579,7 @@ class AgentPollerMixin:
             if len(_my_tasks) == 1:
                 _td = _my_tasks[0]
                 _tid = _td["task_id"]
-                _iter = _td.get("iterations_done", 0)
+                _iter = _td.get("reschedule_count", 0)
                 _max = _td.get("max_iterations", 0)
                 _rejection = _td.get("last_rejection")
                 _rej_text = ""
@@ -622,7 +621,7 @@ class AgentPollerMixin:
             lines = []
             for _td in _my_tasks:
                 _tid = _td["task_id"]
-                _iter = _td.get("iterations_done", 0)
+                _iter = _td.get("reschedule_count", 0)
                 _max = _td.get("max_iterations", 0)
                 _il = f"{_iter + 1}/{_max}" if _max > 0 else f"{_iter + 1}"
                 lines.append(

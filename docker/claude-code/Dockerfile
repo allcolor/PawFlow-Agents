@@ -30,7 +30,7 @@ COPY auth_login.sh /opt/pawflow/auth_login.sh
 RUN chmod +x /opt/pawflow/auth_login.sh
 
 # Browser wrapper for Claude Code auth login (Chromium with Docker-safe flags)
-RUN printf '#!/bin/bash\nexec chromium --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \
+RUN printf '#!/bin/bash\nexec chromium --no-sandbox --disable-gpu --disable-dev-shm-usage --disable-software-rasterizer --window-size=1280,800 "$@"\n' \
     > /usr/local/bin/open-browser && chmod +x /usr/local/bin/open-browser
 RUN mkdir -p /usr/local/share/applications && \
     printf '[Desktop Entry]\nType=Application\nName=Chromium\nExec=/usr/local/bin/open-browser %%U\nMimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;\n' \

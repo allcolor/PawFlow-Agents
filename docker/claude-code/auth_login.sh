@@ -34,25 +34,8 @@ sleep 1
 
 echo "[auth-login] Display and noVNC ready on port 6080"
 
-# Create a wrapper script that launches Chromium with Docker-safe flags
-# Claude Code uses xdg-open or $BROWSER to open URLs
-cat > /usr/local/bin/open-browser <<'BROWSER_SCRIPT'
-#!/bin/bash
-exec chromium --disable-gpu --disable-dev-shm-usage \
-    --disable-software-rasterizer --window-size=1280,800 "$@"
-BROWSER_SCRIPT
-chmod +x /usr/local/bin/open-browser
+# Browser wrapper is pre-installed in the image (Dockerfile)
 export BROWSER=/usr/local/bin/open-browser
-
-# Also set xdg-open alternative (some tools use this)
-mkdir -p /usr/local/share/applications
-cat > /usr/local/share/applications/chromium.desktop <<'DESKTOP'
-[Desktop Entry]
-Type=Application
-Name=Chromium
-Exec=/usr/local/bin/open-browser %U
-MimeType=text/html;x-scheme-handler/http;x-scheme-handler/https;
-DESKTOP
 export XDG_UTILS_DEBUG_LEVEL=0
 
 # Remove ALL possible stale credentials so claude auth login does a fresh OAuth flow

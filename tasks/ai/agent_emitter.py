@@ -519,12 +519,14 @@ class StreamEmitter(AgentEmitter):
                 # Deep copy to avoid mutating originals (shared with sub-conv write)
                 import copy as _copy
                 _task_msgs = _copy.deepcopy(_task_msgs)
-                # Tag each with task_id in source for frontend grouping
+                # Tag each with task_id + iteration in source for frontend grouping
                 _tid = self._task_id
+                _iter = self.ctx.get("_task_iteration", 1)
                 if _tid:
                     for _tm in _task_msgs:
                         _src = _tm.get("source") or {}
                         _src["task_id"] = _tid
+                        _src["task_iteration"] = _iter
                         _tm["source"] = _src
                 ConversationWriter.for_conversation(_parent).enqueue(
                     _task_msgs, user_id=self._user_id)

@@ -156,11 +156,13 @@ function _renderHistory(data) {
     }
     const el = addMsg(m.type || m.role, content, m);
     // task_id can be top-level (SSE) or in source (stored messages)
-    // ALL task-related messages go into the task block
+    // Use task_iteration to create separate blocks per iteration
     const _taskId = m.task_id || (m.source && m.source.task_id) || '';
     if (_taskId && el) {
       const agentName = (m.source && m.source.name) || '';
-      const tb = _getHistTaskBlock(_taskId, agentName);
+      const _iter = (m.source && m.source.task_iteration) || 1;
+      const _blockKey = _taskId + '::iter' + _iter;
+      const tb = _getHistTaskBlock(_blockKey, agentName);
       tb.content.appendChild(el);
     }
   }
@@ -234,8 +236,10 @@ function loadMoreMessages() {
         if (!el) continue;
         if (el.parentNode) el.parentNode.removeChild(el);
         if (_taskId) {
-          if (!_taskEls[_taskId]) _taskEls[_taskId] = [];
-          _taskEls[_taskId].push({el, agentName: (m.source && m.source.name) || ''});
+          const _iter = (m.source && m.source.task_iteration) || 1;
+          const _blockKey = _taskId + '::iter' + _iter;
+          if (!_taskEls[_blockKey]) _taskEls[_blockKey] = [];
+          _taskEls[_blockKey].push({el, agentName: (m.source && m.source.name) || ''});
         } else {
           _fragEls.push(el);
         }

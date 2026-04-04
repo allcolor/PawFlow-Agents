@@ -3,7 +3,9 @@
 // All server calls use action$() from rxbus.js (fire-and-forget + SSE result).
 
 function loadConversations() {
+  console.log('[loadConversations] sending list_conversations, conversationId=', conversationId);
   action$('list_conversations', {}).subscribe(data => {
+    console.log('[loadConversations] received', (data.conversations || []).length, 'conversations');
     const convs = data.conversations || [];
     renderConvList(convs);
   });

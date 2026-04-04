@@ -87,17 +87,28 @@ function resumeConv(cid, force) {
   _expectingClear = false;
   _seenMsgIds.clear();
   highlightConv(cid);
-  // Connect SSE first
+  // Reset SSE state so the new connection doesn't trigger false recovery
+  sseEverConnected = false;
+  sseHadError = false;
+  stopPollTimer();
+  // Connect SSE
   connectSSE(cid);
   updateDeleteBtn();
   document.getElementById('sidebar').classList.add('collapsed');
   _syncToggleBtn();
-  // Load history — start poll timer AFTER so serverMsgCount is set
-  action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
-    .subscribe(data => {
-      _renderHistory(data);
-      startPollTimer();
-    });
+  // Load history AFTER SSE is connected (result comes via SSE command_result)
+  function _loadWhenReady() {
+    if (eventSource && eventSource.readyState === EventSource.OPEN) {
+      action$('load_history', { conversation_id: cid, limit: displayWindow, offset: 0 })
+        .subscribe(data => {
+          _renderHistory(data);
+          startPollTimer();
+        });
+    } else {
+      setTimeout(_loadWhenReady, 100);
+    }
+  }
+  _loadWhenReady();
 }
 
 function _renderHistory(data) {

@@ -583,6 +583,17 @@ class RelayService(BaseService):
             self._relay_pool.append({"reader": reader, "writer": writer, "loop": loop})
             count = len(self._relay_pool)
         logger.info("Relay pool: %d connection(s) for '%s'", count, self._service_id)
+        # Notify all SSE clients to refresh resources (relay status changed)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+            with bus._lock:
+                cids = list(bus._subscribers.keys())
+            for cid in cids:
+                bus.publish_event(cid, "relay_status_changed", {
+                    "relay_id": self._service_id, "connected": True})
+        except Exception:
+            pass
 
     def _clear_relay(self, reader=None):
         """Remove a connection from the pool (by reader), or all if None."""
@@ -598,6 +609,17 @@ class RelayService(BaseService):
                     holder["error"] = "Relay disconnected"
                     evt.set()
                 self._pending.clear()
+        # Notify SSE clients
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+            with bus._lock:
+                cids = list(bus._subscribers.keys())
+            for cid in cids:
+                bus.publish_event(cid, "relay_status_changed", {
+                    "relay_id": self._service_id, "connected": alive > 0})
+        except Exception:
+            pass
 
     def _resolve_pending(self, msg: dict):
         request_id = msg.get("request_id", "")

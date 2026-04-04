@@ -615,6 +615,11 @@ function connectSSE(cid) {
     if (document.getElementById('plansPanel').style.display !== 'none') loadPlans();
   });
 
+  eventSource.addEventListener('relay_status_changed', (e) => {
+    lastSSEActivity = Date.now();
+    loadResources();
+  });
+
   eventSource.addEventListener('notification', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

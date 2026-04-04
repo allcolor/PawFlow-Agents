@@ -40,6 +40,8 @@ class ConversationStore:
         self._conv_locks_lock = threading.Lock()
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._cache_lock = threading.Lock()
+        self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
+        self._ctx_cache_lock = threading.Lock()
         self._loaded = False
 
     @classmethod
@@ -552,6 +554,12 @@ class ConversationStore:
     # ── Context ops ───────────────────────────────────────────────────
 
     def load_agent_context(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
+        # Check in-memory cache first
+        with self._ctx_cache_lock:
+            if cid in self._ctx_cache and agent_name in self._ctx_cache[cid]:
+                cached = self._ctx_cache[cid][agent_name]
+                return list(cached) if cached is not None else None
+
         def _scan(lines):
             data = None
             appends = []
@@ -570,7 +578,18 @@ class ConversationStore:
             for batch in appends:
                 data.extend(batch)
             return data
-        return self._read(cid, _scan)
+        result = self._read(cid, _scan)
+        with self._ctx_cache_lock:
+            self._ctx_cache.setdefault(cid, {})[agent_name] = result
+        return result
+
+    def _invalidate_ctx_cache(self, cid: str, agent_name: str = ""):
+        with self._ctx_cache_lock:
+            if agent_name:
+                if cid in self._ctx_cache:
+                    self._ctx_cache[cid].pop(agent_name, None)
+            else:
+                self._ctx_cache.pop(cid, None)
 
     def save_agent_context(self, cid: str, agent_name: str,
                            context_messages: List[Dict],
@@ -581,6 +600,7 @@ class ConversationStore:
         clean = [m for m in context_messages if not m.get("display_only")]
         self._commit(cid, [{"op": "ctx_replace", "agent": agent_name or "",
                             "data": clean, "skip_merge": skip_merge}])
+        self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def append_to_agent_context(self, cid: str, agent_name: str,
@@ -592,12 +612,14 @@ class ConversationStore:
             return True
         self._commit(cid, [{"op": "ctx_append", "agent": agent_name,
                             "data": clean}])
+        self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:
         if not self.exists(cid):
             return False
         self._commit(cid, [{"op": "ctx_delete", "agent": agent_name}])
+        self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def save_context(self, cid: str, ctx: List[Dict]) -> bool:
@@ -814,24 +836,13 @@ class ConversationStore:
                   user_id: str = "") -> Any:
         if not self.exists(cid):
             return default
-        def _scan(lines):
-            result = default
-            for line in lines:
-                if line.get("t") == "extra" and line.get("key") == key:
-                    result = line.get("value", default)
-            return result
-        return self._read(cid, _scan)
+        return self.get_extra_cached(cid, key, default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
             return None
-        def _scan(lines):
-            extras = {}
-            for line in lines:
-                if line.get("t") == "extra":
-                    extras[line["key"]] = line.get("value")
-            return extras
-        return self._read(cid, _scan)
+        cache = self._load_cache(cid)
+        return dict(cache.get("extras", {}))
 
     def set_extra(self, cid: str, key: str, value: Any,
                   user_id: str = "") -> bool:
@@ -868,6 +879,7 @@ class ConversationStore:
             path.unlink(missing_ok=True)
         with self._cache_lock:
             self._cache.pop(cid, None)
+        self._invalidate_ctx_cache(cid)
         prefix = f"{cid}::task::"
         for p in self._store_dir.glob("*.jsonl"):
             sub_cid = p.stem.replace("__", ":")

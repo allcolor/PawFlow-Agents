@@ -20,19 +20,30 @@ from core.tool_registry import ToolRegistry, create_default_registry, load_agent
 logger = logging.getLogger(__name__)
 
 
+_agent_md_cache = {}  # (agent_name, user_id) -> (result, timestamp)
+_AGENT_MD_TTL = 30  # seconds
+
 def _find_agent_md(agent_name, user_id):
     """Find {agent_name}.md (case-insensitive) in the relay filesystem root."""
+    cache_key = (agent_name, user_id)
+    cached = _agent_md_cache.get(cache_key)
+    if cached and (time.time() - cached[1]) < _AGENT_MD_TTL:
+        return cached[0]
     try:
         from core.handlers._fs_base import find_fs_service
         svc = find_fs_service(user_id)
         if not svc:
+            _agent_md_cache[cache_key] = (None, time.time())
             return None
         entries = svc.list_dir(".")
         target = f"{agent_name}.md".lower()
         for e in entries:
             if e.name.lower() == target:
                 data = svc.read_file(e.name)
-                return (e.name, data.decode("utf-8"))
+                result = (e.name, data.decode("utf-8"))
+                _agent_md_cache[cache_key] = (result, time.time())
+                return result
+        _agent_md_cache[cache_key] = (None, time.time())
     except Exception:
         pass
     return None
@@ -369,10 +380,18 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     messages, conversation_id or "", _context_agent, _uid_pl,
                     max_context=_max_ctx)
         elif use_conv_store and conversation_id:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            context_data = store.load_agent_context(conversation_id, _context_agent)
-            if context_data is not None:
+            if _claude_has_session:
+                # CC has an active session — it already has the context.
+                # Just need a system prompt placeholder; user message appended later.
+                messages = [LLMMessage(role="system", content=system_prompt)]
+                base_message_count = 0
+                _context_diverged = True  # skip compact
+                logger.info(f"[context:{conversation_id[:8]}] CC session active — skipping context load")
+            else:
+              from core.conversation_store import ConversationStore
+              store = ConversationStore.instance()
+              context_data = store.load_agent_context(conversation_id, _context_agent)
+              if context_data is not None:
                 # Context has diverged — use it directly
                 try:
                     messages = self._deserialize_messages(context_data)
@@ -385,12 +404,12 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     logger.error(f"[context:{conversation_id[:8]}] context load failed: {deser_err}")
                 # Diverged context = manually edited → send as-is, no compact
                 # (the user/operation wanted this exact context)
-                if not _claude_has_session and not _context_diverged:
+                if not _context_diverged:
                     _uid = flowfile.get_attribute("http.auth.principal") or ""
                     messages = self._auto_compact_messages(
                         messages, conversation_id, _context_agent, _uid,
                         max_context=_max_ctx)
-            else:
+              else:
                 # No divergence — start from SHARED context (not transcript)
                 existing = store.load_context(conversation_id)
                 if existing:

@@ -156,10 +156,8 @@ function _renderHistory(data) {
     }
     const el = addMsg(m.type || m.role, content, m);
     // task_id can be top-level (SSE) or in source (stored messages)
-    // Only tool_call and tool_result go into task blocks — assistant text stays in chat
-    const _mtype = m.type || m.role;
-    const _taskId = (_mtype === 'tool_call' || _mtype === 'tool_result')
-      ? (m.task_id || (m.source && m.source.task_id) || '') : '';
+    // ALL task-related messages go into the task block
+    const _taskId = m.task_id || (m.source && m.source.task_id) || '';
     if (_taskId && el) {
       const agentName = (m.source && m.source.name) || '';
       const tb = _getHistTaskBlock(_taskId, agentName);
@@ -229,9 +227,7 @@ function loadMoreMessages() {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
-        const _mtype = m.type || m.role;
-        const _taskId = (_mtype === 'tool_call' || _mtype === 'tool_result')
-          ? (m.task_id || (m.source && m.source.task_id) || '') : '';
+        const _taskId = m.task_id || (m.source && m.source.task_id) || '';
         if (!el) continue;
         // Remove from container (addMsg appended it at the end)
         if (el.parentNode) el.parentNode.removeChild(el);
@@ -254,6 +250,11 @@ function loadMoreMessages() {
         }
       }
       container.insertBefore(frag, insertPoint);
+      // Debug: verify task blocks have content
+      for (const [tid, tb] of Object.entries(_histTaskBlocks)) {
+        console.log('[loadMore] task block', tid, 'children=', tb.content.children.length,
+          'inDOM=', !!tb.el.parentNode, 'open=', tb.el.hasAttribute('open'));
+      }
       container.scrollTop = container.scrollHeight - prevHeight;
       _updateLoadMoreBanner();
       loadingMore = false;

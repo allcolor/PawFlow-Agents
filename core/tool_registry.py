@@ -153,6 +153,15 @@ class ToolRegistry:
                 if result is None:
                     return f"Error: tool '{name}' blocked by pre-hook"
                 args = result
+            # Validate: reject unknown arguments so the LLM learns
+            if hasattr(handler, 'parameters_schema'):
+                _schema = handler.parameters_schema
+                _known = set((_schema.get("properties") or {}).keys())
+                if _known:
+                    _unknown = [k for k in args if k not in _known]
+                    if _unknown:
+                        return (f"Error: unknown argument(s) {_unknown} for tool '{name}'. "
+                                f"Valid arguments: {sorted(_known)}")
             # Execute
             result = handler.execute(args)
             # Run post-hooks (specific then wildcard)

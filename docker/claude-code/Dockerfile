@@ -10,9 +10,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN npm install -g @anthropic-ai/claude-code
 
 # Create non-root user (Claude Code refuses --dangerously-skip-permissions as root)
-# GID/UID 1000 may already exist (node image) — use existing or create
-RUN (getent group 1000 || groupadd -g 1000 pawflow) && \
-    (id -u 1000 2>/dev/null || useradd -u 1000 -g 1000 -m -s /bin/bash pawflow)
+# node:22-slim has UID 1000 as 'node' — rename to 'pawflow' for consistency
+RUN if id -u node 2>/dev/null; then usermod -l pawflow -d /home/pawflow -m node && groupmod -n pawflow node; \
+    elif ! id -u pawflow 2>/dev/null; then groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -m -s /bin/bash pawflow; fi
 
 # Working directory for agent sessions
 RUN mkdir -p /workspace && chown 1000:1000 /workspace

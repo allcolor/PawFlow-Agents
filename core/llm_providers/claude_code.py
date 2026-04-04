@@ -469,6 +469,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             # Pool: symlink /workspace → /cc_sessions/<session_dir>
             # CC sees /workspace just like the old per-container model
             _mcp_arg = f"/workspace/{os.path.basename(mcp_path)}"
+            _container_workdir = "/workspace"
         else:
             _container_workdir = workdir
 

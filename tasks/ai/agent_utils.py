@@ -93,24 +93,49 @@ class AgentUtilsMixin:
         return client
 
 
-    def _resolve_llm_service(self, service_id: str, user_id: str):
+    def _resolve_llm_service(self, service_id: str, user_id: str,
+                             conversation_id: str = ""):
         """Resolve an LLM service by ID. Returns (LLMClient, service) or (None, None).
 
         Resolution order: flow services → UserServiceRegistry → GlobalServiceRegistry.
+        If the service has an API key pool, uses conversation affinity.
         """
         if not service_id:
             return None, None
+
+        def _get_client_with_pool(svc):
+            """Get client with pool_index from conversation affinity."""
+            pool_idx = -1
+            if conversation_id and hasattr(svc, 'get_pool_size') and svc.get_pool_size() > 0:
+                try:
+                    from core.conversation_store import ConversationStore
+                    pool_idx = int(ConversationStore.instance().get_extra(
+                        conversation_id, f"llm_api_key_idx:{service_id}") or -1)
+                except Exception:
+                    pass
+            client = svc.get_client(pool_index=pool_idx)
+            # Store the pool index for this conversation (first use)
+            if conversation_id and hasattr(client, '_active_pool_index'):
+                _pidx = client._active_pool_index
+                try:
+                    from core.conversation_store import ConversationStore
+                    ConversationStore.instance().set_extra(
+                        conversation_id, f"llm_api_key_idx:{service_id}", _pidx)
+                except Exception:
+                    pass
+            return client
+
         # 1. Flow-level services (defined in flow JSON)
         if self._services:
             svc = self._services.get(service_id)
             if svc and hasattr(svc, 'get_client'):
-                return svc.get_client(), svc
+                return _get_client_with_pool(svc), svc
         # 2. User-scoped services
         try:
             from gui.services.user_service_registry import UserServiceRegistry
             svc = UserServiceRegistry.get_instance().get_live_instance(user_id, service_id)
             if svc and hasattr(svc, 'get_client'):
-                return svc.get_client(), svc
+                return _get_client_with_pool(svc), svc
         except Exception as e:
             logger.debug("User service '%s' for '%s': %s", service_id, user_id, e)
         # 3. Global services
@@ -118,7 +143,7 @@ class AgentUtilsMixin:
             from gui.services.global_service_registry import GlobalServiceRegistry
             svc = GlobalServiceRegistry.get_instance().get_live_instance(service_id)
             if svc and hasattr(svc, 'get_client'):
-                return svc.get_client(), svc
+                return _get_client_with_pool(svc), svc
         except Exception as e:
             logger.warning("Global service '%s' resolution failed: %s", service_id, e)
         return None, None
@@ -165,7 +190,7 @@ class AgentUtilsMixin:
             if not svc_id:
                 raise RuntimeError(
                     "No llm_service resolved. Check agent config, flow params, or global parameters.")
-        client, svc = self._resolve_llm_service(svc_id, user_id)
+        client, svc = self._resolve_llm_service(svc_id, user_id, conversation_id)
         return client, svc_id, svc
 
     def _resolve_service_param(self, param_name: str, user_id: str = "") -> str:

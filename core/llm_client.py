@@ -176,6 +176,10 @@ class LLMClient(
 
     @property
     def api_key(self):
+        # Pool override: if LLMConnectionService set an active key, use it
+        _active = getattr(self, '_active_api_key', None)
+        if _active:
+            return _active
         return self._cfg("api_key", "")
 
     @property

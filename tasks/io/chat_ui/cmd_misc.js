@@ -468,10 +468,22 @@ function cmdSchedules(text, parts) {
 }
 
 function cmdLlm(text, parts) {
+  var sub = (parts[1] || '').toLowerCase();
+
+  // /llm rotate @service — force rotate API key / CC credential
+  if (sub === 'rotate') {
+    var svcId = stripTarget(parts[2] || '');
+    if (!svcId) { addMsg('error', 'Usage: /llm rotate @service'); return true; }
+    action$('llm_rotate', { service_id: svcId }).subscribe(function(data) {
+      addMsg('system', data.message || data.error || 'Done.');
+    });
+    return true;
+  }
+
   const agent = stripTarget(parts[1] || '');
   const svc = parts.slice(2).join(' ') || '';
   if (!agent || !svc) {
-    addMsg('system', 'Usage: /llm @<agent|assistant> <service_name|${variable}|restore>');
+    addMsg('system', 'Usage: /llm @<agent> <service> | /llm rotate @<service>');
     return true;
   }
   action$('set_llm_service', {

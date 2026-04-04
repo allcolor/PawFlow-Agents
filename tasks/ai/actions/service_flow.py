@@ -246,6 +246,64 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             }).encode())
         return [flowfile]
 
+    if action == "llm_rotate":
+        svc_id = body.get("service_id", "")
+        conv_id = body.get("conversation_id", "")
+        if not svc_id:
+            flowfile.set_content(json.dumps({"error": "Usage: /llm rotate <service>"}).encode())
+            return [flowfile]
+        # Find the service
+        svc = None
+        try:
+            from gui.services.global_service_registry import GlobalServiceRegistry
+            svc = GlobalServiceRegistry.get_instance().get_live_instance(svc_id)
+        except Exception:
+            pass
+        if not svc:
+            try:
+                from gui.services.user_service_registry import UserServiceRegistry
+                svc = UserServiceRegistry.get_instance().get_live_instance(user_id, svc_id)
+            except Exception:
+                pass
+        if not svc:
+            flowfile.set_content(json.dumps({"error": f"Service '{svc_id}' not found"}).encode())
+            return [flowfile]
+        # Rotate API key pool
+        if hasattr(svc, 'rotate_key'):
+            new_idx = svc.rotate_key(conv_id)
+            flowfile.set_content(json.dumps({
+                "ok": True,
+                "message": f"Rotated to key index {new_idx} for {svc_id}.",
+                "index": new_idx,
+            }).encode())
+        # Also rotate CC credentials pool
+        elif hasattr(svc, 'provider') and svc.provider == 'claude-code':
+            from core.llm_providers.claude_code_session import _load_credentials_pool, ClaudeCodeSessionMixin
+            pool = _load_credentials_pool(svc_id)
+            if pool:
+                with ClaudeCodeSessionMixin._pool_lock:
+                    new_idx = ClaudeCodeSessionMixin._pool_counter % len(pool)
+                    ClaudeCodeSessionMixin._pool_counter += 1
+                if conv_id:
+                    try:
+                        from core.conversation_store import ConversationStore
+                        store = ConversationStore.instance()
+                        store.set_extra(conv_id, f"claude_pool_idx:{svc_id}", new_idx)
+                        # Invalidate CC session (new credential = new session)
+                        store.invalidate_claude_sessions(conv_id)
+                    except Exception:
+                        pass
+                flowfile.set_content(json.dumps({
+                    "ok": True,
+                    "message": f"Rotated to credential {new_idx} for {svc_id}. Session invalidated.",
+                    "index": new_idx,
+                }).encode())
+            else:
+                flowfile.set_content(json.dumps({"error": "No credentials pool configured"}).encode())
+        else:
+            flowfile.set_content(json.dumps({"error": "Service has no key pool"}).encode())
+        return [flowfile]
+
     if action == "service_uninstall":
         try:
             svc_id = body.get("service_id", "")

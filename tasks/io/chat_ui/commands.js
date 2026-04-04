@@ -230,7 +230,7 @@ const HELP_DATA = {
       + '  /schedules del            — Delete all schedules',
   },
   '/llm': {
-    usage: '/llm @<agent|assistant> <service|${variable}|restore>',
+    usage: '/llm @<agent> <service|restore> | /llm rotate @<service>',
     short: 'Change LLM service for an agent in this conversation',
     detail: 'Override the LLM service for any agent in the current conversation.\n\n'
       + '  /llm @assistant grok_llm_service    \u2014 Switch assistant to grok\n'

@@ -36,6 +36,10 @@ class LLMConnectionService(BaseService):
 
     PROVIDERS = LLMClient.PROVIDERS
 
+    # Class-level round-robin counter for API key pools
+    _api_key_counter = 0
+    _api_key_lock = threading.Lock()
+
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
         self._client = LLMClient.from_config(self.config)
@@ -194,9 +198,65 @@ class LLMConnectionService(BaseService):
             "calls": self._call_count,
         }
 
-    def get_client(self) -> LLMClient:
-        """Return the underlying LLMClient instance."""
+    def get_client(self, pool_index: int = -1) -> LLMClient:
+        """Return the underlying LLMClient instance.
+
+        If this service has an api_keys_pool, set the active key based on
+        pool_index (conversation affinity) or round-robin (new conv).
+        """
+        pool = self._get_api_key_pool()
+        if pool:
+            if 0 <= pool_index < len(pool):
+                idx = pool_index
+            else:
+                with LLMConnectionService._api_key_lock:
+                    idx = LLMConnectionService._api_key_counter % len(pool)
+                    LLMConnectionService._api_key_counter += 1
+            self._client._active_api_key = pool[idx]
+            self._client._active_pool_index = idx
         return self._client
+
+    def _get_api_key_pool(self) -> list:
+        """Get the API key pool from config. Returns list of key strings."""
+        raw = self.config.get("api_keys_pool", "")
+        if not raw:
+            return []
+        if isinstance(raw, list):
+            return [k for k in raw if k]
+        if isinstance(raw, str):
+            # Could be a resolved expression → JSON array or comma-separated
+            raw = raw.strip()
+            if raw.startswith("["):
+                try:
+                    return [k for k in json.loads(raw) if k]
+                except Exception:
+                    pass
+            return [k.strip() for k in raw.split(",") if k.strip()]
+        return []
+
+    def get_pool_size(self) -> int:
+        """Return the number of API keys in the pool (0 = no pool, single key)."""
+        return len(self._get_api_key_pool())
+
+    def rotate_key(self, conversation_id: str = ""):
+        """Force rotate to the next API key for a conversation."""
+        pool = self._get_api_key_pool()
+        if not pool:
+            return -1
+        with LLMConnectionService._api_key_lock:
+            idx = LLMConnectionService._api_key_counter % len(pool)
+            LLMConnectionService._api_key_counter += 1
+        # Store in conversation extras if conv_id provided
+        if conversation_id:
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_extra(
+                    conversation_id,
+                    f"llm_api_key_idx:{self._service_id}",
+                    idx)
+            except Exception:
+                pass
+        return idx
 
     def try_acquire(self) -> bool:
         """Non-blocking acquire of a concurrency slot. Returns True if acquired."""

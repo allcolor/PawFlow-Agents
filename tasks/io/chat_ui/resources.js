@@ -1435,8 +1435,12 @@ function cmdClaudeLoginServer(parts) {
   // /cls <service> — login (add credential to pool)
   var serviceId = stripTarget(sub);
   if (!serviceId) { addMsg('error', 'Usage: /cls @<service> | /cls pool | /cls reset | /cls remove <N>'); return true; }
-  addMsg('system', 'Starting Claude Code login for ' + serviceId + '...');
+  if (window._clsLoginPending) { addMsg('system', 'Login already in progress...'); return true; }
+  window._clsLoginPending = true;
+  addMsg('system', 'Starting Claude Code login for ' + serviceId + '... (container starting, please wait)');
   fireAction('claude_code_server_login', { service_id: serviceId });
+  // Reset after 60s (container timeout)
+  setTimeout(function() { window._clsLoginPending = false; }, 60000);
   return true;
 }
 
@@ -1481,6 +1485,7 @@ function cmdClaudeLoginCredentials(text, parts) {
 }
 
 function _openVncLoginDialog(sessionId, serviceId, triggerBtn) {
+  window._clsLoginPending = false;
   // Create overlay dialog 80%x80%
   const overlay = document.createElement('div');
   overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:10000;display:flex;align-items:center;justify-content:center;';

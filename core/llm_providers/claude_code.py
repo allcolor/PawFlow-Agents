@@ -490,7 +490,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 container = pool.acquire()
                 self._pool_container_name = container
                 proc = pool.exec_claude(
-                    container, _container_workdir, cmd,
+                    container, _container_workdir, cmd[1:],  # skip 'claude' binary — exec_claude adds it
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,

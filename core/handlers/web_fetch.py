@@ -114,28 +114,37 @@ class ExecuteScriptHandler(ToolHandler):
         if not code:
             return "Error: no code provided"
 
+        _secret_env = arguments.get("_secret_env") or {}
+
         # Explicit relay service name → execute remote
         _dest = destination.strip().lower()
         if _dest and _dest not in ("server", "sandbox", "local", ""):
-            return self._execute_remote(code, _dest)
+            return self._execute_remote(code, _dest, env=_secret_env)
 
         # Explicit sandbox request
         if _dest in ("server", "sandbox"):
-            return self._execute_sandbox(code)
+            return self._execute_sandbox(code, env=_secret_env)
 
         # Auto-detect: if a relay is connected, use it; else sandbox
         _relay_svc = self._find_default_relay()
         if _relay_svc:
             _svc_id = getattr(_relay_svc, '_service_id', '') or getattr(_relay_svc, 'name', '')
             if _svc_id:
-                return self._execute_remote(code, _svc_id)
+                return self._execute_remote(code, _svc_id, env=_secret_env)
 
         # Fallback: server sandbox
-        return self._execute_sandbox(code)
+        return self._execute_sandbox(code, env=_secret_env)
 
-    def _execute_sandbox(self, code: str) -> str:
+    def _execute_sandbox(self, code: str, env: dict = None) -> str:
         """Execute in server-side sandbox."""
         from core.sandbox import execute_sandboxed
+        # Inject env vars as globals accessible via os.environ in sandbox
+        # (sandbox doesn't allow os, so inject as pre-defined variables)
+        _env_prefix = ""
+        if env:
+            for k, v in env.items():
+                _env_prefix += f"{k} = {repr(v)}\n"
+            code = _env_prefix + code
         try:
             with self._vfs_lock:
                 output, created_files, _ = execute_sandboxed(
@@ -177,7 +186,7 @@ class ExecuteScriptHandler(ToolHandler):
             pass
         return None
 
-    def _execute_remote(self, code: str, service_name: str) -> str:
+    def _execute_remote(self, code: str, service_name: str, env: dict = None) -> str:
         """Execute code on a remote filesystem service via relay."""
         svc_name = service_name.replace("fs:", "", 1) if service_name.startswith("fs:") else service_name
         svc = None
@@ -205,7 +214,7 @@ class ExecuteScriptHandler(ToolHandler):
                 _fname = f".pawflow_exec_{_uuid_exec.uuid4().hex[:8]}.py"
                 svc.write_file(_fname, code.encode("utf-8"))
                 try:
-                    result = svc.exec(".", f"python3 {_fname}")
+                    result = svc.exec(".", f"python3 {_fname}", env=env or None)
                 finally:
                     try:
                         svc.delete_file(_fname)

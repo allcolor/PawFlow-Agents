@@ -35,11 +35,31 @@ def check_session(server_url: str) -> dict:
             conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=5)
         else:
             conn = http.client.HTTPConnection(host, port, timeout=5)
-        conn.request("POST", "/api/agent",
-                     body=json.dumps({"action": "ping"}),
-                     headers={"Content-Type": "application/json",
-                              "Authorization": f"Bearer {token}"})
+        _headers = {"Content-Type": "application/json",
+                    "Authorization": f"Bearer {token}"}
+        _body = json.dumps({"action": "ping"})
+        conn.request("POST", "/api/agent", body=_body, headers=_headers)
         resp = conn.getresponse()
+        # Follow 301/302 (HTTP→HTTPS redirect)
+        if resp.status in (301, 302):
+            resp.read()
+            location = resp.getheader("Location", "")
+            conn.close()
+            if location:
+                from urllib.parse import urlparse as _rparse
+                _rp = _rparse(location)
+                _rssl = _rp.scheme == "https"
+                _rh = _rp.hostname or host
+                _rpt = _rp.port or (443 if _rssl else 80)
+                if _rssl:
+                    _ctx2 = ssl.create_default_context()
+                    _ctx2.check_hostname = False
+                    _ctx2.verify_mode = ssl.CERT_NONE
+                    conn = http.client.HTTPSConnection(_rh, _rpt, context=_ctx2, timeout=5)
+                else:
+                    conn = http.client.HTTPConnection(_rh, _rpt, timeout=5)
+                conn.request("POST", _rp.path or "/api/agent", body=_body, headers=_headers)
+                resp = conn.getresponse()
         resp.read()
         # Server may send a refreshed token in header
         new_token = resp.getheader("X-Session-Token")

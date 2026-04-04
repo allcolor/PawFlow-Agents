@@ -106,6 +106,29 @@ def api_call(server_url, method, path, body=None, session_token="",
     payload = json.dumps(body).encode("utf-8") if body else None
     conn.request(method, path, body=payload, headers=headers)
     resp = conn.getresponse()
+
+    # Follow 301/302 redirects (HTTP→HTTPS)
+    if resp.status in (301, 302):
+        resp.read()  # drain
+        conn.close()
+        location = resp.getheader("Location", "")
+        if location:
+            from urllib.parse import urlparse as _urlparse
+            _rp = _urlparse(location)
+            _rssl = _rp.scheme == "https"
+            _rhost = _rp.hostname or host
+            _rport = _rp.port or (443 if _rssl else 80)
+            if _rssl:
+                import ssl as _ssl2
+                _ctx2 = _ssl2.create_default_context()
+                _ctx2.check_hostname = False
+                _ctx2.verify_mode = _ssl2.CERT_NONE
+                conn = http.client.HTTPSConnection(_rhost, _rport, context=_ctx2, timeout=30)
+            else:
+                conn = http.client.HTTPConnection(_rhost, _rport, timeout=30)
+            conn.request(method, _rp.path or path, body=payload, headers=headers)
+            resp = conn.getresponse()
+
     data = resp.read().decode("utf-8")
     # Transparent token refresh: server sends new token in header
     new_token = resp.getheader("X-Session-Token")

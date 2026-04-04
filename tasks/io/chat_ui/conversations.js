@@ -216,35 +216,39 @@ function loadMoreMessages() {
       hasMoreMessages = data.has_more || false;
       currentOffset += data.raw_count || (data.messages || []).length;
       const insertPoint = banner ? banner.nextSibling : container.firstChild;
-      const beforeCount = container.children.length;
+      // Build elements in a fragment, then insert at the right position.
+      // Task messages go into their task block (existing or new).
+      // Non-task messages go into the fragment for insertion.
+      const frag = document.createDocumentFragment();
       for (const m of (data.messages || [])) {
         let content = m.content || '';
         if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
+        if (!el) continue;
+        // Remove from container (addMsg appended it at the end)
+        if (el.parentNode) el.parentNode.removeChild(el);
         const _taskId = m.task_id || (m.source && m.source.task_id) || '';
-        if (_taskId && el) {
+        if (_taskId) {
           const agentName = (m.source && m.source.name) || '';
-          const tb = _histTaskBlocks[_taskId];
+          let tb = _histTaskBlocks[_taskId];
           if (tb) {
-            // Existing task block — prepend older messages at the top
+            // Existing block — prepend older messages at the top
             tb.content.insertBefore(el, tb.content.firstChild);
           } else {
-            // New task block from older messages — will be repositioned below
-            const ntb = _getHistTaskBlock(_taskId, agentName);
-            ntb.content.appendChild(el);
+            // New block — create it in the fragment at this position
+            tb = _getHistTaskBlock(_taskId, agentName);
+            // Move from container end into fragment
+            if (tb.el.parentNode) tb.el.parentNode.removeChild(tb.el);
+            tb.content.appendChild(el);
+            frag.appendChild(tb.el);
           }
+        } else {
+          frag.appendChild(el);
         }
       }
-      const newElements = [];
-      while (container.children.length > beforeCount) {
-        newElements.push(container.lastChild);
-        container.removeChild(container.lastChild);
-      }
-      for (let i = newElements.length - 1; i >= 0; i--) {
-        container.insertBefore(newElements[i], insertPoint);
-      }
+      container.insertBefore(frag, insertPoint);
       container.scrollTop = container.scrollHeight - prevHeight;
       _updateLoadMoreBanner();
       loadingMore = false;

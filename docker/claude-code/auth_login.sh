@@ -10,7 +10,9 @@
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 export HOME="/home/pawflow"
 export USER="pawflow"
-export CLAUDE_CONFIG_DIR=/workspace
+export CLAUDE_CONFIG_DIR="$HOME"
+# Work from HOME, not /workspace — Node.js resolves modules from cwd
+cd "$HOME"
 
 # Skip Claude Code first-run setup
 mkdir -p "$HOME/.claude"

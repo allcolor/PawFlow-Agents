@@ -182,6 +182,7 @@ class ServerRelayManager:
             "--publish", f"{desktop_host_port}:6080",
             "--publish", f"{audio_host_port}:6180",
             "--env", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
+            "--env", "HOME=/home/pawflow",
         ]
 
         # DinD: mount docker.sock so relay can spawn docker-* exec shells

@@ -629,6 +629,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     "--name", container_name,
                     "-p", f"{free_port}:6080",
                     "--tmpfs", "/workspace:rw,size=64m",
+                    "-e", "HOME=/home/pawflow",
                     "--entrypoint", "bash",
                     image,
                     "/opt/pawflow/auth_login.sh",

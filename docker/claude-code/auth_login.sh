@@ -20,6 +20,11 @@ cat > "$HOME/.claude/settings.json" 2>/dev/null <<'SETTINGS' || true
 {"theme": "dark", "hasCompletedOnboarding": true}
 SETTINGS
 
+# Start D-Bus (Chromium needs it)
+mkdir -p /run/dbus
+dbus-daemon --system --fork 2>/dev/null || true
+eval $(dbus-launch --sh-syntax) 2>/dev/null || true
+
 # Start virtual display
 Xvfb :99 -screen 0 1280x800x24 -ac &
 export DISPLAY=:99

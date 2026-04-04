@@ -79,34 +79,44 @@ class ValidateSessionAuthTask(BaseTask):
         # Validate session via SecurityManager
         from core.security import SecurityManager
         sm = SecurityManager.get_instance()
-        session = sm._sessions.get(token)
+        session = sm.get_session(token)
 
         if session is None:
-            logger.debug(f"Invalid session token: {token[:16]}... "
+            logger.debug(f"Unknown session token: {token[:16]}... "
                          f"(active_sessions={len(sm._sessions)})")
-            # Try silent refresh before failing
-            refreshed_session = self._try_silent_refresh(flowfile, sm)
-            if refreshed_session:
-                session = refreshed_session
-                self._set_refreshed_token(flowfile, session)
-            else:
-                return [self._auth_failed(flowfile, "Invalid session token")]
+            return [self._auth_failed(flowfile, "Invalid session token")]
 
         if session.is_expired:
-            expired_username = session.username
-            sm._sessions.pop(token, None)
-            # Try silent refresh before failing
-            refreshed_session = self._try_silent_refresh(
-                flowfile, sm, username=expired_username)
-            if refreshed_session:
-                session = refreshed_session
+            # Session exists but expired — try silent refresh using the
+            # specific OAuth provider that created this session
+            logger.info(f"Session expired for {session.username}, "
+                        f"trying silent refresh (provider={session.oauth_provider})")
+            refreshed = self._try_silent_refresh(
+                flowfile, sm,
+                username=session.username,
+                oauth_provider=session.oauth_provider)
+            if refreshed:
+                # Renew the EXISTING session (same session_id) instead of
+                # creating a new one — client keeps using the same token
+                import time as _time
+                session.expires_at = _time.time() + sm._session_ttl
+                sm._save_sessions()
+                # Tell client about the (same) token in case it needs to update expiry
                 self._set_refreshed_token(flowfile, session)
+                logger.info(f"Silent refresh OK: {session.username} via {session.oauth_provider}")
             else:
+                # Refresh failed — hard-delete this session
+                sm.delete_session(token)
                 return [self._auth_failed(flowfile, "Session expired")]
 
         # Sliding session: renew expiry on each successful validation
         import time as _time
-        session.expires_at = _time.time() + sm._session_ttl
+        new_expiry = _time.time() + sm._session_ttl
+        if new_expiry - session.expires_at > 300:
+            session.expires_at = new_expiry
+            sm._save_sessions()
+        else:
+            session.expires_at = new_expiry
 
         # Renew cookie max-age so the browser doesn't expire it
         cookie_name = self.config.get("cookie_name", "pawflow_token")
@@ -155,67 +165,54 @@ class ValidateSessionAuthTask(BaseTask):
         flowfile.set_attribute("http.response.header.X-Session-Token", session.session_id)
 
     def _try_silent_refresh(self, flowfile: FlowFile, sm,
-                            username: str = "") -> object:
-        """Try to silently refresh the OAuth session using stored refresh tokens.
+                            username: str = "",
+                            oauth_provider: str = "") -> bool:
+        """Try to silently refresh using the session's OAuth provider.
 
-        Uses OAuthTokenStore.get_access_token which auto-refreshes if expired.
-        If the OAuth token is still valid (or was refreshed), create a new
-        PawFlow session.
+        Args:
+            username: The user who owns the session
+            oauth_provider: The specific OAuth provider to use for refresh.
+                If empty, tries all providers for this user.
 
-        Returns a new Session on success, or None on failure.
+        Returns True on success (session is renewed), False on failure.
         """
+        if not username:
+            return False
+
         try:
-            from core.identity_service import IdentityService
-            id_svc = IdentityService.instance()
-
-            if not username:
-                # Session gone — try all users with OAuth links
-                # (typically only 1-2 users on a personal instance)
-                candidates = []
-                for u in sm._users.values():
-                    if id_svc.get_links(u.username):
-                        candidates.append(u.username)
-                if not candidates:
-                    return None
-                for candidate in candidates:
-                    result = self._try_silent_refresh(flowfile, sm, username=candidate)
-                    if result:
-                        return result
-                return None
-
-            # Find which OAuth provider this user is linked to
-            links = id_svc.get_links(username)
-            if not links:
-                return None
-
             from core.oauth_token_store import OAuthTokenStore
             token_store = OAuthTokenStore.instance()
 
-            for provider_name in links:
-                if provider_name in ("builtin",):
-                    continue
+            providers_to_try = []
+            if oauth_provider and oauth_provider != "builtin":
+                providers_to_try = [oauth_provider]
+            else:
+                # No specific provider — try all linked providers
+                from core.identity_service import IdentityService
+                id_svc = IdentityService.instance()
+                links = id_svc.get_links(username)
+                if not links:
+                    logger.info(f"Silent refresh: {username} has no OAuth links")
+                    return False
+                providers_to_try = [p for p in links if p != "builtin"]
 
+            for provider_name in providers_to_try:
                 # Ensure token entry has token_url/client_id for refresh
-                # (tokens saved before this fix may be missing these fields)
                 self._backfill_token_entry(token_store, username, provider_name)
 
                 # get_access_token auto-refreshes if expired
                 access_token = token_store.get_access_token(username, provider_name)
-                if not access_token:
-                    continue
-                # OAuth token is valid — create new PawFlow session
-                user = sm.get_user(username)
-                if user:
-                    session = sm._create_session(user,
-                        ip_address=flowfile.get_attribute("http.remote.addr") or "")
-                    logger.info(f"Silent refresh: renewed session for {username} via {provider_name}")
-                    return session
+                if access_token:
+                    logger.info(f"Silent refresh: {username} via {provider_name} — OK")
+                    return True
+                logger.debug(f"Silent refresh: {username} via {provider_name} — no token")
 
-            return None
+            logger.info(f"Silent refresh: all providers failed for {username}")
+            return False
 
         except Exception as e:
-            logger.debug(f"Silent refresh failed: {e}")
-            return None
+            logger.warning(f"Silent refresh failed for {username}: {e}", exc_info=True)
+            return False
 
     @staticmethod
     def _backfill_token_entry(token_store, username: str, provider_name: str):

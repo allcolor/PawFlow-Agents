@@ -103,8 +103,18 @@ class PawCode:
         # Check auth — don't auto-open browser, let user /login manually
         self.renderer.print_banner(self.directory)
 
-        from pawflow_cli.auth import check_session
-        auth = check_session(self.server_url)
+        from pawflow_cli.auth import check_session, authenticate
+        auth = check_session(self.server_url, gateway_cookie=self.gateway_cookie)
+        if not auth:
+            # Cached session invalid/expired and server silent refresh failed
+            # → auto-launch OAuth login
+            try:
+                self.renderer.print_system("Session expired — opening browser for login...")
+                auth = authenticate(self.server_url, force=True,
+                                    gateway_cookie=self.gateway_cookie)
+            except Exception as e:
+                self.renderer.print_error(f"Login failed: {e}")
+                auth = {}
         if auth:
             self.session_token = auth["token"]
             self.username = auth["username"]
@@ -538,11 +548,14 @@ class PawCode:
                 except Exception:
                     pass
 
+    _last_session_renew = 0.0
+
     def _active_agents_poller(self):
         """Background thread: poll server for active agents every 3s.
 
         This is the SINGLE source of truth for the typing/status indicator,
         matching the web UI's syncActiveFromServer approach.
+        Also renews the local session expiry every 30 minutes.
         """
         while self._running:
             time.sleep(3)
@@ -604,6 +617,13 @@ class PawCode:
                     # Only clear if no active streams either (avoid flicker during token streaming)
                     if not self.renderer._streams:
                         self._update_status("")
+                # Renew local session expiry every 30 min (sliding window)
+                now = time.time()
+                if now - self._last_session_renew > 1800 and self.session_token:
+                    self._last_session_renew = now
+                    from pawflow_cli.config import save_session
+                    save_session(self.session_token, self.username,
+                                 self.server_url, now + 8 * 3600)
             except Exception:
                 pass  # silent — network may be down
 
@@ -795,10 +815,10 @@ class PawCode:
         import json as _json
 
         # Authenticate silently
-        auth = authenticate(self.server_url)
+        auth = authenticate(self.server_url, gateway_cookie=self.gateway_cookie)
         self.session_token = auth["token"]
         self.username = auth["username"]
-        self.api = AgentAPIClient(self.server_url, self.session_token)
+        self.api = AgentAPIClient(self.server_url, self.session_token, self.gateway_cookie)
 
         # Start relay
         self.relay = RelayThread(

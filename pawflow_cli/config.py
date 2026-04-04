@@ -2,6 +2,7 @@
 
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -16,23 +17,44 @@ def ensure_config_dir():
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def load_session() -> Dict[str, Any]:
-    """Load cached session. Returns {} if missing or expired."""
+def load_session(include_expired: bool = False) -> Dict[str, Any]:
+    """Load cached session. Returns {} if missing (or expired, unless include_expired).
+
+    Token is stored encrypted via OS credential protection (DPAPI on Windows).
+    """
     if not SESSION_FILE.exists():
         return {}
     try:
         data = json.loads(SESSION_FILE.read_text())
-        if data.get("expires_at", 0) < time.time():
+        if not include_expired and data.get("expires_at", 0) < time.time():
             return {}  # expired
+        # Decrypt token
+        encrypted_token = data.get("token", "")
+        if encrypted_token:
+            try:
+                from pawflow_cli.secure_store import unprotect
+                data["token"] = unprotect(encrypted_token)
+            except Exception:
+                # Migration: token might be plain text from old version
+                data["token"] = encrypted_token
         return data
     except Exception:
         return {}
 
 
 def save_session(token: str, username: str, server_url: str, expires_at: float):
+    """Save session with encrypted token."""
     ensure_config_dir()
+    # Encrypt the token
+    try:
+        from pawflow_cli.secure_store import protect
+        encrypted_token = protect(token)
+    except Exception:
+        # Fallback: store as-is (shouldn't happen on supported OS)
+        encrypted_token = token
+        sys.stderr.write("[PawCode] Warning: could not encrypt session token\n")
     SESSION_FILE.write_text(json.dumps({
-        "token": token,
+        "token": encrypted_token,
         "username": username,
         "server_url": server_url,
         "expires_at": expires_at,

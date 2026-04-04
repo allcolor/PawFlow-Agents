@@ -126,6 +126,7 @@ class Session:
     created_at: float = field(default_factory=time.time)
     expires_at: float = 0.0
     ip_address: str = ""
+    oauth_provider: str = ""  # Which OAuth provider created this session
 
     @property
     def is_expired(self) -> bool:
@@ -283,13 +284,15 @@ class SecurityManager:
         self._save_users()
         return session
 
-    def _create_session(self, user: User, ip_address: str = "") -> Session:
+    def _create_session(self, user: User, ip_address: str = "",
+                        oauth_provider: str = "") -> Session:
         session = Session(
             session_id=secrets.token_urlsafe(32),
             username=user.username,
             role=user.role,
             expires_at=time.time() + self._session_ttl,
             ip_address=ip_address,
+            oauth_provider=oauth_provider,
         )
         self._sessions[session.session_id] = session
         self._save_sessions()
@@ -297,19 +300,20 @@ class SecurityManager:
 
     def get_session(self, session_id: str) -> Optional[Session]:
         session = self._sessions.get(session_id)
-        if session and session.is_expired:
-            del self._sessions[session_id]
-            self._save_sessions()
+        if not session:
             return None
+        # Expired sessions are NOT deleted here — caller (validate_session_auth)
+        # will attempt silent refresh using session.oauth_provider before giving up.
+        if session.is_expired:
+            return session  # return as-is, caller checks is_expired
         # Sliding window: extend session on each access
-        if session:
-            new_expiry = time.time() + self._session_ttl
-            # Persist if extended by more than 5 minutes
-            if new_expiry - session.expires_at > 300:
-                session.expires_at = new_expiry
-                self._save_sessions()
-            else:
-                session.expires_at = new_expiry
+        new_expiry = time.time() + self._session_ttl
+        # Persist if extended by more than 5 minutes
+        if new_expiry - session.expires_at > 300:
+            session.expires_at = new_expiry
+            self._save_sessions()
+        else:
+            session.expires_at = new_expiry
         return session
 
     def logout(self, session_id: str):
@@ -419,10 +423,13 @@ class SecurityManager:
         with open(path, 'w') as f:
             json.dump(data, f, indent=2)
 
+    _SESSION_HARD_EXPIRY = 14 * 24 * 3600  # 2 weeks — delete sessions with no activity
+
     def _load_sessions(self):
         """Load sessions from disk (survives process/module reloads).
 
-        Expired sessions are discarded on load.
+        Expired sessions are KEPT (for silent OAuth refresh) unless they
+        exceed the hard expiry (2 weeks with no activity).
         """
         path = Path(SESSIONS_PATH)
         if not path.exists():
@@ -434,9 +441,10 @@ class SecurityManager:
             skipped = 0
             for s in data.get("sessions", []):
                 expires_at = s.get("expires_at", 0)
-                if expires_at > 0 and now > expires_at:
+                # Hard expiry: if session hasn't been touched in 2 weeks, drop it
+                if expires_at > 0 and now - expires_at > self._SESSION_HARD_EXPIRY:
                     skipped += 1
-                    continue  # skip expired
+                    continue
                 session = Session(
                     session_id=s["session_id"],
                     username=s["username"],
@@ -444,19 +452,21 @@ class SecurityManager:
                     created_at=s.get("created_at", now),
                     expires_at=expires_at,
                     ip_address=s.get("ip_address", ""),
+                    oauth_provider=s.get("oauth_provider", ""),
                 )
                 self._sessions[session.session_id] = session
             if self._sessions or skipped:
                 logger.info(f"Restored {len(self._sessions)} session(s) from disk"
-                            + (f" ({skipped} expired removed)" if skipped else ""))
-            # Re-save to clean up expired ones from disk
+                            + (f" ({skipped} stale removed)" if skipped else ""))
             if skipped:
                 self._save_sessions()
         except Exception as e:
             logger.warning(f"Failed to load sessions: {e}")
 
     def _save_sessions(self):
-        """Persist active sessions to disk."""
+        """Persist sessions to disk. Keeps expired sessions for silent refresh.
+        Only hard-expired sessions (>2 weeks) are excluded.
+        """
         path = Path(SESSIONS_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
         now = time.time()
@@ -468,9 +478,11 @@ class SecurityManager:
                 "created_at": s.created_at,
                 "expires_at": s.expires_at,
                 "ip_address": s.ip_address,
+                "oauth_provider": s.oauth_provider,
             }
             for s in self._sessions.values()
-            if not (s.expires_at > 0 and now > s.expires_at)
+            # Keep expired sessions for silent refresh; only drop hard-expired
+            if not (s.expires_at > 0 and now - s.expires_at > self._SESSION_HARD_EXPIRY)
         ]
         with open(path, 'w') as f:
             json.dump({"sessions": sessions}, f, indent=2)
@@ -478,10 +490,19 @@ class SecurityManager:
     # -- Cleanup --
 
     def cleanup_expired_sessions(self) -> int:
-        """Remove expired sessions."""
-        expired = [sid for sid, s in self._sessions.items() if s.is_expired]
-        for sid in expired:
+        """Remove hard-expired sessions (>2 weeks). Soft-expired sessions are
+        kept for silent OAuth refresh."""
+        now = time.time()
+        stale = [sid for sid, s in self._sessions.items()
+                 if s.expires_at > 0 and now - s.expires_at > self._SESSION_HARD_EXPIRY]
+        for sid in stale:
             del self._sessions[sid]
-        if expired:
+        if stale:
             self._save_sessions()
-        return len(expired)
+        return len(stale)
+
+    def delete_session(self, session_id: str):
+        """Hard-delete a session (after failed silent refresh)."""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            self._save_sessions()

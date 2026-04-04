@@ -43,7 +43,7 @@ class StreamJsonMode:
         """Main loop: emit init, read stdin NDJSON, dispatch, emit results."""
         try:
             # Authenticate
-            auth = authenticate(self.server_url)
+            auth = authenticate(self.server_url, gateway_cookie=self.gateway_cookie)
             self.session_token = auth["token"]
             self.username = auth["username"]
 

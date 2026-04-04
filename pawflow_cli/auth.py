@@ -11,9 +11,14 @@ from urllib.parse import urlparse, parse_qs, quote
 from pawflow_cli.config import load_session, save_session, clear_session
 
 
-def check_session(server_url: str) -> dict:
-    """Check for a valid cached session. Validates with server, returns {} if invalid."""
-    cached = load_session()
+def check_session(server_url: str, gateway_cookie: str = "") -> dict:
+    """Check for a valid cached session. Validates with server, returns {} if invalid.
+
+    Always tries the server even if the local session is expired — the server
+    may silently refresh using stored OAuth refresh tokens.
+    """
+    # Load session INCLUDING expired ones — server may still refresh them
+    cached = load_session(include_expired=True)
     if not cached or cached.get("server_url") != server_url:
         return {}
     token = cached.get("token", "")
@@ -37,6 +42,8 @@ def check_session(server_url: str) -> dict:
             conn = http.client.HTTPConnection(host, port, timeout=5)
         _headers = {"Content-Type": "application/json",
                     "Authorization": f"Bearer {token}"}
+        if gateway_cookie:
+            _headers["Cookie"] = f"_pf_gw={gateway_cookie}"
         _body = json.dumps({"action": "ping"})
         conn.request("POST", "/api/agent", body=_body, headers=_headers)
         resp = conn.getresponse()
@@ -60,20 +67,24 @@ def check_session(server_url: str) -> dict:
                     conn = http.client.HTTPConnection(_rh, _rpt, timeout=5)
                 conn.request("POST", _rp.path or "/api/agent", body=_body, headers=_headers)
                 resp = conn.getresponse()
-        resp.read()
-        # Server may send a refreshed token in header
+        body_data = resp.read()
+        # Server may send a refreshed token in header (silent OAuth refresh)
         new_token = resp.getheader("X-Session-Token")
         conn.close()
+        sys.stderr.write(f"[PawCode] check_session: status={resp.status}, "
+                         f"new_token={'yes' if new_token else 'no'}, "
+                         f"body={body_data[:200]}\n")
         if resp.status == 401 or resp.status == 403:
             clear_session()
             return {}
         if new_token:
             token = new_token
-            save_session(token, cached.get("username", ""), server_url,
-                         time.time() + 8 * 3600)
+        save_session(token, cached.get("username", ""), server_url,
+                     time.time() + 8 * 3600)
         return {"token": token, "username": cached.get("username", ""),
                 "server_url": server_url}
-    except Exception:
+    except Exception as e:
+        sys.stderr.write(f"[PawCode] check_session exception: {e}\n")
         # Server unreachable — trust local cache if not expired
         expires = cached.get("expires_at", 0)
         if expires and time.time() < expires:
@@ -82,13 +93,14 @@ def check_session(server_url: str) -> dict:
         return {}
 
 
-def authenticate(server_url: str, force: bool = False) -> dict:
+def authenticate(server_url: str, force: bool = False,
+                 gateway_cookie: str = "") -> dict:
     """Authenticate with PawFlow server. Returns {token, username, server_url}.
 
     Tries cached session first. Opens browser if needed.
     """
     if not force:
-        cached = check_session(server_url)
+        cached = check_session(server_url, gateway_cookie=gateway_cookie)
         if cached:
             return cached
 

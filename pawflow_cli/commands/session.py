@@ -38,7 +38,8 @@ def handle_session_commands(app, cmd, arg, text):
 
     if cmd == "/login":
         from pawflow_cli.auth import authenticate
-        auth = authenticate(app.server_url, force=True)
+        auth = authenticate(app.server_url, force=True,
+                           gateway_cookie=getattr(app, 'gateway_cookie', ''))
         app.session_token = auth["token"]
         app.username = auth["username"]
         app.api.session_token = app.session_token

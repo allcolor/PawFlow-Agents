@@ -13,16 +13,14 @@ export class PawFlowAuth {
   }
 
   async getSession(serverUrl: string): Promise<{ token: string; username: string } | null> {
-    // Try cached token
+    // Return cached token even if locally expired — server may silently
+    // refresh via OAuth refresh tokens. Caller validates with server.
     const cached = await this.context.secrets.get('pawflow.token');
     const cachedUser = await this.context.secrets.get('pawflow.username');
-    const cachedExpiry = await this.context.secrets.get('pawflow.expiry');
-    if (cached && cachedUser && cachedExpiry) {
-      if (Date.now() / 1000 < parseFloat(cachedExpiry)) {
-        this.token = cached;
-        this.username = cachedUser;
-        return { token: cached, username: cachedUser };
-      }
+    if (cached && cachedUser) {
+      this.token = cached;
+      this.username = cachedUser;
+      return { token: cached, username: cachedUser };
     }
     return null;
   }

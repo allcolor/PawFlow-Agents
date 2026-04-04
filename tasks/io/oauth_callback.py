@@ -200,11 +200,10 @@ class OAuthCallbackTask(BaseTask):
             return [self._error_response(flowfile, 403, "Account disabled")]
 
         session = sm._create_session(user,
-            ip_address=flowfile.get_attribute("http.remote.addr") or "")
-        logger.info(f"OAuth session created: user={session.username}, role={session.role.value}")
-
-        logger.info(f"OAuth2 login successful: {session.username} "
-                    f"(provider={service.provider}, role={session.role.value})")
+            ip_address=flowfile.get_attribute("http.remote.addr") or "",
+            oauth_provider=service.provider)
+        logger.info(f"OAuth session created: user={session.username}, "
+                    f"role={session.role.value}, provider={service.provider}")
 
         # Save OAuth tokens with resolved username
         pending = getattr(self, "_pending_token_data", None)
@@ -309,7 +308,7 @@ class OAuthCallbackTask(BaseTask):
         user = sm.get_user(result.username)
         if not user:
             return [self._error_response(flowfile, 500, "User created but not found")]
-        session = sm._create_session(user)
+        session = sm._create_session(user, oauth_provider=provider_name)
         token = session.session_id
 
         # Store refresh token in session metadata (per-provider)

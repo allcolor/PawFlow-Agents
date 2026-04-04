@@ -36,35 +36,19 @@ logger = logging.getLogger(__name__)
 
 def _redact_secrets(text: str, secret_values: set,
                     secret_names: dict = None) -> str:
-    """Replace occurrences of secret values in text with a redaction marker.
+    """Replace exact occurrences of secret values in text with a redaction marker.
 
-    Args:
-        secret_values: Set of secret values to redact.
-        secret_names: Optional dict {value: varname} for informative markers.
-
-    Also catches partial matches (prefixes/suffixes of secrets >= 8 chars)
-    to handle truncated output (e.g. head -c 20).
+    Only exact matches — no partial prefix/suffix matching (causes false
+    positives when secrets are substrings of other data like verification codes).
     """
     if len(text) > 1_000_000 or '\x00' in text:
         return text
     _names = secret_names or {}
-    _MIN_PARTIAL = 8
     for val in secret_values:
-        _varname = _names.get(val, "")
-        _marker = f"<****Redacted — use ${_varname}****>" if _varname else "<****Redacted****>"
         if val in text:
+            _varname = _names.get(val, "")
+            _marker = f"<****Redacted — use ${_varname}****>" if _varname else "<****Redacted****>"
             text = text.replace(val, _marker)
-        elif len(val) >= _MIN_PARTIAL:
-            for plen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
-                prefix = val[:plen]
-                if prefix in text:
-                    text = text.replace(prefix, _marker)
-                    break
-            for slen in range(len(val) - 1, _MIN_PARTIAL - 1, -1):
-                suffix = val[-slen:]
-                if suffix in text:
-                    text = text.replace(suffix, _marker)
-                    break
     return text
 
 

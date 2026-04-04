@@ -32,7 +32,7 @@ function connectSSE(cid) {
       + ' <span class="task-block-status" style="margin-left:auto;font-size:11px;color:#888">\u25cf running</span>';
     details.appendChild(summary);
     const content = document.createElement('div');
-    content.style.cssText = 'padding:4px 12px 8px;';
+    content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';
     details.appendChild(content);
     const container = document.getElementById('messages');
     const typingEl = document.getElementById('typing');
@@ -95,19 +95,9 @@ function connectSSE(cid) {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     const agentName = data.agent_name || '';
-    // Task events: thinking = start of a new LLM turn
-    // If current block is done → start new iteration block
+    // Task events: just ensure the block exists, don't create new iterations
+    // New iterations are triggered by task_progress with iteration number
     if (data.task_id) {
-      const curKey = _currentTaskKey[data.task_id];
-      const curBlock = curKey && _taskBlocks[curKey];
-      if (curBlock) {
-        const statusEl = curBlock.summary.querySelector('.task-block-status');
-        if (statusEl && (statusEl.textContent.includes('done') || statusEl.textContent.includes('stopped'))) {
-          // Previous iter finished → new block
-          const iterNum = (curBlock._iterCount || 1) + 1;
-          _startNewTaskIteration(data.task_id, iterNum);
-        }
-      }
       _getTaskBlock(data.task_id, agentName);
       return;
     }
@@ -577,6 +567,10 @@ function connectSSE(cid) {
       }
     } else if (data.progress) {
       addMsg('system', '\u{1F4CA} Task progress (' + agent + ', iter ' + (data.iterations || '?') + '): ' + data.progress);
+      // Start new iteration block if this is a recurring task with iteration > 1
+      if (data.task_id && data.iterations && data.iterations > 1) {
+        _startNewTaskIteration(data.task_id, data.iterations);
+      }
     }
     scrollBottom();
   });

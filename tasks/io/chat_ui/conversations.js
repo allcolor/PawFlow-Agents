@@ -134,7 +134,7 @@ function _getHistTaskBlock(taskId, agentName) {
     + ' <span style="margin-left:auto;font-size:11px;color:#888">\u2714 done</span>';
   details.appendChild(summary);
   const content = document.createElement('div');
-  content.style.cssText = 'padding:4px 12px 8px;';
+  content.style.cssText = 'padding:4px 12px 8px;max-height:60vh;overflow-y:auto;';
   details.appendChild(content);
   document.getElementById('messages').appendChild(details);
   _histTaskBlocks[taskId] = {el: details, content: content};

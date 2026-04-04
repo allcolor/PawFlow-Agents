@@ -15,7 +15,6 @@ import threading
 import time
 from typing import List
 
-from core.docker_utils import docker_popen, docker_rm
 from core.llm_providers.claude_code_session import ClaudeCodeSessionMixin, _SESSIONS_BASE
 
 logger = logging.getLogger(__name__)
@@ -119,10 +118,13 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             self._claude_proc = None
             try:
                 proc.kill()
-                # Docker mode: also force-remove the container
-                if getattr(self, 'containerize', False):
-                    container_name = f"pawflow-claude-{proc.pid}"
-                    docker_rm(container_name)
+                # Pool mode: just kill the exec process, release the slot
+                # (don't kill the container — other sessions may be using it)
+                _pool_name = getattr(self, '_pool_container_name', None)
+                if _pool_name:
+                    from core.claude_code_pool import ClaudeCodePool
+                    ClaudeCodePool.instance().release(_pool_name)
+                    self._pool_container_name = None
             except OSError:
                 pass
             return
@@ -146,14 +148,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
     def _cleanup_proc(self, proc) -> str:
         """Clean up a Claude Code subprocess. Returns captured stderr."""
         self._claude_proc = None
-        # Docker mode: kill container FIRST (proc.kill only kills wsl, not the container)
-        if getattr(self, 'containerize', False):
-            container_name = f"pawflow-claude-{proc.pid}"
+        # Pool mode: release slot (don't kill the container)
+        _pool_name = getattr(self, '_pool_container_name', None)
+        if _pool_name:
             try:
-                from core.docker_utils import docker_rm
-                docker_rm(container_name)
+                from core.claude_code_pool import ClaudeCodePool
+                ClaudeCodePool.instance().release(_pool_name)
             except Exception:
                 pass
+            self._pool_container_name = None
         # Kill process FIRST so pipes become readable (no more blocking)
         try:
             proc.kill()
@@ -197,7 +200,8 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         conv_id = getattr(self, '_conversation_id', "") or "default"
         agent_name = getattr(self, '_agent_name', "") or "default"
 
-        workdir = self._get_session_workdir(conv_id, agent_name)
+        user_id = getattr(self, '_user_id', "") or "default"
+        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         self._setup_credentials(workdir)
 
         # Simple prompt mode: no MCP, no tools, max 1 turn
@@ -213,27 +217,30 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         logger.info("claude-code complete: cwd=%s, containerize=%s, input=%d chars",
                      workdir, _containerize, len(stdin_text))
 
+        _pool_container = None
         try:
             if _containerize:
-                from core.docker_utils import docker_run, to_host_path, get_host_ip
-                _image = getattr(self, 'docker_image', 'pawflow-claude-code:latest')
-                _cpu = getattr(self, 'docker_cpu_limit', '2')
-                _mem = getattr(self, 'docker_memory_limit', '2g')
-                docker_args = [
-                    "--rm", "-i",
-                    "--cpus", _cpu, "--memory", _mem,
-                    "-v", f"{to_host_path(workdir)}:/workspace",
-                    "-e", "CLAUDE_CONFIG_DIR=/workspace",
-                    "-e", "HOME=/workspace",
-                    "-e", f"PAWFLOW_HOST={get_host_ip()}",
-                    "--add-host", "host.docker.internal:host-gateway",
-                    "--user", "1000:1000",
-                    "--security-opt", "no-new-privileges",
-                    _image,
-                ] + cmd
-                result = docker_run(
-                    docker_args, input=stdin_text, capture_output=True,
-                    text=True, timeout=self.timeout, encoding="utf-8")
+                from core.claude_code_pool import ClaudeCodePool
+                pool = ClaudeCodePool.instance()
+                _pool_container = pool.acquire()
+                # Compute container-side workdir
+                _rel = os.path.relpath(workdir, _SESSIONS_BASE)
+                _container_workdir = f"/cc_sessions/{_rel}"
+                # claude args only (no binary name for exec)
+                _claude_args = cmd[1:]  # skip 'claude' binary
+                proc = pool.exec_claude(
+                    _pool_container, _container_workdir, _claude_args,
+                    stdin=subprocess.PIPE,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                )
+                stdout, stderr_out = proc.communicate(
+                    input=stdin_text, timeout=self.timeout)
+                result = subprocess.CompletedProcess(
+                    args=cmd, returncode=proc.returncode,
+                    stdout=stdout, stderr=stderr_out)
             else:
                 result = subprocess.run(
                     cmd, input=stdin_text, capture_output=True, text=True,
@@ -245,6 +252,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 f"Install with: npm install -g @anthropic-ai/claude-code")
         except subprocess.TimeoutExpired:
             raise LLMClientError(f"Claude CLI timed out after {self.timeout}s")
+        finally:
+            if _pool_container:
+                ClaudeCodePool.instance().release(_pool_container)
 
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
@@ -432,27 +442,40 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         logger.info("claude-code stream: conv_id='%s' user='%s' agent='%s' session='%s'",
                      conv_id, user_id, agent_name, session_id[:12] if session_id else "new")
 
-        workdir = self._get_session_workdir(conv_id, agent_name)
+        workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         self._setup_credentials(workdir)
         mcp_path = self._setup_mcp_config(workdir, user_id, conv_id, agent_name)
         _containerize = getattr(self, 'containerize', False)
 
-        # In Docker mode, MCP config path is relative to /workspace
+        # In pool mode, MCP config path is inside /cc_sessions/...
         _mcp_arg = mcp_path
         if _containerize and mcp_path:
-            _mcp_arg = "/workspace/" + os.path.basename(mcp_path)
+            # Pool: workdir is on host, maps to /cc_sessions/<user>/<conv>/<agent>
+            # inside the container. Compute the container-side path.
+            _rel = os.path.relpath(workdir, _SESSIONS_BASE)
+            _container_workdir = f"/cc_sessions/{_rel}"
+            _mcp_arg = f"{_container_workdir}/{os.path.basename(mcp_path)}"
+        else:
+            _container_workdir = workdir
 
         cmd = self._build_claude_cmd(model, session_id,
                                      mcp_config_path=_mcp_arg,
                                      workdir=workdir)
 
-        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
-                     workdir, _containerize, " ".join(cmd[:8]) + "...")
+        logger.info("claude-code stream: cwd=%s, containerize=%s",
+                     workdir, _containerize)
+
+        # Track pool container for cleanup
+        self._pool_container_name = None
 
         try:
             if _containerize:
-                proc = docker_popen(
-                    self._docker_run_args,
+                from core.claude_code_pool import ClaudeCodePool
+                pool = ClaudeCodePool.instance()
+                container = pool.acquire()
+                self._pool_container_name = container
+                proc = pool.exec_claude(
+                    container, _container_workdir, cmd,
                     stdin=subprocess.PIPE,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
@@ -473,6 +496,9 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             self._claude_proc = proc
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary
+            if self._pool_container_name:
+                ClaudeCodePool.instance().release(self._pool_container_name)
+                self._pool_container_name = None
             raise LLMClientError(
                 f"Binary '{_bin}' not found. "
                 + ("Install Docker Desktop." if _containerize

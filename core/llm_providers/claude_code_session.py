@@ -147,13 +147,21 @@ class ClaudeCodeSessionMixin:
         }
 
     def _get_session_workdir(self, conversation_id: str,
-                             agent_name: str = "") -> str:
-        """Get or create a dedicated working directory for this session."""
+                             agent_name: str = "",
+                             user_id: str = "") -> str:
+        """Get or create a dedicated working directory for this session.
+
+        Path: data/claude_sessions/<user_id>/<conv_id>/<agent>/
+        Falls back to data/claude_sessions/default/<conv_id>/<agent>/ if no user.
+        """
+        uid = user_id or getattr(self, '_user_id', '') or 'default'
+        # Sanitize user_id for safe paths
+        uid = uid.replace(':', '_').replace('/', '_').replace('\\', '_')
         cid = conversation_id or "default"
         # Sanitize: replace :: (used in sub-conv keys) with __ for safe paths
         cid = cid.replace(":", "_")
         agent = agent_name or "default"
-        workdir = os.path.join(_SESSIONS_BASE, cid, agent)
+        workdir = os.path.join(_SESSIONS_BASE, uid, cid, agent)
         os.makedirs(workdir, exist_ok=True)
         return workdir
 
@@ -405,7 +413,8 @@ class ClaudeCodeSessionMixin:
         Only our pawflow MCP tools (get_tool_schema, use_tool) remain.
         If MCP fails, Claude Code has ZERO tools and stops.
 
-        When containerize=True, wraps the command in docker run.
+        When containerize=True, uses the pool (docker exec) or falls back
+        to docker run if pool is disabled.
         """
         claude_args = [
             "-p",
@@ -429,42 +438,8 @@ class ClaudeCodeSessionMixin:
         if not getattr(self, 'containerize', False):
             return [self.claude_binary] + claude_args
 
-        # Docker mode: run Claude Code in a container
-        image = getattr(self, 'docker_image', '') or "pawflow-claude-code:latest"
-        cpu = getattr(self, 'docker_cpu_limit', '') or "2"
-        mem = getattr(self, 'docker_memory_limit', '') or "2g"
-
-        # Resolve host address for MCP bridge to connect back
-        from core.docker_utils import get_host_ip
-        host_addr = get_host_ip()
-
-        docker_run_args = [
-            "--rm", "-i",
-            "--cpus", cpu,
-            "--memory", mem,
-            "--name", f"pawflow-claude-{os.getpid()}-{os.urandom(4).hex()}",
-            # Mount session dir for persistence (memories, CLAUDE.md)
-            "-v", f"{to_host_path(workdir)}:/workspace",
-            # Environment — HOME must be /workspace so Claude Code
-            # finds .credentials.json at $CLAUDE_CONFIG_DIR/
-            "-e", "CLAUDE_CONFIG_DIR=/workspace",
-            "-e", "HOME=/workspace",
-            "-e", "NODE_OPTIONS=--max-old-space-size=1536",
-            "-e", f"PAWFLOW_HOST={host_addr}",
-            # Fix git "dubious ownership" — workdir is mounted from host with different uid
-            "-e", "GIT_CONFIG_COUNT=1",
-            "-e", "GIT_CONFIG_KEY_0=safe.directory",
-            "-e", "GIT_CONFIG_VALUE_0=/workspace",
-            # Network: allow MCP bridge to reach host tool relay
-            "--add-host", f"host.docker.internal:host-gateway",
-            # Run as non-root: Claude Code refuses --dangerously-skip-permissions as root
-            "--user", "1000:1000",
-            # Security
-            "--tmpfs", "/tmp:rw,nosuid,size=256m",
-            "--security-opt", "no-new-privileges",
-            image,
-        ] + claude_args
-
-        # Store args for docker_popen (used in _stream_claude_code)
-        self._docker_run_args = docker_run_args
-        return _docker_cmd() + ["run"] + docker_run_args
+        # Docker pool mode: acquire container, store args for exec
+        self._pool_claude_args = claude_args
+        # _pool_container_name is set by the caller (_stream_claude_code)
+        # which calls pool.acquire() and pool.exec_claude()
+        return claude_args  # just the claude args, caller handles docker exec

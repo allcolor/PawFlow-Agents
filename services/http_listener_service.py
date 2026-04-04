@@ -472,9 +472,57 @@ class _HTTPServerWithRegistry(ThreadingMixIn, HTTPServer):
                 if first_byte == b'\x16':
                     client_socket = self._ssl_ctx.wrap_socket(
                         client_socket, server_side=True)
-            except (OSError, ssl.SSLError) as e:
+                else:
+                    # Plain HTTP on an HTTPS port — redirect to HTTPS
+                    self._redirect_to_https(client_socket)
+                    # Return a dummy that will be immediately closed
+                    raise OSError("HTTP→HTTPS redirect sent")
+            except (ssl.SSLError,) as e:
                 logger.debug("TLS auto-detect failed for %s: %s", client_address, e)
+            except OSError:
+                raise  # re-raise redirect OSError
         return client_socket, client_address
+
+    def _redirect_to_https(self, sock):
+        """Send a 301 redirect from HTTP to HTTPS and close the socket."""
+        try:
+            # Read the HTTP request line to get the path
+            data = b""
+            sock.settimeout(2)
+            while b"\r\n" not in data and len(data) < 4096:
+                chunk = sock.recv(4096)
+                if not chunk:
+                    break
+                data += chunk
+            request_line = data.split(b"\r\n")[0].decode("latin-1", errors="replace")
+            parts = request_line.split()
+            path = parts[1] if len(parts) >= 2 else "/"
+            # Extract Host header
+            host = ""
+            for line in data.decode("latin-1", errors="replace").split("\r\n")[1:]:
+                if line.lower().startswith("host:"):
+                    host = line.split(":", 1)[1].strip()
+                    break
+            if not host:
+                host = sock.getsockname()[0]
+                port = sock.getsockname()[1]
+                if port != 443:
+                    host = f"{host}:{port}"
+            redirect_url = f"https://{host}{path}"
+            response = (
+                f"HTTP/1.1 301 Moved Permanently\r\n"
+                f"Location: {redirect_url}\r\n"
+                f"Content-Length: 0\r\n"
+                f"Connection: close\r\n\r\n"
+            )
+            sock.sendall(response.encode("latin-1"))
+        except Exception:
+            pass
+        finally:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
     def process_request(self, request, client_address):
         """Spawn a dispatch thread immediately — never block the accept loop."""

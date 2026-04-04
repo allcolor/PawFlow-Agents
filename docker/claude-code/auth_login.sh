@@ -38,6 +38,9 @@ echo "[auth-login] Display and noVNC ready on port 6080"
 export BROWSER=/usr/local/bin/open-browser
 export XDG_UTILS_DEBUG_LEVEL=0
 
+# Unset CI — Claude Code skips interactive auth login when CI=true
+unset CI
+
 # Remove ALL possible stale credentials so claude auth login does a fresh OAuth flow
 echo "[auth-login] Clearing all credential files..."
 find / -name ".credentials.json" -type f 2>/dev/null | while read f; do

@@ -761,8 +761,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Check if .credentials.json was updated since launch
         try:
             stat_result = _sp.run(
-                _docker_cmd() + ["exec", container, "stat", "-c", "%Y",
-                                  "/workspace/.credentials.json"],
+                _docker_cmd() + ["exec", container, "bash", "-c",
+                                  "stat -c %Y /home/pawflow/.credentials.json 2>/dev/null || stat -c %Y /workspace/.credentials.json 2>/dev/null"],
                 capture_output=True, text=True, timeout=5)
             if stat_result.returncode != 0:
                 # File doesn't exist yet
@@ -780,8 +780,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         # Credentials updated — read them
         try:
             read_result = _sp.run(
-                _docker_cmd() + ["exec", container, "cat",
-                                  "/workspace/.credentials.json"],
+                _docker_cmd() + ["exec", container, "bash", "-c",
+                                  "cat /home/pawflow/.credentials.json 2>/dev/null || cat /workspace/.credentials.json"],
                 capture_output=True, text=True, timeout=10)
             credentials = json.loads(read_result.stdout)
         except Exception as e:

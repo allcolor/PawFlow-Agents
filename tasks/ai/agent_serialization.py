@@ -47,7 +47,8 @@ class AgentSerializationMixin:
                                      "msg_id": m.msg_id, "ts": m.timestamp}
             if m.tool_calls:
                 entry["tool_calls"] = [
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments,
+                     "ts": tc.timestamp}
                     for tc in m.tool_calls
                 ]
             if m.tool_call_id:
@@ -60,6 +61,8 @@ class AgentSerializationMixin:
                 entry["display_only"] = True
             if m.is_error:
                 entry["is_error"] = True
+            if m.thinking:
+                entry["thinking"] = m.thinking
             result.append(entry)
         return result
 
@@ -83,6 +86,7 @@ class AgentSerializationMixin:
                         id=tc["id"],
                         name=tc["name"],
                         arguments=tc.get("arguments", {}),
+                        timestamp=tc.get("ts", 0),
                     )
                     for tc in (entry["tool_calls"] or [])
                 ]
@@ -94,6 +98,7 @@ class AgentSerializationMixin:
                 source=entry.get("source"),
                 msg_id=entry.get("msg_id", ""),
                 display_only=entry.get("display_only", False),
+                thinking=entry.get("thinking", ""),
                 timestamp=entry.get("ts", 0) or entry.get("timestamp", 0),
             ))
         return messages

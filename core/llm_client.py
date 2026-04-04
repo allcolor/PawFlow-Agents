@@ -41,6 +41,12 @@ class LLMToolCall:
     id: str
     name: str
     arguments: Dict[str, Any]
+    timestamp: float = 0.0
+
+    def __post_init__(self):
+        if not self.timestamp:
+            import time
+            self.timestamp = time.time()
 
 
 @dataclass

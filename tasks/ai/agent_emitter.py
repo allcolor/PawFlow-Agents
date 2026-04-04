@@ -98,6 +98,8 @@ class StreamEmitter(AgentEmitter):
     def _emit(self, event_type: str, data: dict):
         if self._task_id:
             data['task_id'] = self._task_id
+        if 'ts' not in data:
+            data['ts'] = time.time()
         self.bus.publish_event(self.event_cid, event_type, data)
 
     def _agent_source(self) -> dict:

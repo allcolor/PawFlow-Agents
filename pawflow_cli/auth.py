@@ -22,11 +22,19 @@ def check_session(server_url: str) -> dict:
     # Validate token with a lightweight server call (ping action)
     try:
         import http.client
+        import ssl
         from urllib.parse import urlparse
         parsed = urlparse(server_url)
+        use_ssl = parsed.scheme == "https"
         host = parsed.hostname or "localhost"
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        conn = http.client.HTTPConnection(host, port, timeout=5)
+        port = parsed.port or (443 if use_ssl else 80)
+        if use_ssl:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            conn = http.client.HTTPSConnection(host, port, context=ctx, timeout=5)
+        else:
+            conn = http.client.HTTPConnection(host, port, timeout=5)
         conn.request("POST", "/api/agent",
                      body=json.dumps({"action": "ping"}),
                      headers={"Content-Type": "application/json",

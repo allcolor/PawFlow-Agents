@@ -21,6 +21,7 @@ WORKDIR /workspace
 # Claude Code expects HOME for config
 ENV HOME=/home/pawflow
 ENV CLAUDE_CONFIG_DIR=/workspace
+ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # No interactive prompts
 ENV CI=true

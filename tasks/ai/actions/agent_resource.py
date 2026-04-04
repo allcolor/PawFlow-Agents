@@ -945,7 +945,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         new_id = store.generate_id()
+        import logging as _log_cr
+        _log_cr.getLogger("pawflow").info(f"[create_conversation] id={new_id} user={uid} agents={valid_agents}")
         store.save(new_id, [], user_id=uid)
+        _log_cr.getLogger("pawflow").info(f"[create_conversation] saved {new_id}, exists={store.exists(new_id)}")
         active_res = {"agents": valid_agents, "agent": valid_agents[0]}
         store.set_extra(new_id, "active_resources", active_res)
         # Title

@@ -197,13 +197,15 @@ function _doNewChat() {
 async function newChat() {
   var result = await _pickAgentsForNewConv();
   if (!result || !result.agents || result.agents.length === 0) return;
-  _doNewChat();
+  // Don't close SSE yet — we need it to receive the create_conversation result
   var params = { agents: result.agents };
   if (result.title) params.title = result.title;
   if (result.relays && result.relays.length) params.relays = result.relays;
   if (result.default_relay) params.default_relay = result.default_relay;
   action$('create_conversation', params).subscribe(data => {
     if (data.conversation_id) {
+      // Now switch to the new conversation
+      _doNewChat();
       conversationId = data.conversation_id;
       _setInputEnabled(true);
       connectSSE(conversationId, () => {

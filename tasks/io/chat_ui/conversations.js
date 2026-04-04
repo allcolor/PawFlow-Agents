@@ -3,7 +3,6 @@
 // All server calls use action$() from rxbus.js (fire-and-forget + SSE result).
 
 function loadConversations() {
-  // list_conversations has no conversation_id — server runs sync for these
   action$('list_conversations', {}).subscribe(data => {
     const convs = data.conversations || [];
     renderConvList(convs);

@@ -177,18 +177,21 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
                 "new_messages": [], "message_count": current_count,
             }).encode())
             return [flowfile]
-        # Load full history and return only the new portion
-        all_messages = store.load(conv_id, user_id=user_id)
-        if all_messages is None:
+        # Load only the new messages (max 50) — never the full conversation
+        delta = current_count - last_count
+        if delta > 50:
+            # Too many missed — client should just update count, not render all
+            delta = 50
+        page = store.load_page(conv_id, limit=delta, offset=0, user_id=user_id)
+        if page is None:
             flowfile.set_content(json.dumps({
-                "new_messages": [], "message_count": 0,
+                "new_messages": [], "message_count": current_count,
             }).encode())
             return [flowfile]
-        new_raw = all_messages[last_count:]
-        new_classified = self._classify_messages_for_display(new_raw)
+        new_classified = self._classify_messages_for_display(page["messages"])
         flowfile.set_content(json.dumps({
             "new_messages": new_classified,
-            "message_count": len(all_messages),
+            "message_count": current_count,
         }, ensure_ascii=False).encode())
         return [flowfile]
 

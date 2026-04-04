@@ -108,7 +108,7 @@ def api_call(server_url, method, path, body=None, session_token="",
     resp = conn.getresponse()
 
     # Follow 301/302 redirects (HTTP→HTTPS)
-    if resp.status in (301, 302):
+    if resp.status == 301:
         resp.read()  # drain
         conn.close()
         location = resp.getheader("Location", "")

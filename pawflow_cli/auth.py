@@ -41,7 +41,7 @@ def check_session(server_url: str) -> dict:
         conn.request("POST", "/api/agent", body=_body, headers=_headers)
         resp = conn.getresponse()
         # Follow 301/302 (HTTP→HTTPS redirect)
-        if resp.status in (301, 302):
+        if resp.status == 301:
             resp.read()
             location = resp.getheader("Location", "")
             conn.close()

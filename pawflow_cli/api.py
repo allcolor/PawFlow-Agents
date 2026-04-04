@@ -29,28 +29,9 @@ def acquire_gateway_cookie(server_url: str, gateway_key: str) -> str:
     headers = {"Content-Type": "application/x-www-form-urlencoded"}
     conn.request("POST", "/_gateway", body=body, headers=headers)
     resp = conn.getresponse()
-
-    # Follow 301/302 (HTTP→HTTPS redirect)
-    if resp.status in (301, 302):
-        resp.read()
-        location = resp.getheader("Location", "")
-        conn.close()
-        if location:
-            _rp = urlparse(location)
-            _rssl = _rp.scheme == "https"
-            _rh = _rp.hostname or host
-            _rpt = _rp.port or (443 if _rssl else 80)
-            if _rssl:
-                _ctx2 = ssl.create_default_context()
-                _ctx2.check_hostname = False
-                _ctx2.verify_mode = ssl.CERT_NONE
-                conn = http.client.HTTPSConnection(_rh, _rpt, context=_ctx2)
-            else:
-                conn = http.client.HTTPConnection(_rh, _rpt)
-            conn.request("POST", _rp.path or "/_gateway", body=body, headers=headers)
-            resp = conn.getresponse()
-
     resp.read()  # drain
+    # Note: gateway returns 302 redirect with Set-Cookie — don't follow,
+    # just read the cookie from this response.
 
     cookie_val = ""
     for hdr in resp.msg.get_all("Set-Cookie") or []:

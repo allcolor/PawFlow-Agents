@@ -222,12 +222,18 @@ class _RequestHandler(BaseHTTPRequestHandler):
                         auth_header = self.headers.get("Authorization", "")
                         if auth_header and auth_header.lower().startswith("bearer "):
                             token = auth_header[7:].strip()
-                    if not token or (not sm.get_session(token) and not sm.validate_api_key(token)):
+                    session = sm.get_session(token) if token else None
+                    if not session and token:
+                        session = True if sm.validate_api_key(token) else None
+                    if not session:
                         self.send_response(401)
                         self.send_header("Content-Type", "application/json")
                         self.end_headers()
                         self.wfile.write(b'{"error": "Unauthorized"}')
                         return
+                    # Renew cookie to extend browser-side expiry (sliding window)
+                    if token and cookie_header and session is not True:
+                        self._renew_cookie = f"pawflow_token={token}; Path=/; Max-Age={int(sm._session_ttl)}; HttpOnly; SameSite=Lax"
             except Exception as e:
                 logger.error("Session auth check failed: %s", e, exc_info=True)
                 self.send_response(500)
@@ -326,6 +332,9 @@ class _RequestHandler(BaseHTTPRequestHandler):
             self.send_header(k, v)
         if "Content-Type" not in req.response_headers:
             self.send_header("Content-Type", "application/octet-stream")
+        # Renew session cookie (sliding window)
+        if hasattr(self, '_renew_cookie') and self._renew_cookie:
+            self.send_header("Set-Cookie", self._renew_cookie)
         self.end_headers()
 
         if req.response_stream is not None:

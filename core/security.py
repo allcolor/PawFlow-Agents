@@ -304,8 +304,8 @@ class SecurityManager:
         # Sliding window: extend session on each access
         if session:
             new_expiry = time.time() + self._session_ttl
-            # Persist if extended by more than 1 hour (avoid disk I/O on every request)
-            if new_expiry - session.expires_at > 3600:
+            # Persist if extended by more than 5 minutes
+            if new_expiry - session.expires_at > 300:
                 session.expires_at = new_expiry
                 self._save_sessions()
             else:

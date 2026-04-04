@@ -221,21 +221,23 @@ function loadMoreMessages() {
       // Task messages go into their task block (existing or new).
       // Non-task messages go into the fragment for insertion.
       const frag = document.createDocumentFragment();
+      let _lmTotal = 0, _lmNull = 0, _lmTask = 0, _lmFrag = 0;
       for (const m of (data.messages || [])) {
+        _lmTotal++;
         let content = m.content || '';
         if ((m.type === 'assistant' || m.role === 'assistant') && typeof content === 'string') {
           content = content.replace(/^\[[^\]]+\]:\s*/, '');
         }
         const el = addMsg(m.type || m.role, content, m);
         const _taskId = m.task_id || (m.source && m.source.task_id) || '';
-        if (!el) continue;
+        if (!el) { _lmNull++; console.log('[loadMore] NULL el for', m.type || m.role, m.msg_id || '?'); continue; }
         // Remove from container (addMsg appended it at the end)
         if (el.parentNode) el.parentNode.removeChild(el);
         if (_taskId) {
+          _lmTask++;
           const agentName = (m.source && m.source.name) || '';
           let tb = _histTaskBlocks[_taskId];
           if (tb) {
-            // Existing block — prepend older messages at the top
             tb.content.insertBefore(el, tb.content.firstChild);
           } else {
             // New block — create it in the fragment at this position
@@ -246,14 +248,16 @@ function loadMoreMessages() {
             frag.appendChild(tb.el);
           }
         } else {
+          _lmFrag++;
           frag.appendChild(el);
         }
       }
       container.insertBefore(frag, insertPoint);
-      // Debug: verify task blocks have content
+      console.log('[loadMore] total=', _lmTotal, 'null=', _lmNull, 'task=', _lmTask, 'frag=', _lmFrag);
       for (const [tid, tb] of Object.entries(_histTaskBlocks)) {
-        console.log('[loadMore] task block', tid, 'children=', tb.content.children.length,
-          'inDOM=', !!tb.el.parentNode, 'open=', tb.el.hasAttribute('open'));
+        console.log('[loadMore] block', tid, 'children=', tb.content.children.length,
+          'visible=', Array.from(tb.content.children).filter(c => c.style.display !== 'none').length,
+          'inDOM=', !!tb.el.parentNode);
       }
       container.scrollTop = container.scrollHeight - prevHeight;
       _updateLoadMoreBanner();

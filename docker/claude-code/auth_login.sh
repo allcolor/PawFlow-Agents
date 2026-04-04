@@ -6,21 +6,11 @@
 # Claude Code opens Chromium on the virtual display.
 # After authorization, .credentials.json is written to $CLAUDE_CONFIG_DIR.
 
-# Don't use set -e — keep container alive even if commands fail
-# (the user needs to see the error in the VNC display)
-
-# Force HOME — Docker Desktop on WSL2 overrides ENV HOME with host value
+# Force HOME — Docker Desktop WSL2 may override with host value
 export HOME=/home/pawflow
 export CLAUDE_CONFIG_DIR=/workspace
-export USER=${USER:-pawflow}
-export XDG_RUNTIME_DIR="/tmp/xdg-${USER}"
-mkdir -p "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 
-# D-Bus session (Chromium needs it)
-export DBUS_SESSION_BUS_ADDRESS="unix:path=/tmp/dbus-login"
-dbus-daemon --session --address="$DBUS_SESSION_BUS_ADDRESS" --fork --nopidfile 2>/dev/null || true
-
-# Skip Claude Code first-run interactive setup
+# Skip Claude Code first-run setup
 mkdir -p "$HOME/.claude"
 cat > "$HOME/.claude/settings.json" 2>/dev/null <<'SETTINGS' || true
 {"theme": "dark", "hasCompletedOnboarding": true}
@@ -44,40 +34,27 @@ sleep 1
 
 echo "[auth-login] Display and noVNC ready on port 6080"
 
-# Browser wrapper is pre-installed in the image (Dockerfile)
-export BROWSER=/usr/local/bin/open-browser
-export XDG_UTILS_DEBUG_LEVEL=0
+# Chromium flags for Docker (no sandbox for non-root, shared memory)
+export CHROME_FLAGS="--no-sandbox --disable-gpu --disable-dev-shm-usage"
+export CHROMIUM_FLAGS="$CHROME_FLAGS"
 
-# Unset CI — Claude Code skips interactive auth login when CI=true
-unset CI
+# Clear stale credentials
+rm -f "$CLAUDE_CONFIG_DIR/.credentials.json" "$HOME/.claude/.credentials.json" 2>/dev/null
 
-# Remove ALL possible stale credentials so claude auth login does a fresh OAuth flow
-echo "[auth-login] Clearing all credential files..."
-find / -name ".credentials.json" -type f 2>/dev/null | while read f; do
-  echo "[auth-login] Removing: $f"
-  rm -f "$f"
-done
-# Also clear any cached auth/session state
-rm -rf "$HOME/.claude/auth" "$HOME/.claude/statsig" "$HOME/.claude/projects" 2>/dev/null
-echo "[auth-login] Done clearing"
-
-# Launch claude auth login (it will use $BROWSER to open the auth URL)
 claude auth login || true
 
-# Find where claude wrote the new credentials
-echo "[auth-login] Searching for new credentials..."
+echo "[auth-login] claude auth login completed"
+
+# Copy credentials to /workspace
 find / -name ".credentials.json" -type f -newer /proc/1/cmdline 2>/dev/null | while read f; do
   echo "[auth-login] Found: $f"
-  # Copy to /workspace so the server can read it
   cp "$f" /workspace/.credentials.json 2>/dev/null || true
 done
-ls -la /workspace/.credentials.json 2>/dev/null || echo "[auth-login] WARNING: no .credentials.json found anywhere!"
-
-echo "[auth-login] claude auth login completed"
+ls -la /workspace/.credentials.json 2>/dev/null || echo "[auth-login] WARNING: no .credentials.json found"
 
 # Signal completion
 touch /tmp/auth_done
 
-# Keep alive until container is killed (server reads credentials then destroys)
+# Keep alive until container is killed
 echo "[auth-login] Waiting for server to read credentials..."
 sleep infinity

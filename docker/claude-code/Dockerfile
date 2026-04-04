@@ -14,9 +14,10 @@ RUN npm install -g @anthropic-ai/claude-code
 RUN if id -u node 2>/dev/null; then usermod -l pawflow -d /home/pawflow -m node && groupmod -n pawflow node; \
     elif ! id -u pawflow 2>/dev/null; then groupadd -g 1000 pawflow && useradd -u 1000 -g 1000 -m -s /bin/bash pawflow; fi
 
-# Working directory for agent sessions
-RUN mkdir -p /workspace && chown 1000:1000 /workspace
-WORKDIR /workspace
+# /workspace is created as a symlink by the pool at exec time
+# (points to /cc_sessions/<user>/<conv>/<agent>)
+# Don't create it as a directory here — the pool needs to replace it.
+WORKDIR /home/pawflow
 
 # Claude Code expects HOME for config
 ENV HOME="/home/pawflow"

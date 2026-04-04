@@ -19,9 +19,10 @@ RUN mkdir -p /workspace && chown 1000:1000 /workspace
 WORKDIR /workspace
 
 # Claude Code expects HOME for config
-ENV HOME=/home/pawflow
-ENV CLAUDE_CONFIG_DIR=/workspace
+ENV HOME="/home/pawflow"
+ENV CLAUDE_CONFIG_DIR="/workspace"
 ENV PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ENV USER="pawflow"
 
 # No interactive prompts
 ENV CI=true

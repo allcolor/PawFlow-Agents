@@ -164,8 +164,10 @@ class ClaudeCodePool:
 
         exec_args = [
             "-i",
-            "-e", "CLAUDE_CONFIG_DIR=/workspace",
+            "-e", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "-e", "HOME=/workspace",
+            "-e", "USER=pawflow",
+            "-e", "CLAUDE_CONFIG_DIR=/workspace",
             "-e", "NODE_OPTIONS=--max-old-space-size=768",
             "-e", f"PAWFLOW_HOST={host_ip}",
             "-e", "GIT_CONFIG_COUNT=1",

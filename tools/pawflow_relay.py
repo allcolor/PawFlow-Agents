@@ -1405,7 +1405,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     if _desktop_user:
                         import subprocess as _sp_chown
                         _sp_chown.run(["chown", "-R",
-                                       f"{_desktop_uid}:{_desktop_gid}",
+                                       _desktop_user,
                                        str(_pa_conf_dir)], check=False)
                     # Kill any stale PA — --start ignores --load if PA is already running
                     subprocess.run(

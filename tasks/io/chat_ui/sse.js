@@ -16,6 +16,8 @@ function connectSSE(cid) {
     if (!taskId) return null;
     const blockKey = taskId + '::iter' + (iteration || 0);
     if (_taskBlocks[blockKey]) return _taskBlocks[blockKey];
+    console.warn('[TASK BLOCK CREATE]', blockKey, 'iteration=', iteration, 'existing keys=', Object.keys(_taskBlocks));
+    console.trace('[TASK BLOCK CREATE STACK]');
     // First event for this iteration — create the block
     const details = document.createElement('details');
     details.className = 'msg task-block';

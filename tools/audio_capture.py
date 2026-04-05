@@ -155,7 +155,7 @@ def _capture_loop(source: str):
 
             proc = subprocess.Popen(
                 ["parec", "--format=s16le", "--rate=48000", "--channels=1",
-                 "-d", monitor, "--latency-msec=20"],
+                 "-d", monitor, "--latency-msec=40"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=frame_bytes)
 

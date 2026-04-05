@@ -40,6 +40,7 @@ from core.handlers import (  # noqa: F401
     CreateFileHandler,
     CreatePlanHandler,
     CreateToolHandler,
+    DeleteToolHandler,
     DeletePlanHandler,
     ExecuteScriptHandler,
     FlowManagerHandler,

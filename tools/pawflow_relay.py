@@ -1452,8 +1452,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         _audio_port = 0
 
                 # 4. XFCE desktop session (inherits audio env vars)
-                sys.stderr.write(f"[FSRelay] Xfce env PULSE_RUNTIME_DIR={_user_env.get('PULSE_RUNTIME_DIR', 'NOT SET')}\n")
-                sys.stderr.write(f"[FSRelay] Xfce env XDG_RUNTIME_DIR={_user_env.get('XDG_RUNTIME_DIR', 'NOT SET')}\n")
                 _p_wm = subprocess.Popen(
                     ["startxfce4"], env=_user_env,
                     stdout=_log_d, stderr=_log_d)

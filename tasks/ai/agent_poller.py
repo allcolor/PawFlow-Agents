@@ -308,10 +308,7 @@ class AgentPollerMixin:
                         self._active_thoughts.discard(entry_key)
                     continue
                 # ── Increment reschedule_count (only real runs, not skipped) ──
-                _prev_rc = _task_entry.get("reschedule_count", 0)
-                _task_entry["reschedule_count"] = _prev_rc + 1
-                logger.info("[poller] task %s reschedule_count %d → %d (key=%s)",
-                            _task_id, _prev_rc, _prev_rc + 1, entry_key[-30:])
+                _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
                 _all_tasks[_task_id] = _task_entry
                 store.set_extra(cid, "agent_tasks", _all_tasks)
             elif "::" in entry_key:
@@ -603,7 +600,7 @@ class AgentPollerMixin:
                 from datetime import datetime as _DTtask
                 _created_str = _DTtask.fromtimestamp(
                     _td.get("created_at", 0)).strftime("%Y-%m-%d %H:%M") if _td.get("created_at") else "?"
-                _iter_label = f"{_iter + 1}/{_max}" if _max > 0 else f"{_iter + 1}"
+                _iter_label = f"{_iter}/{_max}" if _max > 0 else str(_iter)
                 return (
                     f"[System: Task {_tid} — iteration {_iter_label}]\n\n"
                     f"**Task ID:** {_tid} (assigned {_created_str})\n"
@@ -627,7 +624,7 @@ class AgentPollerMixin:
                 _tid = _td["task_id"]
                 _iter = _td.get("reschedule_count", 0)
                 _max = _td.get("max_iterations", 0)
-                _il = f"{_iter + 1}/{_max}" if _max > 0 else f"{_iter + 1}"
+                _il = f"{_iter}/{_max}" if _max > 0 else str(_iter)
                 lines.append(
                     f"- **{_tid}** (iter {_il}): {_td.get('task', '?')[:100]}"
                     + (f" | Progress: {_td.get('last_result', '')[:60]}" if _td.get("last_result") else "")

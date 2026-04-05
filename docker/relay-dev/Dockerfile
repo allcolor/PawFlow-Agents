@@ -19,7 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential make cmake pkg-config autoconf automake libtool \
     jq sqlite3 libsqlite3-dev openssh-client unzip zip \
     ripgrep fd-find bat tree htop strace ltrace \
-    file less man-db \
+    file less man-db chrony \
     libffi-dev libssl-dev zlib1g-dev libbz2-dev libreadline-dev \
     libncurses-dev libgdbm-dev liblzma-dev tk-dev uuid-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -222,9 +222,14 @@ COPY pawflow.py /opt/pawflow/pawflow.py
 COPY audio_capture.py /opt/pawflow/audio_capture.py
 ENV PYTHONPATH="/opt/pawflow"
 
+# ── Init script: start chronyd then exec CMD ──────────────────────
+RUN printf '#!/bin/bash\nsudo chronyd 2>/dev/null || true\nexec "$@"\n' > /usr/local/bin/init.sh \
+    && chmod +x /usr/local/bin/init.sh
+
 # ── Run as pawflow ──────────────────────────────────────────────────
 USER pawflow
 ENV HOME="/home/pawflow"
 ENV USER="pawflow"
 WORKDIR /workspace
+ENTRYPOINT ["/usr/local/bin/init.sh"]
 CMD ["bash"]

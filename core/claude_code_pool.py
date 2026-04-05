@@ -261,6 +261,11 @@ class ClaudeCodePool:
                 f"Failed to spawn pool container {name}: "
                 f"{result.stderr.strip()[:300]}")
 
+        # Start chronyd for time sync (avoid drift in long-running containers)
+        subprocess.run(
+            docker_cmd() + ["exec", "--user", "root", name, "chronyd"],
+            capture_output=True, timeout=5)
+
         info = _ContainerInfo(
             name=name,
             max_sessions=self.max_sessions_per_container,

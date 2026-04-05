@@ -153,8 +153,15 @@ class ToolRegistry:
                 if result is None:
                     return f"Error: tool '{name}' blocked by pre-hook"
                 args = result
+            # Unwrap JSON string (MCP bridge double-encoding)
+            if isinstance(args, str):
+                try:
+                    import json as _json_uw
+                    args = _json_uw.loads(args)
+                except (ValueError, TypeError):
+                    pass
             # Validate: reject unknown arguments so the LLM learns
-            if hasattr(handler, 'parameters_schema'):
+            if isinstance(args, dict) and hasattr(handler, 'parameters_schema'):
                 _schema = handler.parameters_schema
                 _known = set((_schema.get("properties") or {}).keys())
                 if _known:

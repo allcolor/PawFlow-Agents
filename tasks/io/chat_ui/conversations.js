@@ -338,17 +338,19 @@ function deleteConv(event, cid) {
   event.stopPropagation();
   if (!confirm(t('confirmDelete'))) return;
   var wasActive = (cid === conversationId);
-  fireAction('delete_conversation', { conversation_id: cid });
-  if (wasActive) _switchAfterDelete(cid);
-  else loadConversations();
+  action$('delete_conversation', { conversation_id: cid }).subscribe(() => {
+    if (wasActive) _switchAfterDelete(cid);
+    else loadConversations();
+  });
 }
 
 function deleteCurrentConv() {
   if (!conversationId) return;
   if (!confirm(t('confirmDelete'))) return;
   var cid = conversationId;
-  fireAction('delete_conversation', { conversation_id: cid });
-  _switchAfterDelete(cid);
+  action$('delete_conversation', { conversation_id: cid }).subscribe(() => {
+    _switchAfterDelete(cid);
+  });
 }
 
 function _switchAfterDelete(deletedCid) {

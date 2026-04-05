@@ -244,8 +244,7 @@ class StreamEmitter(AgentEmitter):
         _tid = self._task_id
 
         _emitter = self  # capture for closure
-
-        _task_iter = self.ctx.get("_task_iteration", 0)
+        _ctx = self.ctx
 
         def on_token(text: str):
             if not agent._is_current_generation(gen_key, generation):
@@ -260,7 +259,7 @@ class StreamEmitter(AgentEmitter):
                 }
                 if _tid:
                     evt["task_id"] = _tid
-                    evt["task_iteration"] = _task_iter
+                    evt["task_iteration"] = _ctx.get("_task_iteration", 0)
                 bus.publish_event(cid, "token", evt)
         return on_token
 
@@ -272,7 +271,7 @@ class StreamEmitter(AgentEmitter):
         generation = self.generation
         agent = self.agent
         _tid = self._task_id
-        _task_iter = self.ctx.get("_task_iteration", 0)
+        _ctx = self.ctx
 
         def on_thinking(text: str):
             if not agent._is_current_generation(gen_key, generation):
@@ -284,7 +283,7 @@ class StreamEmitter(AgentEmitter):
                 }
                 if _tid:
                     evt["task_id"] = _tid
-                    evt["task_iteration"] = _task_iter
+                    evt["task_iteration"] = _ctx.get("_task_iteration", 0)
                 bus.publish_event(cid, "thinking_content", evt)
         return on_thinking
 
@@ -295,7 +294,7 @@ class StreamEmitter(AgentEmitter):
         agent_name = self._agent_name
         emitter = self
         _tid = self._task_id
-        _task_iter = self.ctx.get("_task_iteration", 0)
+        _ctx = self.ctx
 
         _cancel_detected = threading.Event()
 
@@ -316,7 +315,7 @@ class StreamEmitter(AgentEmitter):
                 }
                 if _tid:
                     evt["task_id"] = _tid
-                    evt["task_iteration"] = _task_iter
+                    evt["task_iteration"] = _ctx.get("_task_iteration", 0)
                 bus.publish_event(cid, "thinking", evt)
 
         t = threading.Thread(target=heartbeat, daemon=True)

@@ -1362,7 +1362,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 os.environ["DISPLAY"] = _display
                 _time_mod.sleep(0.5)
 
-                # 2. D-Bus session (needed by XFCE)
+                # 2. D-Bus session (needed by XFCE and PipeWire)
                 _p_dbus = subprocess.Popen(
                     ["dbus-daemon", "--session", "--nofork",
                      f"--address=unix:path=/tmp/dbus-desktop"],
@@ -1371,7 +1371,87 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _procs.append(_p_dbus)
                 _time_mod.sleep(0.3)
 
-                # 3. XFCE desktop session (as non-root user)
+                # 3. Audio server (PipeWire preferred, PulseAudio fallback)
+                # MUST start before XFCE so desktop apps inherit audio env vars
+                import shutil as _shutil
+                _audio_port = 0
+                _has_pipewire = _shutil.which("pipewire")
+                _has_pulseaudio = _shutil.which("pulseaudio")
+                if _has_pipewire:
+                    _pw_conf_dir = Path(_desktop_home) / ".config" / "pipewire" / "pipewire.conf.d"
+                    _pw_conf_dir.mkdir(parents=True, exist_ok=True)
+                    (_pw_conf_dir / "10-rate.conf").write_text(
+                        'context.properties = {\n'
+                        '  default.clock.rate = 48000\n'
+                        '  default.clock.allowed-rates = [ 48000 ]\n'
+                        '}\n'
+                    )
+                    if _desktop_user:
+                        subprocess.run(["chown", "-R", _desktop_user,
+                                        str(_pw_conf_dir.parent.parent)], check=False)
+                    _pw_runtime = Path(_desktop_home) / ".pipewire-runtime"
+                    _pw_runtime.mkdir(parents=True, exist_ok=True)
+                    if _desktop_user:
+                        subprocess.run(["chown", "-R", _desktop_user, str(_pw_runtime)], check=False)
+                    _pw_env = {**_user_env,
+                               "XDG_RUNTIME_DIR": str(_pw_runtime),
+                               "PIPEWIRE_RUNTIME_DIR": str(_pw_runtime),
+                               "PULSE_RUNTIME_DIR": str(_pw_runtime)}
+                    _p_pw = subprocess.Popen(["pipewire"], env=_pw_env, stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_pw)
+                    _time_mod.sleep(0.3)
+                    if _shutil.which("wireplumber"):
+                        _p_wp = subprocess.Popen(["wireplumber"], env=_pw_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_wp)
+                        _time_mod.sleep(0.2)
+                    if _shutil.which("pipewire-pulse"):
+                        _p_pp = subprocess.Popen(["pipewire-pulse"], env=_pw_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_pp)
+                        _time_mod.sleep(0.3)
+                    try:
+                        subprocess.run(["pactl", "load-module", "module-null-sink",
+                                        "sink_name=virtual_out", "rate=48000"],
+                                       env=_pw_env, timeout=5, stdout=_log_d, stderr=_log_d)
+                    except Exception:
+                        pass
+                    _user_env.update(_pw_env)
+                elif _has_pulseaudio:
+                    _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
+                    _pa_conf_dir.mkdir(parents=True, exist_ok=True)
+                    (_pa_conf_dir / "daemon.conf").write_text(
+                        "default-sample-rate = 48000\nalternate-sample-rate = 48000\n")
+                    if _desktop_user:
+                        subprocess.run(["chown", "-R", _desktop_user, str(_pa_conf_dir)], check=False)
+                    subprocess.run(["pulseaudio", "--kill"], env=_user_env, stdout=_log_d, stderr=_log_d, timeout=5)
+                    _time_mod.sleep(0.3)
+                    _p_pulse = subprocess.Popen(
+                        ["pulseaudio", "--start", "--exit-idle-time=-1",
+                         "--load=module-null-sink sink_name=virtual_out rate=48000",
+                         "--load=module-always-sink"],
+                        env=_user_env, stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_pulse)
+                    _time_mod.sleep(0.5)
+                # Verify audio
+                for _pa_cmd, _pa_label in [("pactl info", "Audio info"), ("pactl list short sinks", "Audio sinks")]:
+                    try:
+                        _pa_out = subprocess.check_output(_pa_cmd.split(), env=_user_env, timeout=5, text=True)
+                        sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
+                    except Exception as _e:
+                        sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_e}\n")
+                # Audio capture (Opus over TCP)
+                if _has_pipewire or _has_pulseaudio:
+                    _audio_port = _novnc_port + 100
+                    _audio_script = Path("/opt/pawflow/audio_capture.py")
+                    if _audio_script.exists():
+                        _p_audio = subprocess.Popen(
+                            [sys.executable, str(_audio_script), "--port", str(_audio_port), "--source", "pulse"],
+                            env=_user_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_audio)
+                        sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")
+                    else:
+                        _audio_port = 0
+
+                # 4. XFCE desktop session (inherits audio env vars)
                 _p_wm = subprocess.Popen(
                     ["startxfce4"], env=_user_env,
                     stdout=_log_d, stderr=_log_d)
@@ -1393,123 +1473,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                      str(_novnc_port), f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
-                # 6. Audio server (PipeWire preferred, PulseAudio fallback)
-                import shutil as _shutil
-                _audio_port = 0
-                _has_pipewire = _shutil.which("pipewire")
-                _has_pulseaudio = _shutil.which("pulseaudio")
-                if _has_pipewire:
-                    # PipeWire: better clock stability than PulseAudio in WSL2/Docker
-                    _pw_conf_dir = Path(_desktop_home) / ".config" / "pipewire" / "pipewire.conf.d"
-                    _pw_conf_dir.mkdir(parents=True, exist_ok=True)
-                    # Force 48kHz sample rate
-                    (_pw_conf_dir / "10-rate.conf").write_text(
-                        'context.properties = {\n'
-                        '  default.clock.rate = 48000\n'
-                        '  default.clock.allowed-rates = [ 48000 ]\n'
-                        '}\n'
-                    )
-                    if _desktop_user:
-                        import subprocess as _sp_chown
-                        _sp_chown.run(["chown", "-R", _desktop_user,
-                                       str(_pw_conf_dir.parent.parent)], check=False)
-                    # Set runtime dir for PipeWire (no systemd in container)
-                    _pw_runtime = Path(_desktop_home) / ".pipewire-runtime"
-                    _pw_runtime.mkdir(parents=True, exist_ok=True)
-                    if _desktop_user:
-                        _sp_chown.run(["chown", "-R", _desktop_user, str(_pw_runtime)], check=False)
-                    _pw_env = {**_user_env,
-                               "XDG_RUNTIME_DIR": str(_pw_runtime),
-                               "PIPEWIRE_RUNTIME_DIR": str(_pw_runtime),
-                               "PULSE_RUNTIME_DIR": str(_pw_runtime)}
-                    # Start PipeWire daemon
-                    _p_pw = subprocess.Popen(
-                        ["pipewire"],
-                        env=_pw_env, stdout=_log_d, stderr=_log_d)
-                    _procs.append(_p_pw)
-                    _time_mod.sleep(0.3)
-                    # Start WirePlumber (session manager)
-                    if _shutil.which("wireplumber"):
-                        _p_wp = subprocess.Popen(
-                            ["wireplumber"],
-                            env=_pw_env, stdout=_log_d, stderr=_log_d)
-                        _procs.append(_p_wp)
-                        _time_mod.sleep(0.2)
-                    # Start pipewire-pulse (PulseAudio compat layer)
-                    if _shutil.which("pipewire-pulse"):
-                        _p_pp = subprocess.Popen(
-                            ["pipewire-pulse"],
-                            env=_pw_env, stdout=_log_d, stderr=_log_d)
-                        _procs.append(_p_pp)
-                        _time_mod.sleep(0.3)
-                    # Create null sink for virtual audio
-                    try:
-                        subprocess.run(
-                            ["pactl", "load-module", "module-null-sink",
-                             "sink_name=virtual_out", "rate=48000"],
-                            env=_pw_env, timeout=5, stdout=_log_d, stderr=_log_d)
-                    except Exception:
-                        pass
-                    # Update user_env so audio_capture uses PipeWire
-                    _user_env.update(_pw_env)
-                    # Verify
-                    for _pa_cmd, _pa_label in [
-                        (["pactl", "info"], "Audio info"),
-                        (["pactl", "list", "short", "sinks"], "Audio sinks"),
-                    ]:
-                        try:
-                            _pa_out = subprocess.check_output(
-                                _pa_cmd, env=_user_env, timeout=5, text=True)
-                            sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
-                        except Exception as _pa_err:
-                            sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-                elif _has_pulseaudio:
-                    _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
-                    _pa_conf_dir.mkdir(parents=True, exist_ok=True)
-                    (_pa_conf_dir / "daemon.conf").write_text(
-                        "default-sample-rate = 48000\n"
-                        "alternate-sample-rate = 48000\n"
-                    )
-                    if _desktop_user:
-                        import subprocess as _sp_chown
-                        _sp_chown.run(["chown", "-R", _desktop_user,
-                                       str(_pa_conf_dir)], check=False)
-                    subprocess.run(
-                        ["pulseaudio", "--kill"],
-                        env=_user_env, stdout=_log_d, stderr=_log_d, timeout=5)
-                    _time_mod.sleep(0.3)
-                    _p_pulse = subprocess.Popen(
-                        ["pulseaudio", "--start", "--exit-idle-time=-1",
-                         "--load=module-null-sink sink_name=virtual_out rate=48000",
-                         "--load=module-always-sink"],
-                        env=_user_env, stdout=_log_d, stderr=_log_d)
-                    _procs.append(_p_pulse)
-                    _time_mod.sleep(0.5)
-                    for _pa_cmd, _pa_label in [
-                        (["pactl", "info"], "PA info"),
-                        (["pactl", "list", "short", "sinks"], "PA sinks"),
-                    ]:
-                        try:
-                            _pa_out = subprocess.check_output(
-                                _pa_cmd, env=_user_env, timeout=5, text=True)
-                            sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
-                        except Exception as _pa_err:
-                            sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-
-                # Audio capture server (Opus over TCP) — works with both PipeWire and PulseAudio
-                if _has_pipewire or _has_pulseaudio:
-                    _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
-                    _audio_script = Path("/opt/pawflow/audio_capture.py")
-                    if _audio_script.exists():
-                        _p_audio = subprocess.Popen(
-                            [sys.executable, str(_audio_script),
-                             "--port", str(_audio_port), "--source", "pulse"],
-                            env=_user_env,
-                            stdout=_log_d, stderr=_log_d)
-                        _procs.append(_p_audio)
-                        sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")
-                    else:
-                        _audio_port = 0
 
                 _execute_command._desktop_procs = _procs
                 _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]

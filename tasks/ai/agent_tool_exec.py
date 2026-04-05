@@ -40,13 +40,17 @@ class AgentToolExecMixin:
 
         Returns list of (tool_call, result_text) in original order.
         """
-        # Load secret values for output redaction (secrets only, not variables)
+        # Load env vars (for $VAR resolution) and secret values (for redaction)
         _secret_values = set()
         _secret_names = {}
+        _all_env = {}
         if user_id:
             try:
-                from services.tool_relay_service import resolve_secret_values, _redact_secrets
+                from services.tool_relay_service import (
+                    resolve_secrets_env, resolve_secret_values,
+                    _redact_secrets, _resolve_vars_in_args)
                 _scid = conversation_id.split('::task::')[0] if '::task::' in conversation_id else conversation_id
+                _all_env = resolve_secrets_env(user_id, _scid)
                 _secret_values, _secret_names = resolve_secret_values(user_id, _scid)
             except Exception:
                 pass
@@ -138,6 +142,9 @@ class AgentToolExecMixin:
                     h.set_source_agent(agent_name, agent_svc)
                     break
             try:
+                # Resolve $VAR / ${VAR} in arguments before execution
+                if _all_env:
+                    _resolve_vars_in_args(tc.arguments, _all_env)
                 # Pre-hook execution
                 self._run_hook("pre", tc.name, tc.arguments, conversation_id, user_id)
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)

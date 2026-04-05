@@ -34,6 +34,35 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
+def _resolve_vars_in_args(arguments: dict, env: dict):
+    """Resolve $VAR and ${VAR} patterns in all string values of arguments.
+
+    Mutates arguments in-place. Recurses into dicts and lists.
+    Skips keys starting with _ (internal params like _secret_env).
+    """
+    import re
+    _pattern = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
+
+    def _replace(match):
+        name = match.group(1) or match.group(2)
+        return env.get(name, env.get(name.upper(), match.group(0)))
+
+    def _resolve(obj):
+        if isinstance(obj, str):
+            return _pattern.sub(_replace, obj)
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if k.startswith('_'):
+                    continue
+                obj[k] = _resolve(v)
+            return obj
+        if isinstance(obj, list):
+            return [_resolve(item) for item in obj]
+        return obj
+
+    _resolve(arguments)
+
+
 def _redact_secrets(text: str, secret_values: set,
                     secret_names: dict = None) -> str:
     """Replace exact occurrences of secret values in text with a redaction marker.
@@ -605,13 +634,17 @@ class ToolRelayService(BaseService):
         # Resolve env vars (all variables + secrets) and secret values (for redaction)
         _secret_values = set()
         _secret_names = {}
+        _all_env = {}
         _secret_cid = conversation_id.split('::task::')[0] if conversation_id and '::task::' in conversation_id else conversation_id
         if user_id and isinstance(arguments, dict):
             try:
-                # All variables + secrets → env injection for exec tools
                 _all_env = resolve_secrets_env(user_id, _secret_cid)
-                if _all_env and tool_name in {"bash", "execute_script"}:
-                    arguments["_secret_env"] = _all_env
+                if _all_env:
+                    # Inject as process env vars for shell tools
+                    if tool_name in {"bash", "execute_script"}:
+                        arguments["_secret_env"] = _all_env
+                    # Resolve $VAR / ${VAR} in ALL string arguments
+                    _resolve_vars_in_args(arguments, _all_env)
                 # Only secrets → redaction
                 _secret_values, _secret_names = resolve_secret_values(user_id, _secret_cid)
             except Exception as _se:

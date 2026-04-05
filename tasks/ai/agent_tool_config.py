@@ -122,6 +122,11 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if user_id:
                     h.set_user_id(user_id)
+            elif hasattr(h, '_is_dynamic') or h.name in ('create_tool', 'delete_tool'):
+                if hasattr(h, 'set_conversation_id') and conversation_id:
+                    h.set_conversation_id(conversation_id)
+                if hasattr(h, 'set_user_id') and user_id:
+                    h.set_user_id(user_id)
             elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
                 h.set_user_id(user_id)
                 if hasattr(h, 'set_agent_name'):

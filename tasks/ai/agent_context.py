@@ -288,6 +288,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 _early_agent = _early_target or _early_res.get("agent", "")
             except Exception:
                 pass
+            # Load dynamic tools for this conversation
+            from core.handlers.dynamic_tool import load_dynamic_tools
+            _parent_cid = conversation_id.split("::task::")[0] if "::task::" in conversation_id else conversation_id
+            load_dynamic_tools(_parent_cid, registry)
         _context_agent = _early_agent
 
         # ── Resolve active agent + LLM service EARLY ──

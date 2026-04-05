@@ -97,6 +97,8 @@ def _append_task_log(conversation_id: str, task_id: str, entry: dict):
 class ToolRegistry:
     """Registry of available tool handlers."""
 
+    _live_registry: Optional["ToolRegistry"] = None  # for dynamic tool access
+
     def __init__(self):
         self._handlers: Dict[str, ToolHandler] = {}
         self._hooks: Dict[str, List] = {}  # "pre:tool_name" or "post:tool_name" or "pre:*" / "post:*"
@@ -266,6 +268,12 @@ def create_default_registry() -> ToolRegistry:
         registry.register(BrowserActionHandler())
     except ImportError:
         pass
+
+    # Dynamic tools (create/delete at runtime)
+    registry.register(DeleteToolHandler())
+
+    # Set live registry for dynamic tool access
+    ToolRegistry._live_registry = registry
 
     # Identity linking
     registry.register(LinkIdentityHandler())

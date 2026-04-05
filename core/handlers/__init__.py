@@ -21,8 +21,12 @@ from core.handlers.file_ops import (  # noqa: F401
     ScheduleRecheckHandler,
 )
 from core.handlers._fs_base import BaseFsHandler  # noqa: F401
-from core.handlers.flow_management import (  # noqa: F401
+from core.handlers.dynamic_tool import (  # noqa: F401
     CreateToolHandler,
+    DeleteToolHandler,
+    load_dynamic_tools,
+)
+from core.handlers.flow_management import (  # noqa: F401
     FlowManagerHandler,
     CreatePlanHandler,
     UpdatePlanHandler,

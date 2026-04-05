@@ -98,14 +98,7 @@ class StreamEmitter(AgentEmitter):
     def _emit(self, event_type: str, data: dict):
         if self._task_id:
             data['task_id'] = self._task_id
-            _ti = self.ctx.get("_task_iteration", 0)
-            data['task_iteration'] = _ti
-            if _ti == 0:
-                import logging as _log_ti
-                _log_ti.getLogger("pawflow").warning(
-                    "[EMIT] task_iteration=0 for %s task=%s ctx_keys=%s conv=%s",
-                    event_type, self._task_id, list(self.ctx.keys())[:10],
-                    self.conversation_id[:16])
+            data['task_iteration'] = self.ctx.get("_task_iteration", 0)
         if 'ts' not in data:
             data['ts'] = time.time()
         self.bus.publish_event(self.event_cid, event_type, data)

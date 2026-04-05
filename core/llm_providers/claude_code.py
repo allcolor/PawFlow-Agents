@@ -541,11 +541,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _task_id = ''
         if '::task::' in conv_id:
             _task_id = conv_id.split('::task::')[-1].split('::')[0]
+        _agent_ctx = getattr(self, '_agent_ctx', {}) or {}
+
         def _pub(event_type, data):
             if not _event_cid:
                 return
             if _task_id:
                 data['task_id'] = _task_id
+                data['task_iteration'] = _agent_ctx.get("_task_iteration", 0)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(

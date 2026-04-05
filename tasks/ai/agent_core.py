@@ -112,6 +112,7 @@ class AgentCoreMixin:
         client._agent_name = ctx.get("active_agent_name", "")
         client._agent_service = ctx.get("active_llm_service", "")
         client._event_cid = ctx.get("_event_cid", conversation_id)
+        client._agent_ctx = ctx  # for SSE event enrichment (task_iteration etc)
 
         # Register active claude-code client for preempt (stdin injection)
         _agent_name_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}" if ctx.get('active_agent_name') else conversation_id

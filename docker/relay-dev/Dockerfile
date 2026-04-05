@@ -152,6 +152,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xvfb xfce4 xfce4-goodies dbus-x11 \
     x11vnc novnc websockify \
     pipewire pipewire-pulse pipewire-audio-client-libraries wireplumber \
+    pulseaudio-utils \
     xdotool xclip xsel scrot wmctrl \
     fonts-dejavu fonts-liberation fonts-noto-color-emoji \
     libgtk-3-0 libnotify4 \

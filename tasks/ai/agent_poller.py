@@ -308,7 +308,10 @@ class AgentPollerMixin:
                         self._active_thoughts.discard(entry_key)
                     continue
                 # ── Increment reschedule_count (only real runs, not skipped) ──
-                _task_entry["reschedule_count"] = _task_entry.get("reschedule_count", 0) + 1
+                _prev_rc = _task_entry.get("reschedule_count", 0)
+                _task_entry["reschedule_count"] = _prev_rc + 1
+                logger.info("[poller] task %s reschedule_count %d → %d (key=%s)",
+                            _task_id, _prev_rc, _prev_rc + 1, entry_key[-30:])
                 _all_tasks[_task_id] = _task_entry
                 store.set_extra(cid, "agent_tasks", _all_tasks)
             elif "::" in entry_key:

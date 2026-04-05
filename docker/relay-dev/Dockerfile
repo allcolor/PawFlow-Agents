@@ -161,7 +161,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir -p /etc/pulse/daemon.conf.d \
     && printf 'default-fragment-size-msec = 20\ndefault-fragments = 2\nhigh-priority = yes\nnice-level = -11\nrealtime-scheduling = yes\n' \
-       > /etc/pulse/daemon.conf.d/timing.conf
+       > /etc/pulse/daemon.conf.d/timing.conf \
+    && sed -i 's/load-module module-udev-detect$/load-module module-udev-detect tsched=0/' /etc/pulse/default.pa \
+    && sed -i 's/load-module module-udev-detect tsched=1/load-module module-udev-detect tsched=0/' /etc/pulse/default.pa
 
 # ── Desktop apps: image, video, audio, office, viewers ─────────────
 RUN apt-get update && apt-get install -y --no-install-recommends \

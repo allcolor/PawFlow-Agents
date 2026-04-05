@@ -1393,11 +1393,78 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                      str(_novnc_port), f"localhost:{_vnc_port}"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_novnc)
-                # 6. PulseAudio (virtual audio sink for desktop apps)
+                # 6. Audio server (PipeWire preferred, PulseAudio fallback)
                 import shutil as _shutil
                 _audio_port = 0
-                if _shutil.which("pulseaudio"):
-                    # Write daemon.conf to force 48kHz — PA defaults to 44100
+                _has_pipewire = _shutil.which("pipewire")
+                _has_pulseaudio = _shutil.which("pulseaudio")
+                if _has_pipewire:
+                    # PipeWire: better clock stability than PulseAudio in WSL2/Docker
+                    _pw_conf_dir = Path(_desktop_home) / ".config" / "pipewire" / "pipewire.conf.d"
+                    _pw_conf_dir.mkdir(parents=True, exist_ok=True)
+                    # Force 48kHz sample rate
+                    (_pw_conf_dir / "10-rate.conf").write_text(
+                        'context.properties = {\n'
+                        '  default.clock.rate = 48000\n'
+                        '  default.clock.allowed-rates = [ 48000 ]\n'
+                        '}\n'
+                    )
+                    if _desktop_user:
+                        import subprocess as _sp_chown
+                        _sp_chown.run(["chown", "-R", _desktop_user,
+                                       str(_pw_conf_dir.parent.parent)], check=False)
+                    # Set runtime dir for PipeWire (no systemd in container)
+                    _pw_runtime = Path(_desktop_home) / ".pipewire-runtime"
+                    _pw_runtime.mkdir(parents=True, exist_ok=True)
+                    if _desktop_user:
+                        _sp_chown.run(["chown", "-R", _desktop_user, str(_pw_runtime)], check=False)
+                    _pw_env = {**_user_env,
+                               "XDG_RUNTIME_DIR": str(_pw_runtime),
+                               "PIPEWIRE_RUNTIME_DIR": str(_pw_runtime),
+                               "PULSE_RUNTIME_DIR": str(_pw_runtime)}
+                    # Start PipeWire daemon
+                    _p_pw = subprocess.Popen(
+                        ["pipewire"],
+                        env=_pw_env, stdout=_log_d, stderr=_log_d)
+                    _procs.append(_p_pw)
+                    _time_mod.sleep(0.3)
+                    # Start WirePlumber (session manager)
+                    if _shutil.which("wireplumber"):
+                        _p_wp = subprocess.Popen(
+                            ["wireplumber"],
+                            env=_pw_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_wp)
+                        _time_mod.sleep(0.2)
+                    # Start pipewire-pulse (PulseAudio compat layer)
+                    if _shutil.which("pipewire-pulse"):
+                        _p_pp = subprocess.Popen(
+                            ["pipewire-pulse"],
+                            env=_pw_env, stdout=_log_d, stderr=_log_d)
+                        _procs.append(_p_pp)
+                        _time_mod.sleep(0.3)
+                    # Create null sink for virtual audio
+                    try:
+                        subprocess.run(
+                            ["pactl", "load-module", "module-null-sink",
+                             "sink_name=virtual_out", "rate=48000"],
+                            env=_pw_env, timeout=5, stdout=_log_d, stderr=_log_d)
+                    except Exception:
+                        pass
+                    # Update user_env so audio_capture uses PipeWire
+                    _user_env.update(_pw_env)
+                    # Verify
+                    for _pa_cmd, _pa_label in [
+                        (["pactl", "info"], "Audio info"),
+                        (["pactl", "list", "short", "sinks"], "Audio sinks"),
+                    ]:
+                        try:
+                            _pa_out = subprocess.check_output(
+                                _pa_cmd, env=_user_env, timeout=5, text=True)
+                            sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
+                        except Exception as _pa_err:
+                            sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
+                elif _has_pulseaudio:
+                    # Fallback: PulseAudio
                     _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
                     _pa_conf_dir.mkdir(parents=True, exist_ok=True)
                     (_pa_conf_dir / "daemon.conf").write_text(
@@ -1406,28 +1473,22 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                     )
                     if _desktop_user:
                         import subprocess as _sp_chown
-                        _sp_chown.run(["chown", "-R",
-                                       _desktop_user,
+                        _sp_chown.run(["chown", "-R", _desktop_user,
                                        str(_pa_conf_dir)], check=False)
-                    # Kill any stale PA — --start ignores --load if PA is already running
                     subprocess.run(
                         ["pulseaudio", "--kill"],
-                        env=_user_env,
-                        stdout=_log_d, stderr=_log_d, timeout=5)
+                        env=_user_env, stdout=_log_d, stderr=_log_d, timeout=5)
                     _time_mod.sleep(0.3)
                     _p_pulse = subprocess.Popen(
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
                          "--load=module-null-sink sink_name=virtual_out rate=48000",
                          "--load=module-always-sink"],
-                        env=_user_env,
-                        stdout=_log_d, stderr=_log_d)
+                        env=_user_env, stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_pulse)
                     _time_mod.sleep(0.5)
-                    # Verify sink rate and daemon config
                     for _pa_cmd, _pa_label in [
                         (["pactl", "info"], "PA info"),
-                        (["pactl", "list", "sinks"], "PA sinks"),
-                        (["pactl", "list", "short", "sources"], "PA sources"),
+                        (["pactl", "list", "short", "sinks"], "PA sinks"),
                     ]:
                         try:
                             _pa_out = subprocess.check_output(

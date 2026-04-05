@@ -1464,7 +1464,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         except Exception as _pa_err:
                             sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
                 elif _has_pulseaudio:
-                    # Fallback: PulseAudio
                     _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
                     _pa_conf_dir.mkdir(parents=True, exist_ok=True)
                     (_pa_conf_dir / "daemon.conf").write_text(
@@ -1496,7 +1495,9 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
                         except Exception as _pa_err:
                             sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-                    # Audio capture server (Opus over TCP)
+
+                # Audio capture server (Opus over TCP) — works with both PipeWire and PulseAudio
+                if _has_pipewire or _has_pulseaudio:
                     _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
                     _audio_script = Path("/opt/pawflow/audio_capture.py")
                     if _audio_script.exists():

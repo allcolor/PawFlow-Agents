@@ -144,7 +144,12 @@ class AgentToolExecMixin:
             try:
                 # Resolve $VAR / ${VAR} in arguments before execution
                 if _all_env:
-                    _resolve_vars_in_args(tc.arguments, _all_env)
+                    _skip = set()
+                    if tc.name == "bash":
+                        _skip = {"command"}
+                    elif tc.name == "execute_script":
+                        _skip = {"code"}
+                    _resolve_vars_in_args(tc.arguments, _all_env, skip_keys=_skip)
                 # Pre-hook execution
                 self._run_hook("pre", tc.name, tc.arguments, conversation_id, user_id)
                 logger.info("Agent calling tool '%s' with args: %s", tc.name, tc.arguments)

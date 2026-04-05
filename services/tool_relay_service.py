@@ -34,13 +34,15 @@ from core.base_service import BaseService
 logger = logging.getLogger(__name__)
 
 
-def _resolve_vars_in_args(arguments: dict, env: dict):
+def _resolve_vars_in_args(arguments: dict, env: dict, skip_keys: set = None):
     """Resolve $VAR and ${VAR} patterns in all string values of arguments.
 
     Mutates arguments in-place. Recurses into dicts and lists.
     Skips keys starting with _ (internal params like _secret_env).
+    Skips keys in skip_keys (e.g. 'command' for bash — shell resolves itself).
     """
     import re
+    _skip = skip_keys or set()
     _pattern = re.compile(r'\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)')
 
     def _replace(match):
@@ -52,7 +54,7 @@ def _resolve_vars_in_args(arguments: dict, env: dict):
             return _pattern.sub(_replace, obj)
         if isinstance(obj, dict):
             for k, v in obj.items():
-                if k.startswith('_'):
+                if k.startswith('_') or k in _skip:
                     continue
                 obj[k] = _resolve(v)
             return obj
@@ -643,8 +645,15 @@ class ToolRelayService(BaseService):
                     # Inject as process env vars for shell tools
                     if tool_name in {"bash", "execute_script"}:
                         arguments["_secret_env"] = _all_env
-                    # Resolve $VAR / ${VAR} in ALL string arguments
-                    _resolve_vars_in_args(arguments, _all_env)
+                    # Resolve $VAR / ${VAR} in string arguments
+                    # bash: skip 'command' (shell resolves $VAR itself)
+                    # execute_script: skip 'code' (Python uses os.environ)
+                    _skip = set()
+                    if tool_name == "bash":
+                        _skip = {"command"}
+                    elif tool_name == "execute_script":
+                        _skip = {"code"}
+                    _resolve_vars_in_args(arguments, _all_env, skip_keys=_skip)
                 # Only secrets → redaction
                 _secret_values, _secret_names = resolve_secret_values(user_id, _secret_cid)
             except Exception as _se:

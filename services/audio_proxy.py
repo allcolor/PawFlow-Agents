@@ -102,35 +102,36 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
             queue_event.set()
 
     def _backend_to_browser():
-        """Send queued packets to browser WS, batched for fewer syscalls."""
+        """Send queued packets to browser WS, rate-capped at 50fps."""
+        _MIN_INTERVAL = 0.019  # ~50fps max (19ms minimum between sends)
+        _MAX_QUEUE = 10  # drop oldest if TCP delivery bursts
+        _last_send = time.perf_counter()
         try:
             while not stop.is_set():
-                queue_event.wait(timeout=0.005)  # low-latency: forward ASAP
+                queue_event.wait(timeout=0.005)
                 queue_event.clear()
-                # Drain all available packets into one batch
-                batch = []
-                while pkt_queue:
-                    batch.append(pkt_queue.popleft())
-                if not batch:
+                if not pkt_queue:
                     continue
-                # Send each as individual WS frame (browser expects 1 opus pkt per msg)
-                # but use writev-style to reduce syscall overhead
-                frames = bytearray()
-                for pkt in batch:
-                    if len(pkt) < 126:
-                        frames.append(0x82)
-                        frames.append(len(pkt))
-                    else:
-                        frames.append(0x82)
-                        frames.append(126)
-                        frames.extend(struct.pack("!H", len(pkt)))
-                    frames.extend(pkt)
+                # Drop excess from TCP bursts (keep latest)
+                while len(pkt_queue) > _MAX_QUEUE:
+                    pkt_queue.popleft()
+                # Rate cap: send 1 packet per ~20ms
+                now = time.perf_counter()
+                if now - _last_send < _MIN_INTERVAL:
+                    continue  # too soon — wait for next cycle
+                pkt = pkt_queue.popleft()
+                frame = bytearray()
+                if len(pkt) < 126:
+                    frame.append(0x82)
+                    frame.append(len(pkt))
+                else:
+                    frame.append(0x82)
+                    frame.append(126)
+                    frame.extend(struct.pack("!H", len(pkt)))
+                frame.extend(pkt)
                 try:
-                    t0 = time.monotonic()
-                    client_sock.sendall(bytes(frames))
-                    dt = time.monotonic() - t0
-                    if dt > 0.1:
-                        logger.warning("Audio proxy: sendall blocked %.1fms (%d frames, %d bytes)", dt*1000, len(batch), len(frames))
+                    client_sock.sendall(bytes(frame))
+                    _last_send = time.perf_counter()
                 except Exception:
                     stop.set()
                     return

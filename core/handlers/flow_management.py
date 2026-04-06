@@ -599,13 +599,10 @@ class CreatePlanHandler(ToolHandler):
         }
 
         if self._conversation_id:
+            plan["conversation_id"] = self._conversation_id
             try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                plans = store.get_extra(self._conversation_id, "plans") or {}
-                plans[plan_id] = plan
-                store.set_extra(self._conversation_id, "plans", plans)
-                # Emit SSE event
+                from core.plan_store import PlanStore
+                PlanStore.instance().save("", self._conversation_id, plan)
                 try:
                     from core.conversation_event_bus import ConversationEventBus
                     ConversationEventBus.instance().publish_event(
@@ -682,26 +679,23 @@ class UpdatePlanHandler(ToolHandler):
         if not plan_id or not updates:
             return "Error: plan_id and updates are required"
 
-        plan = None
-        if self._conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                plans = store.get_extra(self._conversation_id, "plans") or {}
-                plan = plans.get(plan_id)
-            except Exception:
-                pass
+        if not self._conversation_id:
+            return "Error: no conversation context"
 
+        from core.plan_store import PlanStore
+        plan = PlanStore.instance().get("", self._conversation_id, plan_id)
         if not plan:
             return f"Error: plan '{plan_id}' not found."
 
-        _needs_verify = []
         for u in updates:
             step_num = int(u.get("step") or u.get("index") or 0)
             if step_num == 0:
                 continue
             status = u.get("status", "")
             note = u.get("note", "")
+            # Agent can only set done or error
+            if status not in ("done", "error"):
+                continue
             for s in plan["steps"]:
                 if s["index"] == step_num:
                     # If marking done and there's a verifier, intercept
@@ -712,7 +706,6 @@ class UpdatePlanHandler(ToolHandler):
                             s["status"] = "pending_verification"
                             if note:
                                 s["note"] = note
-                            _needs_verify.append((step_num, verifier))
                             break
                     s["status"] = status
                     if note:
@@ -723,66 +716,17 @@ class UpdatePlanHandler(ToolHandler):
         statuses = [s["status"] for s in plan["steps"]]
         if all(s in ("done", "skipped") for s in statuses):
             plan["status"] = "completed"
-        elif any(s == "in_progress" for s in statuses):
-            plan["status"] = "in_progress"
 
-        # Persist
-        if self._conversation_id:
-            try:
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                plans = store.get_extra(self._conversation_id, "plans") or {}
-                plans[plan_id] = plan
-                store.set_extra(self._conversation_id, "plans", plans)
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(
-                        self._conversation_id, "plan_updated", {"plan": plan})
-                except Exception:
-                    pass
-            except Exception:
-                pass
+        # Persist to file (no JSONL duplication)
+        PlanStore.instance().save("", self._conversation_id, plan)
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                self._conversation_id, "plan_updated", {"plan": plan})
+        except Exception:
+            pass
 
-        # Schedule verifiers if any steps need verification
-        if _needs_verify and self._conversation_id:
-            try:
-                from core.poll_scheduler import PollScheduler
-                for step_num, verifier in _needs_verify:
-                    PollScheduler.instance().schedule_delay(
-                        self._conversation_id, 0,
-                        key=(f"{self._conversation_id}::plan_verify::"
-                             f"{plan_id}::step{step_num}::{verifier}"),
-                        reason=(f"[plan_verify:{plan_id}:{step_num}:"
-                                f"{self._agent_name}] ({verifier})"),
-                        user_id="",
-                    )
-                try:
-                    from tasks.ai.agent_loop import AgentLoopTask
-                    AgentLoopTask.wake_poller()
-                except Exception:
-                    pass
-            except Exception:
-                pass
-
-        # Step chaining: if any step was marked done/skipped (not pending_verification)
-        _any_done = any(
-            u.get("status") in ("done", "skipped")
-            and not any(sv[0] == int(u.get("step", 0)) for sv in _needs_verify)
-            for u in updates
-        )
-        _next_scheduled = False
-        if _any_done and plan["status"] != "completed" and self._conversation_id:
-            try:
-                from tasks.ai.actions.plans import _trigger_next_plan_step
-                from core.conversation_store import ConversationStore
-                store = ConversationStore.instance()
-                _trigger_next_plan_step(
-                    self._conversation_id, plan_id, plan, store, "")
-                _next_scheduled = True
-            except Exception:
-                pass
-
-        # Format
+        # Format response for the agent
         done_count = sum(1 for s in plan["steps"] if s["status"] == "done")
         total = len(plan["steps"])
         lines = [f"**{plan['title']}** — {done_count}/{total} done [{plan['status']}]"]
@@ -790,12 +734,13 @@ class UpdatePlanHandler(ToolHandler):
             icon = {"pending": "\u25cb", "in_progress": "\u25d4", "done": "\u2713",
                     "skipped": "\u2013", "error": "\u2717",
                     "pending_verification": "\u2690"}.get(s["status"], "\u25cb")
-            note = f' \u2014 {s["note"]}' if s.get("note") else ""
-            lines.append(f"  {icon} {s['index']}. {s['description']}{note}")
-        if _next_scheduled:
-            lines.append("\nNext step scheduled. STOP here — do NOT continue to the next step yourself.")
-        elif plan["status"] == "completed":
-            lines.append("\nPlan completed.")
+            note_str = f' \u2014 {s["note"]}' if s.get("note") else ""
+            lines.append(f"  {icon} {s['index']}. {s['description']}{note_str}")
+
+        # Tell the agent to stop — the orchestrator handles next steps
+        lines.append("\nSTOP here. The orchestrator will handle the next step.")
+        if plan["status"] == "completed":
+            lines.append("Plan completed.")
         return "\n".join(lines)
 
 

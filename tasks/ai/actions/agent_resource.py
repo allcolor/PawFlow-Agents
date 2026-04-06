@@ -205,14 +205,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 rs.update("skill", skill_name, uid, data)
             else:
                 rs.create("skill", skill_name, uid, data)
-            # Auto-activate in conversation
-            if conv_id:
-                active = store.get_extra(conv_id, "active_resources") or {}
-                skills = active.get("skills", [])
-                if skill_name not in skills:
-                    skills.append(skill_name)
-                active["skills"] = skills
-                store.set_extra(conv_id, "active_resources", active)
             flowfile.set_content(json.dumps({
                 "created": True, "name": skill_name,
             }).encode())
@@ -253,13 +245,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         uid = user_id or "anonymous"
         deleted = ResourceStore.instance().delete("skill", skill_name, uid)
-        if conv_id:
-            active = store.get_extra(conv_id, "active_resources") or {}
-            skills = active.get("skills", [])
-            if skill_name in skills:
-                skills.remove(skill_name)
-            active["skills"] = skills
-            store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({
             "deleted": deleted, "name": skill_name,
         }).encode())
@@ -349,17 +334,11 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         from core.resource_store import ResourceStore
         uid = user_id or "anonymous"
         skills = ResourceStore.instance().list_all("skill", uid)
-        conv_id = body.get("conversation_id", "")
-        active_skills = []
-        if conv_id:
-            active = store.get_extra(conv_id, "active_resources") or {}
-            active_skills = active.get("skills", [])
         flowfile.set_content(json.dumps({
             "skills": [{
                 "name": s["name"],
                 "description": s.get("description", ""),
                 "prompt": s.get("prompt", "")[:80],
-                "active": s["name"] in active_skills,
             } for s in skills],
         }, ensure_ascii=False).encode())
         return [flowfile]
@@ -429,7 +408,6 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "name": s["name"],
                 "description": s.get("description", ""),
                 "scope": s.get("_scope", ""),
-                "active": s["name"] in active.get("skills", []),
                 "assigned_to": [a["name"] for a in all_repo_agents
                                 if s["name"] in (a.get("assigned_skills") or [])],
             } for s in rs.list_all("skill", uid, conversation_id=conv_id)],
@@ -779,16 +757,17 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         active = store.get_extra(conv_id, "active_resources") or {}
         if rtype == "agent":
             active["agent"] = rname
-        elif rtype == "skill":
-            skills = active.get("skills", [])
-            if rname not in skills:
-                skills.append(rname)
-            active["skills"] = skills
         elif rtype == "mcp":
             mcps = active.get("mcps", [])
             if rname not in mcps:
                 mcps.append(rname)
             active["mcps"] = mcps
+        else:
+            flowfile.set_content(json.dumps({
+                "error": f"Cannot activate resource type '{rtype}' on a conversation",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({
             "activated": True, "type": rtype, "name": rname,
@@ -809,16 +788,17 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         if rtype == "agent":
             if active.get("agent") == rname:
                 active.pop("agent", None)
-        elif rtype == "skill":
-            skills = active.get("skills", [])
-            if rname in skills:
-                skills.remove(rname)
-            active["skills"] = skills
         elif rtype == "mcp":
             mcps = active.get("mcps", [])
             if rname in mcps:
                 mcps.remove(rname)
             active["mcps"] = mcps
+        else:
+            flowfile.set_content(json.dumps({
+                "error": f"Cannot deactivate resource type '{rtype}' from a conversation",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         store.set_extra(conv_id, "active_resources", active)
         flowfile.set_content(json.dumps({
             "deactivated": True, "type": rtype, "name": rname,
@@ -847,16 +827,17 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         active = store.get_extra(target_conv, "active_resources") or {}
         if rtype == "agent":
             active["agent"] = rname
-        elif rtype == "skill":
-            skills = active.get("skills", [])
-            if rname not in skills:
-                skills.append(rname)
-            active["skills"] = skills
         elif rtype == "mcp":
             mcps = active.get("mcps", [])
             if rname not in mcps:
                 mcps.append(rname)
             active["mcps"] = mcps
+        else:
+            flowfile.set_content(json.dumps({
+                "error": f"Cannot share resource type '{rtype}' to a conversation",
+            }).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
         store.set_extra(target_conv, "active_resources", active)
         flowfile.set_content(json.dumps({
             "shared": True, "type": rtype, "name": rname,

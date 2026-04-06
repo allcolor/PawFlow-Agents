@@ -582,13 +582,6 @@ delegate(tasks=[
 Sub-agents run their own tool-use loops with their configured tools.
 Depth limit prevents infinite recursion (default: 1 level).
 
-### use_skill tool
-Apply a skill transformation:
-```
-use_skill(skill="summarizer", input="Long text here...")
-```
-Single LLM call, no tools — fast and efficient.
-
 ### show_file tool
 Display a file in the chat viewer:
 ```

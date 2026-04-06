@@ -89,10 +89,10 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # Wire embedding function for semantic memory handlers
         self._wire_embed_fn(registry, client)
 
-        # Set up SubAgentExecutor for delegate/use_skill/get_agent_results
+        # Set up SubAgentExecutor for delegate/get_agent_results
         from core.agent_executor import SubAgentExecutor
         from core.tool_registry import (
-            SpawnAgentsHandler, GetAgentResultsHandler, UseSkillHandler,
+            SpawnAgentsHandler, GetAgentResultsHandler,
         )
         # Create a resolver closure for per-agent LLM service routing
         _self = self
@@ -128,8 +128,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 h.set_spawn_deps(client, _client_resolver, _sub_on_event, registry=registry)
                 if _agent_names:
                     h.set_available_agents(_agent_names)
-            elif isinstance(h, UseSkillHandler):
-                h.set_spawn_deps(client, _client_resolver)
+
             if hasattr(h, '_tool_result_max_chars'):
                 h._tool_result_max_chars = _tool_max
 
@@ -523,7 +522,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             self._pending_channel_chat_id = ""
             self._pending_channel_name = ""
 
-        # Check for selected agent persona and active skills
+        # Check for selected agent persona and assigned skills
         _selected_agent_def = None
         if use_conv_store and conversation_id:
             try:
@@ -572,8 +571,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             )
 
                 # Inject skills into system prompt.
-                # In task context: use task_def skills (not agent's own).
-                # In main conv: use agent's assigned_skills.
+                # Main conv: agent's own assigned_skills.
+                # Task sub-conv: task_def skills only (not agent's own).
                 if "::task::" in conversation_id:
                     _task_id = conversation_id.split("::task::")[1].split("::")[0]
                     _parent_cid = conversation_id.split("::task::")[0]

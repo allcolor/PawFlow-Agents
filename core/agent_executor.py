@@ -782,10 +782,10 @@ def resolve_agent_task(
     llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=user_id) or ""
 
     # Inject skills into system prompt
-    # In sub-contexts (delegate/task), extra_skills REPLACES assigned_skills.
-    # In main conv (no extra_skills), use agent's own assigned_skills.
+    # Sub-contexts (delegate) only get skills explicitly passed via extra_skills.
+    # No fallback to agent's own assigned_skills — those are for the main conv only.
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
-    _assigned_skills = list(extra_skills) if extra_skills is not None else list(agent_def.get("assigned_skills") or [])
+    _assigned_skills = list(extra_skills) if extra_skills else []
     if _assigned_skills:
         _skill_blocks = []
         for _sk_name in _assigned_skills:

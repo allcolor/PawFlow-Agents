@@ -11,6 +11,76 @@ from core.tool_handler import ToolHandler
 logger = logging.getLogger(__name__)
 
 
+def _activate_dependents(conversation_id: str, completed_task_id: str,
+                        result: str = "", user_id: str = ""):
+    """Check if any waiting tasks can be activated after a task completes."""
+    from core.conversation_store import ConversationStore
+    from core.poll_scheduler import PollScheduler
+    store = ConversationStore.instance()
+    all_tasks = store.get_extra(conversation_id, "agent_tasks") or {}
+    activated = []
+    for tid, t in list(all_tasks.items()):
+        if not isinstance(t, dict) or t.get("status") != "waiting":
+            continue
+        deps = t.get("depends_on") or []
+        if completed_task_id not in deps:
+            continue
+        # Check if ALL deps are met (not in all_tasks = completed and removed)
+        all_met = all(d not in all_tasks or all_tasks[d].get("status") == "completed"
+                      for d in deps)
+        if not all_met:
+            continue
+        # Activate this task
+        t["status"] = "active"
+        all_tasks[tid] = t
+        delay = AssignTaskHandler._get_task_delay(t)
+        PollScheduler.instance().schedule_delay(
+            conversation_id, delay,
+            key=f"{conversation_id}::task::{tid}",
+            reason=f"[agent_task:{tid}] deps met, activated ({t.get('agent', '?')})",
+            user_id=user_id or t.get("assigned_by", ""),
+        )
+        # Inject parent results into the sub-conversation
+        parent_results = {}
+        for d in deps:
+            _log = store.get_extra(conversation_id, f"task_log:{d}") or []
+            # Find last completed entry
+            for entry in reversed(_log):
+                if entry.get("type") == "completed":
+                    parent_results[d] = entry.get("detail", "")
+                    break
+        if parent_results:
+            sub_cid = f"{conversation_id}::task::{tid}"
+            _msg = "## Results from dependency tasks\n"
+            for dep_id, dep_result in parent_results.items():
+                _msg += f"\n### Task {dep_id}\n{dep_result}\n"
+            store.append_messages(sub_cid, [{"role": "user", "content": _msg}])
+        activated.append(tid)
+        try:
+            _append_task_log(conversation_id, tid, {
+                "type": "activated",
+                "agent": t.get("agent", ""),
+                "detail": f"Dependencies met: {', '.join(deps)}",
+            })
+        except Exception:
+            pass
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            ConversationEventBus.instance().publish_event(
+                conversation_id, "task_progress", {
+                    "task_id": tid, "agent": t.get("agent", ""),
+                    "stage": "activated", "deps_met": deps,
+                },
+            )
+        except Exception:
+            pass
+    if activated:
+        store.set_extra(conversation_id, "agent_tasks", all_tasks)
+        logger.info("Activated %d dependent tasks after %s completed: %s",
+                    len(activated), completed_task_id, activated)
+    return activated
+
+
 def _append_task_log(conversation_id: str, task_id: str, entry: dict):
     """Append an entry to the persistent task timeline log (standalone helper)."""
     import time
@@ -109,9 +179,40 @@ class AssignTaskHandler(ToolHandler):
                     "type": "boolean",
                     "description": "Auto-approve all tool calls and commands for this task (no permission prompts). Default: false.",
                 },
+                "depends_on": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of task IDs that must complete before this task starts. The task will be in 'waiting' status until all dependencies are met.",
+                },
             },
             "required": ["agent", "task_def_name"],
         }
+
+    @staticmethod
+    def _has_cycle(all_tasks: dict, new_id: str, new_deps: list) -> bool:
+        """Check if adding new_id with new_deps would create a cycle."""
+        # Build adjacency: task → its depends_on
+        graph = {}
+        for tid, t in all_tasks.items():
+            if isinstance(t, dict):
+                graph[tid] = t.get("depends_on") or []
+        graph[new_id] = new_deps
+        # DFS cycle detection
+        visited = set()
+        in_stack = set()
+        def _dfs(node):
+            if node in in_stack:
+                return True
+            if node in visited:
+                return False
+            visited.add(node)
+            in_stack.add(node)
+            for dep in graph.get(node, []):
+                if _dfs(dep):
+                    return True
+            in_stack.discard(node)
+            return False
+        return _dfs(new_id)
 
     @staticmethod
     def _parse_interval(spec: str, fallback: int = 10) -> dict:
@@ -272,13 +373,32 @@ class AssignTaskHandler(ToolHandler):
 
         # Store in agent_tasks dict (multiple tasks per agent)
         all_tasks = store.get_extra(self._conversation_id, "agent_tasks") or {}
+
+        # Dependency handling
+        depends_on = arguments.get("depends_on") or []
+        if depends_on:
+            # Validate: all deps must exist in the same conversation
+            for dep_id in depends_on:
+                if dep_id not in all_tasks:
+                    return f"Error: dependency '{dep_id}' not found in this conversation's tasks"
+            # Cycle detection: DFS from this task through depends_on graph
+            if self._has_cycle(all_tasks, task_id, depends_on):
+                return "Error: circular dependency detected"
+
         context_mode = arguments.get("context", "isolated")
+        # Determine initial status based on dependencies
+        _deps_met = not depends_on or all(
+            all_tasks.get(d, {}).get("status") in (None, "completed")
+            or d not in all_tasks
+            for d in depends_on
+        )
+        _initial_status = "active" if _deps_met else "waiting"
         task_data = {
             "task_id": task_id,
             "agent": target,
             "task": task_desc,
             "completion_criteria": criteria,
-            "status": "active",
+            "status": _initial_status,
             "interval": interval_data,
             "max_iterations": max_iter,
             "iterations_done": 0,
@@ -297,19 +417,23 @@ class AssignTaskHandler(ToolHandler):
             "reschedule_count": 0,
             "auto_allow": auto_allow,
             "skills": definition.get("skills") or [],
+            "depends_on": depends_on,
         }
         all_tasks[task_id] = task_data
         store.set_extra(self._conversation_id, "agent_tasks", all_tasks)
 
-        # Schedule first wake-up
-        first_delay = self._get_task_delay(task_data)
-        from core.poll_scheduler import PollScheduler
-        PollScheduler.instance().schedule_delay(
-            self._conversation_id, first_delay,
-            key=f"{self._conversation_id}::task::{task_id}",
-            reason=f"[agent_task:{task_id}] assigned task ({target})",
-            user_id=self._user_id,
-        )
+        # Schedule first wake-up (only if not waiting on deps)
+        if _initial_status == "active":
+            first_delay = self._get_task_delay(task_data)
+            from core.poll_scheduler import PollScheduler
+            PollScheduler.instance().schedule_delay(
+                self._conversation_id, first_delay,
+                key=f"{self._conversation_id}::task::{task_id}",
+                reason=f"[agent_task:{task_id}] assigned task ({target})",
+                user_id=self._user_id,
+            )
+        else:
+            first_delay = 0
 
         # Publish SSE
         try:
@@ -336,7 +460,9 @@ class AssignTaskHandler(ToolHandler):
 
         v_info = f" (verifier: {verifier})" if verifier else ""
         iv_label = interval_data.get("spec", str(first_delay))
-        return f"Task {task_id} assigned to '{target}'{v_info}. Interval: {iv_label}. First in {first_delay}s."
+        dep_info = f" Waiting on: {', '.join(depends_on)}." if _initial_status == "waiting" else ""
+        sched_info = f" First in {first_delay}s." if _initial_status == "active" else ""
+        return f"Task {task_id} assigned to '{target}'{v_info}. Status: {_initial_status}. Interval: {iv_label}.{sched_info}{dep_info}"
 
 
 class CompleteTaskHandler(ToolHandler):
@@ -508,7 +634,12 @@ class CompleteTaskHandler(ToolHandler):
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(
                     f"{_parent_cid}::task::{task_id}")
-                return f"Task {task_id} completed."
+                # Activate dependent tasks
+                _activated = _activate_dependents(
+                    _parent_cid, task_id, result=result,
+                    user_id=task.get("assigned_by", ""))
+                _act_msg = f" Activated: {', '.join(_activated)}." if _activated else ""
+                return f"Task {task_id} completed.{_act_msg}"
         else:
             # Check limits before rescheduling
             from tasks.ai.agent_poller import _check_task_limits
@@ -635,6 +766,7 @@ class VerifyTaskHandler(ToolHandler):
 
         if approved:
             # Remove completed task
+            _result = task.get("last_result", "")
             all_tasks.pop(task_id, None)
             store.set_extra(_parent_cid, "agent_tasks", all_tasks)
             from core.poll_scheduler import PollScheduler
@@ -642,7 +774,12 @@ class VerifyTaskHandler(ToolHandler):
                 f"{_parent_cid}::task::{task_id}")
             PollScheduler.instance().cancel(
                 f"{_parent_cid}::task_verify::{task_id}")
-            return f"Task {task_id} approved and completed."
+            # Activate dependent tasks
+            _activated = _activate_dependents(
+                _parent_cid, task_id, result=_result,
+                user_id=task.get("assigned_by", ""))
+            _act_msg = f" Activated: {', '.join(_activated)}." if _activated else ""
+            return f"Task {task_id} approved and completed.{_act_msg}"
         else:
             task["status"] = "active"
             task["last_rejection"] = {

@@ -320,6 +320,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 "max_reschedules": t.get("max_reschedules", 0),
                 "total_cost": t.get("total_cost", 0.0),
                 "reschedule_count": t.get("reschedule_count", 0),
+                "depends_on": t.get("depends_on", []),
             })
         # Include library definitions if requested
         defs_out = []
@@ -355,6 +356,118 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         else:
             log = store.get_extra(conv_id, f"task_log:{task_name}") or []
             flowfile.set_content(json.dumps({"task": task_name, "log": log}).encode())
+        return [flowfile]
+
+    if action == "list_templates":
+        import os
+        _tpl_path = os.path.join("config", "task_templates.json")
+        templates_out = []
+        try:
+            with open(_tpl_path, "r") as f:
+                _tpls = json.load(f)
+            category_filter = body.get("category", "")
+            for name, tpl in _tpls.items():
+                if category_filter and tpl.get("category") != category_filter:
+                    continue
+                templates_out.append({
+                    "name": name,
+                    "category": tpl.get("category", ""),
+                    "description": tpl.get("description", ""),
+                    "default_interval": tpl.get("default_interval", ""),
+                    "variables": tpl.get("variables", {}),
+                    "has_criteria": bool(tpl.get("criteria")),
+                })
+        except FileNotFoundError:
+            pass
+        flowfile.set_content(json.dumps({"templates": templates_out}).encode())
+        return [flowfile]
+
+    if action == "instantiate_template":
+        template_name = body.get("template_name", "")
+        custom_name = body.get("name", "")  # optional override name
+        variables = body.get("variables", {})
+        if not template_name:
+            flowfile.set_content(json.dumps({"error": "Missing template_name"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        import os
+        _tpl_path = os.path.join("config", "task_templates.json")
+        try:
+            with open(_tpl_path, "r") as f:
+                _tpls = json.load(f)
+        except FileNotFoundError:
+            _tpls = {}
+        tpl = _tpls.get(template_name)
+        if not tpl:
+            flowfile.set_content(json.dumps({"error": f"Template '{template_name}' not found"}).encode())
+            flowfile.set_attribute("http.response.status", "404")
+            return [flowfile]
+        # Validate required variables
+        for vname, vspec in (tpl.get("variables") or {}).items():
+            if isinstance(vspec, dict) and vspec.get("required") and vname not in variables:
+                flowfile.set_content(json.dumps(
+                    {"error": f"Missing required variable: {vname}"}).encode())
+                flowfile.set_attribute("http.response.status", "400")
+                return [flowfile]
+        # Apply defaults for unset variables
+        for vname, vspec in (tpl.get("variables") or {}).items():
+            if isinstance(vspec, dict) and vname not in variables:
+                variables[vname] = vspec.get("default", "")
+        # Create user-scoped task_def
+        from core.resource_store import ResourceStore
+        import time as _time
+        rs = ResourceStore.instance()
+        def_name = custom_name or template_name
+        task_def = {
+            "name": def_name,
+            "prompt": tpl.get("prompt", ""),
+            "criteria": tpl.get("criteria", ""),
+            "default_interval": tpl.get("default_interval", "6/1m"),
+            "description": tpl.get("description", ""),
+            "category": tpl.get("category", ""),
+            "created_by": user_id,
+            "created_at": _time.time(),
+            "updated_at": _time.time(),
+            "from_template": template_name,
+            "_scope": "user",
+        }
+        # Resolve variables in prompt and criteria
+        for vname, vval in variables.items():
+            task_def["prompt"] = task_def["prompt"].replace(f"${{{vname}}}", str(vval))
+            if task_def["criteria"]:
+                task_def["criteria"] = task_def["criteria"].replace(f"${{{vname}}}", str(vval))
+        rs.save("task_def", def_name, task_def, user_id=user_id)
+        flowfile.set_content(json.dumps({
+            "ok": True, "name": def_name, "from_template": template_name,
+            "variables_applied": variables,
+        }).encode())
+        return [flowfile]
+
+    if action == "task_history":
+        conv_id = body.get("conversation_id", "")
+        task_id = body.get("task_id", "")
+        if not conv_id or not task_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id or task_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        log = store.get_extra(conv_id, f"task_log:{task_id}") or []
+        # Compute aggregates
+        total_cost = sum(e.get("cost", 0) for e in log)
+        total_duration = sum(e.get("duration_secs", 0) for e in log)
+        total_tokens_in = sum(e.get("tokens_in", 0) for e in log)
+        total_tokens_out = sum(e.get("tokens_out", 0) for e in log)
+        iterations = sum(1 for e in log if e.get("type") in ("progress", "completed"))
+        flowfile.set_content(json.dumps({
+            "task_id": task_id,
+            "log": log,
+            "aggregates": {
+                "total_cost": round(total_cost, 6),
+                "total_duration_secs": round(total_duration, 1),
+                "total_tokens_in": total_tokens_in,
+                "total_tokens_out": total_tokens_out,
+                "iterations": iterations,
+            },
+        }).encode())
         return [flowfile]
 
     if action in ("pause_task", "resume_task", "cancel_task", "delete_task"):

@@ -38,7 +38,7 @@ class RelayThread:
         self.directory = str(Path(directory).resolve())
         self.docker_image = docker_image
         self.gateway_cookie = gateway_cookie
-        self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "2")
+        self.docker_cpus = docker_cpus or os.environ.get("PAWFLOW_RELAY_CPUS", "4")
         self.docker_memory = docker_memory or os.environ.get("PAWFLOW_RELAY_MEMORY", "4g")
         self.allow_local = allow_local
         self.relay_id = generate_relay_id(username, self.directory)

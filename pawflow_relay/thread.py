@@ -289,14 +289,21 @@ class RelayThread:
                             sys.stderr.write(
                                 f"[Relay] Health: relay not connected "
                                 f"({_consecutive_fails} consecutive)\n")
-                            if _consecutive_fails >= 3:
+                            if _consecutive_fails == 3:
                                 # Re-register the service so the relay can reconnect
                                 sys.stderr.write("[Relay] Re-registering relay service\n")
                                 try:
                                     self._reregister_service()
-                                    _consecutive_fails = 0
                                 except Exception as _rr_err:
                                     sys.stderr.write(f"[Relay] Re-register failed: {_rr_err}\n")
+                            elif _consecutive_fails >= 6:
+                                # Relay still not back after re-register + 90s — kill container
+                                sys.stderr.write("[Relay] Relay stuck, killing container\n")
+                                try:
+                                    self._docker_proc.kill()
+                                except Exception:
+                                    pass
+                                break
 
                 if self._stop_event.is_set():
                     break

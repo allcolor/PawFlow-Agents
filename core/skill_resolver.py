@@ -11,18 +11,28 @@ from typing import Any, Dict, List, Optional, Tuple
 logger = logging.getLogger(__name__)
 
 
-def normalize_skill_entry(entry) -> Tuple[str, Dict[str, str]]:
-    """Normalize a skill entry to (name, params).
+def normalize_skill_entry(entry) -> Tuple[str, Dict[str, str], str]:
+    """Normalize a skill entry to (name, params, condition).
 
     Accepts:
-      - "skill_name"              → ("skill_name", {})
-      - {"name": "x", "params": {"k": "v"}} → ("x", {"k": "v"})
+      - "skill_name"              → ("skill_name", {}, "")
+      - {"name": "x", "params": {"k": "v"}, "condition": "${...}"}
+        → ("x", {"k": "v"}, "${...}")
     """
     if isinstance(entry, str):
-        return entry, {}
+        return entry, {}, ""
     if isinstance(entry, dict):
-        return entry.get("name", ""), entry.get("params") or {}
-    return "", {}
+        return entry.get("name", ""), entry.get("params") or {}, entry.get("condition", "")
+    return "", {}, ""
+
+
+def _evaluate_condition(condition: str, user_id: str) -> bool:
+    """Evaluate a condition expression. Returns False if result is empty/false/0."""
+    if not condition:
+        return True
+    from core.expression import resolve_value
+    resolved = resolve_value(condition, owner=user_id)
+    return bool(resolved) and resolved not in ("false", "False", "0")
 
 
 def _substitute_params(prompt: str, params: Dict[str, str],
@@ -88,8 +98,10 @@ def resolve_skill_prompts(
     rs = ResourceStore.instance()
     blocks = []
     for entry in skill_entries:
-        name, params = normalize_skill_entry(entry)
+        name, params, condition = normalize_skill_entry(entry)
         if not name:
+            continue
+        if condition and not _evaluate_condition(condition, user_id):
             continue
         skill_def = rs.get_any("skill", name, user_id)
         if not skill_def or not skill_def.get("prompt"):

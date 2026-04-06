@@ -205,7 +205,8 @@ class ToolRelayService(BaseService):
             return self._handle_list_tools(request_id, user_id, conversation_id)
         elif method == "get_tool_schema":
             return self._handle_get_schema(request_id, msg.get("tool_name", ""),
-                                           user_id=user_id)
+                                           user_id=user_id,
+                                           conversation_id=conversation_id)
         elif method == "execute_tool":
             _raw_args = msg.get("arguments", {})
             # Defensive: double-encoded JSON string
@@ -237,9 +238,27 @@ class ToolRelayService(BaseService):
         CRITICAL: injects the live filesystem service instance (the one
         with the relay connection) into the handler. Without this, the
         handler creates a new disconnected instance.
+
+        Also loads dynamic tools (per-conversation) and MCP server tools
+        (per-agent) so they are available via the MCP bridge.
         """
         from core.tool_registry import create_default_registry
         registry = create_default_registry()
+
+        # Load dynamic tools for this conversation
+        if conversation_id:
+            try:
+                from core.handlers.dynamic_tool import load_dynamic_tools
+                _parent_cid = (conversation_id.split("::task::")[0]
+                               if "::task::" in conversation_id
+                               else conversation_id)
+                load_dynamic_tools(_parent_cid, registry)
+            except Exception as e:
+                logger.warning("[tool-relay] Failed to load dynamic tools: %s", e)
+
+        # Load MCP server tools for the active agent
+        if conversation_id and user_id:
+            self._load_mcp_tools(registry, user_id, conversation_id)
 
         # Find the live filesystem service (the one with relay connected)
         fs_svc = self._find_filesystem_service(user_id)
@@ -402,6 +421,102 @@ class ToolRelayService(BaseService):
             return None, f"{media_type.title()} service '{sid}' failed to connect"
         return resolver
 
+    def _load_mcp_tools(self, registry, user_id: str, conversation_id: str):
+        """Load MCP server tools for the active agent into registry."""
+        try:
+            from core.conversation_store import ConversationStore
+            from core.resource_store import ResourceStore
+            cstore = ConversationStore.instance()
+            rs = ResourceStore.instance()
+
+            active_res = cstore.get_extra(conversation_id, "active_resources") or {}
+            active_mcps = active_res.get("mcps", [])
+            if not active_mcps:
+                return
+
+            for mcp_name in active_mcps:
+                try:
+                    raw_def = rs.get_any("mcp", mcp_name, user_id)
+                    if not raw_def:
+                        continue
+                    from core.expression import resolve_value
+                    mcp_def = resolve_value(raw_def, owner=user_id,
+                                             conversation_id=conversation_id)
+                    transport = mcp_def.get("transport", "http")
+                    via = mcp_def.get("via", "") or (
+                        "relay" if transport == "stdio" else "direct")
+                    auth = mcp_def.get("auth", {})
+                    if isinstance(auth, str):
+                        auth = {"Authorization": auth}
+
+                    disc_tools = []
+                    relay_svc = None
+
+                    if via == "relay":
+                        _rsid = mcp_def.get("relay_service", "")
+                        if _rsid:
+                            try:
+                                from gui.services.global_service_registry import GlobalServiceRegistry
+                                relay_svc = GlobalServiceRegistry.get_instance().get_live_instance(_rsid)
+                            except Exception:
+                                pass
+                        if not relay_svc:
+                            relay_svc = self._find_filesystem_service(user_id)
+                        if not relay_svc:
+                            logger.warning("[tool-relay][mcp] No relay for '%s'", mcp_name)
+                            continue
+                        if transport == "stdio":
+                            try:
+                                relay_svc._request("mcp_start", ".", **{
+                                    "server_id": mcp_name,
+                                    "command": mcp_def.get("command", ""),
+                                    "args": mcp_def.get("args", []),
+                                    "env": mcp_def.get("env", {}),
+                                })
+                            except Exception as e:
+                                if "already_running" not in str(e):
+                                    logger.error("[tool-relay][mcp] Start failed '%s': %s",
+                                                 mcp_name, e)
+                                    continue
+                        try:
+                            disc = relay_svc._request("mcp_discover", ".",
+                                                      server_id=mcp_name)
+                            disc_tools = (disc.get("tools", [])
+                                          if isinstance(disc, dict) else [])
+                        except Exception as e:
+                            logger.error("[tool-relay][mcp] Discovery failed '%s': %s",
+                                         mcp_name, e)
+                    else:
+                        url = mcp_def.get("url", "")
+                        if not url:
+                            continue
+                        from core.tool_registry import discover_mcp_tools
+                        disc_tools = discover_mcp_tools(
+                            url, headers=auth, timeout=10)
+
+                    from core.handlers.agent_tools import MCPToolHandler
+                    for mt in disc_tools:
+                        h = MCPToolHandler(
+                            tool_name=mt["name"],
+                            tool_description=mt.get("description", ""),
+                            tool_parameters=mt.get("inputSchema", {
+                                "type": "object", "properties": {}}),
+                            server_url=mcp_def.get("url", ""),
+                            mcp_tool_name=mt["name"],
+                            headers=auth,
+                            transport=transport if via == "relay" else "http",
+                            server_id=mcp_name,
+                            relay_service=relay_svc,
+                        )
+                        registry.register(h)
+                    if disc_tools:
+                        logger.info("[tool-relay][mcp] Loaded %d tools from '%s' (%s/%s)",
+                                    len(disc_tools), mcp_name, via, transport)
+                except Exception as e:
+                    logger.warning("[tool-relay][mcp] Failed to load '%s': %s", mcp_name, e)
+        except Exception as e:
+            logger.warning("[tool-relay] Failed to load MCP tools: %s", e)
+
     @staticmethod
     def _find_filesystem_service(user_id: str = ""):
         """Find the first live filesystem service for this user.
@@ -447,8 +562,9 @@ class ToolRelayService(BaseService):
         return {"type": "result", "request_id": request_id, "data": tools}
 
     def _handle_get_schema(self, request_id: str, tool_name: str,
-                           user_id: str = "") -> dict:
-        registry = self._get_registry(user_id)
+                           user_id: str = "",
+                           conversation_id: str = "") -> dict:
+        registry = self._get_registry(user_id, conversation_id)
         handler = registry.get(tool_name)
         if not handler:
             available = [h.name for h in registry.list_tools()]

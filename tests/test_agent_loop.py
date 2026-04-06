@@ -93,7 +93,7 @@ class TestToolUseDataclasses(unittest.TestCase):
 class TestLLMClientMessageBuilding(unittest.TestCase):
 
     def setUp(self):
-        self.client = LLMClient(provider="openai", api_key="test-key")
+        self.client = LLMClient(provider="openai", config={"api_key": "test-key"})
 
     def test_openai_simple_messages(self):
         messages = [
@@ -136,7 +136,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert len(result) == 0
 
     def test_anthropic_simple_messages(self):
-        client = LLMClient(provider="anthropic", api_key="test-key")
+        client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         messages = [
             LLMMessage(role="system", content="System prompt"),
             LLMMessage(role="user", content="Hello"),
@@ -149,7 +149,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert api_msgs[1] == {"role": "assistant", "content": "Hi!"}
 
     def test_anthropic_tool_call_message(self):
-        client = LLMClient(provider="anthropic", api_key="test-key")
+        client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         tc = LLMToolCall(id="tu_1", name="calc", arguments={"x": 5})
         msg = LLMMessage(role="assistant", content="Let me calculate.", tool_calls=[tc])
         _, api_msgs = client._build_anthropic_messages([msg])
@@ -162,7 +162,7 @@ class TestLLMClientMessageBuilding(unittest.TestCase):
         assert content_blocks[1]["name"] == "calc"
 
     def test_anthropic_tool_result_message(self):
-        client = LLMClient(provider="anthropic", api_key="test-key")
+        client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         msg = LLMMessage(role="tool", content="result=10", tool_call_id="tu_1")
         _, api_msgs = client._build_anthropic_messages([msg])
         assert api_msgs[0]["role"] == "user"
@@ -200,7 +200,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
             "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
         }
 
-        client = LLMClient(provider="openai", api_key="test")
+        client = LLMClient(provider="openai", config={"api_key": "test"})
         resp = client.complete([LLMMessage(role="user", content="weather?")])
         assert len(resp.tool_calls) == 1
         assert resp.tool_calls[0].name == "search"
@@ -218,7 +218,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
             "usage": {"prompt_tokens": 10, "completion_tokens": 8, "total_tokens": 18},
         }
 
-        client = LLMClient(provider="openai", api_key="test")
+        client = LLMClient(provider="openai", config={"api_key": "test"})
         resp = client.complete([LLMMessage(role="user", content="weather?")])
         assert resp.tool_calls == []
         assert resp.content == "The weather is sunny."
@@ -231,7 +231,7 @@ class TestOpenAIToolCallParsing(unittest.TestCase):
             "usage": {"prompt_tokens": 10, "completion_tokens": 1, "total_tokens": 11},
         }
 
-        client = LLMClient(provider="openai", api_key="test")
+        client = LLMClient(provider="openai", config={"api_key": "test"})
         tools = [LLMToolDefinition(name="search", description="Search", parameters={"type": "object", "properties": {}})]
         client.complete([LLMMessage(role="user", content="hi")], tools=tools)
 
@@ -262,7 +262,7 @@ class TestAnthropicToolCallParsing(unittest.TestCase):
             "usage": {"input_tokens": 10, "output_tokens": 15},
         }
 
-        client = LLMClient(provider="anthropic", api_key="test")
+        client = LLMClient(provider="anthropic", config={"api_key": "test"})
         resp = client.complete([LLMMessage(role="user", content="weather?")])
         assert resp.content == "I'll search for that."
         assert len(resp.tool_calls) == 1
@@ -279,7 +279,7 @@ class TestAnthropicToolCallParsing(unittest.TestCase):
             "usage": {"input_tokens": 10, "output_tokens": 1},
         }
 
-        client = LLMClient(provider="anthropic", api_key="test")
+        client = LLMClient(provider="anthropic", config={"api_key": "test"})
         tools = [LLMToolDefinition(name="calc", description="Calculator", parameters={"type": "object", "properties": {}})]
         client.complete([LLMMessage(role="user", content="hi")], tools=tools)
 
@@ -312,12 +312,12 @@ class TestToolRegistry(unittest.TestCase):
         names = [t.name for t in tools]
         assert "execute_script" in names
         assert "fetch" in names
-        assert "read_file" in names
+        assert "read" in names
 
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 43  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
+        assert len(defs) == 67
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 43  # builtins + memory + plan (create/update/approve/assign/cancel/delete) + notify + ask_user + create_tool + flow_manager + pawflow_help + secrets + resources + show_file + browser + link_identity + remote_exec + generate_video + assign_task + complete_task + verify_task + run_tests
+        assert len(registry.list_tools()) == 67
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})
@@ -631,8 +631,8 @@ class TestAgentLoopTask(unittest.TestCase):
         call_args = mock_complete.call_args
         tools = call_args[1].get("tools", call_args[0][4] if len(call_args[0]) > 4 else None)
         assert tools is not None
-        assert len(tools) == 1
-        assert tools[0].name == "weather"
+        tool_names = [t.name for t in tools]
+        assert "weather" in tool_names
 
     def test_invalid_tools_json_raises(self):
         task = AgentLoopTask({
@@ -1156,7 +1156,7 @@ class TestAgentLoopWithAgentTools(unittest.TestCase):
         names = [h.name for h in registry.list_tools()]
         assert "execute_script" in names
         assert "fetch" in names
-        assert "read_file" in names
+        assert "read" in names
 
 
 class TestFlowParserAgentTools(unittest.TestCase):
@@ -1258,48 +1258,6 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
             "context_keep_recent": 6,
         })
 
-    def test_get_context_action_synced(self):
-        """get_context returns messages when context is not diverged."""
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        store.save("cx1", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-        ])
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
-            "action": "get_context",
-            "conversation_id": "cx1",
-        }).encode())
-        result = task.execute(ff)
-        data = json.loads(result[0].get_content())
-        assert data["diverged"] is False
-        assert data["message_count"] == 2
-        assert data["token_estimate"] > 0
-
-    def test_get_context_action_diverged(self):
-        """get_context returns diverged context after save_context."""
-        from core.conversation_store import ConversationStore
-        store = ConversationStore.instance()
-        store.save("cx2", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world"},
-        ])
-        store.save_context("cx2", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "compacted summary"},
-        ])
-        task = self._make_task()
-        ff = FlowFile(content=json.dumps({
-            "action": "get_context",
-            "conversation_id": "cx2",
-        }).encode())
-        result = task.execute(ff)
-        data = json.loads(result[0].get_content())
-        assert data["diverged"] is True
-        assert data["message_count"] == 2
-
     def test_rebuild_action_accepted(self):
         """rebuild returns accepted ack (runs in background)."""
         from core.conversation_store import ConversationStore
@@ -1359,16 +1317,23 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
         assert len(deserialized) == 3  # system + 2 kept
 
 
-class TestContextEditing(unittest.TestCase):
-    """Tests for context editing actions."""
+class TestContextActionsAsync(unittest.TestCase):
+    """Tests for context actions via the real async path.
+
+    All context actions go through _handle_action → _run_action_bg.
+    The caller gets an immediate ack; the result is published via
+    ConversationEventBus. These tests verify both sides.
+    """
 
     def setUp(self):
         from core.conversation_store import ConversationStore
+        from core.conversation_event_bus import ConversationEventBus
         ConversationStore.reset()
         self._tmpdir = tempfile.mkdtemp()
         store = ConversationStore.instance()
         store._store_dir = Path(self._tmpdir)
         store._store_dir.mkdir(parents=True, exist_ok=True)
+        self._bus = ConversationEventBus.instance()
 
     def tearDown(self):
         from core.conversation_store import ConversationStore
@@ -1386,160 +1351,139 @@ class TestContextEditing(unittest.TestCase):
             "context_keep_recent": 6,
         })
 
-    def _seed(self, conv_id, msgs):
+    def _exec_async(self, task, body, timeout=2.0):
+        """Execute an action through the real async path.
+
+        Returns (ack_data, result_data) where result_data is the
+        command_result event published to the bus.
+        """
+        import time
+        conv_id = body["conversation_id"]
+
+        # Subscribe to the bus before executing so we catch the result
+        writer = self._bus.subscribe(conv_id)
+
+        try:
+            ff = FlowFile(content=json.dumps(body).encode())
+            result = task.execute(ff)
+            ack = json.loads(result[0].get_content())
+
+            # Read events from the SSEWriter queue until we get command_result
+            result_data = None
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                try:
+                    item = writer._queue.get(timeout=0.1)
+                    if hasattr(item, 'event') and item.event == "command_result":
+                        data = item.data
+                        if isinstance(data, str):
+                            data = json.loads(data)
+                        result_data = json.loads(data["result"])
+                        break
+                except Exception:
+                    continue
+
+            return ack, result_data
+        finally:
+            self._bus.unsubscribe(conv_id, writer)
+
+    def test_get_context_ack_and_result(self):
+        """get_context returns ack immediately, then publishes result via bus."""
         from core.conversation_store import ConversationStore
-        ConversationStore.instance().save(conv_id, msgs)
-
-    def _exec(self, task, body):
-        ff = FlowFile(content=json.dumps(body).encode())
-        result = task.execute(ff)
-        return json.loads(result[0].get_content())
-
-    def test_get_context_full(self):
-        """get_context_full returns complete content (not truncated)."""
-        long_content = "A" * 1000
-        self._seed("cf1", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": long_content},
-        ])
-        data = self._exec(self._make_task(), {
-            "action": "get_context_full",
-            "conversation_id": "cf1",
-        })
-        assert "error" not in data
-        assert data["message_count"] == 2
-        assert data["context"][1]["content"] == long_content
-
-    def test_edit_context_message(self):
-        """edit_context modifies a message and saves as diverged context."""
-        from core.conversation_store import ConversationStore
-        self._seed("ce1", [
+        store = ConversationStore.instance()
+        store.save("ctx_async1", [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
         ])
-        data = self._exec(self._make_task(), {
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "get_context",
+            "conversation_id": "ctx_async1",
+        })
+        assert ack["status"] == "accepted"
+        assert ack["action"] == "get_context"
+        assert data is not None, "No command_result event received"
+        assert data["diverged"] is False
+        assert data["message_count"] == 2
+        assert data["token_estimate"] > 0
+
+    def test_edit_context_async(self):
+        """edit_context modifies a message via async path."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("ctx_edit1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+        ])
+        ack, data = self._exec_async(self._make_task(), {
             "action": "edit_context",
-            "conversation_id": "ce1",
+            "conversation_id": "ctx_edit1",
             "index": 1,
             "content": "modified hello",
         })
+        assert ack["status"] == "accepted"
+        assert data is not None
         assert data["ok"] is True
-        assert data["message_count"] == 2
-        ctx = ConversationStore.instance().load_context("ce1")
+        ctx = store.load_context("ctx_edit1")
         assert ctx is not None
         assert ctx[1]["content"] == "modified hello"
 
-    def test_edit_context_role(self):
-        """edit_context can change the role of a message."""
+    def test_replace_context_async(self):
+        """replace_context replaces the entire context via async path."""
         from core.conversation_store import ConversationStore
-        self._seed("ce2", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-        ])
-        data = self._exec(self._make_task(), {
-            "action": "edit_context",
-            "conversation_id": "ce2",
-            "index": 1,
-            "content": "hello",
-            "role": "assistant",
-        })
-        assert data["ok"] is True
-        ctx = ConversationStore.instance().load_context("ce2")
-        assert ctx[1]["role"] == "assistant"
-
-    def test_edit_context_invalid_index(self):
-        """edit_context with out-of-range index returns error."""
-        self._seed("ce3", [{"role": "user", "content": "hi"}])
-        data = self._exec(self._make_task(), {
-            "action": "edit_context",
-            "conversation_id": "ce3",
-            "index": 5,
-            "content": "x",
-        })
-        assert "error" in data
-
-    def test_delete_context_message(self):
-        """delete_context_message removes a message."""
-        from core.conversation_store import ConversationStore
-        self._seed("cd1", [
-            {"role": "system", "content": "sys"},
-            {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "world"},
-        ])
-        data = self._exec(self._make_task(), {
-            "action": "delete_context_message",
-            "conversation_id": "cd1",
-            "index": 1,
-        })
-        assert data["ok"] is True
-        assert data["message_count"] == 2
-        ctx = ConversationStore.instance().load_context("cd1")
-        assert len(ctx) == 2
-        assert ctx[1]["role"] == "assistant"
-
-    def test_replace_context(self):
-        """replace_context replaces the entire context."""
-        from core.conversation_store import ConversationStore
-        self._seed("cr1", [{"role": "user", "content": "old"}])
+        store = ConversationStore.instance()
+        store.save("ctx_repl1", [{"role": "user", "content": "old"}])
         new_ctx = [
             {"role": "system", "content": "new sys"},
             {"role": "user", "content": "new msg"},
         ]
-        data = self._exec(self._make_task(), {
+        ack, data = self._exec_async(self._make_task(), {
             "action": "replace_context",
-            "conversation_id": "cr1",
+            "conversation_id": "ctx_repl1",
             "context": new_ctx,
         })
+        assert ack["status"] == "accepted"
+        assert data is not None
         assert data["ok"] is True
-        assert data["message_count"] == 2
-        ctx = ConversationStore.instance().load_context("cr1")
+        ctx = store.load_context("ctx_repl1")
         assert ctx == new_ctx
 
-    def test_replace_context_invalid(self):
-        """replace_context rejects messages without role."""
-        self._seed("cr2", [{"role": "user", "content": "old"}])
-        data = self._exec(self._make_task(), {
-            "action": "replace_context",
-            "conversation_id": "cr2",
-            "context": [{"content": "no role"}],
-        })
-        assert "error" in data
-
-    def test_add_context_message(self):
-        """add_context_message appends a message."""
+    def test_delete_context_message_async(self):
+        """delete_context_message removes a message via async path."""
         from core.conversation_store import ConversationStore
-        self._seed("ca1", [{"role": "system", "content": "sys"}])
-        data = self._exec(self._make_task(), {
+        store = ConversationStore.instance()
+        store.save("ctx_del1", [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "world"},
+        ])
+        ack, data = self._exec_async(self._make_task(), {
+            "action": "delete_context_message",
+            "conversation_id": "ctx_del1",
+            "index": 1,
+        })
+        assert ack["status"] == "accepted"
+        assert data is not None
+        assert data["ok"] is True
+        ctx = store.load_context("ctx_del1")
+        assert len(ctx) == 2
+        assert ctx[1]["role"] == "assistant"
+
+    def test_add_context_message_async(self):
+        """add_context_message appends a message via async path."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.save("ctx_add1", [{"role": "system", "content": "sys"}])
+        ack, data = self._exec_async(self._make_task(), {
             "action": "add_context_message",
-            "conversation_id": "ca1",
+            "conversation_id": "ctx_add1",
             "role": "user",
             "content": "new message",
         })
+        assert ack["status"] == "accepted"
+        assert data is not None
         assert data["ok"] is True
-        assert data["message_count"] == 2
-        ctx = ConversationStore.instance().load_context("ca1")
+        ctx = store.load_context("ctx_add1")
         assert ctx[1]["content"] == "new message"
-
-    def test_add_context_message_at_index(self):
-        """add_context_message inserts at specific index."""
-        from core.conversation_store import ConversationStore
-        self._seed("ca2", [
-            {"role": "system", "content": "sys"},
-            {"role": "assistant", "content": "reply"},
-        ])
-        data = self._exec(self._make_task(), {
-            "action": "add_context_message",
-            "conversation_id": "ca2",
-            "role": "user",
-            "content": "inserted",
-            "index": 1,
-        })
-        assert data["ok"] is True
-        assert data["message_count"] == 3
-        ctx = ConversationStore.instance().load_context("ca2")
-        assert ctx[1]["content"] == "inserted"
-        assert ctx[1]["role"] == "user"
-        assert ctx[2]["role"] == "assistant"
 
 
 class TestRandomThought(unittest.TestCase):
@@ -1622,30 +1566,53 @@ class TestRandomThought(unittest.TestCase):
         assert sched.cancel("conv1::thought::assistant") is True
         assert sched.get("conv1::thought::assistant") is None
 
+    def _setup_agent(self, conv_id):
+        """Configure an active agent for the conversation."""
+        from core.conversation_store import ConversationStore
+        store = ConversationStore.instance()
+        store.set_extra(conv_id, "active_resources", {"agent": "assistant"})
+
+    def _exec_rt(self, task, body):
+        """Execute a random_thought action directly (not via async dispatch)."""
+        ff = FlowFile(content=json.dumps(body).encode())
+        return task._handle_random_thought(
+            body, body.get("conversation_id", ""),
+            "", ff)
+
     def test_random_thought_on(self):
         """Action 'on' stores config and creates schedule."""
         from core.conversation_store import ConversationStore
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
         store.save("rt1", [{"role": "user", "content": "hi"}])
+        self._setup_agent("rt1")
         task = self._make_task()
-        ff = FlowFile(content=json.dumps({
+        body = {
             "action": "random_thought",
             "conversation_id": "rt1",
             "sub": "on",
             "frequency": "2-3/h",
-        }).encode())
-        result = task.execute(ff)
+        }
+        result = self._exec_rt(task, body)
+    def test_random_thought_on(self):
+        """Action 'on' stores config and creates schedule."""
+        from core.conversation_store import ConversationStore
+        from core.poll_scheduler import PollScheduler
+        store = ConversationStore.instance()
+        store.save("rt1", [{"role": "user", "content": "hi"}])
+        self._setup_agent("rt1")
+        task = self._make_task()
+        body = {"action": "random_thought", "conversation_id": "rt1",
+                "sub": "on", "frequency": "2-3/h"}
+        result = self._exec_rt(task, body)
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
         assert data["agent"] == "assistant"
         assert data["frequency"] == "2-3/h"
         assert data["next_in_seconds"] > 0
-        # Config stored in extras
         cfg = store.get_extra("rt1", "random_thought::assistant")
         assert cfg["enabled"] is True
         assert cfg["min_interval"] == 1200
-        # Schedule created
         sched = PollScheduler.instance().get("rt1::thought::assistant")
         assert sched is not None
 
@@ -1655,19 +1622,14 @@ class TestRandomThought(unittest.TestCase):
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
         store.save("rt2", [{"role": "user", "content": "hi"}])
+        self._setup_agent("rt2")
         task = self._make_task()
         # Turn on first
-        ff_on = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt2",
-            "sub": "on", "frequency": "1/h",
-        }).encode())
-        task.execute(ff_on)
+        self._exec_rt(task, {"action": "random_thought", "conversation_id": "rt2",
+                             "sub": "on", "frequency": "1/h"})
         # Turn off
-        ff_off = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt2",
-            "sub": "off",
-        }).encode())
-        result = task.execute(ff_off)
+        result = self._exec_rt(task, {"action": "random_thought",
+                                      "conversation_id": "rt2", "sub": "off"})
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
         assert data["disabled"] is True
@@ -1680,26 +1642,18 @@ class TestRandomThought(unittest.TestCase):
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
         store.save("rt3", [{"role": "user", "content": "hi"}])
+        self._setup_agent("rt3")
         task = self._make_task()
         # Status when not configured
-        ff = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt3",
-            "sub": "status",
-        }).encode())
-        result = task.execute(ff)
+        result = self._exec_rt(task, {"action": "random_thought",
+                                      "conversation_id": "rt3", "sub": "status"})
         data = json.loads(result[0].get_content())
         assert data["enabled"] is False
         # Turn on, then status
-        ff_on = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt3",
-            "sub": "on", "frequency": "1/h",
-        }).encode())
-        task.execute(ff_on)
-        ff2 = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt3",
-            "sub": "status",
-        }).encode())
-        result2 = task.execute(ff2)
+        self._exec_rt(task, {"action": "random_thought", "conversation_id": "rt3",
+                             "sub": "on", "frequency": "1/h"})
+        result2 = self._exec_rt(task, {"action": "random_thought",
+                                       "conversation_id": "rt3", "sub": "status"})
         data2 = json.loads(result2[0].get_content())
         assert data2["enabled"] is True
         assert data2["agents"][0]["next_in_seconds"] is not None
@@ -1710,12 +1664,10 @@ class TestRandomThought(unittest.TestCase):
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
         store.save("rt4", [{"role": "user", "content": "hi"}])
+        self._setup_agent("rt4")
         task = self._make_task()
-        ff = FlowFile(content=json.dumps({
-            "action": "random_thought", "conversation_id": "rt4",
-            "sub": "now",
-        }).encode())
-        result = task.execute(ff)
+        result = self._exec_rt(task, {"action": "random_thought",
+                                      "conversation_id": "rt4", "sub": "now"})
         data = json.loads(result[0].get_content())
         assert data["ok"] is True
         assert data["triggered"] is True

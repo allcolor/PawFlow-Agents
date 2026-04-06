@@ -195,7 +195,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         raw_body = flowfile.get_content().decode("utf-8", errors="replace")
         user_text = raw_body
-        conversation_id = None
+        conversation_id = ""
         attachments = []  # list of {"type": "image"|"document", ...}
         body_json = None
 
@@ -204,7 +204,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 body_json = json.loads(raw_body)
                 if isinstance(body_json, dict) and "message" in body_json:
                     user_text = body_json["message"]
-                    conversation_id = body_json.get("conversation_id")
+                    conversation_id = body_json.get("conversation_id") or ""
                     attachments = body_json.get("attachments", [])
                     # Per-conversation TTL override from chat UI
                     if "ttl" in body_json:
@@ -668,14 +668,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 logger.error("Error loading agent persona/skills: %s", e, exc_info=True)
 
         # Rebuild tool_defs from registry (now includes MCP + dynamic tools)
-        # then apply agent's allowlist/denylist filter
-        tool_defs = [
-            LLMToolDefinition(
-                name=h.name, description=h.description,
-                parameters=h.parameters_schema,
-            )
-            for h in registry.list_tools()
-        ]
+        # then apply agent's allowlist/denylist filter.
+        # Skip rebuild if custom tools were provided via JSON config.
+        if not custom_tools_json:
+            tool_defs = [
+                LLMToolDefinition(
+                    name=h.name, description=h.description,
+                    parameters=h.parameters_schema,
+                )
+                for h in registry.list_tools()
+            ]
         if _selected_agent_def:
             _agent_tools_cfg = _selected_agent_def.get("tools") or []
             if _agent_tools_cfg and isinstance(_agent_tools_cfg, list):

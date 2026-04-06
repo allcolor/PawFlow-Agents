@@ -103,9 +103,11 @@
     "description": "",
     "llm_service": "",
     "assigned_skills": [],
+    "autonomy_level": "semi_auto",
+    "allowed_tools": [],
     "prompt": "Basic assistant",
     "name": "basic",
-    "created_at": 1775492385.5171661,
-    "updated_at": 1775492385.5171666
+    "created_at": 1775502461.4720523,
+    "updated_at": 1775502461.472053
   }
 }

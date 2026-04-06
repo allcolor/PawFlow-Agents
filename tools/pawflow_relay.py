@@ -861,6 +861,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         "allow_automation": allow_automation,
         "allow_local_screen": allow_local_screen,
         "allow_local": allow_local,
+        "desktop_novnc_port": int(os.environ.get("PAWFLOW_DESKTOP_NOVNC_PORT", 0)),
+        "desktop_audio_port": int(os.environ.get("PAWFLOW_DESKTOP_AUDIO_PORT", 0)),
     }
 
     def _resolve(rel_path):

@@ -47,6 +47,30 @@ def _substitute_params(prompt: str, params: Dict[str, str],
     return re.sub(r'\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}', _replace, prompt)
 
 
+_MAX_EXTENDS_DEPTH = 5
+
+
+def _resolve_prompt_chain(skill_name: str, rs, user_id: str,
+                          depth: int = 0) -> str:
+    """Resolve a skill's prompt including its extends chain.
+
+    Returns the concatenated prompt: parent first, then child.
+    """
+    if depth >= _MAX_EXTENDS_DEPTH:
+        return ""
+    skill_def = rs.get_any("skill", skill_name, user_id)
+    if not skill_def or not skill_def.get("prompt"):
+        return ""
+    parent_prompt = ""
+    extends = skill_def.get("extends", "")
+    if extends:
+        parent_prompt = _resolve_prompt_chain(extends, rs, user_id, depth + 1)
+    prompt = skill_def["prompt"]
+    if parent_prompt:
+        return parent_prompt + "\n\n" + prompt
+    return prompt
+
+
 def resolve_skill_prompts(
     skill_entries: List,
     user_id: str,
@@ -70,7 +94,8 @@ def resolve_skill_prompts(
         skill_def = rs.get_any("skill", name, user_id)
         if not skill_def or not skill_def.get("prompt"):
             continue
-        prompt = skill_def["prompt"]
+        # Resolve extends chain (parent prompt prepended)
+        prompt = _resolve_prompt_chain(name, rs, user_id)
         # Substitute parameters
         declared_params = skill_def.get("parameters") or {}
         if params or declared_params:

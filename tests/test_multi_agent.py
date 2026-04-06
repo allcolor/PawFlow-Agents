@@ -355,40 +355,6 @@ class TestParallelSpawn:
         executor.shutdown()
 
 
-class TestSkillExecution:
-    def test_execute_skill(self):
-        """Skill execution = single-shot LLM call."""
-        client = make_client_mock([simple_response("Summary: blah")])
-        registry = make_registry()
-        executor = SubAgentExecutor(client, registry)
-
-        result = executor.execute_skill(
-            skill_prompt="Summarize the input",
-            input_text="A very long document...",
-        )
-        assert result.status == "completed"
-        assert result.response == "Summary: blah"
-        assert result.tokens_in == 10
-
-        # Verify no tools were passed
-        call_args = client.complete.call_args
-        assert call_args.kwargs.get("tools") is None
-        executor.shutdown()
-
-    def test_skill_error(self):
-        """Skill execution handles LLM errors."""
-        client = MagicMock(spec=LLMClient)
-        client.complete.side_effect = Exception("LLM down")
-        registry = make_registry()
-        executor = SubAgentExecutor(client, registry)
-
-        result = executor.execute_skill(
-            skill_prompt="...", input_text="...",
-        )
-        assert result.status == "error"
-        assert "LLM down" in result.error
-        executor.shutdown()
-
 
 class TestResolveAgentTask:
     def test_resolve_from_store(self):

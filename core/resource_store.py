@@ -79,6 +79,7 @@ _DEFAULTS = {
         "default_interval": "6/1m",
         "description": "",
         "created_by": "",
+        "skills": [],
     },
 }
 

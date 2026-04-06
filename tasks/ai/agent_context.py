@@ -571,22 +571,31 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                                 f"manage_resource to work with them."
                             )
 
-                # Inject active skills into system prompt
-                active_skills = active_res.get("skills", [])
-                if active_skills:
+                # Inject skills into system prompt.
+                # In task context: use task_def skills (not agent's own).
+                # In main conv: use agent's assigned_skills.
+                if "::task::" in conversation_id:
+                    _task_id = conversation_id.split("::task::")[1].split("::")[0]
+                    _parent_cid = conversation_id.split("::task::")[0]
+                    _all_tasks = cstore.get_extra(_parent_cid, "agent_tasks") or {}
+                    _task_data = _all_tasks.get(_task_id, {})
+                    _agent_skills = _task_data.get("skills") or []
+                else:
+                    _agent_skills = agent_def.get("assigned_skills") or []
+                if _agent_skills:
                     skill_sections = []
-                    for sname in active_skills:
+                    for sname in _agent_skills:
                         skill_def = rs.get_any("skill", sname, _uid)
-                        if skill_def:
+                        if skill_def and skill_def.get("prompt"):
                             skill_sections.append(
-                                f"### Skill: {sname}\n{skill_def['prompt']}"
+                                f"## Skill: {sname}\n"
+                                f"{skill_def.get('description', '')}\n\n"
+                                f"{skill_def['prompt']}"
                             )
                     if skill_sections:
                         system_prompt += (
-                            "\n\n## Active Skills\n"
-                            "The following skills are active. You can apply them "
-                            "via the use_skill tool or follow their instructions "
-                            "directly:\n\n" + "\n\n".join(skill_sections)
+                            "\n\n# Assigned Skills\n\n"
+                            + "\n\n".join(skill_sections)
                         )
                 # Auto-load tools from active MCP servers
                 active_mcps = active_res.get("mcps", [])

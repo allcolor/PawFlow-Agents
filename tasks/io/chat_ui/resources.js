@@ -316,12 +316,10 @@ async function _renderResourcesData(data) {
     // Skills (always show header + [+] even when empty)
     html += _sectionHeader('Skills', 'skill');
     (data.skills || []).forEach(s => {
-      const active = s.active;
       const assignedTo = s.assigned_to || [];
-      const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
+      const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">→ ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
       html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
-        <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-        ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}${assignedTag}</span>
+        ${_scopeBadge(s.scope)}<span style="color:#e0e0e0;font-size:12px;">${s.name}${assignedTag}</span>
       </div>`;
     });
     html += _sectionFooter();
@@ -822,7 +820,7 @@ const _RESOURCE_FIELDS = {
   agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['assigned_skills','skills_picker'],['max_depth','number'],['timeout','number']],
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
-  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['description','text']],
+  task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['skills','skills_picker'],['description','text']],
   prompt:   [['content','textarea'],['title','text'],['category','text'],['description','text']],
 };
 

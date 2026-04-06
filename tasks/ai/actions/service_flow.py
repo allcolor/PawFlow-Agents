@@ -1828,12 +1828,13 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if _audio_port:
                         register_audio_source(session_id, _relay_addr, _audio_port)
                 else:
-                    # Docker: get audio port from relay_info, server metadata, or docker port
-                    _audio_host_port = 0
-                    _svc = _find_relay_svc(relay_id)
-                    if _svc:
-                        _ri = getattr(_svc, '_relay_info', {}) or {}
-                        _audio_host_port = _ri.get('desktop_audio_port', 0)
+                    # Docker: use port from start_desktop result first
+                    _audio_host_port = result.get("audio_port", 0) if isinstance(result, dict) else 0
+                    if not _audio_host_port:
+                        _svc = _find_relay_svc(relay_id)
+                        if _svc:
+                            _ri = getattr(_svc, '_relay_info', {}) or {}
+                            _audio_host_port = _ri.get('desktop_audio_port', 0)
                     if not _audio_host_port:
                         try:
                             from core.server_relay_manager import ServerRelayManager

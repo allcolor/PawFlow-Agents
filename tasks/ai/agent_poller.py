@@ -718,9 +718,8 @@ class AgentPollerMixin:
         if not plan_id:
             return "[System: Plan step scheduled but no plan_id found.]"
 
-        store = _CS4.instance()
-        plans = store.get_extra(conversation_id, "plans") or {}
-        plan = plans.get(plan_id)
+        from core.plan_store import PlanStore
+        plan = PlanStore.instance().get("", conversation_id, plan_id)
         if not plan:
             return f"[System: Plan {plan_id} not found.]"
 
@@ -780,9 +779,8 @@ class AgentPollerMixin:
         if not plan_id:
             return "[System: Plan verification scheduled but no plan_id found.]"
 
-        store = _CS5.instance()
-        plans = store.get_extra(conversation_id, "plans") or {}
-        plan = plans.get(plan_id)
+        from core.plan_store import PlanStore
+        plan = PlanStore.instance().get("", conversation_id, plan_id)
         if not plan:
             return f"[System: Plan {plan_id} not found.]"
 

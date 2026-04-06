@@ -776,30 +776,21 @@ class ApprovePlanHandler(ToolHandler):
         if not plan_id or not self._conversation_id:
             return "Error: plan_id required"
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            plans = store.get_extra(self._conversation_id, "plans") or {}
-            plan = plans.get(plan_id)
+            from core.plan_store import PlanStore
+            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             if plan["status"] != "pending_approval":
                 return f"Plan is already {plan['status']}"
             plan["status"] = "approved"
-            plans[plan_id] = plan
-            store.set_extra(self._conversation_id, "plans", plans)
+            PlanStore.instance().save("", self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
-                bus = ConversationEventBus.instance()
-                bus.publish_event(self._conversation_id, "plan_updated", {"plan": plan})
-                created_by = plan.get("created_by", "")
-                if created_by and created_by != "user":
-                    bus.publish_event(self._conversation_id, "notification", {
-                        "message": f"Plan '{plan['title']}' ({plan_id}) approved. Proceed with execution.",
-                        "target_agent": created_by,
-                    })
+                ConversationEventBus.instance().publish_event(
+                    self._conversation_id, "plan_updated", {"plan": plan})
             except Exception:
                 pass
-            return f"Plan '{plan_id}' approved."
+            return f"Plan '{plan_id}' approved. Orchestrator will handle execution."
         except Exception as e:
             return f"Error: {e}"
 
@@ -849,15 +840,12 @@ class AssignPlanHandler(ToolHandler):
             return "Error: plan_id and agent required"
 
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            plans = store.get_extra(self._conversation_id, "plans") or {}
-            plan = plans.get(plan_id)
+            from core.plan_store import PlanStore
+            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             if plan["status"] == "cancelled":
                 return "Error: cannot assign a cancelled plan"
-            # Assign implies approval
             if plan["status"] == "pending_approval":
                 plan["status"] = "approved"
             plan["status"] = "in_progress"
@@ -890,8 +878,7 @@ class AssignPlanHandler(ToolHandler):
                         s["assigned_to"] = agent
                         assigned_count += 1
 
-            plans[plan_id] = plan
-            store.set_extra(self._conversation_id, "plans", plans)
+            PlanStore.instance().save("", self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -936,15 +923,12 @@ class CancelPlanHandler(ToolHandler):
         if not plan_id or not self._conversation_id:
             return "Error: plan_id required"
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            plans = store.get_extra(self._conversation_id, "plans") or {}
-            plan = plans.get(plan_id)
+            from core.plan_store import PlanStore
+            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             plan["status"] = "cancelled"
-            plans[plan_id] = plan
-            store.set_extra(self._conversation_id, "plans", plans)
+            PlanStore.instance().save("", self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -988,13 +972,8 @@ class DeletePlanHandler(ToolHandler):
         if not plan_id or not self._conversation_id:
             return "Error: plan_id required"
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            plans = store.get_extra(self._conversation_id, "plans") or {}
-            if plan_id not in plans:
-                return f"Error: plan '{plan_id}' not found"
-            del plans[plan_id]
-            store.set_extra(self._conversation_id, "plans", plans)
+            from core.plan_store import PlanStore
+            PlanStore.instance().delete("", self._conversation_id, plan_id)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -1054,10 +1033,8 @@ class VerifyPlanStepHandler(ToolHandler):
             return "Error: plan_id, step, and approved are required"
 
         try:
-            from core.conversation_store import ConversationStore
-            store = ConversationStore.instance()
-            plans = store.get_extra(self._conversation_id, "plans") or {}
-            plan = plans.get(plan_id)
+            from core.plan_store import PlanStore
+            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
 
@@ -1072,21 +1049,17 @@ class VerifyPlanStepHandler(ToolHandler):
             if step["status"] != "pending_verification":
                 return f"Error: step {step_num} is '{step['status']}', not pending_verification"
 
-            executor = step.get("assigned_to") or plan.get("created_by", "")
-
             if approved:
                 step["status"] = "done"
                 step["verified_by"] = self._agent_name
                 if reason:
                     step["note"] = (step.get("note", "") + f" [verified: {reason}]").strip()
 
-                # Check if plan is completed
                 statuses = [s["status"] for s in plan["steps"]]
                 if all(s in ("done", "skipped") for s in statuses):
                     plan["status"] = "completed"
 
-                plans[plan_id] = plan
-                store.set_extra(self._conversation_id, "plans", plans)
+                PlanStore.instance().save("", self._conversation_id, plan)
 
                 try:
                     from core.conversation_event_bus import ConversationEventBus
@@ -1095,30 +1068,18 @@ class VerifyPlanStepHandler(ToolHandler):
                 except Exception:
                     pass
 
-                # Trigger next step
-                if plan["status"] != "completed":
-                    try:
-                        from tasks.ai.actions.plans import _trigger_next_plan_step
-                        _trigger_next_plan_step(
-                            self._conversation_id, plan_id, plan, store, "",
-                            current_agent=self._agent_name)
-                    except Exception:
-                        pass
-
                 return (
                     f"Step {step_num} approved."
                     + (f" Reason: {reason}" if reason else "")
                     + (f" Plan completed!" if plan["status"] == "completed" else "")
                 )
             else:
-                # Rejected: send back to executor
                 step["status"] = "pending"
                 step["rejected_by"] = self._agent_name
                 if reason:
                     step["note"] = (step.get("note", "") + f" [rejected: {reason}]").strip()
 
-                plans[plan_id] = plan
-                store.set_extra(self._conversation_id, "plans", plans)
+                PlanStore.instance().save("", self._conversation_id, plan)
 
                 try:
                     from core.conversation_event_bus import ConversationEventBus

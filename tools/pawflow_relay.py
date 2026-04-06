@@ -1381,7 +1381,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 # 4. x11vnc
                 _p_vnc = subprocess.Popen(
                     ["x11vnc", "-display", _display, "-forever", "-nopw",
-                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage"],
+                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
+                     "-defer", "33"],
                     stdout=_log_d, stderr=_log_d)
                 _procs.append(_p_vnc)
 
@@ -1550,7 +1551,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         return {"ok": False, "error": "websockify not installed. Install with: pip install websockify"}
                     _p_vnc = subprocess.Popen(
                         ["x11vnc", "-display", _display, "-forever", "-nopw",
-                         "-rfbport", str(_vnc_port), "-shared", "-noxdamage"],
+                         "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
+                         "-defer", "33"],
                         stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_vnc)
 

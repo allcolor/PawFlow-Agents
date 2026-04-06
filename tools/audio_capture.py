@@ -139,6 +139,22 @@ def _detect_pulse_monitor() -> str:
     return "default.monitor"
 
 
+def _create_timerfd(interval_ms: int):
+    """Create a Linux timerfd for precise periodic timing."""
+    import ctypes
+    import ctypes.util
+    libc = ctypes.CDLL(ctypes.util.find_library('c'), use_errno=True)
+    CLOCK_MONOTONIC = 1
+    fd = libc.timerfd_create(CLOCK_MONOTONIC, 0)
+    if fd < 0:
+        raise OSError("timerfd_create failed")
+    interval_ns = interval_ms * 1_000_000
+    # struct itimerspec { struct timespec it_interval; struct timespec it_value; }
+    buf = struct.pack('llll', 0, interval_ns, 0, interval_ns)
+    libc.timerfd_settime(fd, 0, buf, None)
+    return fd
+
+
 def _capture_loop(source: str):
     if platform.system() == "Windows":
         logger.error("Windows not supported (use WASAPI capture)")
@@ -159,45 +175,70 @@ def _capture_loop(source: str):
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 bufsize=frame_bytes)
 
-            logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
-            _pkt_count = 0
-            _skip_count = 0
-            _interval_start = time.monotonic()
-            _next_send = time.monotonic()
-            _FRAME_DUR = 0.020  # 20ms per frame
+            # Make pipe non-blocking so reads don't stall the timer loop
+            import fcntl
+            _pipe_fd = proc.stdout.fileno()
+            _flags = fcntl.fcntl(_pipe_fd, fcntl.F_GETFL)
+            fcntl.fcntl(_pipe_fd, fcntl.F_SETFL, _flags | os.O_NONBLOCK)
 
-            while True:
-                # Blocking read of exactly one frame (20ms at 48kHz)
-                pcm = proc.stdout.read(frame_bytes)
-                if not pcm or len(pcm) < frame_bytes:
+            # Kernel timer at exactly 20ms intervals
+            _timer_fd = _create_timerfd(20)
+
+            logger.info("Capture started (parec + libopus + timerfd, %d bytes/frame)", frame_bytes)
+            _pcm_buf = bytearray()
+            _last_frame = None
+            _pkt_count = 0
+            _repeat_count = 0
+            _drop_count = 0
+            _interval_start = time.monotonic()
+
+            while proc.poll() is None:
+                # Wait for timer tick (kernel-precise 20ms)
+                try:
+                    os.read(_timer_fd, 8)
+                except OSError:
                     break
 
-                _now = time.monotonic()
-                # Wallclock pacing: send at exactly 50fps regardless of PA clock
-                if _now < _next_send - _FRAME_DUR:
-                    # We're >1 frame ahead of wallclock — drop this frame
-                    _skip_count += 1
-                    continue
+                # Non-blocking: drain all available PCM from pipe
+                try:
+                    while True:
+                        chunk = os.read(_pipe_fd, frame_bytes * 4)
+                        if not chunk:
+                            break
+                        _pcm_buf.extend(chunk)
+                except (BlockingIOError, OSError):
+                    pass  # nothing available right now
 
-                if _now < _next_send:
-                    time.sleep(_next_send - _now)
+                # Drop excess to prevent latency buildup (keep max ~3 frames)
+                while len(_pcm_buf) > frame_bytes * 5:
+                    del _pcm_buf[:frame_bytes]
+                    _drop_count += 1
+
+                # Send one frame per tick
+                if len(_pcm_buf) >= frame_bytes:
+                    pcm = bytes(_pcm_buf[:frame_bytes])
+                    del _pcm_buf[:frame_bytes]
+                    _last_frame = pcm
+                elif _last_frame is not None:
+                    pcm = _last_frame
+                    _repeat_count += 1
+                else:
+                    continue  # no data yet at startup
 
                 opus_pkt = encoder.encode(pcm)
                 _broadcast(opus_pkt)
                 _pkt_count += 1
-                _next_send += _FRAME_DUR
 
-                # If we fell way behind (>500ms), reset the clock
-                if time.monotonic() > _next_send + 0.5:
-                    _next_send = time.monotonic()
-
+                _now = time.monotonic()
                 if _now - _interval_start >= 10.0:
-                    logger.info("Audio capture: %d pkts/10s (skipped %d)",
-                                _pkt_count, _skip_count)
+                    logger.info("Audio capture: %d pkts/10s (repeat %d, drop %d)",
+                                _pkt_count, _repeat_count, _drop_count)
                     _pkt_count = 0
-                    _skip_count = 0
+                    _repeat_count = 0
+                    _drop_count = 0
                     _interval_start = _now
 
+            os.close(_timer_fd)
             proc.wait()
             logger.warning("parec exited (code %s)", proc.returncode)
         except Exception as e:

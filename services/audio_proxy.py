@@ -108,17 +108,23 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         _last_send = time.perf_counter()
         try:
             while not stop.is_set():
-                queue_event.wait(timeout=0.005)
-                queue_event.clear()
+                # Wait until next send window
+                _remaining = _MIN_INTERVAL - (time.perf_counter() - _last_send)
+                if _remaining > 0:
+                    queue_event.wait(timeout=_remaining)
+                    queue_event.clear()
+                else:
+                    queue_event.clear()
                 if not pkt_queue:
+                    queue_event.wait(timeout=_MIN_INTERVAL)
+                    queue_event.clear()
+                    continue
+                # Still too soon?
+                if time.perf_counter() - _last_send < _MIN_INTERVAL:
                     continue
                 # Drop excess from TCP bursts (keep latest)
                 while len(pkt_queue) > _MAX_QUEUE:
                     pkt_queue.popleft()
-                # Rate cap: send 1 packet per ~20ms
-                now = time.perf_counter()
-                if now - _last_send < _MIN_INTERVAL:
-                    continue  # too soon — wait for next cycle
                 pkt = pkt_queue.popleft()
                 frame = bytearray()
                 if len(pkt) < 126:

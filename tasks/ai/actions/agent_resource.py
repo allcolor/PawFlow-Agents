@@ -274,6 +274,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        # Invalidate this agent's Claude Code session so the new skill is injected
+        conv_id = body.get("conversation_id", "")
+        if conv_id:
+            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
         flowfile.set_content(json.dumps({
             "assigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' assigned to agent '{agent_name}'",
@@ -299,6 +303,10 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         _scope = agent_def.get("_scope", "user")
         _uid = uid if _scope == "user" else "__global__"
         rs.update("agent", agent_name, _uid, {"assigned_skills": assigned})
+        # Invalidate this agent's Claude Code session so the removed skill takes effect
+        conv_id = body.get("conversation_id", "")
+        if conv_id:
+            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
         flowfile.set_content(json.dumps({
             "unassigned": True, "agent": agent_name, "skill": skill_name,
             "message": f"Skill '{skill_name}' removed from agent '{agent_name}'",

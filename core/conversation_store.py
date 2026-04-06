@@ -68,6 +68,30 @@ class ConversationStore:
         safe = safe.replace(":", "__")
         return self._store_dir / f"{safe}.jsonl"
 
+    def _extras_path(self, cid: str) -> Path:
+        """Path to the extras.json file (atomic JSON, no JSONL duplication)."""
+        safe = "".join(c for c in cid if c.isalnum() or c in "-_:")
+        safe = safe.replace(":", "__")
+        return self._store_dir / f"{safe}.extras.json"
+
+    def _read_extras(self, cid: str) -> dict:
+        """Read extras from the atomic JSON file."""
+        path = self._extras_path(cid)
+        if path.exists():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {}
+
+    def _write_extras(self, cid: str, data: dict):
+        """Atomically write extras JSON (tmp + rename)."""
+        path = self._extras_path(cid)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+
     # ══════════════════════════════════════════════════════════════════
     #  SINGLE READ POINT
     # ══════════════════════════════════════════════════════════════════
@@ -145,10 +169,9 @@ class ConversationStore:
                     "data": op["data"],
                 })
             elif op_type == "extra":
-                lines_to_append.append({
-                    "t": "extra", "key": op["key"], "value": op["value"],
-                    "ts": time.time(),
-                })
+                # Extras now go to extras.json (atomic JSON), not JSONL
+                # set_extra() handles this directly — skip here
+                pass
             elif op_type == "status":
                 lines_to_append.append({
                     "t": "status", "status": op["status"],
@@ -194,7 +217,7 @@ class ConversationStore:
                     "data": op["data"],
                 })
             elif op_type == "extra":
-                appends.append({"t": "extra", "key": op["key"], "value": op["value"]})
+                pass  # extras go to extras.json, not JSONL
             elif op_type == "status":
                 appends.append({"t": "status", "status": op["status"]})
 
@@ -392,10 +415,22 @@ class ConversationStore:
     def _reload_cache(self, cid: str) -> dict:
         """Read file from disk and atomically swap cache entry.
 
+        Extras are loaded from the separate extras.json file (not from JSONL).
         No gap where the entry is absent — list_conversations always
         sees either the old or new value, never missing.
         """
         c = self._read(cid, self._scan_cache)
+        # Merge extras from extras.json file (source of truth for extras)
+        extras_data = self._read_extras(cid)
+        if extras_data:
+            c["extras"] = extras_data
+            c["extra_keys"] = set(extras_data.keys())
+            if "title" in extras_data:
+                c["title"] = extras_data["title"]
+            # Update updated_at from extras if newer
+            for v in extras_data.values():
+                if isinstance(v, dict) and "ts" in v:
+                    c["updated_at"] = max(c["updated_at"], v["ts"])
         with self._cache_lock:
             self._cache[cid] = c
         return c
@@ -831,32 +866,40 @@ class ConversationStore:
     # ── Extras ────────────────────────────────────────────────────────
 
     def get_extra_cached(self, cid: str, key: str, default: Any = None) -> Any:
-        """Fast get_extra from in-memory cache — no disk I/O."""
-        cache = self._load_cache(cid)
-        return cache.get("extras", {}).get(key, default)
+        """Get extra from extras.json file."""
+        return self._read_extras(cid).get(key, default)
 
     def get_extra(self, cid: str, key: str, default: Any = None,
                   user_id: str = "") -> Any:
         if not self.exists(cid):
             return default
-        return self.get_extra_cached(cid, key, default)
+        return self._read_extras(cid).get(key, default)
 
     def get_extras(self, cid: str, user_id: str = "") -> Optional[dict]:
         if not self.exists(cid):
             return None
-        cache = self._load_cache(cid)
-        return dict(cache.get("extras", {}))
+        return dict(self._read_extras(cid))
 
     def set_extra(self, cid: str, key: str, value: Any,
                   user_id: str = "") -> bool:
         if not self.exists(cid):
+            # File gone but extras may still exist — clean up cache
+            with self._cache_lock:
+                self._cache.pop(cid, None)
             return False
-        self._commit(cid, [{"op": "extra", "key": key, "value": value}])
-        # Update in-memory cache
+        lock = self._get_conv_lock(cid)
+        with lock:
+            data = self._read_extras(cid)
+            data[key] = value
+            self._write_extras(cid, data)
+        # Update in-memory cache for list_conversations (title, updated_at)
         with self._cache_lock:
             if cid in self._cache:
                 self._cache[cid]["extra_keys"].add(key)
                 self._cache[cid].setdefault("extras", {})[key] = value
+                if key == "title":
+                    self._cache[cid]["title"] = value
+                self._cache[cid]["updated_at"] = time.time()
         return True
 
     def invalidate_claude_sessions(self, cid: str) -> None:
@@ -875,14 +918,17 @@ class ConversationStore:
 
     def delete(self, cid: str, user_id: str = "") -> bool:
         path = self._conv_path(cid)
+        extras_path = self._extras_path(cid)
         if not path.exists():
-            # File gone but cache entry may linger — clean it up
+            # File gone but cache/extras may linger — clean up
+            extras_path.unlink(missing_ok=True)
             with self._cache_lock:
                 self._cache.pop(cid, None)
             return False
         lock = self._get_conv_lock(cid)
         with lock:
             path.unlink(missing_ok=True)
+            extras_path.unlink(missing_ok=True)
         with self._cache_lock:
             self._cache.pop(cid, None)
         self._invalidate_ctx_cache(cid)
@@ -893,6 +939,8 @@ class ConversationStore:
                 sub_lock = self._get_conv_lock(sub_cid)
                 with sub_lock:
                     p.unlink(missing_ok=True)
+                    # Also delete task extras
+                    self._extras_path(sub_cid).unlink(missing_ok=True)
                 with self._cache_lock:
                     self._cache.pop(sub_cid, None)
         return True

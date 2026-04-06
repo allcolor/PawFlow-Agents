@@ -861,8 +861,6 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
         "allow_automation": allow_automation,
         "allow_local_screen": allow_local_screen,
         "allow_local": allow_local,
-        "desktop_novnc_port": int(os.environ.get("PAWFLOW_DESKTOP_NOVNC_PORT", 0)),
-        "desktop_audio_port": int(os.environ.get("PAWFLOW_DESKTOP_AUDIO_PORT", 0)),
     }
 
     def _resolve(rel_path):
@@ -1406,7 +1404,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                             sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
                         except Exception as _pa_err:
                             sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-                    _audio_port = int(os.environ.get("PAWFLOW_DESKTOP_AUDIO_PORT", 0)) or _novnc_port + 100
+                    _audio_port = _novnc_port + 100
                     _audio_script = Path("/opt/pawflow/audio_capture.py")
                     if _audio_script.exists():
                         _p_audio = subprocess.Popen(
@@ -1495,7 +1493,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 "display": getattr(_execute_command, '_desktop_display', None),
                 "vnc_port": getattr(_execute_command, '_desktop_vnc_port', None),
                 "novnc_port": _novnc,
-                "audio_port": int(os.environ.get("PAWFLOW_DESKTOP_AUDIO_PORT", 0)) or ((_novnc + 100) if _novnc else 0) if _running else 0,
+                "audio_port": (_novnc + 100) if _novnc and _running else 0,
                 "local_screen_running": _local_running,
                 "local_screen_novnc_port": getattr(_execute_command, '_local_desktop_novnc_port', None),
             }}

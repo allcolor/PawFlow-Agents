@@ -215,20 +215,17 @@ class RelayThread:
         while not self._stop_event.is_set():
             self._docker_container = make_container_name(self.relay_id, "relay")
             ws_url = f"wss://{get_host_ip()}:{self.port}/ws/relay"
-            # Use --network host: no port mapping, no bridge, no docker-proxy
-            # Container ports are directly on the host network (lower latency)
-            _novnc_port_host = find_free_port()
-            _audio_port_host = find_free_port()
-            self._desktop_host_port = _novnc_port_host
-            self._audio_host_port = _audio_port_host
+            self._desktop_host_port = find_free_port()
+            self._audio_host_port = find_free_port()
             docker_run_cmd = docker_cmd() + [
                 "run", "--rm",
                 "--name", self._docker_container,
-                "--network", "host",
                 "-v", f"{translate_path(to_host_path(self.directory))}:/workspace",
                 "-v", f"pawflow_home_{self.relay_id}:/home/pawflow",
+                "--add-host", "host.docker.internal:host-gateway",
                 "--cpus", self.docker_cpus, "--memory", self.docker_memory,
                 "--shm-size", "512m",
+                "--security-opt", "no-new-privileges",
                 "-e", "GIT_CONFIG_COUNT=4",
                 "-e", "GIT_CONFIG_KEY_0=safe.directory",
                 "-e", "GIT_CONFIG_VALUE_0=/workspace",
@@ -239,8 +236,9 @@ class RelayThread:
                 "-e", "GIT_CONFIG_KEY_3=core.untrackedCache",
                 "-e", "GIT_CONFIG_VALUE_3=false",
                 "-e", f"PAWFLOW_HOST_HELPER={get_host_ip()}:{host_helper_port}",
-                "-e", f"PAWFLOW_DESKTOP_NOVNC_PORT={_novnc_port_host}",
-                "-e", f"PAWFLOW_DESKTOP_AUDIO_PORT={_audio_port_host}",
+                "--publish", f"{self._desktop_host_port}:6080",
+                "--publish", f"{self._audio_host_port}:6180",
+                "-e", "PAWFLOW_DESKTOP_NOVNC_PORT=6080",
                 "-e", f"PAWFLOW_HOST_WORKDIR={self.directory.replace(chr(92), '/')}",
                 "-e", "HOME=/home/pawflow",
                 "-e", "USER=pawflow",

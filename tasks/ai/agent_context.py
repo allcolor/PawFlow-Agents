@@ -582,20 +582,9 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 else:
                     _agent_skills = agent_def.get("assigned_skills") or []
                 if _agent_skills:
-                    skill_sections = []
-                    for sname in _agent_skills:
-                        skill_def = rs.get_any("skill", sname, _uid)
-                        if skill_def and skill_def.get("prompt"):
-                            skill_sections.append(
-                                f"## Skill: {sname}\n"
-                                f"{skill_def.get('description', '')}\n\n"
-                                f"{skill_def['prompt']}"
-                            )
-                    if skill_sections:
-                        system_prompt += (
-                            "\n\n# Assigned Skills\n\n"
-                            + "\n\n".join(skill_sections)
-                        )
+                    from core.skill_resolver import inject_skills_into_prompt
+                    system_prompt = inject_skills_into_prompt(
+                        system_prompt, _agent_skills, _uid)
                 # Auto-load tools from active MCP servers
                 active_mcps = active_res.get("mcps", [])
                 if active_mcps:

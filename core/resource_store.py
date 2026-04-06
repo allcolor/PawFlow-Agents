@@ -56,6 +56,7 @@ _DEFAULTS = {
     },
     "skill": {
         "description": "",
+        "parameters": {},
     },
     "mcp": {
         "url": "",              # HTTP transport: server URL

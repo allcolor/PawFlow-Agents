@@ -785,19 +785,9 @@ def resolve_agent_task(
     # Sub-contexts (delegate) only get skills explicitly passed via extra_skills.
     # No fallback to agent's own assigned_skills — those are for the main conv only.
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
-    _assigned_skills = list(extra_skills) if extra_skills else []
-    if _assigned_skills:
-        _skill_blocks = []
-        for _sk_name in _assigned_skills:
-            _sk_def = store.get_any("skill", _sk_name, user_id)
-            if _sk_def and _sk_def.get("prompt"):
-                _skill_blocks.append(
-                    f"## Skill: {_sk_name}\n"
-                    f"{_sk_def.get('description', '')}\n\n"
-                    f"{_sk_def['prompt']}"
-                )
-        if _skill_blocks:
-            _sys_prompt += "\n\n# Assigned Skills\n\n" + "\n\n".join(_skill_blocks)
+    if extra_skills:
+        from core.skill_resolver import inject_skills_into_prompt
+        _sys_prompt = inject_skills_into_prompt(_sys_prompt, list(extra_skills), user_id)
     _nick = None
     if conversation_id:
         try:

@@ -110,6 +110,16 @@ class ResourceStore:
         with cls._lock:
             cls._instance = None
 
+    def reload(self, resource_type: str = ""):
+        """Force re-read from disk. If resource_type is empty, reload all."""
+        with self._store_lock:
+            if resource_type:
+                self._loaded.discard(resource_type)
+                self._ensure_loaded(resource_type)
+            else:
+                self._loaded.clear()
+                self._data.clear()
+
     def _ensure_loaded(self, resource_type: str):
         """Lazy-load a resource file from disk."""
         if resource_type in self._loaded:

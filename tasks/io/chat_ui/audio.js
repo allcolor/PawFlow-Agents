@@ -31,7 +31,7 @@ var _pcmFlushTimer = null;
 var _preBuffer = [];
 var _preBufferSamples = 0;
 var _preBufferDone = false;
-var _PRE_BUFFER_TARGET = 4800; // 100ms at 48kHz — matches worklet TARGET
+var _PRE_BUFFER_TARGET = 7200; // 150ms at 48kHz — jitter absorption buffer
 
 // Diagnostic stats
 var _audioStats = {
@@ -119,43 +119,19 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = ring.length;
     const wPos = Atomics.load(this.sabCtrl, 0);
     const available = wPos - Math.floor(this.sabRPos);
-    const TARGET = 4800; // 100ms at 48kHz
+    const TARGET = 7200; // 150ms at 48kHz — jitter absorption buffer
+    const MAX_FILL = 14400; // 300ms — drop threshold
 
-    // Rate measurement: every ~2s, compute actual input/output ratio
-    if (this._measWPos === undefined) {
-      this._measWPos = wPos;
-      this._measN = 0;
-      this._smoothStep = this.baseStep;
-    }
-    this._measN++;
-    if (this._measN >= 750) { // 750 calls * 128 samples = 96000 = 2s at 48kHz
-      const samplesIn = wPos - this._measWPos;
-      const samplesOut = this._measN * out.length;
-      if (samplesOut > 0 && samplesIn > 0) {
-        const ratio = samplesIn / samplesOut;
-        this._smoothStep = this._smoothStep * 0.6 + ratio * 0.4;
-      }
-      this._measWPos = wPos;
-      this._measN = 0;
-    }
-    this._smoothStep = Math.max(this.baseStep * 0.85, Math.min(this.baseStep * 1.15, this._smoothStep));
+    // Fixed step: CONSTANT playback rate, no adaptation
+    const step = this.baseStep;
+    this._smoothStep = step; // for stats reporting
 
-    // Micro-correction: nudge step based on buffer fill (keeps fill near TARGET)
-    const error = available - TARGET;
-    const step = this._smoothStep + error * 0.000002;
-
-    // Emergency snap only if buffer exceeds 2 seconds (96000 samples)
-    if (available > 96000) {
+    // Buffer overflow: snap forward to TARGET (prevents latency buildup)
+    if (available > MAX_FILL) {
       this.sabRPos = wPos - TARGET;
     }
 
-    const wasUnderrun = this._sabWasUnderrun || false;
     if (available < out.length) this.underruns++;
-    this._sabWasUnderrun = (available < out.length);
-    if (wasUnderrun && available >= out.length && available > TARGET * 2) {
-      this.sabRPos = wPos - TARGET;
-    }
-    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.sabRPos);
@@ -163,15 +139,11 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         const frac = this.sabRPos - ri;
         const s0 = ring[ri % len];
         const s1 = (ri + 1 < wPos) ? ring[(ri + 1) % len] : s0;
-        let sample = s0 + frac * (s1 - s0);
-        if (fadeIn > 0) {
-          sample *= (64 - fadeIn) / 64;
-          fadeIn--;
-        }
-        out[i] = sample;
+        out[i] = s0 + frac * (s1 - s0);
         this.sabRPos += step;
       } else {
-        out[i] = i > 0 ? out[i-1] * 0.99 : 0;
+        // Underrun: silence (no pitch change, just a micro-gap)
+        out[i] = 0;
       }
     }
   }
@@ -180,41 +152,17 @@ class AudioRingProcessor extends AudioWorkletProcessor {
     const len = this.ring.length;
     const irPos = Math.floor(this.rPos);
     const available = this.wPos - irPos;
-    const TARGET = 4800;
+    const TARGET = 7200; // 150ms
+    const MAX_FILL = 14400; // 300ms
 
-    // Rate measurement: same as SAB path
-    if (this._pmMeasWPos === undefined) {
-      this._pmMeasWPos = this.wPos;
-      this._pmMeasN = 0;
-      this._pmSmoothStep = this.baseStep;
-    }
-    this._pmMeasN++;
-    if (this._pmMeasN >= 750) {
-      const samplesIn = this.wPos - this._pmMeasWPos;
-      const samplesOut = this._pmMeasN * out.length;
-      if (samplesOut > 0 && samplesIn > 0) {
-        const ratio = samplesIn / samplesOut;
-        this._pmSmoothStep = this._pmSmoothStep * 0.6 + ratio * 0.4;
-      }
-      this._pmMeasWPos = this.wPos;
-      this._pmMeasN = 0;
-    }
-    this._pmSmoothStep = Math.max(this.baseStep * 0.85, Math.min(this.baseStep * 1.15, this._pmSmoothStep));
+    const step = this.baseStep;
+    this._pmSmoothStep = step;
 
-    const error = available - TARGET;
-    const step = this._pmSmoothStep + error * 0.000002;
-
-    if (available > 96000) {
+    if (available > MAX_FILL) {
       this.rPos = this.wPos - TARGET;
     }
 
-    const wasUnderrun = this._pmWasUnderrun || false;
     if (available < out.length) this.underruns++;
-    this._pmWasUnderrun = (available < out.length);
-    if (wasUnderrun && available >= out.length && available > TARGET * 2) {
-      this.rPos = this.wPos - TARGET;
-    }
-    let fadeIn = wasUnderrun && available >= out.length ? 64 : 0;
 
     for (let i = 0; i < out.length; i++) {
       const ri = Math.floor(this.rPos);
@@ -222,15 +170,10 @@ class AudioRingProcessor extends AudioWorkletProcessor {
         const frac = this.rPos - ri;
         const s0 = this.ring[ri % len];
         const s1 = (ri + 1 < this.wPos) ? this.ring[(ri + 1) % len] : s0;
-        let sample = s0 + frac * (s1 - s0);
-        if (fadeIn > 0) {
-          sample *= (64 - fadeIn) / 64;
-          fadeIn--;
-        }
-        out[i] = sample;
+        out[i] = s0 + frac * (s1 - s0);
         this.rPos += step;
       } else {
-        out[i] = i > 0 ? out[i-1] * 0.99 : 0;
+        out[i] = 0;
       }
     }
   }

@@ -102,9 +102,10 @@
     "timeout": 120,
     "description": "",
     "llm_service": "",
+    "assigned_skills": [],
     "prompt": "Basic assistant",
     "name": "basic",
-    "created_at": 1774221920.715349,
-    "updated_at": 1774221920.7153492
+    "created_at": 1775492385.5171661,
+    "updated_at": 1775492385.5171666
   }
 }

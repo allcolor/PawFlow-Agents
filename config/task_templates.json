@@ -1,0 +1,65 @@
+{
+  "daily_code_review": {
+    "name": "daily_code_review",
+    "category": "development",
+    "description": "Review recent code changes and provide feedback",
+    "prompt": "Review the latest code changes in the project. Focus on:\n- Code quality and best practices\n- Potential bugs or security issues\n- Performance concerns\n- Readability and maintainability\n\nProvide a concise summary with actionable feedback for each issue found.",
+    "criteria": "Code review completed with at least one actionable finding or explicit confirmation that code quality is satisfactory.",
+    "default_interval": "1/1d",
+    "variables": {
+      "focus_area": {"description": "Specific area to focus on (e.g. 'api/', 'tests/')", "default": ""}
+    }
+  },
+  "monitor_endpoint": {
+    "name": "monitor_endpoint",
+    "category": "monitoring",
+    "description": "Periodically check an HTTP endpoint and alert on issues",
+    "prompt": "Check the endpoint ${endpoint_url} and verify it responds correctly.\n\n1. Fetch the URL and check the HTTP status code\n2. Verify the response time is reasonable (< ${max_response_time}ms)\n3. If ${expected_content} is set, verify the response contains it\n4. Report any issues found\n\nIf everything is OK, report 'OK' with response time. If there's an issue, describe it clearly.",
+    "criteria": "",
+    "default_interval": "1/5m",
+    "variables": {
+      "endpoint_url": {"description": "URL to monitor", "required": true},
+      "max_response_time": {"description": "Max acceptable response time in ms", "default": "5000"},
+      "expected_content": {"description": "Expected string in response body", "default": ""}
+    }
+  },
+  "summarize_channel": {
+    "name": "summarize_channel",
+    "category": "communication",
+    "description": "Summarize recent activity in a communication channel",
+    "prompt": "Summarize the recent activity and key discussions. Focus on:\n- Important decisions made\n- Action items assigned\n- Questions that need answers\n- Notable announcements\n\nProvide a concise, structured summary that someone who missed the conversation can quickly scan.",
+    "criteria": "Summary produced with at least the key topics and any action items identified.",
+    "default_interval": "1/1d",
+    "variables": {}
+  },
+  "dependency_audit": {
+    "name": "dependency_audit",
+    "category": "development",
+    "description": "Check project dependencies for updates and security issues",
+    "prompt": "Audit the project's dependencies:\n1. Check for outdated packages\n2. Look for known security vulnerabilities\n3. Identify deprecated dependencies\n4. Suggest updates with their changelogs\n\nPrioritize security-critical updates. For each recommendation, note the risk level and any breaking changes.",
+    "criteria": "Audit completed with a list of findings (or explicit confirmation that all deps are up to date and secure).",
+    "default_interval": "1/1d",
+    "variables": {}
+  },
+  "data_pipeline_check": {
+    "name": "data_pipeline_check",
+    "category": "monitoring",
+    "description": "Verify data pipeline health and freshness",
+    "prompt": "Check the data pipeline status:\n1. Verify the latest data is fresh (less than ${max_age} old)\n2. Check for anomalies in data volume or patterns\n3. Verify data quality metrics\n4. Report any pipeline failures or warnings\n\nData source: ${data_source}",
+    "criteria": "",
+    "default_interval": "2/1h",
+    "variables": {
+      "data_source": {"description": "Data source to check", "required": true},
+      "max_age": {"description": "Maximum acceptable data age", "default": "1h"}
+    }
+  },
+  "standup_report": {
+    "name": "standup_report",
+    "category": "communication",
+    "description": "Generate a daily standup report from recent activity",
+    "prompt": "Generate a standup report based on recent activity:\n\n**Yesterday:**\n- Summarize completed work from the last 24 hours\n\n**Today:**\n- List planned tasks and priorities\n\n**Blockers:**\n- Identify any blockers or risks\n\nKeep it concise and actionable. Use bullet points.",
+    "criteria": "Report generated with all three sections (yesterday, today, blockers).",
+    "default_interval": "1/1d",
+    "variables": {}
+  }
+}

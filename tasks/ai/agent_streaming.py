@@ -427,6 +427,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
 
         _had_error = False
         try:
+            ctx["_agent_loop_start_time"] = time.time()
             result = self._run_agent_loop(ctx, emitter)
             _had_error = getattr(result, "finish_reason", "") == "error"
 
@@ -546,15 +547,43 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                     _all_tasks = _store.get_extra(_parent_cid, "agent_tasks") or {}
                     _ag_name = ctx.get("active_agent_name") or ""
                     _tasks_changed = False
-                    # Accumulate total_cost from CostTracker
+                    # Accumulate total_cost from CostTracker and log iteration metrics
                     if "::task::" in conversation_id:
                         try:
                             from core.cost_tracker import CostTracker as _CT
                             _task_sub_cost = _CT.instance().get_conversation_cost(conversation_id)
                             _tid_cost = conversation_id.rsplit("::", 1)[-1]
                             if _tid_cost in _all_tasks:
-                                _all_tasks[_tid_cost]["total_cost"] = _task_sub_cost.get("total", 0.0)
+                                _prev_cost = _all_tasks[_tid_cost].get("total_cost", 0.0)
+                                _new_total = _task_sub_cost.get("total", 0.0)
+                                _all_tasks[_tid_cost]["total_cost"] = _new_total
                                 _tasks_changed = True
+                                # Enrich task log with iteration metrics
+                                try:
+                                    from core.handlers.task_management import _append_task_log
+                                    _iter_cost = max(0, _new_total - _prev_cost)
+                                    _iter_start = ctx.get("_agent_loop_start_time", 0)
+                                    _iter_duration = (time.time() - _iter_start) if _iter_start else 0
+                                    # Sum tokens across all models
+                                    _by_model = _task_sub_cost.get("by_model", {})
+                                    _total_in = sum(m.get("in", 0) for m in _by_model.values())
+                                    _total_out = sum(m.get("out", 0) for m in _by_model.values())
+                                    # Compute delta from previous iteration
+                                    _prev_tokens_in = _all_tasks[_tid_cost].get("_prev_tokens_in", 0)
+                                    _prev_tokens_out = _all_tasks[_tid_cost].get("_prev_tokens_out", 0)
+                                    _all_tasks[_tid_cost]["_prev_tokens_in"] = _total_in
+                                    _all_tasks[_tid_cost]["_prev_tokens_out"] = _total_out
+                                    _append_task_log(_parent_cid, _tid_cost, {
+                                        "type": "iteration",
+                                        "agent": _ag_name,
+                                        "cost": round(_iter_cost, 6),
+                                        "duration_secs": round(_iter_duration, 1),
+                                        "tokens_in": _total_in - _prev_tokens_in,
+                                        "tokens_out": _total_out - _prev_tokens_out,
+                                        "had_error": _had_error,
+                                    })
+                                except Exception:
+                                    pass
                         except Exception:
                             pass
                     for _tid, _task in _all_tasks.items():

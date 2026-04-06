@@ -547,18 +547,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         system_prompt = agent_def["prompt"]
                         # Identity is injected later (with nickname awareness)
 
-                        # Filter tool_defs by agent's tools list (! prefix = deny)
-                        _agent_tools_cfg = agent_def.get("tools") or []
-                        if _agent_tools_cfg and isinstance(_agent_tools_cfg, list):
-                            _allow = {t for t in _agent_tools_cfg if not str(t).startswith("!")}
-                            _deny  = {t[1:] for t in _agent_tools_cfg if str(t).startswith("!")}
-                            if _allow:
-                                # Allowlist: only keep listed tools
-                                tool_defs = [td for td in tool_defs if td.name in _allow]
-                            elif _deny:
-                                # Denylist only: remove denied tools
-                                tool_defs = [td for td in tool_defs if td.name not in _deny]
-
                         # Date/time NOT in system prompt (KV cache killer)
                         # List other available agents
                         all_agents = rs.list_all("agent", _uid, conversation_id=conversation_id)
@@ -678,6 +666,25 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
             except Exception as e:
                 logger.error("Error loading agent persona/skills: %s", e, exc_info=True)
+
+        # Rebuild tool_defs from registry (now includes MCP + dynamic tools)
+        # then apply agent's allowlist/denylist filter
+        tool_defs = [
+            LLMToolDefinition(
+                name=h.name, description=h.description,
+                parameters=h.parameters_schema,
+            )
+            for h in registry.list_tools()
+        ]
+        if _selected_agent_def:
+            _agent_tools_cfg = _selected_agent_def.get("tools") or []
+            if _agent_tools_cfg and isinstance(_agent_tools_cfg, list):
+                _allow = {t for t in _agent_tools_cfg if not str(t).startswith("!")}
+                _deny  = {t[1:] for t in _agent_tools_cfg if str(t).startswith("!")}
+                if _allow:
+                    tool_defs = [td for td in tool_defs if td.name in _allow]
+                elif _deny:
+                    tool_defs = [td for td in tool_defs if td.name not in _deny]
 
         # NOTE: messages[0] is updated with the final system_prompt
         # at the end of this method, after all prompt modifications

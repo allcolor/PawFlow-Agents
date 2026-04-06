@@ -1,5 +1,7 @@
 # PawFlow Core
 
+from __future__ import annotations
+
 """
 Core module de PawFlow.
 Définit les interfaces et classes abstraites du framework.

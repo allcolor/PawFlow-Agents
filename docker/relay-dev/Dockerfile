@@ -158,6 +158,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr tesseract-ocr-fra \
     && pip3 install --break-system-packages --no-cache-dir \
        mss pyautogui pytesseract opencv-python-headless \
+    && apt-get purge -y xfce4-pulseaudio-plugin 2>/dev/null || true \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Desktop apps: image, video, audio, office, viewers ─────────────

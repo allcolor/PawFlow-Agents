@@ -1371,34 +1371,10 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 _procs.append(_p_dbus)
                 _time_mod.sleep(0.3)
 
-                # 3. XFCE desktop session (as non-root user)
-                _p_wm = subprocess.Popen(
-                    ["startxfce4"], env=_user_env,
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_wm)
-                _time_mod.sleep(1)
-
-                # 4. x11vnc
-                _p_vnc = subprocess.Popen(
-                    ["x11vnc", "-display", _display, "-forever", "-nopw",
-                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
-                     "-defer", "33"],
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_vnc)
-
-                # 5. websockify (noVNC)
-                _novnc_web = "/usr/share/novnc"
-                _p_novnc = subprocess.Popen(
-                    ["websockify", "--web", _novnc_web,
-                     "--heartbeat", "30",
-                     str(_novnc_port), f"localhost:{_vnc_port}"],
-                    stdout=_log_d, stderr=_log_d)
-                _procs.append(_p_novnc)
-                # 6. PulseAudio (virtual audio sink for desktop apps)
+                # 3. PulseAudio (BEFORE XFCE — so desktop apps find PA already running)
                 import shutil as _shutil
                 _audio_port = 0
                 if _shutil.which("pulseaudio"):
-                    # Write daemon.conf to force 48kHz — PA defaults to 44100
                     _pa_conf_dir = Path(_desktop_home) / ".config" / "pulse"
                     _pa_conf_dir.mkdir(parents=True, exist_ok=True)
                     (_pa_conf_dir / "daemon.conf").write_text(
@@ -1406,49 +1382,63 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                         "alternate-sample-rate = 48000\n"
                     )
                     if _desktop_user:
-                        import subprocess as _sp_chown
-                        _sp_chown.run(["chown", "-R",
-                                       _desktop_user,
-                                       str(_pa_conf_dir)], check=False)
-                    # Kill any stale PA — --start ignores --load if PA is already running
-                    subprocess.run(
-                        ["pulseaudio", "--kill"],
-                        env=_user_env,
-                        stdout=_log_d, stderr=_log_d, timeout=5)
+                        subprocess.run(["chown", "-R", _desktop_user,
+                                        str(_pa_conf_dir)], check=False)
+                    subprocess.run(["pulseaudio", "--kill"], env=_user_env,
+                                   stdout=_log_d, stderr=_log_d, timeout=5)
                     _time_mod.sleep(0.3)
                     _p_pulse = subprocess.Popen(
                         ["pulseaudio", "--start", "--exit-idle-time=-1",
                          "--load=module-null-sink sink_name=virtual_out rate=48000",
                          "--load=module-always-sink"],
-                        env=_user_env,
-                        stdout=_log_d, stderr=_log_d)
+                        env=_user_env, stdout=_log_d, stderr=_log_d)
                     _procs.append(_p_pulse)
                     _time_mod.sleep(0.5)
-                    # Verify sink rate and daemon config
                     for _pa_cmd, _pa_label in [
                         (["pactl", "info"], "PA info"),
-                        (["pactl", "list", "sinks"], "PA sinks"),
-                        (["pactl", "list", "short", "sources"], "PA sources"),
+                        (["pactl", "list", "short", "sinks"], "PA sinks"),
                     ]:
                         try:
                             _pa_out = subprocess.check_output(
-                                _pa_cmd, env=_user_env, timeout=5, text=True)
+                                _pa_cmd.split(), env=_user_env, timeout=5, text=True)
                             sys.stderr.write(f"[FSRelay] {_pa_label}:\n{_pa_out.strip()}\n")
                         except Exception as _pa_err:
                             sys.stderr.write(f"[FSRelay] {_pa_label} failed: {_pa_err}\n")
-                    # Audio capture server (Opus over TCP)
-                    _audio_port = _novnc_port + 100  # e.g. 6080 -> 6180
+                    _audio_port = _novnc_port + 100
                     _audio_script = Path("/opt/pawflow/audio_capture.py")
                     if _audio_script.exists():
                         _p_audio = subprocess.Popen(
                             [sys.executable, str(_audio_script),
                              "--port", str(_audio_port), "--source", "pulse"],
-                            env=_user_env,
-                            stdout=_log_d, stderr=_log_d)
+                            env=_user_env, stdout=_log_d, stderr=_log_d)
                         _procs.append(_p_audio)
                         sys.stderr.write(f"[FSRelay] Audio capture on port {_audio_port}\n")
                     else:
                         _audio_port = 0
+
+                # 4. XFCE desktop session (PA already running — no plugin conflict)
+                _p_wm = subprocess.Popen(
+                    ["startxfce4"], env=_user_env,
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_wm)
+                _time_mod.sleep(1)
+
+                # 5. x11vnc
+                _p_vnc = subprocess.Popen(
+                    ["x11vnc", "-display", _display, "-forever", "-nopw",
+                     "-rfbport", str(_vnc_port), "-shared", "-noxdamage",
+                     "-defer", "33"],
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_vnc)
+
+                # 6. websockify (noVNC)
+                _novnc_web = "/usr/share/novnc"
+                _p_novnc = subprocess.Popen(
+                    ["websockify", "--web", _novnc_web,
+                     "--heartbeat", "30",
+                     str(_novnc_port), f"localhost:{_vnc_port}"],
+                    stdout=_log_d, stderr=_log_d)
+                _procs.append(_p_novnc)
 
                 _execute_command._desktop_procs = _procs
                 _execute_command._desktop_essential_procs = [_p_xvfb, _p_vnc, _p_novnc]

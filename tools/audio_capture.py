@@ -11,6 +11,7 @@ import argparse
 import ctypes
 import ctypes.util
 import logging
+import os
 import platform
 import socket
 import struct

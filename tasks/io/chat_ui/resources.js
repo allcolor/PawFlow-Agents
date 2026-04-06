@@ -267,7 +267,7 @@ async function _renderResourcesData(data) {
         var primaryTitle = isPrimary ? 'Primary agent' : 'Set as primary';
         var primaryArrow = isPrimary ? '&#9654;' : '&#9655;';
         var autoconvTag = a.autoconv ? '<span style="font-size:9px;color:#4ecdc4;margin-left:2px;">' + String.fromCodePoint(0x1F504) + '</span>' : '';
-        html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;">'
+        html += '<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showAgentMenu(event,\'' + aName + '\',\'' + (a.scope||'') + '\',\'' + (a.autoconv||'') + '\');return false;">'
           + '<span style="cursor:pointer;font-size:10px;color:' + primaryColor + ';" title="' + primaryTitle + '"'
           + ' onclick="cmdAgentSelect(this.dataset.n).then(loadResources)" data-n="' + aName + '">' + primaryArrow + '</span>'
           + _scopeBadge(a.scope)
@@ -277,6 +277,15 @@ async function _renderResourcesData(data) {
           + '<span style="cursor:pointer;font-size:11px;color:#e94560;padding:0 3px;" title="Remove from conversation"'
           + ' onclick="_removeAgentFromConv(this.dataset.n)" data-n="' + aName + '">&times;</span>'
           + '</div>';
+        // Show assigned skills as small tags
+        var aSkills = a.assigned_skills || [];
+        if (aSkills.length) {
+          html += '<div style="margin-left:24px;margin-bottom:3px;display:flex;flex-wrap:wrap;gap:3px;">';
+          aSkills.forEach(function(sk) {
+            html += '<span style="font-size:9px;padding:1px 5px;border-radius:3px;background:#2a1a4e;color:#b39ddb;">' + escapeHtml(sk) + '</span>';
+          });
+          html += '</div>';
+        }
       });
     } else {
       html += '<div style="margin-left:8px;font-size:11px;color:#555;">No agents — <span style="color:#6c5ce7;cursor:pointer;" onclick="showAddAgentToConvDialog()">+ Add</span></div>';
@@ -308,9 +317,11 @@ async function _renderResourcesData(data) {
     html += _sectionHeader('Skills', 'skill');
     (data.skills || []).forEach(s => {
       const active = s.active;
+      const assignedTo = s.assigned_to || [];
+      const assignedTag = assignedTo.length ? ' <span style="color:#555;font-size:9px;">\u2192 ' + assignedTo.map(escapeHtml).join(', ') + '</span>' : '';
       html += `<div style="display:flex;align-items:center;gap:4px;margin-left:8px;margin-bottom:2px;" oncontextmenu="showResourceMenu(event,'skill','${s.name}','${s.scope||''}');return false;">
         <span style="cursor:pointer;font-size:11px;" onclick="cmdResourceAction('${active ? 'deactivate_resource' : 'activate_resource'}',{resource_type:'skill',name:'${s.name}'}).then(loadResources)">${active ? '\u2705' : '\u2B1C'}</span>
-        ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}</span>
+        ${_scopeBadge(s.scope)}<span style="color:${active ? '#e0e0e0' : '#666'};font-size:12px;">${s.name}${assignedTag}</span>
       </div>`;
     });
     html += _sectionFooter();
@@ -584,6 +595,9 @@ function showResourceMenu(e, rtype, name, scope, autoconv) {
       });
     }
   }
+  if (rtype === 'skill') {
+    item('\u{1F517} Assign to agent...', () => _showSkillAssignDialog(name));
+  }
   if (rtype === 'task_def') {
     item('\u25B6 Assign to agent...', () => _showAssignDialog(name));
     item('\u{1F4DC} View Log...', () => _showTaskDefLog(name));
@@ -619,6 +633,109 @@ function _deleteResource(rtype, name, scope) {
     if (d.error) addMsg('error', d.error);
     else addMsg('system', `${rtype} '${name}' deleted.`);
     loadResources();
+  });
+}
+
+function showAgentMenu(e, name, scope, autoconv) {
+  e.preventDefault();
+  const old = document.querySelector('.ctx-menu');
+  if (old) old.remove();
+  const menu = document.createElement('div');
+  menu.className = 'ctx-menu';
+  menu.style.cssText = 'position:fixed;z-index:10000;background:#1a1a2e;border:1px solid #333;border-radius:6px;padding:4px 0;min-width:160px;box-shadow:0 4px 12px rgba(0,0,0,0.5);';
+  _positionMenu(menu, e);
+  const item = (label, fn, danger) => {
+    const d = document.createElement('div');
+    d.textContent = label;
+    d.style.cssText = 'padding:6px 16px;cursor:pointer;font-size:12px;color:' + (danger ? '#e94560' : '#e0e0e0');
+    d.onmouseenter = () => d.style.background = '#2a2a4a';
+    d.onmouseleave = () => d.style.background = '';
+    d.onclick = () => { menu.remove(); fn(); };
+    menu.appendChild(d);
+  };
+  const sep = () => { const s = document.createElement('div'); s.style.cssText = 'height:1px;background:#333;margin:4px 0;'; menu.appendChild(s); };
+
+  item('\u{1F441} View...', () => showResourceEditor('agent', name, !_canEditScope(scope)));
+  if (_canEditScope(scope)) item('\u270F Edit...', () => showResourceEditor('agent', name));
+  item('\u25B6 Select', () => cmdAgentSelect(name).then(loadResources));
+  item('\u{1F9E9} Manage skills...', () => _showAgentSkillsDialog(name));
+  if (autoconv) {
+    item('\u23F9 Autoconv off', () => { action$('random_thought', { sub: 'off', agent: name }).subscribe(d => { addMsg('system', d.error || 'Autoconv disabled for ' + name); loadResources(); }); });
+  } else {
+    item('\u{1F504} Autoconv on...', () => { const freq = prompt('Frequency (e.g. 6/1m, 2-3/h, 1/2h):', '6/1m'); if (!freq) return; action$('random_thought', { sub: 'on', agent: name, frequency: freq }).subscribe(d => { addMsg('system', d.error || 'Autoconv enabled for ' + name + ' (' + freq + ')'); loadResources(); }); });
+  }
+  sep();
+  item('\u2716 Remove from conversation', () => _removeAgentFromConv(name), true);
+  setTimeout(() => document.addEventListener('click', function _close() { menu.remove(); document.removeEventListener('click', _close); }), 0);
+}
+
+function _showSkillAssignDialog(skillName) {
+  action$('list_resources', {}).subscribe(data => {
+    var agents = (data.agents || []).concat((data.repo_agents || []).filter(a => !a.in_conversation));
+    if (!agents.length) { addMsg('system', 'No agents available.'); return; }
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    var options = agents.map(a => '<option value="' + escapeHtml(a.name) + '">' + escapeHtml(a.name) + '</option>').join('');
+    overlay.innerHTML = '<div class="exec-dialog" style="min-width:320px;">'
+      + '<h3 style="margin:0 0 12px;">Assign skill \u201C' + escapeHtml(skillName) + '\u201D to agent</h3>'
+      + '<select id="_skAssignAgent" style="width:100%;padding:8px;background:#1a1a2e;color:#e0e0e0;border:1px solid #444;border-radius:4px;font-size:13px;">' + options + '</select>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="_skAssignBtn" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Assign</button>'
+      + '</div></div>';
+    document.body.appendChild(overlay);
+    document.getElementById('_skAssignBtn').onclick = function() {
+      var agent = document.getElementById('_skAssignAgent').value;
+      overlay.remove();
+      cmdResourceAction('assign_skill', { agent_name: agent, skill_name: skillName }).then(loadResources);
+    };
+  });
+}
+
+function _showAgentSkillsDialog(agentName) {
+  // Load all skills + agent's current assigned skills
+  Promise.all([
+    rxjs.firstValueFrom(action$('list_skills', {})),
+    rxjs.firstValueFrom(action$('list_agent_skills', { agent_name: agentName })),
+  ]).then(function(results) {
+    var allSkills = results[0].skills || [];
+    var assigned = (results[1].skills || []).map(s => s.name);
+    if (!allSkills.length) { addMsg('system', 'No skills defined. Create one first with /add-skill.'); return; }
+    var overlay = document.createElement('div');
+    overlay.className = 'exec-overlay';
+    var checkboxes = allSkills.map(s => {
+      var checked = assigned.indexOf(s.name) >= 0 ? ' checked' : '';
+      return '<label style="display:flex;align-items:center;gap:8px;padding:4px 0;cursor:pointer;font-size:13px;color:#c0c0d0;">'
+        + '<input type="checkbox" class="agent-sk-cb" value="' + escapeHtml(s.name) + '"' + checked + ' style="accent-color:#6c5ce7;"/>'
+        + escapeHtml(s.name)
+        + (s.description ? ' <span style="color:#666;font-size:11px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
+        + '</label>';
+    }).join('');
+    overlay.innerHTML = '<div class="exec-dialog" style="min-width:360px;">'
+      + '<h3 style="margin:0 0 12px;">Skills for \u201C' + escapeHtml(agentName) + '\u201D</h3>'
+      + '<div style="max-height:200px;overflow-y:auto;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:8px;">' + checkboxes + '</div>'
+      + '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">'
+      + '<button onclick="this.closest(\'.exec-overlay\').remove()" style="background:#333;color:#ccc;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Cancel</button>'
+      + '<button id="_agentSkSave" style="background:#6c5ce7;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Save</button>'
+      + '</div></div>';
+    document.body.appendChild(overlay);
+    document.getElementById('_agentSkSave').onclick = function() {
+      var newAssigned = Array.from(overlay.querySelectorAll('.agent-sk-cb:checked')).map(cb => cb.value);
+      // Compute diff and send assign/unassign calls
+      var toAssign = newAssigned.filter(s => assigned.indexOf(s) < 0);
+      var toUnassign = assigned.filter(s => newAssigned.indexOf(s) < 0);
+      overlay.remove();
+      var calls = [];
+      toAssign.forEach(sk => calls.push(rxjs.firstValueFrom(action$('assign_skill', { agent_name: agentName, skill_name: sk }))));
+      toUnassign.forEach(sk => calls.push(rxjs.firstValueFrom(action$('unassign_skill', { agent_name: agentName, skill_name: sk }))));
+      Promise.all(calls).then(() => {
+        var msg = [];
+        if (toAssign.length) msg.push('Assigned: ' + toAssign.join(', '));
+        if (toUnassign.length) msg.push('Removed: ' + toUnassign.join(', '));
+        if (msg.length) addMsg('system', agentName + ' skills updated. ' + msg.join('. '));
+        loadResources();
+      });
+    };
   });
 }
 
@@ -702,7 +819,7 @@ setTimeout(function() { if (document.getElementById('deploy-template')) _onDeplo
 
 // ── Resource editor overlay ───────────────────────────────────────
 const _RESOURCE_FIELDS = {
-  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['max_depth','number'],['timeout','number']],
+  agent:    [['prompt','textarea'],['description','text'],['llm_service','text'],['model','text'],['tools','text'],['assigned_skills','skills_picker'],['max_depth','number'],['timeout','number']],
   skill:    [['prompt','textarea'],['description','text']],
   mcp:      [['url','text'],['auth','text'],['description','text']],
   task_def: [['prompt','textarea'],['criteria','textarea'],['default_interval','text'],['verifier','text'],['description','text']],
@@ -726,6 +843,10 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     html += `<div style="margin-bottom:8px;"><label style="color:#aaa;font-size:11px;">${key}</label>`;
     if (type === 'textarea') {
       html += `<textarea id="res-${key}"${dis} style="width:100%;min-height:120px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;font-family:monospace;font-size:12px;resize:vertical;${roS}">${escaped}</textarea>`;
+    } else if (type === 'skills_picker') {
+      html += `<div id="res-${key}" data-type="skills_picker" style="margin-top:2px;background:#0f0f23;border:1px solid #333;border-radius:4px;padding:6px;max-height:120px;overflow-y:auto;${roS}">`;
+      html += '<div style="color:#555;font-size:11px;">Loading skills...</div>';
+      html += '</div>';
     } else if (type === 'number') {
       html += `<input id="res-${key}" type="number" value="${escaped}"${dis} style="width:80px;background:#0f0f23;color:#e0e0e0;border:1px solid #333;padding:6px;border-radius:4px;margin-top:2px;${roS}"/>`;
     } else {
@@ -734,6 +855,32 @@ function _buildResourceForm(rtype, data, isNew, readonly) {
     html += '</div>';
   }
   return html;
+}
+
+function _loadSkillsPicker(container, selected, readonly) {
+  action$('list_skills', {}).subscribe(data => {
+    const skills = data.skills || [];
+    if (!skills.length) {
+      container.innerHTML = '<div style="color:#555;font-size:11px;">No skills defined</div>';
+      return;
+    }
+    const dis = readonly ? ' disabled' : '';
+    container.innerHTML = skills.map(s => {
+      const checked = selected.indexOf(s.name) >= 0 ? ' checked' : '';
+      return '<label style="display:flex;align-items:center;gap:6px;padding:2px 0;cursor:' + (readonly ? 'default' : 'pointer') + ';font-size:12px;color:#c0c0d0;">'
+        + '<input type="checkbox" class="skill-cb" value="' + escapeHtml(s.name) + '"' + checked + dis + ' style="accent-color:#6c5ce7;"/>'
+        + escapeHtml(s.name)
+        + (s.description ? ' <span style="color:#666;font-size:10px;">\u2014 ' + escapeHtml(s.description) + '</span>' : '')
+        + '</label>';
+    }).join('');
+  });
+}
+
+function _collectSkillsPicker(key) {
+  var container = document.getElementById('res-' + key);
+  if (!container || container.getAttribute('data-type') !== 'skills_picker') return null;
+  var cbs = container.querySelectorAll('.skill-cb:checked');
+  return Array.from(cbs).map(function(cb) { return cb.value; });
 }
 
 async function showResourceEditor(rtype, name, readonly) {
@@ -771,12 +918,19 @@ async function showResourceEditor(rtype, name, readonly) {
   panel.innerHTML = html;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  // Populate skills picker if present
+  var skPicker = panel.querySelector('[data-type="skills_picker"]');
+  if (skPicker) {
+    var selected = Array.isArray(data.assigned_skills) ? data.assigned_skills : [];
+    _loadSkillsPicker(skPicker, selected, !!readonly);
+  }
 }
 
 function _saveResourceEdit(rtype, name, scope) {
   const fields = _RESOURCE_FIELDS[rtype] || [];
   const data = {};
   for (const [key, type] of fields) {
+    if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
   }
@@ -806,6 +960,9 @@ function showResourceCreator(rtype) {
   </div>`;
   overlay.appendChild(panel);
   document.body.appendChild(overlay);
+  // Populate skills picker if present (empty selection for new)
+  var skPicker = panel.querySelector('[data-type="skills_picker"]');
+  if (skPicker) _loadSkillsPicker(skPicker, [], false);
 }
 
 function _saveResourceCreate(rtype) {
@@ -817,6 +974,7 @@ function _saveResourceCreate(rtype) {
   const fields = _RESOURCE_FIELDS[rtype] || [];
   const data = {};
   for (const [key, type] of fields) {
+    if (type === 'skills_picker') { data[key] = _collectSkillsPicker(key) || []; continue; }
     const el = document.getElementById('res-' + key);
     if (el) data[key] = type === 'number' ? parseInt(el.value) || 0 : el.value;
   }

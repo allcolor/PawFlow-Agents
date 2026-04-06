@@ -403,6 +403,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "description": a.get("description", ""),
                 "scope": a.get("_scope", ""),
                 "active": active.get("agent") == aname,
+                "assigned_skills": a.get("assigned_skills") or [],
             }
             if conv_id:
                 ac_cfg = store.get_extra(conv_id, f"random_thought::{aname.lower()}") or {}
@@ -418,6 +419,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             "description": a.get("description", ""),
             "scope": a.get("_scope", ""),
             "in_conversation": a["name"] in set(conv_agent_names),
+            "assigned_skills": a.get("assigned_skills") or [],
         } for a in all_repo_agents]
         result = {
             "agents": agents_out,
@@ -428,6 +430,8 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
                 "description": s.get("description", ""),
                 "scope": s.get("_scope", ""),
                 "active": s["name"] in active.get("skills", []),
+                "assigned_to": [a["name"] for a in all_repo_agents
+                                if s["name"] in (a.get("assigned_skills") or [])],
             } for s in rs.list_all("skill", uid, conversation_id=conv_id)],
             "mcp_servers": [{
                 "name": m["name"],

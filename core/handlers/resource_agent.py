@@ -386,6 +386,11 @@ class SpawnAgentsHandler(ToolHandler):
                                 "type": "string",
                                 "description": "Context mode: 'isolated' (default), 'last:N' (last N messages), 'summary:N' (summary of N tokens), 'full' (entire parent context)",
                             },
+                            "skills": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional extra skill names to inject into this agent's prompt (in addition to its assigned_skills)",
+                            },
                         },
                         "required": ["agent", "message"],
                     },
@@ -438,8 +443,10 @@ class SpawnAgentsHandler(ToolHandler):
             task_id = spec.get("id", uuid.uuid4().hex[:8])
 
             try:
+                extra_skills = spec.get("skills") or []
                 task = resolve_agent_task(agent_name, message, user_id,
-                                         conversation_id=self._conversation_id)
+                                         conversation_id=self._conversation_id,
+                                         extra_skills=extra_skills)
                 task.id = task_id
                 task.source_agent = _src_agent
                 task.source_agent_nickname = _src_nickname

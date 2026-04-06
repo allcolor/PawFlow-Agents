@@ -779,6 +779,7 @@ class SubAgentExecutor:
 def resolve_agent_task(
     agent_name: str, message: str, user_id: str,
     conversation_id: str = "",
+    extra_skills: list = None,
 ) -> AgentTask:
     """Resolve an agent name to an AgentTask using the ResourceStore.
 
@@ -832,7 +833,11 @@ def resolve_agent_task(
 
     # Inject assigned skills into system prompt
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
-    _assigned_skills = agent_def.get("assigned_skills", [])
+    _assigned_skills = list(agent_def.get("assigned_skills") or [])
+    # Merge extra skills from delegate call (deduplicated)
+    for _esk in (extra_skills or []):
+        if _esk not in _assigned_skills:
+            _assigned_skills.append(_esk)
     if _assigned_skills:
         _skill_blocks = []
         for _sk_name in _assigned_skills:

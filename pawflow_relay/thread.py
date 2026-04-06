@@ -65,6 +65,37 @@ class RelayThread:
         if self._on_token_refresh:
             self._on_token_refresh(new_token)
 
+    def _check_relay_connected(self) -> bool:
+        """Check if the relay is connected to the server."""
+        try:
+            data = self._api("POST", "/api/agent",
+                             {"action": "relay_list_available"})
+            for r in (data.get("relays") or []):
+                if r.get("relay_id") == self.relay_id and r.get("connected"):
+                    return True
+            return False
+        except Exception:
+            return False
+
+    def _reregister_service(self):
+        """Re-register the relay service on the server (keeps same port/token)."""
+        try:
+            self._api("POST", "/api/agent",
+                      {"action": "service_uninstall", "service_id": self.relay_id})
+        except Exception:
+            pass
+        config_str = f"port={self.port},path=/ws/relay,token={self.ws_token},mode=readwrite"
+        if self.docker_image:
+            config_str += f",docker_image={self.docker_image}"
+        if self.allow_local:
+            config_str += ",allow_local=true"
+        self._api("POST", "/api/agent", {
+            "action": "service_install",
+            "service_type": "relay",
+            "service_name": self.relay_id,
+            "config_str": config_str,
+        })
+
     def start(self):
         """Register the service and start the relay thread."""
         self._kill_docker()
@@ -238,12 +269,34 @@ class RelayThread:
                 threading.Thread(target=_read_relay_logs, daemon=True,
                                  name="relay-log-reader").start()
 
+                _health_interval = 30  # check relay connectivity every 30s
+                _last_health = time.time()
+                _consecutive_fails = 0
+
                 while not self._stop_event.is_set():
                     try:
                         self._docker_proc.wait(timeout=1)
                         break
                     except _sp.TimeoutExpired:
-                        continue
+                        pass
+                    # Periodic health check: is the relay still connected to the server?
+                    if time.time() - _last_health > _health_interval:
+                        _last_health = time.time()
+                        if self._check_relay_connected():
+                            _consecutive_fails = 0
+                        else:
+                            _consecutive_fails += 1
+                            sys.stderr.write(
+                                f"[Relay] Health: relay not connected "
+                                f"({_consecutive_fails} consecutive)\n")
+                            if _consecutive_fails >= 3:
+                                # Re-register the service so the relay can reconnect
+                                sys.stderr.write("[Relay] Re-registering relay service\n")
+                                try:
+                                    self._reregister_service()
+                                    _consecutive_fails = 0
+                                except Exception as _rr_err:
+                                    sys.stderr.write(f"[Relay] Re-register failed: {_rr_err}\n")
 
                 if self._stop_event.is_set():
                     break

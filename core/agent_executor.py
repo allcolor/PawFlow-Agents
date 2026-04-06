@@ -1,8 +1,7 @@
-"""SubAgentExecutor — Lightweight agent loop for sub-agent and skill execution.
+"""SubAgentExecutor — Lightweight agent loop for sub-agent execution.
 
 Used by the main AgentLoopTask to:
 - Spawn sub-agents in parallel (delegate tool)
-- Execute skills as single-shot LLM calls (use_skill tool)
 
 Each sub-agent runs its own tool-use loop with:
 - Its own system prompt (from ResourceStore agent definition)
@@ -725,55 +724,6 @@ class SubAgentExecutor:
 
         return results
 
-    # ── Skill execution (single-shot) ─────────────────────────────────
-
-    def execute_skill(
-        self, skill_prompt: str, input_text: str,
-        model: str = "", timeout: int = 60,
-    ) -> AgentResult:
-        """Execute a skill as a single-shot LLM call (no tools, no loop).
-
-        Args:
-            skill_prompt: The skill's system prompt.
-            input_text: User input to process.
-            model: Model override.
-            timeout: Timeout in seconds.
-
-        Returns:
-            AgentResult with the skill output.
-        """
-        task_id = uuid.uuid4().hex[:12]
-        start = time.time()
-
-        try:
-            messages = [
-                LLMMessage(role="system", content=skill_prompt),
-                LLMMessage(role="user", content=input_text),
-            ]
-            response = self._client.complete(
-                messages=messages,
-                model=model or None,
-                temperature=0.7,
-                max_tokens=0,
-                tools=None,
-            )
-            return AgentResult(
-                task_id=task_id,
-                agent_name="skill",
-                response=response.content,
-                tokens_in=response.tokens_in,
-                tokens_out=response.tokens_out,
-                duration_ms=(time.time() - start) * 1000,
-                status="completed",
-            )
-        except Exception as e:
-            return AgentResult(
-                task_id=task_id,
-                agent_name="skill",
-                error=str(e),
-                duration_ms=(time.time() - start) * 1000,
-                status="error",
-            )
 
 
 def resolve_agent_task(
@@ -831,25 +781,13 @@ def resolve_agent_task(
     from core.expression import resolve_value
     llm_svc = resolve_value(agent_def.get("llm_service", ""), owner=user_id) or ""
 
-    # Inject assigned skills into system prompt
+    # Inject skills into system prompt
+    # Sub-contexts (delegate) only get skills explicitly passed via extra_skills.
+    # No fallback to agent's own assigned_skills — those are for the main conv only.
     _sys_prompt = agent_def.get("prompt", "You are a helpful assistant.")
-    _assigned_skills = list(agent_def.get("assigned_skills") or [])
-    # Merge extra skills from delegate call (deduplicated)
-    for _esk in (extra_skills or []):
-        if _esk not in _assigned_skills:
-            _assigned_skills.append(_esk)
-    if _assigned_skills:
-        _skill_blocks = []
-        for _sk_name in _assigned_skills:
-            _sk_def = store.get_any("skill", _sk_name, user_id)
-            if _sk_def and _sk_def.get("prompt"):
-                _skill_blocks.append(
-                    f"## Skill: {_sk_name}\n"
-                    f"{_sk_def.get('description', '')}\n\n"
-                    f"{_sk_def['prompt']}"
-                )
-        if _skill_blocks:
-            _sys_prompt += "\n\n# Assigned Skills\n\n" + "\n\n".join(_skill_blocks)
+    if extra_skills:
+        from core.skill_resolver import inject_skills_into_prompt
+        _sys_prompt = inject_skills_into_prompt(_sys_prompt, list(extra_skills), user_id)
     _nick = None
     if conversation_id:
         try:

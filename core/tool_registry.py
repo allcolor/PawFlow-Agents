@@ -71,7 +71,6 @@ from core.handlers import (  # noqa: F401
     TaskToolHandler,
     UpdatePlanHandler,
     UseToolHandler,
-    UseSkillHandler,
     VerifyPlanStepHandler,
     VerifyTaskHandler,
     VideoGenerationHandler,
@@ -247,7 +246,6 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ManageResourceHandler())
     registry.register(SpawnAgentsHandler())
     registry.register(GetAgentResultsHandler())
-    registry.register(UseSkillHandler())
     registry.register(ShowFileHandler())
     registry.register(ReadParentContextHandler())
 

@@ -43,7 +43,6 @@ class ToolApprovalGate:
         "notify_user", "ask_user",
         # Meta / internal
         "get_tool_schema", "compact_result", "share_file", "create_file",
-        "use_skill",
     })
 
     # ALWAYS_ASK: always need approval (dangerous, irreversible, sensitive)

@@ -55,7 +55,7 @@ class AgentToolConfigMixin:
             AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler,
             ListSecretsHandler,
             ScheduleRecheckHandler, ShowFileHandler, SpawnAgentsHandler,
-            StoreSecretHandler, UpdatePlanHandler, UseSkillHandler,
+            StoreSecretHandler, UpdatePlanHandler,
             VerifyPlanStepHandler,
             SecurityScanHandler,
         )
@@ -196,7 +196,7 @@ class AgentToolConfigMixin:
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)
                 h.set_llm_service(agent_svc)
-            elif isinstance(h, (SpawnAgentsHandler, UseSkillHandler)):
+            elif isinstance(h, SpawnAgentsHandler):
                 if user_id:
                     h.set_user_id(user_id)
                 if isinstance(h, SpawnAgentsHandler):

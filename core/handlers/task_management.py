@@ -296,6 +296,7 @@ class AssignTaskHandler(ToolHandler):
             "total_cost": 0.0,
             "reschedule_count": 0,
             "auto_allow": auto_allow,
+            "skills": definition.get("skills") or [],
         }
         all_tasks[task_id] = task_data
         store.set_extra(self._conversation_id, "agent_tasks", all_tasks)

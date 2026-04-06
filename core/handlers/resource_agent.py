@@ -389,7 +389,7 @@ class SpawnAgentsHandler(ToolHandler):
                             "skills": {
                                 "type": "array",
                                 "items": {"type": "string"},
-                                "description": "Optional extra skill names to inject into this agent's prompt (in addition to its assigned_skills)",
+                                "description": "Skill names to inject into the delegate agent's prompt (replaces the agent's own assigned_skills)",
                             },
                         },
                         "required": ["agent", "message"],
@@ -586,88 +586,6 @@ class GetAgentResultsHandler(ToolHandler):
     def execute(self, arguments: Dict[str, Any]) -> str:
         return "Error: get_agent_results is not supported. Use delegate with wait=true (default)."
 
-
-class UseSkillHandler(ToolHandler):
-    """Apply a skill (single-shot LLM transformation) to input text."""
-
-    def __init__(self):
-        self._user_id = ""
-        self._client_resolver = None  # callable(svc_id, uid) -> (client, svc)
-        self._default_client = None
-
-    @property
-    def name(self) -> str:
-        return "use_skill"
-
-    @property
-    def description(self) -> str:
-        return (
-            "Apply a skill to transform text. A skill is a specialized prompt "
-            "that processes input text in a single LLM call (no tools). "
-            "Useful for summarization, translation, code review, etc. "
-            "Skills must be created first via manage_resource or /add-skill."
-        )
-
-    @property
-    def parameters_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "skill": {
-                    "type": "string",
-                    "description": "Name of the skill to use",
-                },
-                "input": {
-                    "type": "string",
-                    "description": "Text to process with the skill",
-                },
-                "model": {
-                    "type": "string",
-                    "description": "Optional model override for this skill call",
-                },
-            },
-            "required": ["skill", "input"],
-        }
-
-    def set_user_id(self, uid: str):
-        self._user_id = uid
-
-    def set_spawn_deps(self, client, client_resolver):
-        """Set dependencies for LLM calls."""
-        self._default_client = client
-        self._client_resolver = client_resolver
-
-    def execute(self, arguments: Dict[str, Any]) -> str:
-        if not self._default_client:
-            return "Error: LLM client not configured."
-
-        from core.resource_store import ResourceStore
-
-        skill_name = arguments.get("skill", "")
-        input_text = arguments.get("input", "")
-        model = arguments.get("model", "")
-        user_id = self._user_id or "anonymous"
-
-        store = ResourceStore.instance()
-        skill_def = store.get_any("skill", skill_name, user_id)
-        if skill_def is None:
-            return f"Error: Skill '{skill_name}' not found."
-
-        from core.llm_client import LLMMessage
-        try:
-            messages = [
-                LLMMessage(role="system", content=skill_def.get("prompt", "")),
-                LLMMessage(role="user", content=input_text),
-            ]
-            response = self._default_client.complete(
-                messages=messages,
-                model=model or None,
-                temperature=0.7,
-                max_tokens=4096,
-            )
-            return response.content or ""
-        except Exception as e:
-            return f"Skill error: {e}"
 
 
 class ShowFileHandler(ToolHandler):

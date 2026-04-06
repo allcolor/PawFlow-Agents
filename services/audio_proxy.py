@@ -102,38 +102,28 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
             queue_event.set()
 
     def _backend_to_browser():
-        """Send queued packets to browser WS, batched for fewer syscalls."""
+        """Send queued packets to browser WS, one at a time (no batching)."""
         try:
             while not stop.is_set():
-                queue_event.wait(timeout=0.005)  # low-latency: forward ASAP
+                queue_event.wait(timeout=0.02)
                 queue_event.clear()
-                # Drain all available packets into one batch
-                batch = []
+                # Send packets one by one — no batching to avoid bursts
                 while pkt_queue:
-                    batch.append(pkt_queue.popleft())
-                if not batch:
-                    continue
-                # Send each as individual WS frame (browser expects 1 opus pkt per msg)
-                # but use writev-style to reduce syscall overhead
-                frames = bytearray()
-                for pkt in batch:
+                    pkt = pkt_queue.popleft()
+                    frame = bytearray()
                     if len(pkt) < 126:
-                        frames.append(0x82)
-                        frames.append(len(pkt))
+                        frame.append(0x82)
+                        frame.append(len(pkt))
                     else:
-                        frames.append(0x82)
-                        frames.append(126)
-                        frames.extend(struct.pack("!H", len(pkt)))
-                    frames.extend(pkt)
-                try:
-                    t0 = time.monotonic()
-                    client_sock.sendall(bytes(frames))
-                    dt = time.monotonic() - t0
-                    if dt > 0.1:
-                        logger.warning("Audio proxy: sendall blocked %.1fms (%d frames, %d bytes)", dt*1000, len(batch), len(frames))
-                except Exception:
-                    stop.set()
-                    return
+                        frame.append(0x82)
+                        frame.append(126)
+                        frame.extend(struct.pack("!H", len(pkt)))
+                    frame.extend(pkt)
+                    try:
+                        client_sock.sendall(bytes(frame))
+                    except Exception:
+                        stop.set()
+                        return
         except Exception:
             pass
         finally:

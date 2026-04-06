@@ -192,7 +192,10 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         _name = "" if (not agent_name or agent_name == "shared") else agent_name
         store.save_agent_context(conv_id, _name, data,
                                   skip_merge=skip_merge)
-        store.invalidate_claude_sessions(conv_id)
+        if _name:
+            store.set_extra(conv_id, f"claude_session:{_name}", "")
+        else:
+            store.invalidate_claude_sessions(conv_id)
 
     def _resolve_agent_max_tokens(agent_name):
         """Get max_tokens from an agent's LLM service config."""
@@ -511,8 +514,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     force=True,
                 )
             after_tokens = self._estimate_tokens(compacted)
-            # Manual compact → invalidate claude-code sessions
-            store.invalidate_claude_sessions(_compact_conv)
+            # Invalidate the compacted agent's CC session
+            if _compact_agent_name:
+                store.set_extra(_compact_conv, f"claude_session:{_compact_agent_name}", "")
+            else:
+                store.invalidate_claude_sessions(_compact_conv)
             return {"before": before, "after": len(compacted),
                     "tokens_before": estimated, "tokens_after": after_tokens,
                     "agent": _compact_agent_name or "shared",
@@ -563,8 +569,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                     if shared_ctx is not None and shared_ctx == _rb_msgs:
                         store.save_agent_context(conv_id, _rb_agent, shared_ctx)
                         logger.info(f"[rebuild] Agent '{_rb_agent}' context == shared, merged back")
-            # Manual context modification → invalidate claude-code sessions
-            store.invalidate_claude_sessions(conv_id)
+            # Invalidate the rebuilt agent's CC session
+            if _rb_agent and _rb_agent != "shared":
+                store.set_extra(conv_id, f"claude_session:{_rb_agent}", "")
+            else:
+                store.invalidate_claude_sessions(conv_id)
             return {"before": len(_rb_msgs), "after": len(_rb_msgs),
                     "tokens_after": estimated,
                     "agent": _rb_agent or "shared"}
@@ -753,7 +762,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             store.delete_agent_context(conv_id, agent_name)
-            store.invalidate_claude_sessions(conv_id)
+            store.set_extra(conv_id, f"claude_session:{agent_name}", "")
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
@@ -804,7 +813,6 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 if 0 <= idx < len(context_data):
                     context_data.pop(idx)
             _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
-            store.invalidate_claude_sessions(conv_id)
             deserialized = self._deserialize_messages(context_data)
             estimated = self._estimate_tokens(deserialized)
             flowfile.set_content(json.dumps({

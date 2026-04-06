@@ -752,12 +752,10 @@ class AgentCoreMixin:
                         # CC started auto-compacting → do PawFlow compact instead
                         logger.warning("[agent:%s] CCCompactDetected — running PawFlow compact",
                                        conversation_id[:8])
-                        # Invalidate CC session
+                        # Invalidate CC session for this agent only
                         try:
                             from core.conversation_store import ConversationStore
                             _an = ctx.get("active_agent_name", "") or "default"
-                            ConversationStore.instance().invalidate_claude_sessions(
-                                conversation_id)
                             ConversationStore.instance().set_extra(
                                 conversation_id, f"claude_session:{_an}", "")
                         except Exception:
@@ -817,13 +815,7 @@ class AgentCoreMixin:
                         if _is_claude_code and ctx.get("_claude_has_session") and not _is_auth_error:
                             logger.warning("[claude-code] resume failed (%s), "
                                            "retrying with full context", err_str[:100])
-                            try:
-                                from core.conversation_store import ConversationStore
-                                ConversationStore.instance().invalidate_claude_sessions(
-                                    conversation_id)
-                            except Exception:
-                                pass
-                            # Invalidate session in store
+                            # Invalidate this agent's CC session only
                             try:
                                 from core.conversation_store import ConversationStore
                                 _an = ctx.get("active_agent_name", "") or "default"

@@ -1462,15 +1462,10 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
         except Exception:
             pass
 
-        # 2) Any relay: check relay_info for host-network ports, then docker port
+        # 2) Any relay: get container_id from relay info, then docker port
         svc = _find_relay_svc(relay_id)
         if svc:
-            _ri = getattr(svc, '_relay_info', {}) or {}
-            # --network host: ports are in relay_info directly
-            _ri_port = _ri.get('desktop_novnc_port', 0)
-            if _ri_port:
-                return _ri_port
-            container_id = _ri.get('container_id', '')
+            container_id = getattr(svc, '_relay_info', {}).get('container_id', '')
             if container_id:
                 try:
                     r = subprocess.run(
@@ -1828,21 +1823,16 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                     if _audio_port:
                         register_audio_source(session_id, _relay_addr, _audio_port)
                 else:
-                    # Docker: get audio port from relay_info, server metadata, or docker port
+                    # Docker: get audio_host_port from relay metadata, fallback to docker port 6180
                     _audio_host_port = 0
-                    _svc = _find_relay_svc(relay_id)
-                    if _svc:
-                        _ri = getattr(_svc, '_relay_info', {}) or {}
-                        _audio_host_port = _ri.get('desktop_audio_port', 0)
-                    if not _audio_host_port:
-                        try:
-                            from core.server_relay_manager import ServerRelayManager
-                            for _entry in ServerRelayManager.get_instance().list_all():
-                                if _entry.get("relay_id") == relay_id:
-                                    _audio_host_port = _entry.get("audio_host_port", 0)
-                                    break
-                        except Exception:
-                            pass
+                    try:
+                        from core.server_relay_manager import ServerRelayManager
+                        for _entry in ServerRelayManager.get_instance().list_all():
+                            if _entry.get("relay_id") == relay_id:
+                                _audio_host_port = _entry.get("audio_host_port", 0)
+                                break
+                    except Exception:
+                        pass
                     if not _audio_host_port:
                         _audio_host_port = _get_container_port(relay_id, 6180)
                     if _audio_host_port:

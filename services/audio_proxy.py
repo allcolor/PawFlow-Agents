@@ -48,23 +48,14 @@ def audio_ws_proxy(client_sock, path_params: dict, meta: dict):
         _ws_close(client_sock, 4001, "No audio source")
         return
 
-    # Retry connection — audio_capture may not be listening yet (--network host)
-    backend_sock = None
-    for _attempt in range(10):
-        try:
-            logger.info("Audio proxy: connecting to %s:%d (attempt %d)", target_host, target_port, _attempt + 1)
-            backend_sock = socket.create_connection((target_host, target_port), timeout=3)
-            backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            backend_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
-            logger.info("Audio proxy: connected to %s:%d", target_host, target_port)
-            break
-        except Exception as e:
-            logger.warning("Audio proxy: attempt %d failed %s:%d: %s", _attempt + 1, target_host, target_port, e)
-            if _attempt < 9:
-                time.sleep(1)
-            else:
-                _ws_close(client_sock, 4002, "Audio source unavailable")
-                return
+    try:
+        backend_sock = socket.create_connection((target_host, target_port), timeout=5)
+        backend_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        backend_sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+    except Exception as e:
+        logger.warning("Audio proxy: connect failed %s:%d: %s", target_host, target_port, e)
+        _ws_close(client_sock, 4002, "Audio source unavailable")
+        return
 
     try:
         client_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)

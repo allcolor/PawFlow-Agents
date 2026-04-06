@@ -160,44 +160,83 @@ def _capture_loop(source: str):
                 bufsize=frame_bytes)
 
             logger.info("Capture started (parec + libopus, %d bytes/frame)", frame_bytes)
+
+            # Ring buffer: reader thread fills, sender thread drains at 50fps
+            import collections
+            _ring = collections.deque(maxlen=25)  # 500ms max buffer
+            _last_frame = None  # repeat if ring empty (no silence gap)
+            _ring_lock = threading.Lock()
+            _reader_alive = threading.Event()
+            _reader_alive.set()
+
+            def _pipe_reader():
+                """Read parec pipe into ring buffer (decoupled from sender)."""
+                nonlocal _last_frame
+                try:
+                    while _reader_alive.is_set():
+                        pcm = proc.stdout.read(frame_bytes)
+                        if not pcm or len(pcm) < frame_bytes:
+                            break
+                        with _ring_lock:
+                            _ring.append(pcm)
+                            _last_frame = pcm
+                except Exception:
+                    pass
+                finally:
+                    _reader_alive.clear()
+
+            reader_thread = threading.Thread(target=_pipe_reader, daemon=True,
+                                             name="parec-reader")
+            reader_thread.start()
+
+            # Sender: drain ring at exactly 50fps wallclock
             _pkt_count = 0
-            _skip_count = 0
+            _repeat_count = 0
+            _drop_count = 0
             _interval_start = time.monotonic()
             _next_send = time.monotonic()
-            _FRAME_DUR = 0.020  # 20ms per frame
+            _FRAME_DUR = 0.020  # 20ms
 
-            while True:
-                # Blocking read of exactly one frame (20ms at 48kHz)
-                pcm = proc.stdout.read(frame_bytes)
-                if not pcm or len(pcm) < frame_bytes:
-                    break
-
+            while _reader_alive.is_set():
                 _now = time.monotonic()
-                # Wallclock pacing: send at exactly 50fps regardless of PA clock
-                if _now < _next_send - _FRAME_DUR:
-                    # We're >1 frame ahead of wallclock — drop this frame
-                    _skip_count += 1
-                    continue
-
                 if _now < _next_send:
                     time.sleep(_next_send - _now)
 
-                opus_pkt = encoder.encode(pcm)
-                _broadcast(opus_pkt)
-                _pkt_count += 1
+                with _ring_lock:
+                    # Drop excess if ring is too full (prevent growing latency)
+                    while len(_ring) > 5:
+                        _ring.popleft()
+                        _drop_count += 1
+                    if _ring:
+                        pcm = _ring.popleft()
+                    elif _last_frame is not None:
+                        # Ring empty — repeat last frame (no gap)
+                        pcm = _last_frame
+                        _repeat_count += 1
+                    else:
+                        pcm = None
+
+                if pcm:
+                    opus_pkt = encoder.encode(pcm)
+                    _broadcast(opus_pkt)
+                    _pkt_count += 1
+
                 _next_send += _FRAME_DUR
 
-                # If we fell way behind (>500ms), reset the clock
+                # Reset if way behind
                 if time.monotonic() > _next_send + 0.5:
                     _next_send = time.monotonic()
 
-                if _now - _interval_start >= 10.0:
-                    logger.info("Audio capture: %d pkts/10s (skipped %d)",
-                                _pkt_count, _skip_count)
+                _now2 = time.monotonic()
+                if _now2 - _interval_start >= 10.0:
+                    logger.info("Audio capture: %d pkts/10s (repeat %d, drop %d, ring %d)",
+                                _pkt_count, _repeat_count, _drop_count, len(_ring))
                     _pkt_count = 0
-                    _skip_count = 0
-                    _interval_start = _now
+                    _repeat_count = 0
+                    _drop_count = 0
+                    _interval_start = _now2
 
+            _reader_alive.clear()
             proc.wait()
             logger.warning("parec exited (code %s)", proc.returncode)
         except Exception as e:

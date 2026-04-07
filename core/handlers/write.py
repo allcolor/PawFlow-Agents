@@ -19,9 +19,20 @@ class WriteHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Write or create a file on the workspace filesystem. "
-            "This is the primary tool for creating and modifying code files. "
-            "Use destination parameter to specify which filesystem service."
+            "Writes content to a file on the filesystem, creating it if it does not exist "
+            "or overwriting it if it does.\n\n"
+            "Usage:\n"
+            " - If the file already exists, you MUST use read first to read its contents. "
+            "This tool will fail if you did not read an existing file first.\n"
+            " - Prefer the edit tool for modifying existing files — it only sends the diff. "
+            "Only use write to create new files or for complete rewrites.\n"
+            " - Use the destination parameter to specify a non-default filesystem service.\n\n"
+            "Important:\n"
+            " - NEVER create documentation files (*.md) or README files unless explicitly "
+            "requested by the user.\n"
+            " - Do not use emojis in file content unless the user explicitly requests it.\n"
+            " - ALWAYS prefer editing existing files in the codebase. NEVER write new files "
+            "unless explicitly required."
         )
 
     @property

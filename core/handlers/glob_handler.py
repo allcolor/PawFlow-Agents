@@ -12,7 +12,16 @@ class GlobHandler(BaseFsHandler):
 
     @property
     def description(self):
-        return "Search for files matching a glob pattern (e.g. **/*.py)."
+        return (
+            "Fast file pattern matching tool that works with any codebase size.\n\n"
+            " - Supports glob patterns like '**/*.py' or 'src/**/*.ts'.\n"
+            " - Returns matching file paths sorted by modification time.\n"
+            " - Use this tool when you need to find files by name or extension pattern.\n"
+            " - Use the source parameter to specify a non-default filesystem service.\n\n"
+            "When to use glob vs grep:\n"
+            " - Use glob to find files by name/path pattern (e.g. all .py files in src/).\n"
+            " - Use grep to search for content inside files (e.g. a function name)."
+        )
 
     @property
     def parameters_schema(self):

@@ -18,9 +18,25 @@ class ReadHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Read a file. Supports text (with line numbers and pagination via offset/limit), "
-            "PDF (via pages parameter), Jupyter notebooks, and images. "
-            "Use source parameter to specify the filesystem service."
+            "Reads a file from the filesystem and returns its contents.\n\n"
+            "Usage:\n"
+            " - The path parameter must be provided. Use the source parameter to specify "
+            "a non-default filesystem service or relay.\n"
+            " - By default, reads up to 2000 lines starting from the beginning of the file.\n"
+            " - When you already know which part of the file you need, use offset/limit to "
+            "read only that part. This is important for large files.\n"
+            " - Results are returned in cat -n format, with line numbers starting at 1.\n\n"
+            "Supported file types:\n"
+            " - Text files: returned with line numbers and pagination (offset/limit).\n"
+            " - PDF files: use the pages parameter (e.g. pages='1-5'). For large PDFs "
+            "(more than 10 pages), you MUST provide pages to read specific ranges.\n"
+            " - Jupyter notebooks (.ipynb): returns all cells with their outputs.\n"
+            " - Images (PNG, JPG, etc.): returns metadata; use see() for visual inspection.\n\n"
+            "Important:\n"
+            " - This tool can only read files, not directories. To list a directory, use "
+            "bash with ls or use glob.\n"
+            " - Do NOT re-read a file you just edited to verify — edit would have errored "
+            "if the change failed."
         )
 
     @property

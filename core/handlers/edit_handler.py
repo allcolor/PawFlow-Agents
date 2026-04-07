@@ -21,9 +21,22 @@ class EditHandler(BaseFsHandler):
     @property
     def description(self):
         return (
-            "Edit a file by exact string replacement (old_string → new_string) or "
-            "line-based replacement (start_line/end_line + new_string). "
-            "Use filesystem parameter to specify the service."
+            "Performs exact string replacements in a file (old_string -> new_string), "
+            "or line-based replacement (start_line/end_line + new_string).\n\n"
+            "Usage:\n"
+            " - You MUST use read at least once before editing a file. This tool will "
+            "error if you attempt an edit without reading the file first.\n"
+            " - When editing text from read output, preserve the exact indentation "
+            "(tabs/spaces) as it appears in the file. Do not include line number prefixes "
+            "in old_string or new_string.\n"
+            " - ALWAYS prefer editing existing files over creating new files.\n"
+            " - Only use emojis if the user explicitly requests it.\n\n"
+            "Important:\n"
+            " - The edit will FAIL if old_string is not unique in the file. Provide a "
+            "larger string with more surrounding context to make it unique, or use "
+            "replace_all to change every occurrence.\n"
+            " - Use replace_all for renaming variables or strings across the entire file.\n"
+            " - Use the filesystem parameter to specify a non-default filesystem service."
         )
 
     @property

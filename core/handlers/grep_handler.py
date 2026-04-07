@@ -12,7 +12,30 @@ class GrepHandler(BaseFsHandler):
 
     @property
     def description(self):
-        return "Search file contents with a regex pattern. Returns path:line_number:line."
+        return (
+            "A powerful content search tool built on ripgrep.\n\n"
+            "ALWAYS use this grep tool for searching file contents. NEVER invoke grep or rg "
+            "as a bash command — this tool is optimized for correct access and permissions.\n\n"
+            "Usage:\n"
+            " - Supports full regex syntax (e.g. 'log.*Error', 'function\\s+\\w+').\n"
+            " - Filter files with the glob parameter (e.g. '*.js', '**/*.tsx') or the "
+            "type parameter (e.g. 'js', 'py', 'rust').\n"
+            " - Output modes: 'content' shows matching lines with context, "
+            "'files_with_matches' shows only file paths (default), "
+            "'count' shows match counts per file.\n\n"
+            "Pattern syntax:\n"
+            " - Uses ripgrep regex (not grep). Literal braces need escaping "
+            "(use 'interface\\{\\}' to find 'interface{}' in Go code).\n"
+            " - For cross-line patterns, use multiline: true "
+            "(e.g. 'struct \\{[\\s\\S]*?field').\n\n"
+            "Parameters:\n"
+            " - head_limit: Limit output to first N entries (default 250). "
+            "Pass 0 for unlimited (use sparingly).\n"
+            " - offset: Skip first N entries before applying head_limit.\n"
+            " - -B/-A/-C/context: Lines of context before/after/both for content mode.\n"
+            " - -i: Case insensitive search.\n"
+            " - -n: Show line numbers (default true for content mode)."
+        )
 
     @property
     def parameters_schema(self):

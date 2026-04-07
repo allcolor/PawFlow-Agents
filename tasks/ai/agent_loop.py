@@ -161,6 +161,18 @@ class AgentLoopTask(
         if inst and hasattr(inst, '_poller_wake'):
             inst._poller_wake.set()
 
+    @classmethod
+    def force_stop_agent(cls, conversation_id: str, agent_name: str):
+        """Force stop an agent — callable without instance ref (class method)."""
+        inst = cls._live_instance
+        if inst:
+            inst.cancel_agent(conversation_id, agent_name=agent_name)
+        try:
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.cancel_agent(conversation_id, agent_name)
+        except Exception:
+            pass
+
     def get_tool_registry(self) -> ToolRegistry:
         """Get or create the tool registry for this agent.
 

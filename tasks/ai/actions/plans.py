@@ -34,8 +34,17 @@ def _publish(conv_id, event_type, data):
         pass
 
 
+def force_stop_agent(conv_id, agent_name):
+    """Force stop an agent — standalone, no self needed."""
+    try:
+        from tasks.ai.agent_loop import AgentLoopTask
+        AgentLoopTask.force_stop_agent(conv_id, agent_name)
+    except Exception as e:
+        logger.warning("force_stop_agent failed: %s", e)
+
+
 def _force_stop_agent(self, conv_id, agent_name=""):
-    """Force stop an agent in a conversation."""
+    """Force stop an agent (legacy — uses self for CC subprocess kill)."""
     try:
         self.cancel_agent(conv_id, agent_name=agent_name)
         from services.tool_relay_service import ToolRelayService

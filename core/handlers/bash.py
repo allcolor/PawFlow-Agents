@@ -70,11 +70,13 @@ class BashHandler(BaseFsHandler):
             "type": "object",
             "properties": {
                 "command": {"type": "string", "description": "Shell command to execute"},
+                "description": {"type": "string", "description": "Short description of what the command does."},
+                "timeout": {"type": "integer", "description": "Timeout in milliseconds (default: 120000)"},
+                "run_in_background": {"type": "boolean", "description": "Run command in background. Use read to check output later."},
                 "shell": {
                     "type": "string",
                     "description": "Shell to use (default: bash). Options: bash, powershell, cmd, python, node.",
                 },
-                "timeout": {"type": "integer", "description": "Timeout in seconds (default: no limit)"},
                 "path": {"type": "string", "description": "Working directory for the command"},
                 "max_output": {"type": "integer", "description": "Max output chars (default: 30000, max: 150000)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit for default."},

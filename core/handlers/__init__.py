@@ -28,6 +28,8 @@ from core.handlers.dynamic_tool import (  # noqa: F401
 )
 from core.handlers.flow_management import (  # noqa: F401
     FlowManagerHandler,
+)
+from core.handlers.plan_handlers import (  # noqa: F401
     CreatePlanHandler,
     UpdatePlanHandler,
     ApprovePlanHandler,

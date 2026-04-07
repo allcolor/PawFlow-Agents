@@ -159,9 +159,28 @@ class AgentToolConfigMixin:
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
             elif isinstance(h, ProjectGraphHandler):
+                # ProjectGraphHandler extends BaseFsHandler — wire FS + agent_name
                 h.set_user_id(user_id)
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)
+                # Wire relay/filesystem service (same as BaseFsHandler clause below)
+                _agent_name_pg = agent_name
+                _relay_svc_pg = None
+                if conversation_id:
+                    try:
+                        from core.relay_bindings import get_default
+                        _default_relay_pg = get_default(conversation_id, agent=_agent_name_pg)
+                        if _default_relay_pg:
+                            from gui.services.global_service_registry import GlobalServiceRegistry
+                            _relay_svc_pg = GlobalServiceRegistry.get_instance().get_live_instance(_default_relay_pg)
+                            if not _relay_svc_pg:
+                                from gui.services.user_service_registry import UserServiceRegistry
+                                _relay_svc_pg = UserServiceRegistry.get_instance().get_live_instance(user_id, _default_relay_pg)
+                    except Exception:
+                        pass
+                fs_svc_pg = _relay_svc_pg or self._find_filesystem_service(user_id)
+                if fs_svc_pg:
+                    h.set_fs_service(fs_svc_pg)
             elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)

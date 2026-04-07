@@ -1,19 +1,26 @@
-"""Project graph handlers — build and query code structure graphs."""
+"""Project graph handlers — build and query code structure graphs.
+
+Build action fetches files via the relay (user's machine), runs AST
+extraction server-side. Query/report/node actions work on the stored graph.
+"""
 
 import logging
 from typing import Any, Dict
 
-from core.tool_handler import ToolHandler
+from core.handlers._fs_base import BaseFsHandler
 
 logger = logging.getLogger(__name__)
 
 
-class ProjectGraphHandler(ToolHandler):
-    """Build and query the structural graph of a project codebase."""
+class ProjectGraphHandler(BaseFsHandler):
+    """Build and query the structural graph of a project codebase.
+
+    Extends BaseFsHandler to get relay/filesystem service access.
+    Build fetches code via relay, AST parsing runs server-side.
+    """
 
     def __init__(self):
-        self._user_id = ""
-        self._conversation_id = ""
+        super().__init__()
         self._agent_name = ""
 
     def set_agent_name(self, name: str):
@@ -27,7 +34,7 @@ class ProjectGraphHandler(ToolHandler):
     def description(self) -> str:
         return (
             "Build or query the structural code graph of the current project. "
-            "Actions: build (index codebase), query (traverse graph), "
+            "Actions: build (index codebase via relay), query (traverse graph), "
             "report (summary), node (entity details)."
         )
 
@@ -40,24 +47,22 @@ class ProjectGraphHandler(ToolHandler):
                     "type": "string",
                     "enum": ["build", "query", "report", "node"],
                     "description": (
-                        "build: index the project codebase into a graph; "
+                        "build: fetch code via relay and index into a graph; "
                         "query: traverse graph with a question; "
                         "report: get graph summary (god nodes, stats); "
                         "node: get details about a specific entity"
                     ),
                 },
-                "path": {"type": "string", "description": "Project root path (for build)"},
+                "path": {"type": "string", "description": "Project root path (for build, default: '.')"},
                 "question": {"type": "string", "description": "Query text (for query/node)"},
                 "depth": {"type": "integer", "description": "Traversal depth (default: 3)"},
+                "source": {
+                    "type": "string",
+                    "description": "Relay/filesystem service name (for build). Omit for default.",
+                },
             },
             "required": ["action"],
         }
-
-    def set_user_id(self, uid: str):
-        self._user_id = uid
-
-    def set_conversation_id(self, cid: str):
-        self._conversation_id = cid
 
     def execute(self, arguments: Dict[str, Any]) -> str:
         action = arguments.get("action", "")
@@ -69,12 +74,22 @@ class ProjectGraphHandler(ToolHandler):
 
         if action == "build":
             path = arguments.get("path", ".")
-            result = pg.build_from_directory(path)
+            # Resolve filesystem service (relay) via BaseFsHandler
+            source = arguments.get("source", "")
+            svc, workdir = self._resolve(source)
+            if svc == "filestore":
+                return "Error: project_graph build requires a relay, not filestore"
+            if svc is None and workdir is None:
+                return "Error: no relay connected. Connect a relay to index the codebase."
+            if workdir:
+                return "Error: project_graph build requires a relay filesystem service"
+            # Build via relay
+            result = pg.build_from_relay(svc, path)
             status = result.get("status", "?")
-            if status in ("built", "built_fallback"):
+            if status == "built":
                 return (f"Project graph built: {result.get('nodes', 0)} nodes, "
-                        f"{result.get('edges', 0)} edges"
-                        + (" (fallback mode)" if status == "built_fallback" else ""))
+                        f"{result.get('edges', 0)} edges "
+                        f"({result.get('files', 0)} files indexed)")
             return f"Graph build: {status} — {result.get('reason', '')}"
 
         if action == "query":

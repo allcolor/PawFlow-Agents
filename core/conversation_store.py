@@ -50,6 +50,7 @@ class ConversationStore:
         self._cache_lock = threading.Lock()
         self._ctx_cache: Dict[str, Dict[str, List[Dict]]] = {}  # cid -> {agent -> messages}
         self._ctx_cache_lock = threading.Lock()
+        self._cid_user: Dict[str, str] = {}  # cid -> user_id (fast lookup, no scan)
         self._loaded = False
 
     @classmethod
@@ -79,18 +80,19 @@ class ConversationStore:
     def _conv_dir(self, cid: str, user_id: str = "") -> Path:
         """Directory for a conversation: {store_dir}/{user}/{conv_id}/"""
         if user_id:
+            self._cid_user[cid] = user_id  # cache for future lookups
             return self._store_dir / self._safe_name(user_id) / self._safe_name(cid)
-        # Try cache first (loaded by _ensure_loaded at startup)
-        with self._cache_lock:
-            cached = self._cache.get(cid)
-            if cached and cached.get("user_id"):
-                return self._store_dir / self._safe_name(cached["user_id"]) / self._safe_name(cid)
+        # Fast lookup from cid→user mapping (populated by _ensure_loaded + save)
+        uid = self._cid_user.get(cid)
+        if uid:
+            return self._store_dir / self._safe_name(uid) / self._safe_name(cid)
         # Fallback: scan user dirs on disk
         if self._store_dir.is_dir():
             for user_dir in self._store_dir.iterdir():
                 if user_dir.is_dir():
                     conv_dir = user_dir / self._safe_name(cid)
                     if conv_dir.is_dir():
+                        self._cid_user[cid] = user_dir.name  # remember for next time
                         return conv_dir
         raise ValueError(f"Conversation {cid[:16]} not found and no user_id provided")
 
@@ -528,15 +530,18 @@ class ConversationStore:
             self._loaded = True
         count = 0
         # Scan data/conversations/{user}/{conv_id}/ directories
+        # First pass: populate cid→user mapping so _conv_dir never needs to scan
         for user_dir in self._store_dir.iterdir():
             if not user_dir.is_dir():
                 continue
+            uid = user_dir.name
             for conv_dir in user_dir.iterdir():
                 if not conv_dir.is_dir():
                     continue
                 if not (conv_dir / "transcript.jsonl").exists() and not (conv_dir / "extras.json").exists():
                     continue
                 cid = conv_dir.name.replace("__", ":")
+                self._cid_user[cid] = uid
                 self._load_cache(cid)
                 count += 1
         if count:
@@ -550,7 +555,10 @@ class ConversationStore:
         return uuid.uuid4().hex[:16]
 
     def exists(self, cid: str) -> bool:
-        return self._conv_dir(cid).is_dir()
+        try:
+            return self._conv_dir(cid).is_dir()
+        except ValueError:
+            return False
 
     # ── Create / Save ─────────────────────────────────────────────────
 

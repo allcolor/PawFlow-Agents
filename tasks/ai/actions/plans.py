@@ -95,33 +95,44 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
     if action == "create_plan_user":
         title = body.get("title", "")
         steps = body.get("steps", [])
+        assigned_to = body.get("assigned_to", "")  # plan-level agent
         if not conv_id or not title or not steps:
             flowfile.set_content(json.dumps({"error": "Missing conversation_id, title, or steps"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         import uuid
         plan_id = "p_" + uuid.uuid4().hex[:8]
+        built_steps = []
+        for i, s in enumerate(steps):
+            if isinstance(s, str):
+                built_steps.append({
+                    "index": i + 1, "description": s,
+                    "status": "pending", "note": "", "assigned_to": "",
+                })
+            else:
+                built_steps.append({
+                    "index": i + 1,
+                    "description": s.get("description", ""),
+                    "status": "pending", "note": "",
+                    "assigned_to": s.get("assigned_to", ""),
+                })
+        # Auto-approve only if at least one agent is assigned
+        has_agent = bool(assigned_to) or any(s["assigned_to"] for s in built_steps)
         plan = {
             "id": plan_id,
             "conversation_id": conv_id,
             "title": title,
-            "status": "approved",  # user-created plans are auto-approved
-            "created_by": user_id or "user",
+            "status": "approved" if has_agent else "pending_approval",
+            "created_by": assigned_to or user_id,
             "created_at": time.time(),
-            "assigned_to": [],
-            "steps": [
-                {
-                    "index": i + 1,
-                    "description": s if isinstance(s, str) else s.get("description", ""),
-                    "status": "pending",
-                    "note": "",
-                    "assigned_to": "",
-                }
-                for i, s in enumerate(steps)
-            ],
+            "assigned_to": [assigned_to] if assigned_to else [],
+            "steps": built_steps,
         }
         _save_plan(conv_id, plan, user_id)
         _publish(conv_id, "plan_created", {"plan": plan})
+        # Auto-orchestrate if approved
+        if plan["status"] == "approved":
+            _orchestrate_next_step(self, conv_id, plan_id, user_id)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 

@@ -188,6 +188,11 @@ class ExecuteScriptHandler(ToolHandler):
 
     def _execute_remote(self, code: str, service_name: str, env: dict = None) -> str:
         """Execute code on a remote filesystem service via relay."""
+        # Inject PawFlow SDK env vars so scripts can use `from pawflow import tools`
+        from core.handlers._fs_base import get_tool_relay_env
+        _sdk_env = get_tool_relay_env()
+        if _sdk_env:
+            env = {**_sdk_env, **(env or {})}
         svc_name = service_name.replace("fs:", "", 1) if service_name.startswith("fs:") else service_name
         svc = None
         if self._fs_resolver:

@@ -46,20 +46,10 @@ class ExecuteScriptTask(BaseTask):
         timeout = int(self.config.get('docker_timeout', 120))
 
         # Get tool relay info for SDK access
-        relay_url, relay_token = "", ""
-        try:
-            from services.tool_relay_service import ToolRelayService
-            from gui.services.global_service_registry import GlobalServiceRegistry
-            greg = GlobalServiceRegistry.get_instance()
-            for sid, sdef in greg.get_all_definitions().items():
-                if getattr(sdef, "service_type", "") == "toolRelay":
-                    svc = greg.get_live_instance(sid)
-                    if svc:
-                        relay_url = f"wss://host.docker.internal:{svc._port}/ws/tools"
-                        relay_token = getattr(svc, '_token', '') or ''
-                        break
-        except Exception:
-            pass
+        from core.handlers._fs_base import get_tool_relay_env
+        _sdk_env = get_tool_relay_env()
+        relay_url = _sdk_env.get("PAWFLOW_TOOL_RELAY_URL", "")
+        relay_token = _sdk_env.get("PAWFLOW_TOOL_RELAY_TOKEN", "")
 
         # Detect filesystem service for SDK
         fs_service = self.config.get('filesystem_service_id', '')

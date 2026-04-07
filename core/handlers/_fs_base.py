@@ -77,6 +77,32 @@ def find_fs_service(user_id: str, service_name: str = ""):
     return None
 
 
+def get_tool_relay_env() -> Dict[str, str]:
+    """Get PawFlow SDK environment variables for scripts running in relay/Docker.
+
+    Returns dict with PAWFLOW_TOOL_RELAY_URL, PAWFLOW_TOOL_RELAY_TOKEN, etc.
+    Empty dict if no tool relay is available.
+    """
+    try:
+        from gui.services.global_service_registry import GlobalServiceRegistry
+        greg = GlobalServiceRegistry.get_instance()
+        for sid, sdef in greg.get_all_definitions().items():
+            if getattr(sdef, "service_type", "") == "toolRelay":
+                svc = greg.get_live_instance(sid)
+                if svc:
+                    cfg = getattr(sdef, "config", {}) or {}
+                    port = int(cfg.get("port", 0))
+                    token = cfg.get("token", "")
+                    if port and token:
+                        return {
+                            "PAWFLOW_TOOL_RELAY_URL": f"ws://host.docker.internal:{port}/ws/tools",
+                            "PAWFLOW_TOOL_RELAY_TOKEN": token,
+                        }
+    except Exception:
+        pass
+    return {}
+
+
 def cap_binary_output(text: str, cap: int = _BINARY_CAP) -> str:
     """Reduce cap for output that looks like binary or base64 data."""
     if not text or len(text) < cap:

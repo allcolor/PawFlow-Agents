@@ -395,6 +395,7 @@ class AgentCoreMixin:
                                         agent_name=ctx.get("active_agent_name") or "",
                                         tool_defs=ctx.get("tool_defs"),
                                         chars_per_token=_cpt,
+                                        user_id=user_id,
                                     )
                                     _snap_data = {
                                         "messages": result,
@@ -439,6 +440,7 @@ class AgentCoreMixin:
                                     agent_name=ctx.get("active_agent_name") or "",
                                     tool_defs=ctx.get("tool_defs"),
                                     chars_per_token=_cpt,
+                                    user_id=user_id,
                                 )
                             logger.info("[precompact:%s] applied: snapshot(%d) + after(%d) = %d msgs",
                                         conversation_id[:8], len(_snap["messages"]),
@@ -456,6 +458,7 @@ class AgentCoreMixin:
                                 agent_name=ctx.get("active_agent_name") or "",
                                 tool_defs=ctx.get("tool_defs"),
                                 chars_per_token=_cpt,
+                                user_id=user_id,
                             )
                             if len(llm_context) < len(messages):
                                 ctx["_context_diverged"] = True
@@ -563,30 +566,6 @@ class AgentCoreMixin:
                                 llm_context, _max_ctx,
                                 chars_per_token=ctx.get("chars_per_token", 0),
                                 tool_defs=ctx.get("tool_defs"))
-
-                    # Dynamic lazy tools fallback — for tools_mode=full that needs switching
-                    if (tool_defs and not ctx.get("_lazy_tools_active")
-                            and len(tool_defs) > 4 and iteration > 5):
-                        _tools_chars = sum(
-                            len(td.name) + len(td.description or "")
-                            + len(json.dumps(td.parameters or {}))
-                            for td in tool_defs)
-                        _tools_pct = (_tools_chars / max(_pre_send_est * 3.5, 1)) * 100
-                        if _tools_pct > 15:
-                            logger.info(f"[compact] Dynamic lazy switch: tools={_tools_pct:.0f}%% of context")
-                            from core.tool_registry import GetToolSchemaHandler, UseToolHandler
-                            _gts = GetToolSchemaHandler(registry)
-                            _ut = UseToolHandler(registry)
-                            registry.register(_gts)
-                            registry.register(_ut)
-                            tool_defs = [
-                                LLMToolDefinition(name=_gts.name, description=_gts.description,
-                                                  parameters=_gts.parameters_schema),
-                                LLMToolDefinition(name=_ut.name, description=_ut.description,
-                                                  parameters=_ut.parameters_schema),
-                            ]
-                            ctx["tool_defs"] = tool_defs
-                            ctx["_lazy_tools_active"] = True
 
                     # LLM call
                     _tb = ctx.get("thinking_budget", 0)

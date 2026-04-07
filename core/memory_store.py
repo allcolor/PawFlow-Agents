@@ -24,13 +24,15 @@ class MemoryEntry:
     """A single memory entry."""
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
-                 "embedding", "agent", "conversation_id")
+                 "embedding", "agent", "conversation_id",
+                 "wing", "hall", "room")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
                  created_at: float = 0, updated_at: float = 0,
                  embedding: Optional[List[float]] = None,
-                 agent: str = "", conversation_id: str = ""):
+                 agent: str = "", conversation_id: str = "",
+                 wing: str = "", hall: str = "", room: str = ""):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -40,6 +42,9 @@ class MemoryEntry:
         self.embedding = embedding
         self.agent = agent  # "" = not scoped to agent
         self.conversation_id = conversation_id  # "" = not scoped to conversation
+        self.wing = wing    # project/person scope (e.g. 'project:pawflow')
+        self.hall = hall    # memory type category (facts/events/discoveries/preferences/advice)
+        self.room = room    # specific topic (e.g. 'auth', 'docker')
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -56,6 +61,12 @@ class MemoryEntry:
             d["agent"] = self.agent
         if self.conversation_id:
             d["conversation_id"] = self.conversation_id
+        if self.wing:
+            d["wing"] = self.wing
+        if self.hall:
+            d["hall"] = self.hall
+        if self.room:
+            d["room"] = self.room
         return d
 
     @classmethod
@@ -70,6 +81,9 @@ class MemoryEntry:
             embedding=data.get("embedding"),
             agent=data.get("agent", ""),
             conversation_id=data.get("conversation_id", ""),
+            wing=data.get("wing", ""),
+            hall=data.get("hall", ""),
+            room=data.get("room", ""),
         )
 
     def matches(self, query: str) -> bool:
@@ -78,6 +92,12 @@ class MemoryEntry:
         if q in self.text.lower():
             return True
         if any(q in tag for tag in self.tags):
+            return True
+        if self.wing and q in self.wing.lower():
+            return True
+        if self.hall and q in self.hall.lower():
+            return True
+        if self.room and q in self.room.lower():
             return True
         return False
 
@@ -118,7 +138,8 @@ class MemoryStore:
     def remember(self, user_id: str, text: str, tags: List[str],
                  source: str = "",
                  embedding: Optional[List[float]] = None,
-                 agent: str = "", conversation_id: str = "") -> MemoryEntry:
+                 agent: str = "", conversation_id: str = "",
+                 wing: str = "", hall: str = "", room: str = "") -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -135,12 +156,19 @@ class MemoryStore:
                         e.embedding = embedding
                     if agent:
                         e.agent = agent
+                    if wing:
+                        e.wing = wing
+                    if hall:
+                        e.hall = hall
+                    if room:
+                        e.room = room
                     self._save_user(user_id)
                     return e
 
             entry = MemoryEntry(text=text, tags=tags, source=source,
                                 embedding=embedding, agent=agent,
-                                conversation_id=conversation_id)
+                                conversation_id=conversation_id,
+                                wing=wing, hall=hall, room=room)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -149,7 +177,8 @@ class MemoryStore:
                tags: Optional[List[str]] = None,
                limit: int = 20,
                agent_name: str = "",
-               conversation_id: str = "") -> List[MemoryEntry]:
+               conversation_id: str = "",
+               wing: str = "", hall: str = "", room: str = "") -> List[MemoryEntry]:
         """Retrieve memories matching query and/or tags.
 
         Scoping: returns memories visible to this agent in this conversation.
@@ -158,6 +187,14 @@ class MemoryStore:
         with self._store_lock:
             self._ensure_loaded(user_id)
             entries = self._memories.get(user_id, [])
+
+        # Structural filtering (wing/hall/room)
+        if wing:
+            entries = [e for e in entries if e.wing == wing]
+        if hall:
+            entries = [e for e in entries if e.hall == hall]
+        if room:
+            entries = [e for e in entries if e.room == room]
 
         # Filter to entries visible for this agent/conversation
         visible = []
@@ -301,7 +338,8 @@ class MemoryStore:
     def semantic_recall(self, user_id: str, query_embedding: List[float],
                         limit: int = 10,
                         agent_name: str = "",
-                        conversation_id: str = "") -> List[Tuple[MemoryEntry, float]]:
+                        conversation_id: str = "",
+                        wing: str = "", hall: str = "", room: str = "") -> List[Tuple[MemoryEntry, float]]:
         """Find memories by semantic similarity using embeddings.
 
         Filters by visibility (same scoping as recall).
@@ -312,6 +350,14 @@ class MemoryStore:
         with self._store_lock:
             self._ensure_loaded(user_id)
             entries = self._memories.get(user_id, [])
+
+        # Structural filtering (wing/hall/room)
+        if wing:
+            entries = [e for e in entries if e.wing == wing]
+        if hall:
+            entries = [e for e in entries if e.hall == hall]
+        if room:
+            entries = [e for e in entries if e.room == room]
 
         results = []
         for e in entries:

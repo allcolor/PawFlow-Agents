@@ -332,6 +332,78 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         return keep
 
 
+    def _auto_extract_memories(
+        self,
+        summary: str,
+        client: LLMClient,
+        user_id: str,
+        agent_name: str = "",
+        conversation_id: str = "",
+    ):
+        """Extract key facts from a compaction summary and store as memories.
+
+        Best-effort: failures are logged but never propagate.
+        """
+        if not user_id or not summary or len(summary) < 50:
+            return
+        try:
+            prompt = (
+                "Extract the most important facts from this conversation summary "
+                "that should be remembered for future conversations.\n"
+                "Return a JSON array of objects with keys: "
+                '"text" (the fact), "tags" (list of tags), "hall" (one of: '
+                'facts, events, discoveries, preferences, advice).\n'
+                "Only include facts worth remembering long-term "
+                "(user preferences, key decisions, project context). "
+                "Skip ephemeral details (file contents, error messages, tool output).\n"
+                "Return 0-5 items. If nothing is worth remembering, return [].\n\n"
+                f"SUMMARY:\n{summary[:4000]}"
+            )
+            resp = client.complete(
+                messages=[LLMMessage(role="user", content=prompt)],
+                temperature=0.3,
+                max_tokens=1000,
+            )
+            import re as _re_mem
+            _match = _re_mem.search(r'\[.*\]', resp.content or "", _re_mem.DOTALL)
+            if not _match:
+                return
+            items = json.loads(_match.group())
+            if not isinstance(items, list):
+                return
+            from core.memory_store import MemoryStore
+            store = MemoryStore.instance()
+            stored = 0
+            for item in items[:5]:
+                if not isinstance(item, dict):
+                    continue
+                text = item.get("text", "").strip()
+                if not text or len(text) < 10:
+                    continue
+                tags = item.get("tags", [])
+                if not isinstance(tags, list):
+                    tags = []
+                tags = [str(t).lower().strip() for t in tags if t][:5]
+                if "auto-extracted" not in tags:
+                    tags.append("auto-extracted")
+                hall = item.get("hall", "facts")
+                if hall not in ("facts", "events", "discoveries", "preferences", "advice"):
+                    hall = "facts"
+                store.remember(
+                    user_id, text, tags, source="compaction",
+                    agent=agent_name, hall=hall,
+                )
+                stored += 1
+            if stored:
+                logger.info("[compact] Auto-extracted %d memories from summary", stored)
+        except Exception as e:
+            logger.debug("[compact] LLM auto-extract failed: %s, trying heuristic", e)
+            try:
+                from core.memory_auto_extract import auto_extract_memories
+                auto_extract_memories(user_id, summary, agent_name=agent_name)
+            except Exception:
+                pass
+
     def _compact(
         self,
         messages: List[LLMMessage],
@@ -344,6 +416,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         chars_per_token: float = 0,
         compact_instructions: str = "",
         force: bool = False,
+        user_id: str = "",
     ) -> List[LLMMessage]:
         """Unified compaction: cleanup + threshold check + summarize + rebuild.
 
@@ -518,6 +591,21 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 raise RuntimeError(
                     f"Compaction failed: summarizer returned {len(summary or '')} chars")
             summary = f"[Summary unavailable — {len(old_messages)} earlier messages dropped]"
+
+        # Auto-extract memories from compaction summary
+        if user_id and summary and not summary.startswith("["):
+            _extract_client = client
+            try:
+                _mem_llm, _, _ = self._get_memory_llm_client(user_id)
+                if _mem_llm:
+                    _extract_client = _mem_llm
+            except Exception:
+                pass
+            self._auto_extract_memories(
+                summary, _extract_client, user_id,
+                agent_name=agent_name,
+                conversation_id=conversation_id,
+            )
 
         # ── Phase 3: Rebuild ──
         compacted: List[LLMMessage] = []

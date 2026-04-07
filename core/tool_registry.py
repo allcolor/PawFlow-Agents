@@ -241,6 +241,20 @@ def create_default_registry() -> ToolRegistry:
     registry.register(CompleteTaskHandler())
     registry.register(VerifyTaskHandler())
     registry.register(ForgetHandler())
+
+    # Knowledge Graph handlers
+    from core.handlers.knowledge_graph import (
+        KgAddHandler, KgQueryHandler, KgInvalidateHandler,
+        KgTimelineHandler, KgStatsHandler,
+    )
+    for _kg_cls in (KgAddHandler, KgQueryHandler, KgInvalidateHandler,
+                    KgTimelineHandler, KgStatsHandler):
+        registry.register(_kg_cls())
+
+    # Memory navigation
+    from core.handlers.memory_navigate import MemoryNavigateHandler
+    registry.register(MemoryNavigateHandler())
+
     registry.register(CreatePlanHandler())
     registry.register(UpdatePlanHandler())
     registry.register(ApprovePlanHandler())

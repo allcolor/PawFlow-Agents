@@ -58,6 +58,19 @@ class RememberHandler(ToolHandler):
                     "enum": ["conversation", "agent", "global", "private"],
                     "description": "Where to store: conversation (this conv, all agents), agent (all convs, this agent), global (everywhere), private (this agent + this conv only). Default: agent.",
                 },
+                "wing": {
+                    "type": "string",
+                    "description": "Project or person scope (e.g. 'project:pawflow', 'person:quentin')",
+                },
+                "hall": {
+                    "type": "string",
+                    "enum": ["facts", "events", "discoveries", "preferences", "advice"],
+                    "description": "Memory type category",
+                },
+                "room": {
+                    "type": "string",
+                    "description": "Specific topic (e.g. 'auth', 'docker', 'ci-pipeline')",
+                },
             },
             "required": ["text"],
         }
@@ -121,11 +134,15 @@ class RememberHandler(ToolHandler):
                 except Exception as emb_err:
                     logger.debug(f"Auto-embed failed: {emb_err}")
 
+            wing = arguments.get("wing", "")
+            hall = arguments.get("hall", "")
+            room = arguments.get("room", "")
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
                 embedding=embedding, agent=agent,
                 conversation_id=conv_id,
+                wing=wing, hall=hall, room=room,
             )
             scope_label = scope
             if scope == "private":
@@ -134,7 +151,33 @@ class RememberHandler(ToolHandler):
                 scope_label = f"agent:{agent}"
             elif scope == "conversation":
                 scope_label = f"conv:{conv_id[:8]}"
-            return f"Remembered (id: {entry.id}, tags: {entry.tags}, scope: {scope_label})"
+            msg = f"Remembered (id: {entry.id}, tags: {entry.tags}, scope: {scope_label})"
+
+            # Light KG cross-check: warn if contradictions exist
+            try:
+                from core.knowledge_graph import KnowledgeGraph
+                kg = KnowledgeGraph.for_user(user_id)
+                if kg.stats()["triples"] > 0:
+                    # Check if any entity mentioned in the text has contradictions
+                    for ent_data in kg._entities:
+                        if ent_data.lower() in text.lower():
+                            facts = kg.query_entity(ent_data)
+                            active = [f for f in facts if f["current"]]
+                            # Group by predicate, check for multi-valued
+                            by_pred = {}
+                            for f in active:
+                                by_pred.setdefault(f["predicate"], []).append(f["object"])
+                            conflicts = [
+                                f"{ent_data}->{p}: {', '.join(vs)}"
+                                for p, vs in by_pred.items() if len(vs) > 1
+                            ]
+                            if conflicts:
+                                msg += f"\n\u26a0 KG conflicts: {'; '.join(conflicts[:3])}"
+                            break  # only check first matching entity
+            except Exception:
+                pass
+
+            return msg
         except Exception as e:
             return f"Error storing memory: {e}"
 
@@ -173,6 +216,19 @@ class SemanticRecallHandler(ToolHandler):
                     "type": "integer",
                     "description": "Max results to return (default: 5)",
                 },
+                "wing": {
+                    "type": "string",
+                    "description": "Filter by project/person scope",
+                },
+                "hall": {
+                    "type": "string",
+                    "enum": ["facts", "events", "discoveries", "preferences", "advice"],
+                    "description": "Filter by memory type category",
+                },
+                "room": {
+                    "type": "string",
+                    "description": "Filter by specific topic",
+                },
             },
             "required": ["query"],
         }
@@ -207,6 +263,9 @@ class SemanticRecallHandler(ToolHandler):
                 user_id, query_embedding, limit=limit,
                 agent_name=self._agent_name,
                 conversation_id=self._conversation_id,
+                wing=arguments.get("wing", ""),
+                hall=arguments.get("hall", ""),
+                room=arguments.get("room", ""),
             )
             if not results:
                 return "No semantically similar memories found."
@@ -254,6 +313,19 @@ class RecallHandler(ToolHandler):
                     "type": "array",
                     "items": {"type": "string"},
                     "description": "Filter by tags (e.g. 'preference', 'name')",
+                },
+                "wing": {
+                    "type": "string",
+                    "description": "Filter by project/person scope",
+                },
+                "hall": {
+                    "type": "string",
+                    "enum": ["facts", "events", "discoveries", "preferences", "advice"],
+                    "description": "Filter by memory type category",
+                },
+                "room": {
+                    "type": "string",
+                    "description": "Filter by specific topic",
                 },
             },
         }
@@ -339,6 +411,9 @@ class RecallHandler(ToolHandler):
                 user_id, query=query, tags=tags, limit=20,
                 agent_name=self._agent_name,
                 conversation_id=self._conversation_id,
+                wing=arguments.get("wing", ""),
+                hall=arguments.get("hall", ""),
+                room=arguments.get("room", ""),
             )
             if not entries:
                 return "No memories found matching your query."

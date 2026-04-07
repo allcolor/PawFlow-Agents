@@ -61,6 +61,8 @@ class AgentToolConfigMixin:
         )
         from core.handlers._fs_base import BaseFsHandler
         from core.handlers.compact_result import CompactResultHandler
+        from core.handlers.knowledge_graph import _KgBaseHandler
+        from core.handlers.memory_navigate import MemoryNavigateHandler
 
         file_base_url = self.config.get("file_base_url", "")
         # file_ttl is set per-request to match conversation TTL
@@ -141,6 +143,8 @@ class AgentToolConfigMixin:
                             h.set_memory_llm_client(_mem_client)
                     except Exception:
                         pass
+            elif isinstance(h, (_KgBaseHandler, MemoryNavigateHandler)):
+                h.set_user_id(user_id)
             elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)

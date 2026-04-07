@@ -949,21 +949,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _tools_tokens = _tools_chars // 4  # rough estimate
         _tools_pct = (_tools_tokens / _resolved_max_ctx * 100) if _resolved_max_ctx else 0
 
-        _forced_mode = (
-            str(self.config.get("tools_mode", "")).lower()
-            or str((_selected_agent_def or {}).get("tools_mode", "")).lower()
-        )
         # Estimate how much context is already used by messages
         _msg_tokens = self._estimate_tokens(messages) if messages else 0
         _msg_pct = (_msg_tokens / _resolved_max_ctx * 100) if _resolved_max_ctx else 0
 
-        # Claude-code: tools come via MCP, not via prompt. Clear tool_defs
-        # entirely so no tool instructions leak into the system prompt.
+        # Claude-code: tools come via MCP bridge (mcp__pawflow__*), not via API tool_defs.
         _is_claude_code = (_client_provider_name or "").lower() == "claude-code"
         if _is_claude_code:
-            logger.info("Claude-code provider: tools via MCP, clearing %d tool_defs from prompt",
-                        len(tool_defs))
-            tool_defs = []
             # Find available relay services from conversation bindings
             _fs_services_info = ""
             try:
@@ -1013,73 +1005,35 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 + _fs_services_info
             )
 
-        # Lazy tools: default ON when many tools.
-        # Only send 2 meta-tools (get_tool_schema, use_tool) instead of all 48.
-        # Saves ~12K tokens per request.
-        _lazy_tools = (
-            not _is_claude_code
-            and (
-                _forced_mode == "lazy"
-                or (_forced_mode != "full" and len(tool_defs) > 4)
-            )
-        )
-        if _lazy_tools and tool_defs:
-            logger.info("Lazy tools: %d tools = ~%d tokens (%.1f%%) → 2 meta-tools",
-                         len(tool_defs), _tools_tokens, _tools_pct)
-        _full_tool_defs = tool_defs
-        if _lazy_tools and tool_defs:
-            from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
-            _gts = GetToolSchemaHandler(registry)
-            _ut = UseToolHandler(registry)
-            registry.register(_gts)
-            registry.register(_ut)
-            # Compact tool catalog: names + first-sentence descriptions by category (~400 tokens vs ~12K)
-            _categories = {}
-            for td in tool_defs:
-                cat = "other"
-                _n = td.name.lower()
-                if _n in ("read", "write", "edit", "bash", "glob", "grep",
-                         "delete", "mkdir", "stat", "exists", "list_dir",
-                         "batch_edit", "apply_patch", "find_replace",
-                         "notebook_edit", "copy") or "file" in _n or "exec" in _n:
-                    cat = "filesystem"
-                elif "git" in _n:
-                    cat = "git"
-                elif "image" in _n or "video" in _n:
-                    cat = "media"
-                elif "web" in _n or "scrap" in _n or "fetch" in _n:
-                    cat = "web"
-                elif "agent" in _n or "spawn" in _n:
-                    cat = "agents"
-                elif "memory" in _n or "remember" in _n or "recall" in _n or "forget" in _n:
-                    cat = "memory"
-                elif "plan" in _n or "task" in _n:
-                    cat = "planning"
-                _desc = (td.description or "").split(".")[0].strip()
-                _entry = f"{td.name}: {_desc}" if _desc else td.name
-                _categories.setdefault(cat, []).append(_entry)
-            _cat_lines = [f"{cat} — {'; '.join(entries)}" for cat, entries in _categories.items()]
-            system_prompt += (
-                "\n\nTools: call get_tool_schema(name) to see parameters, "
-                "then use_tool(name, {args}) to execute. "
-                "Available: " + " | ".join(_cat_lines)
-            )
-            # Replace tool_defs with just the 2 meta-tools
-            tool_defs = [
-                LLMToolDefinition(
-                    name=_gts.name, description=_gts.description,
-                    parameters=_gts.parameters_schema,
-                ),
-                LLMToolDefinition(
-                    name=_ut.name, description=_ut.description,
-                    parameters=_ut.parameters_schema,
-                ),
-            ]
-            logger.info("Lazy tools mode: %d tools → 2 meta-tools (max_ctx=%d)",
-                         len(_full_tool_defs), _resolved_max_ctx)
+        # Always expose only 2 meta-tools: get_tool_schema + use_tool.
+        # The LLM discovers available tools via get_tool_schema().
+        from core.handlers.meta_tools import GetToolSchemaHandler, UseToolHandler
+        _gts = GetToolSchemaHandler(registry)
+        _ut = UseToolHandler(registry)
+        registry.register(_gts)
+        registry.register(_ut)
+        tool_defs = [
+            LLMToolDefinition(
+                name=_gts.name, description=_gts.description,
+                parameters=_gts.parameters_schema,
+            ),
+            LLMToolDefinition(
+                name=_ut.name, description=_ut.description,
+                parameters=_ut.parameters_schema,
+            ),
+        ]
+
+        # Inject persistent memory digest (same for CC and API)
+        try:
+            from core.memory_digest import build_memory_digest
+            _digest = build_memory_digest(user_id, agent_name=_active_agent_name)
+            if _digest:
+                system_prompt += f"\n\n## Persistent memory\n{_digest}"
+        except Exception:
+            pass
 
         # Final update: inject the fully-built system_prompt into messages[0]
-        # (must happen AFTER all modifications: narration, resilience, FS context, lazy tools)
+        # (must happen AFTER all modifications: narration, resilience, FS context, memory digest)
         if messages and messages[0].role == "system":
             messages[0] = LLMMessage(role="system", content=system_prompt)
 
@@ -1195,6 +1149,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             agent_name=agent_name,
             chars_per_token=0,
             compact_instructions=compact_instructions,
+            user_id=user_id,
         )
 
     # ── Context operation pause/resume ─────────────────────────────────

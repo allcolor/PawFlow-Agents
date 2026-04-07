@@ -861,7 +861,7 @@ class AgentLoopTask(
                     "interrupted": True,
                 })
                 self._track_tokens(
-                    user_id or "anonymous", resp.tokens_in, resp.tokens_out,
+                    user_id, resp.tokens_in, resp.tokens_out,
                     model=resp.model, agent_name=agent_name or "")
             except Exception as e:
                 logger.error(f"[interrupt synthesis] failed: {e}", exc_info=True)

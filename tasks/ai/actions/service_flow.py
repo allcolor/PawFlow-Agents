@@ -445,7 +445,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 # User service
                 from gui.services.user_service_registry import UserServiceRegistry
                 ureg = UserServiceRegistry.get_instance()
-                uid = user_id or "anonymous"
+                uid = user_id
                 ureg.set_enabled(uid, sid, enabled)
             flowfile.set_content(json.dumps({"ok": True, "enabled": enabled}).encode())
         except Exception as e:
@@ -460,7 +460,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             return [flowfile]
         try:
             from gui.services.user_service_registry import UserServiceRegistry
-            uid = user_id or "anonymous"
+            uid = user_id
             UserServiceRegistry.get_instance().uninstall(uid, sid)
             flowfile.set_content(json.dumps({"ok": True}).encode())
         except Exception as e:
@@ -1195,7 +1195,7 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             flow_scope = flow_config.get("scope", "independent")
 
             # Validate runtime dependencies
-            uid = user_id or "anonymous"
+            uid = user_id
             if flow_scope in ("user", "conversation") and not uid:
                 flowfile.set_content(json.dumps(
                     {"error": f"Flow requires user context (scope={flow_scope})"}).encode())

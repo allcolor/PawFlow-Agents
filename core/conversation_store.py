@@ -1,21 +1,29 @@
-"""ConversationStore — JSONL append-only with single commit/read point.
+"""ConversationStore — directory-based conversation storage.
 
-Each conversation is a .jsonl file with one JSON object per line.
-ONE _commit() for ALL writes. ONE _read() for ALL reads.
-Per-conversation locks ensure atomicity of logical operations.
+Each conversation is a directory:
+  data/conversations/{user}/{conv_id}/
+    transcript.jsonl              — all messages (faithful replay)
+    shared.jsonl                  — shared context (public messages for all agents)
+    {agent}/context.jsonl         — per-agent LLM context
+    extras.json                   — atomic JSON metadata (no duplication)
 
-Line types:
+Transcript line types:
   {"t":"meta", "user_id":"...", "status":"idle", "created_at":N, "expires_at":N}
   {"t":"msg", "role":"...", "content":"...", "msg_id":"...", "source":{}, "ts":N}
   {"t":"msg", ..., "private":true}  (tool calls/results — agent context only)
-  {"t":"ctx", "agent":"name", "op":"replace", "data":[...]}
-  {"t":"ctx", "agent":"name", "op":"append", "data":[...]}
-  {"t":"extra", "key":"...", "value":...}
+  {"t":"msg_patch", "msg_id":"...", ...}
   {"t":"status", "status":"active"}
+  {"t":"trace_update", "trace_id":"...", ...}
+
+Context files ({agent}/context.jsonl, shared.jsonl):
+  One message dict per line (no "t" prefix — raw messages).
+
+Per-conversation locks ensure atomicity of logical operations.
 """
 
 import json
 import logging
+import subprocess
 import threading
 import time
 import uuid
@@ -98,6 +106,113 @@ class ConversationStore:
     def _extras_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "extras.json"
 
+    # ── Git per conversation ──────────────────────────────────────────
+
+    def _git(self, cid: str, *args: str, check: bool = True) -> subprocess.CompletedProcess:
+        """Run a git command in the conversation directory."""
+        conv_dir = self._conv_dir(cid)
+        return subprocess.run(
+            ["git"] + list(args),
+            cwd=str(conv_dir), capture_output=True, text=True,
+            check=check, timeout=10,
+        )
+
+    def _git_init(self, cid: str):
+        """Initialize a git repo in the conversation directory (idempotent)."""
+        conv_dir = self._conv_dir(cid)
+        git_dir = conv_dir / ".git"
+        if git_dir.exists():
+            return
+        try:
+            self._git(cid, "init", "-q")
+            # Configure for this repo only (no user-level config needed)
+            self._git(cid, "config", "user.email", "pawflow@local")
+            self._git(cid, "config", "user.name", "PawFlow")
+            # Initial commit with whatever exists
+            self._git(cid, "add", "-A")
+            self._git(cid, "commit", "-m", "init", "--allow-empty", "-q")
+            logger.debug("[convstore] git init for %s", cid[:8])
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] git init failed for %s: %s", cid[:8], e)
+
+    def git_snapshot(self, cid: str, message: str = ""):
+        """Commit current state as a snapshot (called after agent turn end).
+
+        Uses the per-conversation lock to prevent race conditions when
+        multiple agents flush simultaneously.
+        """
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return
+        lock = self._get_conv_lock(cid)
+        with lock:
+            try:
+                status = self._git(cid, "status", "--porcelain")
+                if not status.stdout.strip():
+                    return  # nothing changed
+                self._git(cid, "add", "-A")
+                msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
+                self._git(cid, "commit", "-m", msg, "-q")
+                logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+                logger.warning("[convstore] git snapshot failed for %s: %s", cid[:8], e)
+
+    def git_log(self, cid: str, limit: int = 20) -> List[Dict]:
+        """List recent git commits for a conversation."""
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return []
+        try:
+            result = self._git(cid, "log", f"--max-count={limit}",
+                               "--format=%H\t%at\t%s")
+            entries = []
+            for line in result.stdout.strip().split("\n"):
+                if not line.strip():
+                    continue
+                parts = line.split("\t", 2)
+                if len(parts) >= 3:
+                    entries.append({
+                        "hash": parts[0],
+                        "timestamp": int(parts[1]),
+                        "message": parts[2],
+                    })
+            return entries
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+            return []
+
+    def git_rollback(self, cid: str, commit_hash: str) -> bool:
+        """Rollback conversation to a previous commit."""
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return False
+        try:
+            self._git(cid, "checkout", commit_hash, "--", ".")
+            # Reload cache from rolled-back state
+            with self._cache_lock:
+                self._cache.pop(cid, None)
+            self._invalidate_ctx_cache(cid)
+            self._reload_cache(cid)
+            # Commit the rollback as a new snapshot
+            self.git_snapshot(cid, f"rollback to {commit_hash[:8]}")
+            logger.info("[convstore] rolled back %s to %s", cid[:8], commit_hash[:8])
+            return True
+        except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as e:
+            logger.warning("[convstore] rollback failed for %s: %s", cid[:8], e)
+            return False
+
+    def git_diff(self, cid: str, commit_a: str = "HEAD~1", commit_b: str = "HEAD") -> str:
+        """Get diff between two commits."""
+        conv_dir = self._conv_dir(cid)
+        if not (conv_dir / ".git").exists():
+            return ""
+        try:
+            result = self._git(cid, "diff", commit_a, commit_b, check=False)
+            return result.stdout
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return ""
+
+    # ── Context file helpers ──────────────────────────────────────────
+
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
         """Append messages to an agent's context file."""
         path = self._agent_ctx_path(cid, agent)
@@ -106,12 +221,94 @@ class ConversationStore:
             for m in messages:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 
+    @staticmethod
+    def _transform_for_shared(msg: Dict) -> Dict:
+        """Transform a message for the shared (agent-neutral) context.
+
+        ALL messages are prefixed — shared belongs to no agent.
+        - Agent messages: role→user, content prefixed [Agent X]:
+        - User messages: content prefixed [User to agent X]:
+        """
+        m = dict(msg)
+        src = m.get("source") or {}
+        src_type = src.get("type", "")
+
+        if src_type == "agent":
+            agent_name = src.get("name")
+            if not agent_name:
+                raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
+            m["role"] = "user"
+            m["content"] = f"[Agent {agent_name}]:\n{m.get('content', '')}"
+
+        elif src_type == "user":
+            target = src.get("target_agent", "")
+            if target:
+                m["content"] = f"[User to agent {target}]:\n{m.get('content', '')}"
+
+        return m
+
+    @staticmethod
+    def _transform_for_other_agent(msg: Dict, receiving_agent: str) -> Dict:
+        """Transform a message for injection into a specific agent's context.
+
+        - Own agent messages (source.name == receiving_agent): unchanged
+        - Other agent messages: role→user, content prefixed [Agent X]:
+        - User messages to receiving_agent: unchanged
+        - User messages to other agent: content prefixed [User to agent X]:
+        """
+        m = dict(msg)
+        src = m.get("source") or {}
+        src_type = src.get("type", "")
+
+        if src_type == "agent":
+            agent_name = src.get("name")
+            if not agent_name:
+                raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
+            if agent_name != receiving_agent:
+                m["role"] = "user"
+                m["content"] = f"[Agent {agent_name}]:\n{m.get('content', '')}"
+
+        elif src_type == "user":
+            target = src.get("target_agent", "")
+            if target and target != receiving_agent:
+                m["content"] = f"[User to agent {target}]:\n{m.get('content', '')}"
+
+        return m
+
+    @staticmethod
+    def _personalize_from_shared(msg: Dict, agent_name: str) -> Dict:
+        """Personalize a shared-context message for a specific agent.
+
+        Reverses _transform_for_shared for this agent's own messages:
+        - [Agent {me}]: → strip prefix, role=assistant
+        - [User to agent {me}]: → strip prefix
+        - Everything else: keep as-is (already prefixed for "others")
+        """
+        m = dict(msg)
+        src = m.get("source") or {}
+        src_type = src.get("type", "")
+        content = m.get("content", "")
+
+        if src_type == "agent" and src.get("name") == agent_name:
+            prefix = f"[Agent {agent_name}]:\n"
+            if content.startswith(prefix):
+                m["content"] = content[len(prefix):]
+            m["role"] = "assistant"
+
+        elif src_type == "user" and src.get("target_agent") == agent_name:
+            prefix = f"[User to agent {agent_name}]:\n"
+            if content.startswith(prefix):
+                m["content"] = content[len(prefix):]
+
+        return m
+
     def _append_shared_ctx(self, cid: str, messages: List[Dict]):
-        """Append messages to the shared context file."""
+        """Append transformed messages to the shared context file."""
         path = self._shared_ctx_path(cid)
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
-                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+                xf = self._transform_for_shared(m)
+                f.write(json.dumps(xf, ensure_ascii=False) + "\n")
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file."""
@@ -181,255 +378,6 @@ class ConversationStore:
                 logger.error(f"[convstore] read failed {cid}: {e}")
                 return read_fn(iter([]))
 
-    # ══════════════════════════════════════════════════════════════════
-    #  SINGLE WRITE POINT
-    # ══════════════════════════════════════════════════════════════════
-
-    def _commit(self, cid: str, operations: List[dict]) -> None:
-        """THE ONLY write method. Lock, apply operations, release.
-
-        Operations are dicts with an "op" key:
-          {"op":"append", "lines":[...]}           — append lines to file
-          {"op":"ctx_replace", "agent":"X", "data":[...]}  — replace agent ctx (with merge+vacuum)
-          {"op":"ctx_append", "agent":"X", "data":[...]}   — append to agent ctx
-          {"op":"ctx_delete", "agent":"X"}          — delete agent ctx
-          {"op":"extra", "key":"K", "value":V}     — set extra
-          {"op":"status", "status":"active"}        — set status
-          {"op":"rewrite_full", "lines":[...]}     — replace entire file
-
-        All operations are applied atomically under one lock.
-        """
-        if not operations:
-            return
-        lock = self._get_conv_lock(cid)
-        path = self._conv_path(cid)
-        with lock:
-            # Classify: do we need a rewrite or just appends?
-            needs_rewrite = any(
-                op.get("op") in ("ctx_replace", "ctx_delete", "rewrite_full")
-                for op in operations
-            )
-
-            if needs_rewrite:
-                self._apply_with_rewrite(path, operations)
-            else:
-                self._apply_append_only(path, operations)
-
-            # Rebuild cache atomically — read new state and swap in
-            # one step, so list_conversations never sees a missing entry.
-            self._reload_cache(cid)
-
-    def _apply_append_only(self, path: Path, operations: List[dict]) -> None:
-        """Fast path: just append lines to end of file."""
-        lines_to_append = []
-        for op in operations:
-            op_type = op.get("op", "")
-            if op_type == "append":
-                lines_to_append.extend(op.get("lines", []))
-            elif op_type == "ctx_append":
-                lines_to_append.append({
-                    "t": "ctx", "agent": op["agent"], "op": "append",
-                    "data": op["data"],
-                })
-            elif op_type == "extra":
-                # Extras now go to extras.json (atomic JSON), not JSONL
-                # set_extra() handles this directly — skip here
-                pass
-            elif op_type == "status":
-                lines_to_append.append({
-                    "t": "status", "status": op["status"],
-                    "ts": time.time(),
-                })
-        if lines_to_append:
-            try:
-                with open(path, "a", encoding="utf-8") as f:
-                    for line in lines_to_append:
-                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
-            except OSError as e:
-                logger.error(f"[convstore] append failed: {e}")
-                raise
-
-    def _apply_with_rewrite(self, path: Path, operations: List[dict]) -> None:
-        """Slow path: stream file, apply transforms, write to tmp, rename.
-
-        Handles ctx_replace (with merge), ctx_delete, and also
-        applies any appends in the same pass.
-        """
-        # Separate operations by type
-        replacements: Dict[str, List[dict]] = {}  # agent -> new data
-        skip_merge_agents: set = set()  # agents whose replace should NOT merge
-        deletes: set = set()  # agents to delete
-        appends: List[dict] = []  # lines to append at end
-        full_rewrite = None
-
-        for op in operations:
-            op_type = op.get("op", "")
-            if op_type == "rewrite_full":
-                full_rewrite = op.get("lines", [])
-            elif op_type == "ctx_replace":
-                replacements[op["agent"]] = op["data"]
-                if op.get("skip_merge"):
-                    skip_merge_agents.add(op["agent"])
-            elif op_type == "ctx_delete":
-                deletes.add(op["agent"])
-            elif op_type == "append":
-                appends.extend(op.get("lines", []))
-            elif op_type == "ctx_append":
-                appends.append({
-                    "t": "ctx", "agent": op["agent"], "op": "append",
-                    "data": op["data"],
-                })
-            elif op_type == "extra":
-                pass  # extras go to extras.json, not JSONL
-            elif op_type == "status":
-                appends.append({"t": "status", "status": op["status"]})
-
-        if full_rewrite is not None:
-            # Complete file replacement
-            tmp = path.with_suffix(".tmp")
-            try:
-                with open(tmp, "w", encoding="utf-8") as f:
-                    for line in full_rewrite:
-                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
-                tmp.replace(path)
-            except OSError as e:
-                tmp.unlink(missing_ok=True)
-                raise
-            return
-
-        # Stream source file, collect state for merges, write to tmp
-        #
-        # Pass 1 info we need to collect while streaming:
-        # - For each agent being replaced: current ctx msg_ids (for merge)
-        # - The shared context (for identity check after replace)
-        # - Transcript msg_ids per source (for merge: find missed msgs)
-        #
-        # We stream line by line to keep RAM low.
-
-        # Lightweight tracking — only msg_ids and sources, not full messages
-        shared_ctx_ids: List[str] = []  # msg_ids of shared context
-        # For merge: transcript msg_ids + source agent (lightweight)
-        transcript_index: List[dict] = []  # [{"msg_id":"...", "source_agent":"...", "line_num":N}]
-        # For merge: we need the FULL lines of missed messages — but only the missed ones
-        # So we track where they are (line numbers) and re-read them in a second pass if needed
-
-        tmp = path.with_suffix(".tmp")
-        try:
-            with open(tmp, "w", encoding="utf-8") as dst:
-                if path.exists():
-                    with open(path, "r", encoding="utf-8") as src:
-                        for raw in src:
-                            raw = raw.strip()
-                            if not raw:
-                                continue
-                            try:
-                                line = json.loads(raw)
-                            except json.JSONDecodeError:
-                                continue
-
-                            t = line.get("t", "")
-                            agent = line.get("agent", "")
-
-                            # Lightweight transcript index (msg_id + source only)
-                            if t == "msg" and not line.get("private"):
-                                src_dict = line.get("source", {})
-                                src_name = src_dict.get("name", "") if isinstance(src_dict, dict) else ""
-                                transcript_index.append({
-                                    "msg_id": line.get("msg_id", ""),
-                                    "source_agent": src_name,
-                                    "line": line,  # keep ref for merge (streaming — already parsed)
-                                })
-
-                            # Track shared context msg_ids
-                            if t == "ctx" and agent == "":
-                                if line.get("op") == "replace":
-                                    shared_ctx_ids = [m.get("msg_id", "") for m in line.get("data", [])]
-                                elif line.get("op") == "append":
-                                    shared_ctx_ids.extend(m.get("msg_id", "") for m in line.get("data", []))
-
-                            # Skip ctx lines for agents being replaced or deleted
-                            if t == "ctx" and (agent in replacements or agent in deletes):
-                                continue  # vacuum: don't write old ctx lines
-
-                            # Write all other lines as-is
-                            dst.write(json.dumps(line, ensure_ascii=False) + "\n")
-
-                # Now handle replacements with merge
-                for agent, new_data in replacements.items():
-                    if agent in skip_merge_agents:
-                        final_data = list(new_data)
-                    else:
-                        final_data = self._merge_ctx_replace(
-                            agent, new_data, transcript_index)
-                    # Check if final == shared → delete instead of replace
-                    final_ids = [m.get("msg_id", "") for m in final_data]
-                    if shared_ctx_ids and final_ids == shared_ctx_ids:
-                        logger.info(f"[convstore] ctx '{agent}' == shared after replace, removing")
-                    else:
-                        dst.write(json.dumps({
-                            "t": "ctx", "agent": agent, "op": "replace",
-                            "data": final_data,
-                        }, ensure_ascii=False) + "\n")
-
-                # Append any remaining lines
-                for line in appends:
-                    dst.write(json.dumps(line, ensure_ascii=False) + "\n")
-
-            tmp.replace(path)
-        except OSError as e:
-            tmp.unlink(missing_ok=True)
-            logger.error(f"[convstore] rewrite failed: {e}")
-            raise
-
-    @staticmethod
-    def _merge_ctx_replace(agent: str, new_data: List[dict],
-                           transcript_index: List[dict]) -> List[dict]:
-        """Merge missed messages into a context replacement.
-
-        transcript_index: lightweight list of {"msg_id", "source_agent", "line"}
-        from the streaming pass.
-
-        Logic:
-        1. Find cutoff: last transcript msg_id in new_data that is NOT from this agent
-        2. Find transcript msgs AFTER cutoff not from this agent and not in new_data
-        3. Those are missed → merge
-        """
-        if not transcript_index:
-            return new_data
-
-        new_ids = {m.get("msg_id") for m in new_data if m.get("msg_id")}
-        agent_lower = agent.lower()
-
-        # Find cutoff
-        cutoff_idx = -1
-        for i, ti in enumerate(transcript_index):
-            if (ti["msg_id"] and ti["msg_id"] in new_ids
-                    and ti["source_agent"].lower() != agent_lower):
-                cutoff_idx = i
-
-        if cutoff_idx < 0:
-            return new_data
-
-        # Collect missed
-        missed = []
-        for ti in transcript_index[cutoff_idx + 1:]:
-            if ti["source_agent"].lower() == agent_lower:
-                continue
-            if ti["msg_id"] and ti["msg_id"] in new_ids:
-                continue
-            line = ti["line"]
-            if line.get("display_only"):
-                continue  # NEVER merge display_only into contexts
-            msg = {k: v for k, v in line.items() if k not in ("t", "ts", "private")}
-            if "ts" in line:
-                msg["timestamp"] = line["ts"]
-            missed.append(msg)
-
-        if missed:
-            logger.info(f"[convstore] ctx_replace '{agent}': merged {len(missed)} "
-                        f"missed transcript message(s)")
-            return list(new_data) + missed
-        return new_data
 
 
     # ══════════════════════════════════════════════════════════════════
@@ -454,10 +402,6 @@ class ConversationStore:
                     content = line.get("content", "")
                     if isinstance(content, str) and content.strip():
                         c["preview"] = content[:80]
-            elif t == "ctx":
-                a = line.get("agent", "")
-                if a:
-                    c["agents"].add(a)
             elif t == "extra":
                 _ekey = line.get("key", "")
                 c["extra_keys"].add(_ekey)
@@ -567,6 +511,9 @@ class ConversationStore:
         }
         self._write_extras(cid, extras)
 
+        # Initialize git repo
+        self._git_init(cid)
+
         # Update cache
         self._reload_cache(cid)
 
@@ -623,15 +570,19 @@ class ConversationStore:
             if all_agent:
                 self._append_ctx_file(cid, agent_name, all_agent)
 
-            # 3. Append to shared context + all other agents' contexts
+            # 3. Append to shared context + transformed to other agents' contexts
             if ctx_public:
                 self._append_shared_ctx(cid, ctx_public)
                 cache = self._load_cache(cid)
                 for other in cache.get("agents", set()):
                     if other and other != agent_name:
-                        self._append_ctx_file(cid, other, ctx_public)
+                        transformed = [self._transform_for_other_agent(m, other)
+                                       for m in ctx_public]
+                        self._append_ctx_file(cid, other, transformed)
 
         self._reload_cache(cid)
+        # Git snapshot after agent turn
+        self.git_snapshot(cid, f"agent:{agent_name}")
 
     # ── Append messages (simple) ──────────────────────────────────────
 
@@ -651,34 +602,49 @@ class ConversationStore:
             if not deduped:
                 return
             new_messages = deduped
+
         now = time.time()
-        lines = []
+        lock = self._get_conv_lock(cid)
+
+        # Create conv if needed
         if not self.exists(cid):
-            lines.append({"t": "meta", "user_id": user_id,
-                          "status": status or "idle", "created_at": now,
-                          "expires_at": now + ttl if ttl > 0 else 0})
+            if not user_id:
+                raise ValueError("user_id required for new conversation")
+            self.save(cid, [], user_id=user_id, ttl=ttl, status=status or "idle")
+
+        # Build transcript lines
+        transcript_lines = []
         for m in new_messages:
             line = {"t": "msg", **m}
             if "ts" not in line:
                 line["ts"] = now
-            lines.append(line)
-        ops = [{"op": "append", "lines": lines}]
+            transcript_lines.append(line)
         if status:
-            ops.append({"op": "status", "status": status})
+            transcript_lines.append({"t": "status", "status": status, "ts": now})
 
-        # Propagate non-private, non-tool messages to shared + all agent contexts
+        # Filter context-eligible messages
         ctx_msgs = [m for m in new_messages
                     if not m.get("private") and not m.get("display_only")
                     and m.get("role") != "tool" and not m.get("tool_calls")]
-        if ctx_msgs:
-            ops.append({"op": "ctx_append", "agent": "", "data": ctx_msgs})
-            cache = self._load_cache(cid)
-            for agent in cache.get("agents", set()):
-                if agent:
-                    ops.append({"op": "ctx_append", "agent": agent,
-                                "data": ctx_msgs})
 
-        self._commit(cid, ops)
+        with lock:
+            # 1. Append to transcript
+            if transcript_lines:
+                with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
+                    for line in transcript_lines:
+                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+            # 2. Propagate to shared + all agent contexts (with transformation)
+            if ctx_msgs:
+                self._append_shared_ctx(cid, ctx_msgs)
+                cache = self._load_cache(cid)
+                for agent in cache.get("agents", set()):
+                    if agent:
+                        transformed = [self._transform_for_other_agent(m, agent)
+                                       for m in ctx_msgs]
+                        self._append_ctx_file(cid, agent, transformed)
+
+        self._reload_cache(cid)
 
     def _get_transcript_msg_ids(self, cid: str) -> set:
         """Get all msg_ids from transcript lines (cached via _read)."""
@@ -695,7 +661,12 @@ class ConversationStore:
     # ── Context ops ───────────────────────────────────────────────────
 
     def load_agent_context(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
-        """Load agent context from {agent}/context.jsonl file."""
+        """Load agent context from {agent}/context.jsonl file.
+
+        If agent_name is set but no context file exists, returns None
+        (caller falls back to shared via load_context).
+        If agent_name is empty, loads from shared.jsonl directly.
+        """
         with self._ctx_cache_lock:
             if cid in self._ctx_cache and agent_name in self._ctx_cache[cid]:
                 cached = self._ctx_cache[cid][agent_name]
@@ -710,6 +681,17 @@ class ConversationStore:
             self._ctx_cache.setdefault(cid, {})[agent_name] = result
         return result
 
+    def load_shared_for_agent(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
+        """Load shared context personalized for a specific agent.
+
+        Shared stores agent-neutral messages (all prefixed).
+        This reverses prefixes for the agent's own messages.
+        """
+        raw = self._read_ctx_file(self._shared_ctx_path(cid))
+        if not raw:
+            return None
+        return [self._personalize_from_shared(m, agent_name) for m in raw]
+
     def _invalidate_ctx_cache(self, cid: str, agent_name: str = ""):
         with self._ctx_cache_lock:
             if agent_name:
@@ -719,8 +701,7 @@ class ConversationStore:
                 self._ctx_cache.pop(cid, None)
 
     def save_agent_context(self, cid: str, agent_name: str,
-                           context_messages: List[Dict],
-                           skip_merge: bool = False) -> bool:
+                           context_messages: List[Dict]) -> bool:
         """Write agent context to {agent}/context.jsonl (full replace)."""
         if not self.exists(cid):
             return False
@@ -946,9 +927,11 @@ class ConversationStore:
         """Patch attributes on an existing message (appends a msg_patch record)."""
         if not msg_id or not fields:
             return
-        self._commit(cid, [{"op": "append", "lines": [
-            {"t": "msg_patch", "msg_id": msg_id, **fields}
-        ]}])
+        lock = self._get_conv_lock(cid)
+        line = {"t": "msg_patch", "msg_id": msg_id, "ts": time.time(), **fields}
+        with lock:
+            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
     def message_count(self, cid: str) -> int:
         return self._load_cache(cid).get("msg_count", 0)
@@ -1053,98 +1036,61 @@ class ConversationStore:
             if not msg_id:
                 return False
 
-        # Rewrite: remove this msg_id from transcript and all contexts
-        def _remove_from_ctx(data: list) -> list:
-            return [m for m in data if m.get("msg_id") != msg_id]
-
-        # Use a custom rewrite that streams and filters
-        lock = self._get_conv_lock(cid)
-        path = self._conv_path(cid)
-        with lock:
-            if not path.exists():
-                return False
-            tmp = path.with_suffix(".tmp")
-            removed = False
-            try:
-                with open(path, "r", encoding="utf-8") as src, \
-                     open(tmp, "w", encoding="utf-8") as dst:
-                    for raw in src:
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            line = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-                        t = line.get("t", "")
-                        # Remove from transcript
-                        if t == "msg" and line.get("msg_id") == msg_id:
-                            removed = True
-                            continue
-                        # Remove from contexts
-                        if t == "ctx" and "data" in line:
-                            old_len = len(line["data"])
-                            line["data"] = _remove_from_ctx(line["data"])
-                            if len(line["data"]) != old_len:
-                                removed = True
-                        dst.write(json.dumps(line, ensure_ascii=False) + "\n")
-                tmp.replace(path)
-            except OSError as e:
-                tmp.unlink(missing_ok=True)
-                logger.error(f"[convstore] delete_message rewrite failed: {e}")
-                return False
-            with self._cache_lock:
-                self._cache.pop(cid, None)
-        if removed:
-            self._load_cache(cid)
-            # Manual context modification → invalidate claude-code sessions
-            self.invalidate_claude_sessions(cid)
-        return removed
+        removed = self._remove_msg_ids_from_files(cid, {msg_id})
+        return removed > 0
 
     def delete_messages(self, cid: str, msg_ids: list,
                         user_id: str = "") -> int:
         """Delete multiple messages by msg_id. Returns count of removed messages."""
         if not msg_ids or not self.exists(cid):
             return 0
-        ids_to_remove = set(msg_ids)
+        return self._remove_msg_ids_from_files(cid, set(msg_ids))
 
-        def _filter_ctx(data: list) -> list:
-            return [m for m in data if m.get("msg_id") not in ids_to_remove]
-
+    def _remove_msg_ids_from_files(self, cid: str, ids: set) -> int:
+        """Remove messages by msg_id from transcript + shared + all agent contexts."""
         lock = self._get_conv_lock(cid)
-        path = self._conv_path(cid)
         removed = 0
-        with lock:
+
+        def _rewrite_jsonl(path: Path) -> int:
+            """Rewrite a JSONL file, removing lines with matching msg_id. Returns count removed."""
             if not path.exists():
                 return 0
+            count = 0
             tmp = path.with_suffix(".tmp")
-            try:
-                with open(path, "r", encoding="utf-8") as src, \
-                     open(tmp, "w", encoding="utf-8") as dst:
-                    for raw in src:
-                        raw = raw.strip()
-                        if not raw:
-                            continue
-                        try:
-                            line = json.loads(raw)
-                        except json.JSONDecodeError:
-                            continue
-                        t = line.get("t", "")
-                        if t == "msg" and line.get("msg_id") in ids_to_remove:
-                            removed += 1
-                            continue
-                        if t == "ctx" and "data" in line:
-                            old_len = len(line["data"])
-                            line["data"] = _filter_ctx(line["data"])
-                            removed += old_len - len(line["data"])
-                        dst.write(json.dumps(line, ensure_ascii=False) + "\n")
+            with open(path, "r", encoding="utf-8") as src, \
+                 open(tmp, "w", encoding="utf-8") as dst:
+                for raw in src:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        line = json.loads(raw)
+                    except json.JSONDecodeError:
+                        continue
+                    if line.get("msg_id") in ids:
+                        count += 1
+                        continue
+                    dst.write(json.dumps(line, ensure_ascii=False) + "\n")
+            if count:
                 tmp.replace(path)
-            except OSError as e:
+            else:
                 tmp.unlink(missing_ok=True)
-                logger.error("[convstore] delete_messages rewrite failed: %s", e)
-                return 0
-            with self._cache_lock:
-                self._cache.pop(cid, None)
+            return count
+
+        with lock:
+            # 1. Transcript
+            removed += _rewrite_jsonl(self._transcript_path(cid))
+            # 2. Shared context
+            _rewrite_jsonl(self._shared_ctx_path(cid))
+            # 3. All agent contexts
+            conv_dir = self._conv_dir(cid)
+            if conv_dir.is_dir():
+                for entry in conv_dir.iterdir():
+                    if entry.is_dir() and (entry / "context.jsonl").exists():
+                        _rewrite_jsonl(entry / "context.jsonl")
+
+        with self._cache_lock:
+            self._cache.pop(cid, None)
         if removed:
             self._load_cache(cid)
             self.invalidate_claude_sessions(cid)
@@ -1188,30 +1134,30 @@ class ConversationStore:
 
     def create_display_trace(self, cid: str, trace_id: str,
                              source: Dict, user_id: str = "") -> bool:
-        self._commit(cid, [{"op": "append", "lines": [{
-            "t": "msg", "role": "sub_agent_trace", "display_only": True,
-            "trace_id": trace_id, "source": source, "content": "",
-            "trace": [], "ts": time.time(),
-        }]}])
+        lock = self._get_conv_lock(cid)
+        line = {"t": "msg", "role": "sub_agent_trace", "display_only": True,
+                "trace_id": trace_id, "source": source, "content": "",
+                "trace": [], "ts": time.time()}
+        with lock:
+            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return True
 
     def append_display_trace(self, cid: str, trace_id: str,
                              entry_data: Dict, content_update: str = "") -> bool:
         entry_data.setdefault("ts", time.time())
-        self._commit(cid, [{"op": "append", "lines": [{
-            "t": "trace_update", "trace_id": trace_id,
-            "entry": entry_data, "content_update": content_update,
-        }]}])
+        lock = self._get_conv_lock(cid)
+        line = {"t": "trace_update", "trace_id": trace_id,
+                "entry": entry_data, "content_update": content_update}
+        with lock:
+            with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
         return True
 
     # ── Cleanup ───────────────────────────────────────────────────────
 
     def vacuum(self, cid: str) -> dict:
-        """Manual vacuum — remove superseded extras/status lines."""
-        # This is a rewrite op with no ctx changes
-        # Just filter superseded extras and status
-        # (ctx vacuum happens automatically in ctx_replace)
-        # For now, no-op — the ctx_replace handles the main bloat
+        """Manual vacuum — no-op (extras are now atomic JSON, contexts are separate files)."""
         return {"status": "ok"}
 
     def cleanup(self) -> int:

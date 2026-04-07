@@ -59,7 +59,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "list_agents":
         conv_id = body.get("conversation_id", "")
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         agents_list = ResourceStore.instance().list_all("agent", uid,
                                                        conversation_id=conv_id)
         agents = {a["name"]: a for a in agents_list}
@@ -141,7 +141,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         if ResourceStore.instance().get_any("agent", agent_name, uid) is None:
             flowfile.set_content(json.dumps({
                 "error": f"Agent '{agent_name}' not found",
@@ -170,7 +170,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         deleted = ResourceStore.instance().delete("agent", agent_name, uid)
         # Fall back to "assistant" if deleted agent was active
         if conv_id:
@@ -195,7 +195,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         try:
             data = {"prompt": skill_prompt}
             description = body.get("description", "")
@@ -243,7 +243,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         deleted = ResourceStore.instance().delete("skill", skill_name, uid)
         flowfile.set_content(json.dumps({
             "deleted": deleted, "name": skill_name,
@@ -258,7 +258,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         agent_def = rs.get_any("agent", agent_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
@@ -292,7 +292,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         agent_def = rs.get_any("agent", agent_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
@@ -320,7 +320,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         agent_def = rs.get_any("agent", agent_name, uid)
         if not agent_def:
             flowfile.set_content(json.dumps({"error": f"Agent '{agent_name}' not found"}).encode())
@@ -340,7 +340,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
 
     if action == "list_skills":
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         skills = ResourceStore.instance().list_all("skill", uid)
         flowfile.set_content(json.dumps({
             "skills": [{
@@ -367,7 +367,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
         conv_id = body.get("conversation_id", "")
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         active = {}
         if conv_id:
             active = store.get_extra(conv_id, "active_resources") or {}
@@ -565,7 +565,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             dr = DeploymentRegistry.get_instance()
             # sync_with_executors removed from request path — too expensive.
             # DeploymentRegistry syncs on its own schedule.
-            uid = user_id or "anonymous"
+            uid = user_id
             _is_admin = (flowfile.get_attribute("http.auth.roles") or "") == "admin"
             for iid, inst in dr.get_all().items():
                 # Determine scope
@@ -609,7 +609,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         conv_id = body.get("conversation_id", "")
         item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
         if not item:
@@ -632,7 +632,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         target_uid = "__global__" if scope == "global" else uid
         try:
             rs.update(rtype, rname, target_uid, data)
@@ -660,7 +660,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         target_uid = "__global__" if scope == "global" else uid
         if rtype == "task_def":
             data.setdefault("created_by", uid)
@@ -692,7 +692,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         target_uid = "__global__" if scope == "global" else uid
         if rtype == "task_def" and scope == "conversation" and conv_id:
             from core.conversation_store import ConversationStore
@@ -716,7 +716,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         from core.resource_store import ResourceStore
         rs = ResourceStore.instance()
-        uid = user_id or "anonymous"
+        uid = user_id
         conv_id = body.get("conversation_id", "")
         item = rs.get_any(rtype, rname, uid, conversation_id=conv_id)
         if not item:
@@ -861,7 +861,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         agent = ResourceStore.instance().get_any("agent", aname, uid)
         if not agent:
             flowfile.set_content(json.dumps({"error": f"Agent '{aname}' not found in repository"}).encode())
@@ -899,7 +899,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
     if action == "list_repo_agents":
         conv_id = body.get("conversation_id", "")
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         rs = ResourceStore.instance()
         all_agents = rs.list_all("agent", uid)
         conv_agents = set()
@@ -927,7 +927,7 @@ def _handle_agent_resource(self, action, body, store, user_id, flowfile):
             return [flowfile]
         # Validate agents exist in repo
         from core.resource_store import ResourceStore
-        uid = user_id or "anonymous"
+        uid = user_id
         rs = ResourceStore.instance()
         valid_agents = []
         for aname in agents:

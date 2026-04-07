@@ -36,7 +36,9 @@ class PlanStore:
         self._write_lock = threading.Lock()
 
     def _plan_dir(self, user_id: str, conv_id: str) -> Path:
-        safe_user = user_id.replace("/", "_").replace("\\", "_") or "anonymous"
+        if not user_id:
+            raise ValueError("BUG: user_id is required for plan storage")
+        safe_user = user_id.replace("/", "_").replace("\\", "_")
         safe_conv = conv_id.replace(":", "_")
         return _PLANS_DIR / safe_user / safe_conv
 

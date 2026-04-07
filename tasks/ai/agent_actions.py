@@ -427,19 +427,21 @@ class AgentActionsMixin:
             if old:
                 store.set_extra(conv_id, key, "")
                 logger.info("Cleared Claude Code session for %s/%s",
-                            conv_id[:8], agent_name or "default")
+                            conv_id[:8], agent_name)
         except Exception:
             pass
         # Clean up dead session data from workdir
         try:
             import shutil
             from core.llm_providers.claude_code import _SESSIONS_BASE
-            workdir = os.path.join(_SESSIONS_BASE, conv_id or "default", agent_name or "default")
+            if not conv_id or not agent_name:
+                raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r}")
+            workdir = os.path.join(_SESSIONS_BASE, conv_id, agent_name)
             for subdir in ("projects", "sessions", ".cache"):
                 _path = os.path.join(workdir, subdir)
                 if os.path.isdir(_path):
                     shutil.rmtree(_path, ignore_errors=True)
-                    logger.info("Cleaned up %s/%s/%s", conv_id[:8], agent_name or "default", subdir)
+                    logger.info("Cleaned up %s/%s/%s", conv_id[:8], agent_name, subdir)
         except Exception:
             pass
 

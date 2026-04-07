@@ -24,7 +24,9 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store) -> str:
         return ""
 
     from core.llm_providers.claude_code import _SESSIONS_BASE
-    workdir = os.path.join(_SESSIONS_BASE, conv_id or "default", agent_name or "default")
+    if not conv_id or not agent_name:
+        raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r} required for CC session")
+    workdir = os.path.join(_SESSIONS_BASE, conv_id, agent_name)
     projects_dir = os.path.join(workdir, "projects", "-workspace")
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 
@@ -186,12 +188,11 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return store.load_agent_context(conv_id, agent_name)
         return store.load_context(conv_id, user_id=user_id)
 
-    def _ctx_save(conv_id, data, agent_name="", skip_merge=False):
+    def _ctx_save(conv_id, data, agent_name=""):
         """Save context for an agent (or shared if no agent)."""
         # "shared" or "" both mean the shared context (agent="")
         _name = "" if (not agent_name or agent_name == "shared") else agent_name
-        store.save_agent_context(conv_id, _name, data,
-                                  skip_merge=skip_merge)
+        store.save_agent_context(conv_id, _name, data)
         if _name:
             store.set_extra(conv_id, f"claude_session:{_name}", "")
         else:
@@ -724,7 +725,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
         context_data[index]["content"] = new_content
         if new_role:
             context_data[index]["role"] = new_role
-        _ctx_save(conv_id, context_data, skip_merge=True)
+        _ctx_save(conv_id, context_data)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -812,7 +813,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             for idx in sorted(indices, reverse=True):
                 if 0 <= idx < len(context_data):
                     context_data.pop(idx)
-            _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
+            _ctx_save(conv_id, context_data, _ctx_agent)
             deserialized = self._deserialize_messages(context_data)
             estimated = self._estimate_tokens(deserialized)
             flowfile.set_content(json.dumps({
@@ -858,7 +859,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
         context_data.pop(index)
-        _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
+        _ctx_save(conv_id, context_data, _ctx_agent)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -881,7 +882,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
                 flowfile.set_content(json.dumps({"error": "Each message must have 'role' and 'content'"}).encode())
                 flowfile.set_attribute("http.response.status", "400")
                 return [flowfile]
-        _ctx_save(conv_id, new_context, _ctx_agent, skip_merge=True)
+        _ctx_save(conv_id, new_context, _ctx_agent)
         deserialized = self._deserialize_messages(new_context)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({
@@ -909,7 +910,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             context_data.insert(index, msg)
         else:
             context_data.append(msg)
-        _ctx_save(conv_id, context_data, _ctx_agent, skip_merge=True)
+        _ctx_save(conv_id, context_data, _ctx_agent)
         deserialized = self._deserialize_messages(context_data)
         estimated = self._estimate_tokens(deserialized)
         flowfile.set_content(json.dumps({

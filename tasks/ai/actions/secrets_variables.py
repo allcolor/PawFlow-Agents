@@ -24,7 +24,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "key and value are required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        uid = user_id or "anonymous"
+        uid = user_id
         from pathlib import Path
         from core.secrets import get_secrets_manager
         sm = get_secrets_manager()
@@ -52,7 +52,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": "key and value are required"}).encode())
             flowfile.set_attribute("http.response.status", "400")
             return [flowfile]
-        uid = user_id or "anonymous"
+        uid = user_id
         from pathlib import Path
         params_path = Path("config/users") / uid / "parameters.json"
         params_path.parent.mkdir(parents=True, exist_ok=True)
@@ -71,7 +71,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "list_secrets":
-        uid = user_id or "anonymous"
+        uid = user_id
         from pathlib import Path
         secrets_path = Path("config/users") / uid / "secrets.json"
         if not secrets_path.exists():
@@ -92,7 +92,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
         return [flowfile]
 
     if action == "list_variables":
-        uid = user_id or "anonymous"
+        uid = user_id
         from pathlib import Path
         params_path = Path("config/users") / uid / "parameters.json"
         if not params_path.exists():
@@ -114,7 +114,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
 
     if action == "list_params_secrets":
         conv_id = body.get("conversation_id", "")
-        uid = user_id or "anonymous"
+        uid = user_id
         params_out = []
         secrets_out = []
         # Global params
@@ -171,7 +171,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             cp[key] = value
             store.set_extra(conv_id, "conv_parameters", cp)
         else:  # user
-            uid = user_id or "anonymous"
+            uid = user_id
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
             path = _CfgPath(f"config/users/{uid}/parameters.json")
@@ -206,7 +206,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             cp.pop(key, None)
             store.set_extra(conv_id, "conv_parameters", cp)
         else:  # user
-            uid = user_id or "anonymous"
+            uid = user_id
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
             path = _CfgPath(f"config/users/{uid}/parameters.json")
@@ -247,7 +247,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             from core.config_store import ConfigStore
             from core.config_value import ConfigValue
             from pathlib import Path as _CfgPath
-            uid = user_id or "anonymous"
+            uid = user_id
             path = _CfgPath(f"config/users/{uid}/secrets.json")
             path.parent.mkdir(parents=True, exist_ok=True)
             data = ConfigStore.load_secrets(path)
@@ -279,7 +279,7 @@ def _handle_secrets_variables(self, action, body, store, user_id, flowfile):
             cs.pop(key, None)
             store.set_extra(conv_id, "conv_secrets", cs)
         else:  # user
-            uid = user_id or "anonymous"
+            uid = user_id
             from core.config_store import ConfigStore
             from pathlib import Path as _CfgPath
             path = _CfgPath(f"config/users/{uid}/secrets.json")

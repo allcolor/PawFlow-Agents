@@ -68,6 +68,14 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             logger.warning("No running Claude Code process to send message to")
             return False
         try:
+            # Multi-agent catch-up: inject messages from other agents before user msg
+            conv_id = getattr(self, '_conversation_id', "")
+            agent_name = getattr(self, '_agent_name', "")
+            if conv_id and agent_name:
+                catchup = self._build_catchup_context(conv_id, agent_name)
+                if catchup:
+                    text = catchup + "\n\n" + text
+
             # Build content: text + optional images
             if attachments:
                 content = []
@@ -224,9 +232,11 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         system_prompt, user_text = self._serialize_messages_for_cli(messages, None)
         stdin_text = self._build_stdin_with_system(system_prompt, user_text)
 
-        conv_id = getattr(self, '_conversation_id', "") or "default"
-        agent_name = getattr(self, '_agent_name', "") or "default"
-        user_id = getattr(self, '_user_id', "") or "default"
+        conv_id = getattr(self, '_conversation_id', "")
+        agent_name = getattr(self, '_agent_name', "")
+        user_id = getattr(self, '_user_id', "")
+        if not conv_id or not agent_name or not user_id:
+            raise ValueError(f"BUG: CC provider requires conv_id={conv_id!r}, agent_name={agent_name!r}, user_id={user_id!r}")
         workdir = self._get_session_workdir(conv_id, agent_name, user_id)
         self._setup_credentials(workdir)
 
@@ -401,6 +411,59 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             + "\n</system_instructions>\n\n" + user_text
         )
 
+    def _build_catchup_context(self, conv_id: str, agent_name: str) -> str:
+        """Build catch-up text from messages other agents sent since our last turn.
+
+        Reads agent's context.jsonl, finds messages after the last known index
+        (tracked in self._cc_catchup_idx). Returns formatted text block or "".
+        Also updates self._cc_catchup_idx so the same messages aren't sent twice
+        (shared between initial, preempt, and inter-turn catch-up).
+        """
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            ctx_data = store.load_agent_context(conv_id, agent_name)
+            if not ctx_data:
+                return ""
+
+            # Initialize tracking index: find last own message as baseline
+            if not hasattr(self, '_cc_catchup_idx') or self._cc_catchup_idx == 0:
+                last_own = -1
+                for i, m in enumerate(ctx_data):
+                    src = m.get("source") or {}
+                    if src.get("type") == "agent" and src.get("name") == agent_name:
+                        last_own = i
+                self._cc_catchup_idx = (last_own + 1) if last_own >= 0 else len(ctx_data)
+
+            # Collect messages since last check
+            new_msgs = ctx_data[self._cc_catchup_idx:]
+            self._cc_catchup_idx = len(ctx_data)
+
+            if not new_msgs:
+                return ""
+
+            # Format as XML block
+            lines = ["<catch_up_context>",
+                     "New messages from other participants since your last response:"]
+            count = 0
+            for m in new_msgs:
+                content = m.get("content", "")
+                if not content or not isinstance(content, str):
+                    continue
+                role = m.get("role", "user")
+                lines.append(f"<message role=\"{role}\">\n{content}\n</message>")
+                count += 1
+            lines.append("</catch_up_context>")
+
+            if count == 0:
+                return ""
+
+            logger.info("[claude-code] catch-up: %d messages for %s", count, agent_name)
+            return "\n".join(lines)
+        except Exception as e:
+            logger.warning("[claude-code] catch-up failed: %s", e)
+            return ""
+
     def _stream_claude_code(
         self, messages, model, temperature, max_tokens, tools, callback,
         turn_callback=None,
@@ -508,8 +571,18 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 + ("Install Docker Desktop." if _containerize
                    else "Install with: npm install -g @anthropic-ai/claude-code"))
 
+        # Multi-agent catch-up: when resuming a session, inject messages
+        # from other agents that CC hasn't seen (arrived after CC's last turn)
+        catchup_text = ""
+        if session_id and conv_id and agent_name:
+            catchup_text = self._build_catchup_context(conv_id, agent_name)
+
         # Send initial message as stream-json (keep stdin open for preempt/interrupt)
         try:
+            # Prepend catch-up context to the initial message
+            if catchup_text:
+                initial_text = catchup_text + "\n\n" + initial_text
+
             if image_blocks:
                 # Multipart: text + images as content array (enables vision)
                 content = [{"type": "text", "text": initial_text}] + image_blocks
@@ -568,6 +641,23 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         _tool_results: dict = {}  # tool_use_id → result text
         _current_msg_id: str = ""  # track message ID to detect incremental updates
         self._preempt_pending = 0  # reset at start of each stream
+
+        def _inject_catchup():
+            """Check for new messages from other agents and inject via stdin."""
+            if not conv_id or not agent_name:
+                return
+            catchup = self._build_catchup_context(conv_id, agent_name)
+            if not catchup:
+                return
+            _p = getattr(self, '_claude_proc', None)
+            if _p and _p.poll() is None:
+                msg = json.dumps({
+                    "type": "user",
+                    "message": {"role": "user", "content": catchup},
+                })
+                _p.stdin.write(msg + "\n")
+                _p.stdin.flush()
+                self._preempt_pending = getattr(self, '_preempt_pending', 0) + 1
 
         def _flush_turn():
             """Emit the accumulated turn via turn_callback."""
@@ -781,6 +871,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         # New message — flush previous turn
                         if _turn_count > 0:
                             _flush_turn()
+                            _inject_catchup()
                         _turn_count += 1
                         _current_msg_id = msg_id
                     for block in msg.get("content", []):

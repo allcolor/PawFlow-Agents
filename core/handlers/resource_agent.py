@@ -96,7 +96,7 @@ class ManageResourceHandler(ToolHandler):
         rtype = arguments.get("resource_type", "")
         name = arguments.get("name", "")
         data = arguments.get("data", {})
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         store = ResourceStore.instance()
 
         try:
@@ -416,7 +416,7 @@ class SpawnAgentsHandler(ToolHandler):
 
         tasks_spec = arguments.get("tasks", [])
         wait = arguments.get("wait", True)
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
 
         # Thread-safe source agent (each agent loop runs in its own thread)
         _src_agent = getattr(self._local, 'source_agent', '') or ''

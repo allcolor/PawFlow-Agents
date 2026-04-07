@@ -81,7 +81,9 @@ class BrowserActionHandler(ToolHandler):
         if not action:
             return "Error: action is required"
 
-        conv_id = self._conversation_id or "default"
+        conv_id = self._conversation_id
+        if not conv_id:
+            raise ValueError("BUG: conversation_id required for agent_tools")
 
         try:
             from services.browser_service import BrowserService

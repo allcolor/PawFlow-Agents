@@ -56,7 +56,7 @@ def _handle_conversation(self, action, body, store, user_id, flowfile):
         history = self._classify_messages_for_display(raw_messages)
         nicknames = store.get_extra(conv_id, "agent_nicknames", user_id=user_id) or {}
         active_res = store.get_extra(conv_id, "active_resources", user_id=user_id) or {}
-        active_res = self._ensure_active_agent(conv_id, active_res, user_id or "anonymous")
+        active_res = self._ensure_active_agent(conv_id, active_res, user_id)
         custom_css = store.get_extra(conv_id, "custom_css", user_id=user_id) or ""
 
         result = json.dumps({

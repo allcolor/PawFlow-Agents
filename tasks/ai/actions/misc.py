@@ -223,7 +223,7 @@ def _handle_misc(self, action, body, store, user_id, flowfile):
         try:
             from core.resource_store import ResourceStore
             rs = ResourceStore.instance()
-            agents = rs.list_all("agent", user_id or "anonymous")
+            agents = rs.list_all("agent", user_id)
             checks.append({"component": "Agents", "status": "ok",
                            "detail": f"{len(agents)} defined: "
                                      f"{', '.join(a['name'] for a in agents[:5])}"})

@@ -71,6 +71,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
 
         # LLM service routing — all LLM access goes through services
         _user_id_for_svc = flowfile.get_attribute("http.auth.principal") or ""
+        if not _user_id_for_svc:
+            raise ValueError("BUG: missing http.auth.principal on flowfile — all requests require authentication")
         task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
         if not task_llm_service:
             _agent_hint = _target_agent or "(unknown agent)"
@@ -111,7 +113,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             on_event=_sub_on_event,
         )
         # Inject available agent names into SpawnAgentsHandler for tool description
-        _uid_for_agents = flowfile.get_attribute("http.auth.principal") or "anonymous"
+        _uid_for_agents = flowfile.get_attribute("http.auth.principal") or ""
         try:
             from core.resource_store import ResourceStore
             _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
@@ -306,7 +308,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 ) or {}
                 _ares = self._ensure_active_agent(
                     conversation_id, _ares,
-                    flowfile.get_attribute("http.auth.principal") or "anonymous",
+                    flowfile.get_attribute("http.auth.principal") or "",
                 )
                 _active_agent_name = _early_target or _ares.get("agent", "")
                 if _active_agent_name:
@@ -413,8 +415,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         messages, conversation_id, _context_agent, _uid,
                         max_context=_max_ctx)
               else:
-                # No divergence — start from SHARED context (not transcript)
-                existing = store.load_context(conversation_id)
+                # No divergence — start from SHARED context, personalized for this agent
+                existing = store.load_shared_for_agent(conversation_id, _context_agent)
                 if existing:
                     try:
                         messages = self._deserialize_messages(existing)
@@ -531,7 +533,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                 cstore = ConversationStore.instance()
                 rs = ResourceStore.instance()
                 active_res = cstore.get_extra(conversation_id, "active_resources") or {}
-                _uid = flowfile.get_attribute("http.auth.principal") or "anonymous"
+                _uid = flowfile.get_attribute("http.auth.principal") or ""
                 active_res = self._ensure_active_agent(conversation_id, active_res, _uid)
 
                 # Active agent overrides system prompt (target_agent takes priority)
@@ -693,7 +695,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         # (narration, resilience, FS context, identity, lazy tools).
 
         model_name = self.config.get("model", "")
-        user_id = flowfile.get_attribute("http.auth.principal") or ""
+        user_id = flowfile.get_attribute("http.auth.principal")
 
         # Check for cancel checkpoint — inject resume context if present
         if use_conv_store and conversation_id:
@@ -730,7 +732,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                             ", ".join(f"{a.get('filename','?')} ({a.get('mime_type','?')}, {len(a.get('data',''))//1024}KB)"
                                       for a in attachments))
             user_content = self._build_user_content(user_text, attachments)
-            user_source = {"type": "user", "name": user_id or "anonymous"}
+            user_source = {"type": "user", "name": user_id}
             if _target_agent:
                 user_source["target_agent"] = _target_agent
             if _reply_to:

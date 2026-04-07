@@ -129,7 +129,7 @@ class AgentSideChannelsMixin:
             # 4. Persist btw Q&A in conversation history
             import time as _btw_time
             _btw_now = _btw_time.time()
-            _btw_user_source = {"type": "user", "name": user_id or "anonymous",
+            _btw_user_source = {"type": "user", "name": user_id,
                                 "btw": True, "target_agent": agent_name}
             _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
             from core.conversation_writer import ConversationWriter

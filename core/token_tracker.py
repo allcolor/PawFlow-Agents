@@ -68,10 +68,12 @@ class TokenTracker:
                 m["out"] += tokens_out
 
             # Per-agent tracking (agent_name::llm_service)
-            agent_key = (agent_name or "default") + "::" + (llm_service or "default")
+            if not agent_name or not llm_service:
+                raise ValueError(f"BUG: agent_name={agent_name!r}, llm_service={llm_service!r} required for token tracking")
+            agent_key = agent_name + "::" + llm_service
             a = entry.setdefault("agents", {}).setdefault(agent_key, {
-                "agent": agent_name or "default",
-                "llm_service": llm_service or "default",
+                "agent": agent_name,
+                "llm_service": llm_service,
                 "in": 0, "out": 0, "calls": 0,
             })
             a["in"] += tokens_in

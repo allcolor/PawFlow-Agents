@@ -755,7 +755,7 @@ class AgentCoreMixin:
                         # Invalidate CC session for this agent only
                         try:
                             from core.conversation_store import ConversationStore
-                            _an = ctx.get("active_agent_name", "") or "default"
+                            _an = ctx["active_agent_name"]
                             ConversationStore.instance().set_extra(
                                 conversation_id, f"claude_session:{_an}", "")
                         except Exception:
@@ -818,7 +818,7 @@ class AgentCoreMixin:
                             # Invalidate this agent's CC session only
                             try:
                                 from core.conversation_store import ConversationStore
-                                _an = ctx.get("active_agent_name", "") or "default"
+                                _an = ctx["active_agent_name"]
                                 ConversationStore.instance().set_extra(
                                     conversation_id, f"claude_session:{_an}", "")
                             except Exception:
@@ -876,7 +876,7 @@ class AgentCoreMixin:
                                 if _is_claude_code and ctx.get("_claude_has_session"):
                                     try:
                                         from core.conversation_store import ConversationStore
-                                        _an = ctx.get("active_agent_name", "") or "default"
+                                        _an = ctx["active_agent_name"]
                                         ConversationStore.instance().set_extra(
                                             conversation_id, f"claude_session:{_an}", "")
                                     except Exception:
@@ -909,7 +909,7 @@ class AgentCoreMixin:
                     if _is_claude_code and not ctx.get("_claude_has_session"):
                         try:
                             from core.conversation_store import ConversationStore
-                            _an = ctx.get("active_agent_name", "") or "default"
+                            _an = ctx["active_agent_name"]
                             if ConversationStore.instance().get_extra(
                                     conversation_id, f"claude_session:{_an}"):
                                 ctx["_claude_has_session"] = True
@@ -1262,7 +1262,7 @@ class AgentCoreMixin:
                 response_content = _processed
 
                 self._track_tokens(
-                    user_id or "anonymous", total_tokens_in, total_tokens_out,
+                    user_id, total_tokens_in, total_tokens_out,
                     model=final_model or _client_model,
                     agent_name=ctx.get("active_agent_name", "") or "",
                     llm_service=ctx.get("active_llm_service", ""))

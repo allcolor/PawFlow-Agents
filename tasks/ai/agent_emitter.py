@@ -450,6 +450,7 @@ class StreamEmitter(AgentEmitter):
             try:
                 from core.conversation_store import ConversationStore
                 _cs = ConversationStore.instance()
+                _my_agent = self.ctx.get("active_agent_name") or ""
                 _current = _cs.message_count(self.conversation_id)
                 _known = self.ctx.get("_last_known_msg_count", 0)
                 if _current > _known:
@@ -459,16 +460,31 @@ class StreamEmitter(AgentEmitter):
                     # Collect msg_ids already in context to avoid duplicates
                     _existing_ids = {m.msg_id for m in messages if m.msg_id}
                     for m in (_tail or []):
-                        if (isinstance(m, dict) and m.get("role") == "user"
-                                and not (isinstance(m.get("content"), str)
-                                         and m["content"].startswith("[System:"))
-                                and m.get("msg_id") not in _existing_ids):
-                            messages.append(LLMMessage(
-                                role="user",
-                                content=m.get("content", ""),
-                                source=m.get("source"),
-                                msg_id=m.get("msg_id", ""),
-                            ))
+                        if not isinstance(m, dict):
+                            continue
+                        _mid = m.get("msg_id", "")
+                        if _mid and _mid in _existing_ids:
+                            continue
+                        _role = m.get("role", "")
+                        if _role not in ("user", "assistant"):
+                            continue
+                        _content = m.get("content", "")
+                        if isinstance(_content, str) and _content.startswith("[System:"):
+                            continue
+                        _src = m.get("source") or {}
+                        if _src.get("type") == "context":
+                            continue
+                        # Skip own messages (already in context)
+                        if _src.get("type") == "agent" and _src.get("name") == _my_agent:
+                            continue
+                        # Transform for this agent's perspective
+                        _xf = _cs._transform_for_other_agent(m, _my_agent)
+                        messages.append(LLMMessage(
+                            role=_xf.get("role", "user"),
+                            content=_xf.get("content", ""),
+                            source=_xf.get("source"),
+                            msg_id=_mid,
+                        ))
                     self.ctx["_last_known_msg_count"] = _current
             except Exception as e:
                 logger.debug(f"Message checkpoint failed: {e}")

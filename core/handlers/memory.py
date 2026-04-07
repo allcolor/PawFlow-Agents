@@ -102,7 +102,7 @@ class RememberHandler(ToolHandler):
             tags = [str(tags)]
         scope = arguments.get("scope", "agent")
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         # Resolve scope to agent + conversation_id
         if scope == "global":
             agent, conv_id = "", ""
@@ -199,7 +199,7 @@ class SemanticRecallHandler(ToolHandler):
         if not self._embed_fn:
             return "Error: semantic search not available (no embedding provider configured)"
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         try:
             query_embedding = self._embed_fn(query)
             from core.memory_store import MemoryStore
@@ -332,7 +332,7 @@ class RecallHandler(ToolHandler):
         if isinstance(tags, str):
             tags = [tags]
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         try:
             from core.memory_store import MemoryStore
             entries = MemoryStore.instance().recall(
@@ -394,7 +394,7 @@ class ForgetHandler(ToolHandler):
         if not memory_id:
             return "Error: memory_id is required"
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         try:
             from core.memory_store import MemoryStore
             deleted = MemoryStore.instance().forget(user_id, memory_id)

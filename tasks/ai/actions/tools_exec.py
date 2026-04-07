@@ -229,7 +229,7 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             from core.conversation_event_bus import ConversationEventBus
             from core.conversation_store import ConversationStore
             bus = ConversationEventBus.instance()
-            source = {"type": "user", "name": _call_user_id or "anonymous"}
+            source = {"type": "user", "name": _call_user_id}
             # Publish tool_call event (same as agent loop)
             bus.publish_event(_call_conv_id, "tool_call", {
                 "tool": _call_tool_name,

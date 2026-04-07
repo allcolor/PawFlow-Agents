@@ -169,7 +169,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"error": "Missing name or prompt"}).encode())
             return [flowfile]
-        uid = user_id or "anonymous"
+        uid = user_id
         data["created_by"] = uid
         scope = data.pop("scope", body.get("scope", "user"))
         try:
@@ -196,7 +196,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"error": "Missing name"}).encode())
             return [flowfile]
-        uid = user_id or "anonymous"
+        uid = user_id
         # Try conversation scope first
         deleted = False
         if conv_id:
@@ -222,7 +222,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps(
                 {"error": "Missing name"}).encode())
             return [flowfile]
-        uid = user_id or "anonymous"
+        uid = user_id
         # Read from conversation scope
         if not conv_id:
             flowfile.set_content(json.dumps(
@@ -326,7 +326,7 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
         defs_out = []
         if body.get("include_library"):
             from core.resource_store import ResourceStore
-            uid = user_id or "anonymous"
+            uid = user_id
             all_defs = ResourceStore.instance().list_all("task_def", uid)
             for d in all_defs:
                 defs_out.append({

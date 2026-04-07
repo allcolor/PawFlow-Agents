@@ -655,7 +655,7 @@ class StoreSecretHandler(ToolHandler):
         if not key or not value:
             return "Error: key and value are required"
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
 
         try:
             from pathlib import Path
@@ -705,7 +705,7 @@ class ListSecretsHandler(ToolHandler):
         from pathlib import Path
         from core.config_store import ConfigStore
 
-        user_id = self._user_id or "anonymous"
+        user_id = self._user_id
         secrets_path = Path("config/users") / user_id / "secrets.json"
         secrets = ConfigStore.load_secrets(secrets_path)
 

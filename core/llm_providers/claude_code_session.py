@@ -296,13 +296,18 @@ class ClaudeCodeSessionMixin:
         Path: data/claude_sessions/<user_id>/<conv_id>/<agent>/
         Falls back to data/claude_sessions/default/<conv_id>/<agent>/ if no user.
         """
-        uid = user_id or getattr(self, '_user_id', '') or 'default'
-        # Sanitize user_id for safe paths
+        uid = user_id or getattr(self, '_user_id', '')
+        if not uid:
+            raise ValueError("BUG: user_id required for CC session workdir")
+        cid = conversation_id
+        if not cid:
+            raise ValueError("BUG: conversation_id required for CC session workdir")
+        if not agent_name:
+            raise ValueError("BUG: agent_name required for CC session workdir")
+        # Sanitize for safe paths
         uid = uid.replace(':', '_').replace('/', '_').replace('\\', '_')
-        cid = conversation_id or "default"
-        # Sanitize: replace :: (used in sub-conv keys) with __ for safe paths
         cid = cid.replace(":", "_")
-        agent = agent_name or "default"
+        agent = agent_name
         workdir = os.path.join(_SESSIONS_BASE, uid, cid, agent)
         os.makedirs(workdir, exist_ok=True)
         return workdir

@@ -770,21 +770,10 @@ class UpdatePlanHandler(_PlanHandlerBase):
                     if _v:
                         _needs_verify.append((_sn, _v, self._agent_name))
 
-        # Force stop the agent after marking done/error — don't ask nicely
-        _has_terminal = any(
-            _actual_statuses.get(int(u.get("step") or u.get("index") or 0), "")
-            in ("done", "error", "pending_verification")
-            for u in updates
-        )
-        if _has_terminal and self._agent_name and self._conversation_id:
-            import threading
-            def _post_force_stop():
-                try:
-                    from tasks.ai.actions.plans import force_stop_agent
-                    force_stop_agent(self._conversation_id, self._agent_name)
-                except Exception as e:
-                    logger.warning("Plan post force-stop failed: %s", e)
-            threading.Thread(target=_post_force_stop, daemon=True).start()
+        # No force-stop here — the agent receives "STOP here" in the tool
+        # result and stops naturally. Force-stopping during tool result
+        # delivery causes CC to loop (kill → retry → kill → retry).
+        # The next step's user message will wake a fresh agent run.
 
         if plan["status"] != "completed":
             import threading

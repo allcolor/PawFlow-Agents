@@ -53,10 +53,14 @@ class DynamicToolHandler(ToolHandler):
         lines.append(self._code)
         full_code = "\n".join(lines)
 
-        # Execute via execute_script (relay or sandbox)
-        from core.handlers.web_fetch import ExecuteScriptHandler
-        runner = ExecuteScriptHandler()
-        # Pass through _secret_env if present
+        # Execute via the live execute_script handler (already wired with relay)
+        from core.tool_registry import ToolRegistry
+        registry = ToolRegistry._live_registry
+        runner = registry.get("execute_script") if registry else None
+        if runner is None:
+            # Fallback: create bare handler (no relay — sandbox only)
+            from core.handlers.web_fetch import ExecuteScriptHandler
+            runner = ExecuteScriptHandler()
         run_args = {"code": full_code}
         if arguments.get("_secret_env"):
             run_args["_secret_env"] = arguments["_secret_env"]

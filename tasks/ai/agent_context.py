@@ -1042,6 +1042,23 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             pass
 
+        # Cognitive tools hint — tell agents what's available
+        system_prompt += (
+            "\n\n## Cognitive tools"
+            "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
+            "\n- **Memory**: `remember` to store facts, `recall` to search, `forget` to delete, "
+            "`memory_navigate` to browse wings/halls/rooms taxonomy"
+            "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
+            "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
+            "`kg_god_nodes`/`kg_surprises`/`kg_communities` for analysis"
+            "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
+            "`diary_read` to review past entries"
+            "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
+            "17 languages), then action=query/report/node to explore code structure"
+            "\nUse memory for facts about the user/project, KG for relationships between entities, "
+            "diary for your own reflections. Build the project graph when exploring a new codebase."
+        )
+
         # Final update: inject the fully-built system_prompt into messages[0]
         # (must happen AFTER all modifications: narration, resilience, FS context, memory digest)
         if messages and messages[0].role == "system":

@@ -46,6 +46,28 @@ ebooklib>=0.18
 # Terminal (Windows ConPTY)
 pywinpty>=2.0.0; sys_platform == "win32"
 
+# Code structure graph (graphify integration — AST extraction)
+networkx>=3.0
+tree-sitter>=0.23.0
+tree-sitter-python
+tree-sitter-javascript
+tree-sitter-typescript
+tree-sitter-go
+tree-sitter-rust
+tree-sitter-java
+tree-sitter-c
+tree-sitter-cpp
+tree-sitter-ruby
+tree-sitter-c-sharp
+tree-sitter-kotlin
+tree-sitter-scala
+tree-sitter-php
+tree-sitter-swift
+tree-sitter-lua
+tree-sitter-zig
+tree-sitter-powershell
+tree-sitter-elixir
+
 # Utilities
 python-dateutil>=2.8.0
 jinja2>=3.1.0

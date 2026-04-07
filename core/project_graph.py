@@ -1,7 +1,7 @@
 """Project Graph — structural code graph for a conversation's workspace.
 
-Integrates graphify's AST extraction pipeline to build a persistent
-knowledge graph of the codebase the agent is working on.
+Uses the integrated graphify pipeline (core/graphify/) for AST extraction
+across 17 languages via tree-sitter. No external graphify dependency.
 
 Storage: data/graphs/{user}/{conv_id}/graph.json
 """
@@ -74,9 +74,9 @@ class ProjectGraph:
             use_semantic: if True, also extract semantic relations (needs LLM)
         """
         try:
-            from graphify.detect import detect
-            from graphify.extract import extract
-            from graphify.build import build
+            from core.graphify.detect import detect
+            from core.graphify.extract import extract
+            from core.graphify.build import build
         except ImportError:
             return self._build_fallback(root_path)
 
@@ -91,7 +91,7 @@ class ProjectGraph:
             if not code_files:
                 return {"status": "skipped", "reason": "no code files found"}
 
-            extractions = extract(code_files)
+            extractions = extract([Path(f) for f in code_files])
 
             # Stage 3: build graph
             G = build([extractions])

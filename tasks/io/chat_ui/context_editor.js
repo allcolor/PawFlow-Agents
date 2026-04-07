@@ -100,15 +100,18 @@ function ctxLoadMore() {
     // Remove old load-more button
     if (btn) btn.remove();
     const roleColors = {system:'#6c6c8a',user:'#4fc3f7',assistant:'#4ecdc4',tool:'#f4a261'};
-    // Append older messages (already in chronological order from server, reverse for display)
-    const reversed = [...(data.context || [])].reverse();
+    // Append older messages at the BOTTOM (list is newest-first, older = further down)
+    // Server returns chronological (oldest first) — reverse for newest-first display
+    const olderMsgs = data.context || [];
+    const baseIdx = _ctxTotalCount - _ctxCurrentOffset;
+    const reversed = [...olderMsgs].reverse();
     reversed.forEach((m, ri) => {
-      const i = data.context.length - 1 - ri;
+      const origIdx = baseIdx + (olderMsgs.length - 1 - ri);
       const color = roleColors[m.role] || '#808090';
       const badge = '<span style="display:inline-block;background:' + color + '22;color:' + color + ';padding:1px 6px;border-radius:6px;font-size:11px;font-weight:600;margin-right:6px">' + m.role + '</span>';
       const tcTag = m.has_tool_calls ? '<span style="color:#f4a261;font-size:10px;margin-left:4px">[tool_calls]</span>' : '';
       const content = (m.content || '').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + (_ctxCurrentOffset - (data.context || []).length + i) + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
+      const delBtn = '<button onclick="event.stopPropagation();ctxDeleteMessage(' + origIdx + ')" style="background:none;border:none;color:#e74c3c;cursor:pointer;font-size:13px;padding:0 3px" title="Delete">&#128465;</button>';
       const row = document.createElement('div');
       row.style.cssText = 'padding:6px 8px;border-bottom:1px solid #222;cursor:pointer';
       row.innerHTML = '<div style="display:flex;align-items:center">' + badge + tcTag + '<span style="margin-left:auto">' + delBtn + '</span></div>'

@@ -177,6 +177,8 @@ class AgentLoopTask(
                 _cc = inst._active_claude_client.get(_key)
             if _cc and hasattr(_cc, 'cancel_claude_code'):
                 _cc.cancel_claude_code(force=True)
+                # Reset catch-up index so next run re-scans from last own message
+                _cc._cc_catchup_idx = 0
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)

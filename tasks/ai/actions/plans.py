@@ -568,9 +568,8 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
     _save_plan(conv_id, plan, user_id)
     _publish(conv_id, "plan_updated", {"plan": plan})
 
-    # Send step instruction as a REAL user message — this IS what triggers the agent.
-    # The message goes into the conv like any user message: transcript + shared + agent contexts.
-    # The poller just wakes the agent — the instruction is already in the context.
+    # Send step instruction exactly like a user message — same pipeline,
+    # same code path. No store write, no poller, no special handling.
     total = len(plan["steps"])
     step_num = next_step["index"]
     _user_msg = (
@@ -582,47 +581,39 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         f"If the step fails, set status to \"error\" with a note explaining why.\n"
         f"Do NOT skip ahead to other steps."
     )
-    try:
-        from core.conversation_writer import ConversationWriter
-        import uuid as _uuid_plan
-        _msg_id = _uuid_plan.uuid4().hex[:12]
-        writer = ConversationWriter.for_conversation(conv_id)
-        writer.enqueue(
-            [{"role": "user", "content": _user_msg,
-              "msg_id": _msg_id, "ts": time.time(),
-              "source": {"type": "user", "name": user_id,
-                         "target_agent": agent, "plan_id": plan_id}}],
-            user_id=user_id)
-        # MUST flush before scheduling — the agent loads context on wake,
-        # the message MUST be written to disk before the agent starts.
-        writer.flush(timeout=10)
-        # Publish SSE so frontend renders the step message BEFORE thinking starts
-        _publish(conv_id, "new_message", {
-            "role": "user", "content": _user_msg, "msg_id": _msg_id,
-            "source": {"type": "user", "name": user_id,
-                       "target_agent": agent, "plan_id": plan_id},
-        })
-    except Exception as e:
-        logger.warning("Failed to write plan step user message: %s", e)
 
-    # Wake the agent — the instruction is guaranteed in the context now
-    try:
-        from core.poll_scheduler import PollScheduler
-        PollScheduler.instance().schedule_delay(
-            conv_id, delay,
-            key=f"{conv_id}::plan::{plan_id}::step{step_num}::{agent}",
-            reason=f"[plan_step:{plan_id}:{step_num}] ({agent})",
-            user_id=user_id,
-        )
-        logger.info("Plan %s step %d scheduled for agent '%s'",
-                     plan_id, step_num, agent)
+    def _send_step():
+        """Send via _execute_streaming — identical to user typing the message."""
+        import json as _j
+        from core import FlowFile as _FF
+        body = _j.dumps({
+            "message": _user_msg,
+            "conversation_id": conv_id,
+            "target_agent": agent,
+        })
+        ff = _FF(body.encode("utf-8"))
+        ff.set_attribute("http.auth.principal", user_id)
         try:
             from tasks.ai.agent_loop import AgentLoopTask
-            AgentLoopTask.wake_poller()
-        except Exception:
-            pass
-    except Exception as e:
-        logger.warning("Failed to schedule plan step: %s", e)
+            inst = AgentLoopTask._live_instance
+            if inst:
+                inst._execute_streaming(ff)
+                logger.info("Plan %s step %d sent to agent '%s' (same as user msg)",
+                            plan_id, step_num, agent)
+            else:
+                logger.error("Plan %s step %d: no AgentLoopTask instance", plan_id, step_num)
+        except Exception as e:
+            logger.error("Plan %s step %d send failed: %s", plan_id, step_num, e)
+
+    if delay > 0:
+        import threading
+        def _delayed_send():
+            time.sleep(delay)
+            _send_step()
+        threading.Thread(target=_delayed_send, daemon=True,
+                         name=f"plan-step-{plan_id}-{step_num}").start()
+    else:
+        _send_step()
 
 
 def _stop_plan_agents(self, conv_id, plan):

@@ -519,7 +519,8 @@ class AgentPollerMixin:
             _is_plan_step, _is_plan_verify,
             user_id=_poll_uid,
         )
-        ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
+        if checkin_content:
+            ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
         ctx["_base_message_count"] = len(ctx["messages"])
 
         return ctx

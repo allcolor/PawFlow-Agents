@@ -784,8 +784,8 @@ class VerifyTaskHandler(ToolHandler):
             # Cleanup sub-conv context + CC session
             _sub_cid = f"{_parent_cid}::task::{task_id}"
             try:
-                store.delete(_sub_cid)
                 store.invalidate_claude_sessions(_sub_cid)
+                store.delete(_sub_cid)
             except Exception:
                 pass
             # Activate dependent tasks

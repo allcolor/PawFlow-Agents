@@ -586,6 +586,12 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         """Send via _execute_streaming — identical to user typing the message."""
         import json as _j
         from core import FlowFile as _FF
+        # Publish SSE FIRST so frontend renders the message before agent starts
+        _publish(conv_id, "new_message", {
+            "role": "user", "content": _user_msg,
+            "source": {"type": "user", "name": user_id,
+                       "target_agent": agent, "plan_id": plan_id},
+        })
         body = _j.dumps({
             "message": _user_msg,
             "conversation_id": conv_id,

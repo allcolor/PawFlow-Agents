@@ -163,22 +163,25 @@ class AgentLoopTask(
 
     @classmethod
     def force_stop_agent(cls, conversation_id: str, agent_name: str):
-        """Force stop an agent — kill CC process + bump generation.
+        """Force stop an agent — kill CC + bump gen + cancel relay.
 
-        Does NOT cancel the tool relay — that would kill tool calls from
-        the NEXT step too (relay cancel persists across agent runs).
-        The CC kill + gen bump are sufficient to stop the agent.
+        The relay cancel is cleared by uncancel_agent at the start of
+        every new agent run (agent_core.py line 122). So a force stop
+        never affects the NEXT run — only the current one.
         """
         inst = cls._live_instance
         if inst:
-            # Bump generation — prevents any retry in agent_core
             inst.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
-            # Kill CC subprocess if running
             _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
             with inst._active_contexts_lock:
                 _cc = inst._active_claude_client.get(_key)
             if _cc and hasattr(_cc, 'cancel_claude_code'):
                 _cc.cancel_claude_code(force=True)
+        try:
+            from services.tool_relay_service import ToolRelayService
+            ToolRelayService.cancel_agent(conversation_id, agent_name)
+        except Exception:
+            pass
 
     def get_tool_registry(self) -> ToolRegistry:
         """Get or create the tool registry for this agent.

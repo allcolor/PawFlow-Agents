@@ -141,7 +141,7 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         _publish(conv_id, "plan_created", {"plan": plan})
         # Auto-orchestrate if approved
         if plan["status"] == "approved":
-            _orchestrate_next_step(self, conv_id, plan_id, user_id)
+            _orchestrate_next_step(self, conv_id, plan_id, user_id, delay=0)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -165,7 +165,7 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         _save_plan(conv_id, plan, user_id)
         _publish(conv_id, "plan_updated", {"plan": plan})
         # Launch orchestrator — does NOT call LLM, just schedules first step
-        _orchestrate_next_step(self, conv_id, plan_id, user_id)
+        _orchestrate_next_step(self, conv_id, plan_id, user_id, delay=0)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -365,7 +365,7 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         if plan["status"] == "cancelled":
             plan["status"] = "approved"
             _save_plan(conv_id, plan, user_id)
-        _orchestrate_next_step(self, conv_id, plan_id, user_id)
+        _orchestrate_next_step(self, conv_id, plan_id, user_id, delay=0)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -497,7 +497,7 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
         _publish(conv_id, "plan_updated", {"plan": plan})
         # If unpausing, resume orchestration
         if not paused and plan["status"] in ("in_progress", "approved"):
-            _orchestrate_next_step(self, conv_id, plan_id, user_id)
+            _orchestrate_next_step(self, conv_id, plan_id, user_id, delay=0)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
 
@@ -506,12 +506,12 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
 
 # ── Orchestrator ──────────────────────────────────────────────────────
 
-def orchestrate_next_step(conv_id, plan_id, user_id):
+def orchestrate_next_step(conv_id, plan_id, user_id, delay: int = 10):
     """Find and schedule the next pending step. Standalone — callable from handlers."""
-    return _orchestrate_next_step(None, conv_id, plan_id, user_id)
+    return _orchestrate_next_step(None, conv_id, plan_id, user_id, delay=delay)
 
 
-def _orchestrate_next_step(self, conv_id, plan_id, user_id):
+def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
     """Find and schedule the next pending step.
 
     The orchestrator:
@@ -603,7 +603,7 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
     try:
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(
-            conv_id, 10,  # 10s cooldown between steps
+            conv_id, delay,
             key=f"{conv_id}::plan::{plan_id}::step{step_num}::{agent}",
             reason=f"[plan_step:{plan_id}:{step_num}] ({agent})",
             user_id=user_id,

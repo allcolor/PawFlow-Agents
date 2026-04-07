@@ -63,16 +63,41 @@ class ConversationStore:
                 self._conv_locks[cid] = threading.RLock()
             return self._conv_locks[cid]
 
+    @staticmethod
+    def _safe_name(name: str) -> str:
+        safe = "".join(c for c in name if c.isalnum() or c in "-_.:@")
+        return safe.replace(":", "__")
+
+    def _conv_dir(self, cid: str, user_id: str = "") -> Path:
+        """Directory for a conversation: {store_dir}/{user}/{conv_id}/"""
+        if user_id:
+            return self._store_dir / self._safe_name(user_id) / self._safe_name(cid)
+        # Try to find existing dir (scan user dirs)
+        for user_dir in self._store_dir.iterdir():
+            if user_dir.is_dir():
+                conv_dir = user_dir / self._safe_name(cid)
+                if conv_dir.is_dir():
+                    return conv_dir
+        # No user_id and not found — this is an error
+        logger.error("Conversation %s not found (no user_id provided)", cid[:16])
+        return self._store_dir / "_orphan" / self._safe_name(cid)
+
     def _conv_path(self, cid: str) -> Path:
-        safe = "".join(c for c in cid if c.isalnum() or c in "-_:")
-        safe = safe.replace(":", "__")
-        return self._store_dir / f"{safe}.jsonl"
+        """Legacy compat: points to transcript.jsonl for exists() checks."""
+        return self._conv_dir(cid) / "transcript.jsonl"
+
+    def _transcript_path(self, cid: str) -> Path:
+        return self._conv_dir(cid) / "transcript.jsonl"
+
+    def _shared_ctx_path(self, cid: str) -> Path:
+        return self._conv_dir(cid) / "shared.jsonl"
+
+    def _agent_ctx_path(self, cid: str, agent: str) -> Path:
+        safe_agent = self._safe_name(agent) if agent else "_shared"
+        return self._conv_dir(cid) / safe_agent / "context.jsonl"
 
     def _extras_path(self, cid: str) -> Path:
-        """Path to the extras.json file (atomic JSON, no JSONL duplication)."""
-        safe = "".join(c for c in cid if c.isalnum() or c in "-_:")
-        safe = safe.replace(":", "__")
-        return self._store_dir / f"{safe}.extras.json"
+        return self._conv_dir(cid) / "extras.json"
 
     def _read_extras(self, cid: str) -> dict:
         """Read extras from the atomic JSON file."""
@@ -455,22 +480,42 @@ class ConversationStore:
         return uuid.uuid4().hex[:16]
 
     def exists(self, cid: str) -> bool:
-        return self._conv_path(cid).exists()
+        return self._conv_dir(cid).is_dir()
 
     # ── Create / Save ─────────────────────────────────────────────────
 
     def save(self, cid: str, messages: List[Dict], ttl: int = 0,
              user_id: str = "", status: str = ""):
         _now = time.time()
-        lines = [{"t": "meta", "user_id": user_id, "status": status or "idle",
-                  "created_at": _now, "ts": _now,
-                  "expires_at": _now + ttl if ttl > 0 else 0}]
-        for m in messages:
-            line = {"t": "msg", **m}
-            if "ts" not in line and "timestamp" not in line:
-                line["ts"] = time.time()
-            lines.append(line)
-        self._commit(cid, [{"op": "rewrite_full", "lines": lines}])
+        if not user_id:
+            raise ValueError("user_id is required to create a conversation")
+        conv_dir = self._conv_dir(cid, user_id=user_id)
+        conv_dir.mkdir(parents=True, exist_ok=True)
+
+        # Write transcript
+        transcript = conv_dir / "transcript.jsonl"
+        meta_line = {"t": "meta", "user_id": user_id, "status": status or "idle",
+                     "created_at": _now, "ts": _now,
+                     "expires_at": _now + ttl if ttl > 0 else 0}
+        with open(transcript, "w", encoding="utf-8") as f:
+            f.write(json.dumps(meta_line, ensure_ascii=False) + "\n")
+            for m in messages:
+                line = {"t": "msg", **m}
+                if "ts" not in line and "timestamp" not in line:
+                    line["ts"] = _now
+                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+
+        # Write extras with metadata
+        extras = {
+            "_meta_user_id": user_id,
+            "_meta_created_at": _now,
+            "_meta_expires_at": _now + ttl if ttl > 0 else 0,
+            "_meta_status": status or "idle",
+        }
+        self._write_extras(cid, extras)
+
+        # Update cache
+        self._reload_cache(cid)
 
     # ── Agent flush (main write op) ──────────────────────────────────
 

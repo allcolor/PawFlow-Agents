@@ -170,6 +170,7 @@ class ToolRegistry:
                     "include": "glob",        # Grep
                     "notebook_path": "path",  # NotebookEdit
                     "edit_mode": "operation",  # NotebookEdit
+                    "filesystem": "source",   # Read, Grep, Glob → "source" param
                 }
                 for _cc_name, _pf_name in _CC_ALIASES.items():
                     if _cc_name in args and _pf_name not in args:

@@ -162,6 +162,17 @@ class ToolRegistry:
                     args = _json_uw.loads(args)
                 except (ValueError, TypeError):
                     pass
+            # Normalize CC-native argument names to PawFlow names
+            # (drop-in compat with Claude Code built-in tool signatures)
+            if isinstance(args, dict):
+                _CC_ALIASES = {
+                    "file_path": "path",
+                    "head_limit": "limit",
+                    "include": "glob",
+                }
+                for _cc_name, _pf_name in _CC_ALIASES.items():
+                    if _cc_name in args and _pf_name not in args:
+                        args[_pf_name] = args.pop(_cc_name)
             # Validate: reject unknown arguments so the LLM learns
             if isinstance(args, dict) and hasattr(handler, 'parameters_schema'):
                 _schema = handler.parameters_schema

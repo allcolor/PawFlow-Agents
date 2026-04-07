@@ -568,7 +568,9 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
     _save_plan(conv_id, plan, user_id)
     _publish(conv_id, "plan_updated", {"plan": plan})
 
-    # Send step instruction as user message
+    # Send step instruction as a REAL user message — this IS what triggers the agent.
+    # The message goes into the conv like any user message: transcript + shared + agent contexts.
+    # The poller just wakes the agent — the instruction is already in the context.
     total = len(plan["steps"])
     step_num = next_step["index"]
     _user_msg = (
@@ -585,14 +587,15 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
         import uuid as _uuid_plan
         _msg_id = _uuid_plan.uuid4().hex[:12]
         ConversationWriter.for_conversation(conv_id).enqueue(
-            [{"type": "msg", "role": "user", "content": _user_msg,
-              "msg_id": _msg_id, "ts": time.time(), "display_only": True,
-              "source": {"type": "plan", "plan_id": plan_id}}],
+            [{"role": "user", "content": _user_msg,
+              "msg_id": _msg_id, "ts": time.time(),
+              "source": {"type": "user", "name": user_id,
+                         "target_agent": agent, "plan_id": plan_id}}],
             user_id=user_id)
     except Exception as e:
         logger.warning("Failed to write plan step user message: %s", e)
 
-    # Schedule the agent
+    # Wake the agent — the instruction is already in the context from the message above
     try:
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(

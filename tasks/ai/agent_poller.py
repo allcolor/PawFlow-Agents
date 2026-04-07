@@ -704,60 +704,13 @@ class AgentPollerMixin:
                                  scheduled_reasons: List[str],
                                  agent_name: str,
                                  user_id: str = "") -> str:
-        """Build check-in prompt for a plan step execution."""
-        import re
-        from core.conversation_store import ConversationStore as _CS4
+        """Plan step check-in — returns empty string.
 
-        # Extract plan_id and step number from reason: [plan_step:p_xxx:N] (agent)
-        plan_id = ""
-        step_num = 0
-        for sr in scheduled_reasons:
-            m = re.search(r'\[plan_step:(p_\w+):(\d+)\]', sr)
-            if m:
-                plan_id = m.group(1)
-                step_num = int(m.group(2))
-                break
-
-        if not plan_id:
-            return "[System: Plan step scheduled but no plan_id found.]"
-
-        from core.plan_store import PlanStore
-        plan = PlanStore.instance().get(user_id, conversation_id, plan_id)
-        if not plan:
-            return f"[System: Plan {plan_id} not found.]"
-
-        step = None
-        for s in plan["steps"]:
-            if s["index"] == step_num:
-                step = s
-                break
-        if not step:
-            return f"[System: Step {step_num} not found in plan {plan_id}.]"
-
-        # Build context: show full plan with current step highlighted
-        total = len(plan["steps"])
-        steps_text = ""
-        for s in plan["steps"]:
-            marker = ">>" if s["index"] == step_num else "  "
-            icon = {"done": "\u2713", "skipped": "\u2014", "in_progress": "\u25d4",
-                    "error": "\u2717", "pending": "\u25cb",
-                    "pending_verification": "\u2690"}.get(s["status"], "?")
-            steps_text += f"{marker} {icon} {s['index']}. {s['description']}"
-            if s.get("note"):
-                steps_text += f" [{s['note']}]"
-            steps_text += "\n"
-
-        return (
-            f"The plan \"{plan['title']}\" has been approved. "
-            f"Execute step {step_num}/{total} now: {step['description']}\n\n"
-            f"Plan: {plan_id}\n"
-            f"All steps:\n{steps_text}\n"
-            f"When done, call:\n"
-            f"  update_plan(plan_id=\"{plan_id}\", updates=[{{\"step\": {step_num}, "
-            f"\"status\": \"done\", \"note\": \"what you did\"}}])\n\n"
-            f"If the step fails, set status to \"error\" with a note explaining why.\n"
-            f"Do NOT skip ahead to other steps. Do NOT respond with text only — take action."
-        )
+        The step instruction is already in the conversation as a real user
+        message (written by _orchestrate_next_step). No duplicate needed.
+        The poller just wakes the agent — the message is in the context.
+        """
+        return ""
 
     def _build_plan_verify_checkin(self, conversation_id: str,
                                     scheduled_reasons: List[str],

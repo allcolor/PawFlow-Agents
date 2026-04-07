@@ -200,6 +200,12 @@ class StreamEmitter(AgentEmitter):
         })
 
     def on_cancelled(self, result: AgentResult, ctx: dict) -> None:
+        # Publish done so frontend closes pending tool calls + streaming elements
+        self._emit("done", {
+            "agent_name": self._agent_name or "",
+            "response": "",
+            "cancelled": True,
+        })
         # Save cancel checkpoint for resume
         if self._use_conv_store and self.conversation_id:
             try:

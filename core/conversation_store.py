@@ -78,9 +78,8 @@ class ConversationStore:
                 conv_dir = user_dir / self._safe_name(cid)
                 if conv_dir.is_dir():
                     return conv_dir
-        # No user_id and not found — this is an error
-        logger.error("Conversation %s not found (no user_id provided)", cid[:16])
-        return self._store_dir / "_orphan" / self._safe_name(cid)
+        # No user_id and not found — BUG: all conversations must have a user
+        raise ValueError(f"Conversation {cid[:16]} not found and no user_id provided")
 
     def _conv_path(self, cid: str) -> Path:
         """Legacy compat: points to transcript.jsonl for exists() checks."""
@@ -98,6 +97,45 @@ class ConversationStore:
 
     def _extras_path(self, cid: str) -> Path:
         return self._conv_dir(cid) / "extras.json"
+
+    def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
+        """Append messages to an agent's context file."""
+        path = self._agent_ctx_path(cid, agent)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as f:
+            for m in messages:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+
+    def _append_shared_ctx(self, cid: str, messages: List[Dict]):
+        """Append messages to the shared context file."""
+        path = self._shared_ctx_path(cid)
+        with open(path, "a", encoding="utf-8") as f:
+            for m in messages:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+
+    def _read_ctx_file(self, path: Path) -> List[Dict]:
+        """Read all messages from a context JSONL file."""
+        if not path.exists():
+            return []
+        result = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        result.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        return result
+
+    def _write_ctx_file(self, path: Path, messages: List[Dict]):
+        """Overwrite a context file with messages (atomic: tmp + rename)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            for m in messages:
+                f.write(json.dumps(m, ensure_ascii=False) + "\n")
+        tmp.replace(path)
 
     def _read_extras(self, cid: str) -> dict:
         """Read extras from the atomic JSON file."""
@@ -445,17 +483,26 @@ class ConversationStore:
         sees either the old or new value, never missing.
         """
         c = self._read(cid, self._scan_cache)
-        # Merge extras from extras.json file (source of truth for extras)
+        # Merge extras from extras.json file (source of truth)
         extras_data = self._read_extras(cid)
         if extras_data:
             c["extras"] = extras_data
             c["extra_keys"] = set(extras_data.keys())
             if "title" in extras_data:
                 c["title"] = extras_data["title"]
-            # Update updated_at from extras if newer
-            for v in extras_data.values():
-                if isinstance(v, dict) and "ts" in v:
-                    c["updated_at"] = max(c["updated_at"], v["ts"])
+            # Use meta from extras for cache fields
+            c["user_id"] = extras_data.get("_meta_user_id", c.get("user_id", ""))
+            if extras_data.get("_meta_created_at"):
+                c["created_at"] = max(c["created_at"], extras_data["_meta_created_at"])
+                c["updated_at"] = max(c["updated_at"], extras_data["_meta_created_at"])
+        # Scan agent context directories
+        conv_dir = self._conv_dir(cid)
+        if conv_dir.is_dir():
+            for entry in conv_dir.iterdir():
+                if entry.is_dir() and (entry / "context.jsonl").exists():
+                    agent = entry.name.replace("__", ":")
+                    if agent != "_shared":
+                        c["agents"].add(agent)
         with self._cache_lock:
             self._cache[cid] = c
         return c
@@ -465,10 +512,18 @@ class ConversationStore:
             return
         self._loaded = True
         count = 0
-        for p in self._store_dir.glob("*.jsonl"):
-            cid = p.stem.replace("__", ":")
-            self._load_cache(cid)
-            count += 1
+        # Scan data/conversations/{user}/{conv_id}/ directories
+        for user_dir in self._store_dir.iterdir():
+            if not user_dir.is_dir():
+                continue
+            for conv_dir in user_dir.iterdir():
+                if not conv_dir.is_dir():
+                    continue
+                if not (conv_dir / "transcript.jsonl").exists() and not (conv_dir / "extras.json").exists():
+                    continue
+                cid = conv_dir.name.replace("__", ":")
+                self._load_cache(cid)
+                count += 1
         if count:
             logger.info(f"ConversationStore: loaded {count} conversations from disk")
 
@@ -489,15 +544,13 @@ class ConversationStore:
         _now = time.time()
         if not user_id:
             raise ValueError("user_id is required to create a conversation")
-        conv_dir = self._conv_dir(cid, user_id=user_id)
-        conv_dir.mkdir(parents=True, exist_ok=True)
+        self._conv_dir(cid, user_id=user_id).mkdir(parents=True, exist_ok=True)
 
         # Write transcript
-        transcript = conv_dir / "transcript.jsonl"
         meta_line = {"t": "meta", "user_id": user_id, "status": status or "idle",
                      "created_at": _now, "ts": _now,
                      "expires_at": _now + ttl if ttl > 0 else 0}
-        with open(transcript, "w", encoding="utf-8") as f:
+        with open(self._transcript_path(cid), "w", encoding="utf-8") as f:
             f.write(json.dumps(meta_line, ensure_ascii=False) + "\n")
             for m in messages:
                 line = {"t": "msg", **m}
@@ -524,17 +577,18 @@ class ConversationStore:
                     private_messages: List[Dict],
                     user_id: str = "", ttl: int = 0):
         now = time.time()
-        ops: List[dict] = []
-        lines: List[dict] = []
+        lock = self._get_conv_lock(cid)
 
         if not self.exists(cid):
-            lines.append({"t": "meta", "user_id": user_id,
-                          "status": "idle", "created_at": now,
-                          "expires_at": now + ttl if ttl > 0 else 0})
+            if not user_id:
+                raise ValueError("user_id required for new conversation")
+            self.save(cid, [], user_id=user_id, ttl=ttl)
 
         # Dedup: skip messages already in transcript
-        existing_ids = self._get_transcript_msg_ids(cid) if self.exists(cid) else set()
+        existing_ids = self._get_transcript_msg_ids(cid)
 
+        # Build transcript lines (public + private)
+        transcript_lines = []
         for m in public_messages:
             mid = m.get("msg_id")
             if mid and mid in existing_ids:
@@ -542,7 +596,7 @@ class ConversationStore:
             line = {"t": "msg", **m}
             if "ts" not in line:
                 line["ts"] = now
-            lines.append(line)
+            transcript_lines.append(line)
 
         for m in private_messages:
             mid = m.get("msg_id")
@@ -551,29 +605,33 @@ class ConversationStore:
             line = {"t": "msg", "private": True, **m}
             if "ts" not in line:
                 line["ts"] = now
-            lines.append(line)
+            transcript_lines.append(line)
 
-        if lines:
-            ops.append({"op": "append", "lines": lines})
+        with lock:
+            # 1. Append to transcript
+            if transcript_lines:
+                with open(self._transcript_path(cid), "a", encoding="utf-8") as f:
+                    for line in transcript_lines:
+                        f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
-        # Filter display_only — NEVER goes into any context
-        ctx_public = [m for m in public_messages if not m.get("display_only")]
-        ctx_private = [m for m in private_messages if not m.get("display_only")]
-        all_agent = ctx_public + ctx_private
-        if all_agent:
-            ops.append({"op": "ctx_append", "agent": agent_name, "data": all_agent})
+            # Filter display_only — NEVER goes into any context
+            ctx_public = [m for m in public_messages if not m.get("display_only")]
+            ctx_private = [m for m in private_messages if not m.get("display_only")]
 
-        if ctx_public:
-            # Update shared context (source of truth for new agents)
-            ops.append({"op": "ctx_append", "agent": "", "data": ctx_public})
-            # Update all other agents' diverged contexts
-            cache = self._load_cache(cid)
-            for other in cache.get("agents", set()):
-                if other and other != agent_name:
-                    ops.append({"op": "ctx_append", "agent": other,
-                                "data": ctx_public})
+            # 2. Append to agent context file
+            all_agent = ctx_public + ctx_private
+            if all_agent:
+                self._append_ctx_file(cid, agent_name, all_agent)
 
-        self._commit(cid, ops)
+            # 3. Append to shared context + all other agents' contexts
+            if ctx_public:
+                self._append_shared_ctx(cid, ctx_public)
+                cache = self._load_cache(cid)
+                for other in cache.get("agents", set()):
+                    if other and other != agent_name:
+                        self._append_ctx_file(cid, other, ctx_public)
+
+        self._reload_cache(cid)
 
     # ── Append messages (simple) ──────────────────────────────────────
 
@@ -637,31 +695,17 @@ class ConversationStore:
     # ── Context ops ───────────────────────────────────────────────────
 
     def load_agent_context(self, cid: str, agent_name: str) -> Optional[List[Dict]]:
-        # Check in-memory cache first
+        """Load agent context from {agent}/context.jsonl file."""
         with self._ctx_cache_lock:
             if cid in self._ctx_cache and agent_name in self._ctx_cache[cid]:
                 cached = self._ctx_cache[cid][agent_name]
                 return list(cached) if cached is not None else None
 
-        def _scan(lines):
-            data = None
-            appends = []
-            found = False
-            for line in lines:
-                if line.get("t") != "ctx" or line.get("agent") != agent_name:
-                    continue
-                if line.get("op") == "replace":
-                    data = list(line.get("data", []))
-                    appends = []
-                    found = True
-                elif line.get("op") == "append" and found:
-                    appends.append(line.get("data", []))
-            if data is None:
-                return None
-            for batch in appends:
-                data.extend(batch)
-            return data
-        result = self._read(cid, _scan)
+        if agent_name:
+            path = self._agent_ctx_path(cid, agent_name)
+        else:
+            path = self._shared_ctx_path(cid)
+        result = self._read_ctx_file(path) or None
         with self._ctx_cache_lock:
             self._ctx_cache.setdefault(cid, {})[agent_name] = result
         return result
@@ -677,31 +721,42 @@ class ConversationStore:
     def save_agent_context(self, cid: str, agent_name: str,
                            context_messages: List[Dict],
                            skip_merge: bool = False) -> bool:
+        """Write agent context to {agent}/context.jsonl (full replace)."""
         if not self.exists(cid):
             return False
-        # NEVER put display_only messages in contexts
         clean = [m for m in context_messages if not m.get("display_only")]
-        self._commit(cid, [{"op": "ctx_replace", "agent": agent_name or "",
-                            "data": clean, "skip_merge": skip_merge}])
+        if agent_name:
+            self._write_ctx_file(self._agent_ctx_path(cid, agent_name), clean)
+        else:
+            self._write_ctx_file(self._shared_ctx_path(cid), clean)
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def append_to_agent_context(self, cid: str, agent_name: str,
                                 new_messages: List[Dict]) -> bool:
+        """Append messages to agent context file."""
         if not self.exists(cid):
             return False
         clean = [m for m in new_messages if not m.get("display_only")]
         if not clean:
             return True
-        self._commit(cid, [{"op": "ctx_append", "agent": agent_name,
-                            "data": clean}])
+        if agent_name:
+            self._append_ctx_file(cid, agent_name, clean)
+        else:
+            self._append_shared_ctx(cid, clean)
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:
+        """Delete agent context file."""
         if not self.exists(cid):
             return False
-        self._commit(cid, [{"op": "ctx_delete", "agent": agent_name}])
+        if agent_name:
+            path = self._agent_ctx_path(cid, agent_name)
+        else:
+            path = self._shared_ctx_path(cid)
+        if path.exists():
+            path.unlink()
         self._invalidate_ctx_cache(cid, agent_name)
         return True
 
@@ -962,32 +1017,18 @@ class ConversationStore:
     # ── Delete ────────────────────────────────────────────────────────
 
     def delete(self, cid: str, user_id: str = "") -> bool:
-        path = self._conv_path(cid)
-        extras_path = self._extras_path(cid)
-        if not path.exists():
-            # File gone but cache/extras may linger — clean up
-            extras_path.unlink(missing_ok=True)
+        import shutil
+        conv_dir = self._conv_dir(cid)
+        if not conv_dir.is_dir():
             with self._cache_lock:
                 self._cache.pop(cid, None)
             return False
         lock = self._get_conv_lock(cid)
         with lock:
-            path.unlink(missing_ok=True)
-            extras_path.unlink(missing_ok=True)
+            shutil.rmtree(conv_dir, ignore_errors=True)
         with self._cache_lock:
             self._cache.pop(cid, None)
         self._invalidate_ctx_cache(cid)
-        prefix = f"{cid}::task::"
-        for p in self._store_dir.glob("*.jsonl"):
-            sub_cid = p.stem.replace("__", ":")
-            if sub_cid.startswith(prefix):
-                sub_lock = self._get_conv_lock(sub_cid)
-                with sub_lock:
-                    p.unlink(missing_ok=True)
-                    # Also delete task extras
-                    self._extras_path(sub_cid).unlink(missing_ok=True)
-                with self._cache_lock:
-                    self._cache.pop(sub_cid, None)
         return True
 
     def delete_message(self, cid: str, msg_id: str = "", index: int = -1,

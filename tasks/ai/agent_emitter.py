@@ -522,7 +522,18 @@ class StreamEmitter(AgentEmitter):
                 return False
             return True
         public = [m for m in all_serialized if _is_public(m)]
-        private = [m for m in all_serialized if m not in public and m.get("role") != "system"]
+        # Private = tools + tool results. Exclude system and context-only messages.
+        def _is_persistable(m):
+            if m.get("role") == "system":
+                return False
+            src = m.get("source") or {}
+            if src.get("type") == "context":
+                return False
+            content = m.get("content", "")
+            if isinstance(content, str) and content.startswith("[System:"):
+                return False
+            return True
+        private = [m for m in all_serialized if m not in public and _is_persistable(m)]
 
         _agent_n = self.ctx.get("active_agent_name") or ""
         from core.conversation_writer import ConversationWriter

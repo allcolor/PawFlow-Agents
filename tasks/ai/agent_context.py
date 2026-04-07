@@ -467,7 +467,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                         break
                 messages.insert(_inject_idx, LLMMessage(
                     role="user",
-                    content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}"
+                    content=f"[System: Project instructions from {_agent_md[0]}]\n\n{_agent_md[1]}",
+                    source={"type": "context"},
                 ))
                 messages.insert(_inject_idx + 1, LLMMessage(
                     role="assistant", content="Understood.",

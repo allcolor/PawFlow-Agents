@@ -251,7 +251,7 @@ async function ctxDeleteContext() {
   if (!_ctxAgentFilter) return;
   if (!confirm('Delete the entire "' + _ctxAgentFilter + '" context? This cannot be undone.')) return;
   const name = _ctxAgentFilter;
-  _ctxAgentFilter = '';
+  _ctxAgentFilter = 'transcript';  // switch to transcript after delete
   _ctxMutate({action: 'delete_agent_context', agent_name: name}, 'Context "' + name + '" deleted.');
 }
 

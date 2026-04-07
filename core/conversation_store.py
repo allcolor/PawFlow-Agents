@@ -808,7 +808,7 @@ class ConversationStore:
         return True
 
     def delete_agent_context(self, cid: str, agent_name: str) -> bool:
-        """Delete agent context file."""
+        """Delete agent context file + directory."""
         if not self.exists(cid):
             return False
         if agent_name:
@@ -817,7 +817,17 @@ class ConversationStore:
             path = self._shared_ctx_path(cid)
         if path.exists():
             path.unlink()
+        # Remove empty agent directory
+        if agent_name and path.parent.is_dir():
+            try:
+                path.parent.rmdir()  # only succeeds if empty
+            except OSError:
+                pass
         self._invalidate_ctx_cache(cid, agent_name)
+        # Reload main cache so agents set is updated
+        with self._cache_lock:
+            self._cache.pop(cid, None)
+        self._reload_cache(cid)
         return True
 
     def save_context(self, cid: str, ctx: List[Dict]) -> bool:
@@ -1171,6 +1181,7 @@ class ConversationStore:
         with self._cache_lock:
             self._cache.pop(cid, None)
         if removed:
+            self._invalidate_ctx_cache(cid)  # clear ALL agent ctx caches
             self._load_cache(cid)
             self.invalidate_claude_sessions(cid)
         return removed

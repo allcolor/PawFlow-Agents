@@ -80,13 +80,18 @@ class ConversationStore:
         """Directory for a conversation: {store_dir}/{user}/{conv_id}/"""
         if user_id:
             return self._store_dir / self._safe_name(user_id) / self._safe_name(cid)
-        # Try to find existing dir (scan user dirs)
-        for user_dir in self._store_dir.iterdir():
-            if user_dir.is_dir():
-                conv_dir = user_dir / self._safe_name(cid)
-                if conv_dir.is_dir():
-                    return conv_dir
-        # No user_id and not found — BUG: all conversations must have a user
+        # Try cache first (loaded by _ensure_loaded at startup)
+        with self._cache_lock:
+            cached = self._cache.get(cid)
+            if cached and cached.get("user_id"):
+                return self._store_dir / self._safe_name(cached["user_id"]) / self._safe_name(cid)
+        # Fallback: scan user dirs on disk
+        if self._store_dir.is_dir():
+            for user_dir in self._store_dir.iterdir():
+                if user_dir.is_dir():
+                    conv_dir = user_dir / self._safe_name(cid)
+                    if conv_dir.is_dir():
+                        return conv_dir
         raise ValueError(f"Conversation {cid[:16]} not found and no user_id provided")
 
     def _conv_path(self, cid: str) -> Path:

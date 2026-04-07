@@ -231,27 +231,6 @@ class AgentUtilsMixin:
             return client, ctx_max, svc_id
         return None, 0, ""
 
-    def _get_memory_llm_client(self, user_id: str = ""):
-        """Resolve a dedicated LLM service for memory relevance filtering.
-
-        Same pattern as _get_summarizer_client. When configured, the recall
-        handler uses this LLM to select the most relevant memories instead
-        of returning all matches.
-
-        Returns (service_or_client, max_context_tokens, service_id) or (None, 0, "").
-        """
-        svc_id = self._resolve_service_param("memory_llm_service", user_id)
-        if not svc_id:
-            return None, 0, ""
-        logger.debug(f"[memory_llm] resolved to '{svc_id}'")
-        client, svc = self._resolve_llm_service(svc_id, user_id)
-        if svc and hasattr(svc, 'complete'):
-            ctx_max = int((getattr(svc, 'config', {}) or {}).get("max_context_size", 0))
-            return svc, ctx_max, svc_id
-        if client:
-            return client, 0, svc_id
-        return None, 0, ""
-
     def _get_title_client(self, user_id: str = ""):
         """Resolve a dedicated LLM service for conversation title generation.
 

@@ -668,7 +668,7 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             )
             if len(recent_text) < 100:
                 return
-            # Use memory_llm_service or summarizer
+            # Use summarizer_service for extraction
             _client = None
             try:
                 _client, _, _ = self._get_summarizer_client(user_id)

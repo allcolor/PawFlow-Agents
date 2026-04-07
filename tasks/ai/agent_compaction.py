@@ -596,9 +596,9 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
         if user_id and summary and not summary.startswith("["):
             _extract_client = client
             try:
-                _mem_llm, _, _ = self._get_memory_llm_client(user_id)
-                if _mem_llm:
-                    _extract_client = _mem_llm
+                _sum_llm, _, _ = self._get_summarizer_client(user_id)
+                if _sum_llm:
+                    _extract_client = _sum_llm
             except Exception:
                 pass
             self._auto_extract_memories(

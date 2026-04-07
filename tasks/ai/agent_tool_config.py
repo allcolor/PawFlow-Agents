@@ -61,8 +61,11 @@ class AgentToolConfigMixin:
         )
         from core.handlers._fs_base import BaseFsHandler
         from core.handlers.compact_result import CompactResultHandler
+        from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
         from core.handlers.knowledge_graph import _KgBaseHandler
+        from core.handlers.memory import CheckDuplicateHandler
         from core.handlers.memory_navigate import MemoryNavigateHandler
+        from core.handlers.project_graph import ProjectGraphHandler
 
         file_base_url = self.config.get("file_base_url", "")
         # file_ttl is set per-request to match conversation TTL
@@ -129,22 +132,36 @@ class AgentToolConfigMixin:
                     h.set_conversation_id(conversation_id)
                 if hasattr(h, 'set_user_id') and user_id:
                     h.set_user_id(user_id)
-            elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler, ForgetHandler)):
+            elif isinstance(h, (RememberHandler, RecallHandler, SemanticRecallHandler,
+                                  ForgetHandler, CheckDuplicateHandler)):
                 h.set_user_id(user_id)
                 if hasattr(h, 'set_agent_name'):
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                # Wire memory LLM service for relevance filtering (RecallHandler only)
+                # Wire summarizer for relevance filtering (RecallHandler only)
                 if isinstance(h, RecallHandler) and hasattr(h, 'set_memory_llm_client'):
                     try:
-                        _mem_client, _mem_max, _mem_svc = self._get_memory_llm_client(user_id)
-                        if _mem_client:
-                            h.set_memory_llm_client(_mem_client)
+                        _sum_client, _, _ = self._get_summarizer_client(user_id)
+                        if _sum_client:
+                            h.set_memory_llm_client(_sum_client)
                     except Exception:
                         pass
             elif isinstance(h, (_KgBaseHandler, MemoryNavigateHandler)):
                 h.set_user_id(user_id)
+                if hasattr(h, 'set_agent_name'):
+                    h.set_agent_name(agent_name)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, (DiaryWriteHandler, DiaryReadHandler)):
+                h.set_user_id(user_id)
+                h.set_agent_name(agent_name)
+                if hasattr(h, 'set_conversation_id'):
+                    h.set_conversation_id(conversation_id)
+            elif isinstance(h, ProjectGraphHandler):
+                h.set_user_id(user_id)
+                h.set_conversation_id(conversation_id)
+                h.set_agent_name(agent_name)
             elif isinstance(h, (AssignTaskHandler, CompleteTaskHandler, VerifyTaskHandler)):
                 h.set_conversation_id(conversation_id)
                 h.set_agent_name(agent_name)

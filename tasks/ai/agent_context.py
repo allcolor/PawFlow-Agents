@@ -1119,7 +1119,6 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "active_agent_name": _active_agent_name,  # MUST be non-empty — see _ensure_active_agent
             "active_llm_service": _active_llm_service,
             "narrator_service": self._resolve_service_param("narrator_service", user_id),
-            "memory_llm_service": self._resolve_service_param("memory_llm_service", user_id),
             "title_llm_service": self._resolve_service_param("title_llm_service", user_id),
             "resolved_svc": resolved_svc,
             "max_budget_usd": _max_budget,

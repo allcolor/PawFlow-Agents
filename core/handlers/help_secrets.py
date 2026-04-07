@@ -353,7 +353,16 @@ Available tool tasks (use `pawflow_help topic='tasks'` for full list):
 - `tool.generate_video` — Generate a video
 - `tool.notify_user` — Send a notification to a user/conversation
 - `tool.share_file` — Create a file in the FileStore
-- `tool.remember` / `tool.recall` — Memory store/retrieve
+- `tool.remember` / `tool.recall` / `tool.forget` — Memory store/retrieve/delete
+- `tool.semantic_recall` — Search memories by vector similarity
+- `tool.check_duplicate` — Check for duplicate memories before storing
+- `tool.memory_navigate` — Browse memory taxonomy (wings/halls/rooms/tunnels)
+- `tool.kg_add` / `tool.kg_query` / `tool.kg_invalidate` — Knowledge graph triples
+- `tool.kg_timeline` / `tool.kg_stats` — KG timeline and statistics
+- `tool.query_graph` — Traverse KG with BFS/DFS
+- `tool.kg_god_nodes` / `tool.kg_surprises` / `tool.kg_hyperedges` / `tool.kg_communities` — KG analysis
+- `tool.diary_write` / `tool.diary_read` — Agent personal diary
+- `tool.project_graph` — Build/query code structure graph (AST)
 - `tool.fetch` — Fetch a web page
 - `tool.web_search` — Web search
 - `tool.execute_script` — Run a sandboxed Python script

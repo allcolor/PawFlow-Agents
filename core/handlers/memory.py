@@ -429,7 +429,7 @@ class RecallHandler(ToolHandler):
             if not entries:
                 return "No memories found matching your query."
 
-            # If memory_llm_service is configured, filter by relevance
+            # If summarizer_service is configured, filter by relevance
             if self._memory_llm_client and query:
                 entries = self._filter_by_relevance(entries, query, top_k=5)
 

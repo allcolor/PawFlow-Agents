@@ -1,5 +1,10 @@
 """AgentLoopTask mixin — summarization methods.
 
+Unified approach: ALL providers use the file-based method.
+1. Write text to FileStore
+2. LLM reads pages via tool loop, then calls compact_result
+3. Works for any size (LLM paginates), no chunking needed
+
 Extracted from tasks/ai/agent_compaction.py.
 All methods access self (AgentLoopTask instance).
 """
@@ -17,6 +22,41 @@ from core.llm_client import (
 
 logger = logging.getLogger(__name__)
 
+# Tool definitions for the mini summarizer loop (API providers)
+_READ_TOOL = LLMToolDefinition(
+    name="read",
+    description=(
+        "Read a file. Use source='filestore' for compaction files. "
+        "Supports pagination via offset (1-based line) and limit."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "path": {"type": "string", "description": "File path or FileStore ID"},
+            "offset": {"type": "integer", "description": "Start line (1-based)"},
+            "limit": {"type": "integer", "description": "Max lines to read"},
+            "source": {"type": "string", "description": "Filesystem service (use 'filestore')"},
+        },
+        "required": ["path"],
+    },
+)
+
+_COMPACT_RESULT_TOOL = LLMToolDefinition(
+    name="compact_result",
+    description=(
+        "Return the compaction summary. Call this ONCE after reading all pages. "
+        "This is the ONLY way to return a summary — do NOT respond with text."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "summary": {"type": "string", "description": "The summary text"},
+            "compact_key": {"type": "string", "description": "The compact key from instructions"},
+        },
+        "required": ["summary", "compact_key"],
+    },
+)
+
 
 class AgentSummarizeMixin:
     """Summarization methods extracted from AgentCompactionMixin."""
@@ -31,120 +71,27 @@ class AgentSummarizeMixin:
         agent_name: str = "",
         compact_instructions: str = "",
     ) -> str:
-        """Summarize messages iteratively until they fit.
+        """Summarize messages using the file-based approach.
 
-        Strategy:
+        Unified strategy (all providers):
         1. Convert messages to text
-        2. If text fits in LLM context (< 60% of max_tokens) → single summarize call
-        3. If too big → split into N chunks (each < 60% of max_tokens),
-           summarize each independently
-        4. Concatenate summaries. If still too big, repeat from step 2
-        5. Final pass: summarize combined result to ~25% of max_tokens
+        2. Write to FileStore
+        3. LLM reads pages via tool loop, calls compact_result
+        No chunking — the LLM paginates through the file itself.
         """
         if not target_tokens:
             target_tokens = max(500, int(max_tokens / 4))
 
-        # Claude-code: no chunking — write full text to file, Claude reads it via MCP
-        _provider = getattr(client, 'provider', '') or (
-            getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
-        if _provider == "claude-code":
-            total_text = "\n".join(
-                self._sanitize_for_llm(self._messages_to_text([m]))
-                for m in old_messages)
-            return self._call_summarize(client, total_text, target_tokens,
-                                       agent_name=agent_name, conversation_id=conversation_id,
-                                       compact_instructions=compact_instructions)
+        total_text = "\n".join(
+            self._sanitize_for_llm(self._messages_to_text([m]))
+            for m in old_messages)
 
-        # 60% of context = safe input limit (leaves room for system prompt + output)
-        safe_limit = int(max_tokens * 0.60)
-
-        def _pub(stage, detail=""):
-            if conversation_id:
-                try:
-                    from core.conversation_event_bus import ConversationEventBus
-                    ConversationEventBus.instance().publish_event(
-                        conversation_id, "compact_progress",
-                        {"stage": stage, "detail": detail},
-                    )
-                except Exception:
-                    pass
-
-        def _est(text: str) -> int:
-            return self._estimate_tokens([LLMMessage(role="user", content=text)])
-
-        # Convert messages to text chunks (one per message for granular splitting)
-        text_chunks = []
-        for m in old_messages:
-            text_chunks.append(self._sanitize_for_llm(self._messages_to_text([m])))
-
-        _pass = 0
-        _max_passes = 5  # safety valve
-
-        while _pass < _max_passes:
-            _pass += 1
-            total_text = "\n".join(text_chunks)
-            total_tokens = _est(total_text)
-
-            logger.info(f"[compact] Pass {_pass}: {total_tokens} tokens in "
-                        f"{len(text_chunks)} chunks (safe_limit={safe_limit})")
-
-            # If everything fits → single summary call
-            if total_tokens <= safe_limit:
-                _pub("summarizing", f"pass {_pass}: single call ({total_tokens} tokens)")
-                return self._call_summarize(client, total_text, target_tokens, agent_name=agent_name)
-
-            # Split chunks into groups that each fit in safe_limit
-            groups: List[str] = []
-            current_group: List[str] = []
-            current_tokens = 0
-            # Leave 20% margin within each group for overhead
-            group_limit = int(safe_limit * 0.80)
-
-            for chunk in text_chunks:
-                chunk_tokens = _est(chunk)
-                # If a single chunk exceeds the limit, hard-truncate it
-                if chunk_tokens > group_limit:
-                    cpt = max(1.0, len(chunk) / max(1, chunk_tokens))
-                    max_chars = int(group_limit * cpt)
-                    chunk = chunk[:max_chars] + "\n...[truncated]..."
-                    chunk_tokens = _est(chunk)
-                if current_tokens + chunk_tokens > group_limit and current_group:
-                    groups.append("\n".join(current_group))
-                    current_group = []
-                    current_tokens = 0
-                current_group.append(chunk)
-                current_tokens += chunk_tokens
-
-            if current_group:
-                groups.append("\n".join(current_group))
-
-            n_groups = len(groups)
-            logger.info(f"[compact] Pass {_pass}: split into {n_groups} groups")
-            _pub("chunking", f"pass {_pass}: {n_groups} groups")
-
-            # Summarize each group independently
-            chunk_target = max(200, target_tokens // max(1, n_groups))
-            summaries = []
-            for i, group_text in enumerate(groups):
-                _pub("summarizing", f"pass {_pass}: group {i+1}/{n_groups}")
-                try:
-                    s = self._call_summarize(client, group_text, chunk_target, agent_name=agent_name)
-                    summaries.append(s)
-                except Exception as e:
-                    logger.error(f"[compact] Group {i+1} summarization failed: {e}")
-                    # Hard fallback: just truncate
-                    cpt = max(1.0, len(group_text) / max(1, _est(group_text)))
-                    summaries.append(group_text[:int(chunk_target * cpt)] + "\n...[truncated]...")
-
-            # Replace text_chunks with the summaries for next iteration
-            text_chunks = summaries
-
-        # Exhausted max passes — concatenate what we have
-        final = "\n\n".join(text_chunks)
-        logger.warning(f"[compact] Exhausted {_max_passes} passes, "
-                       f"final size: {_est(final)} tokens")
-        return final
-
+        return self._call_summarize(
+            client, total_text, target_tokens,
+            agent_name=agent_name,
+            conversation_id=conversation_id,
+            compact_instructions=compact_instructions,
+        )
 
     def _call_summarize(self, client: LLMClient, text: str,
                         target_tokens: int = 0,
@@ -152,111 +99,27 @@ class AgentSummarizeMixin:
                         llm_service: str = "",
                         conversation_id: str = "",
                         compact_instructions: str = "") -> str:
-        """Single LLM call to summarize text. Routes to claude-code path if needed."""
+        """Summarize text via file-based tool loop (unified for all providers).
+
+        1. Write text to FileStore
+        2. For CC: use complete_stream (CC handles tool loop)
+        3. For API: run mini tool loop with read + compact_result
+        """
         logger.info(f"[compact] summarize via service='{llm_service or 'default'}', "
                      f"target={target_tokens} tokens, input={len(text)} chars")
         if not target_tokens:
             target_tokens = 2000
 
-        # Claude-code: use streaming with file + compact_result tool
-        _provider = getattr(client, 'provider', '') or (
-            getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
-        if _provider == "claude-code":
-            return self._call_summarize_via_cc(
-                client, text, target_tokens, user_id, agent_name, llm_service,
-                conversation_id, compact_instructions)
-
-        clean_text = self._sanitize_for_llm(text)
-        _focus = f"\n<focus>{compact_instructions}</focus>\n" if compact_instructions else ""
-        _prompt = (
-            "Summarize this work session into a structured summary.\n"
-            "Use this checklist — every section MUST be present:\n\n"
-            "<checklist>\n"
-            "1. USER_INTENT: What the user asked for / is working on\n"
-            "2. DECISIONS: Key technical and architectural decisions made\n"
-            "3. FILES_MODIFIED: Files changed with paths (and line ranges if relevant)\n"
-            "4. ERRORS: Errors encountered and how they were resolved (verbatim if short)\n"
-            "5. CURRENT_STATE: What was accomplished, current project state\n"
-            "6. PENDING: Unfinished tasks, next steps, what the user expects next\n"
-            "7. CONTEXT: Any important constraints, preferences, or rules established\n"
-            "</checklist>\n\n"
-            f"STRICT LIMIT: maximum {target_tokens} tokens.\n"
-            f"{_focus}\n"
-            f"Wrap your output in <summary></summary> tags.\n\n"
-            f"SESSION:\n{clean_text}"
-        )
-        try:
-            response = client.complete(
-                messages=[
-                    LLMMessage(role="user", content=_prompt),
-                ],
-                max_tokens=min(target_tokens * 2, 4000),
-            )
-            logger.info(f"[compact] LLM response: content={len(response.content or '')} chars, "
-                        f"thinking={len(getattr(response, 'thinking', '') or '')} chars, "
-                        f"tokens_in={response.tokens_in}, tokens_out={response.tokens_out}, "
-                        f"model={response.model}")
-        except Exception as e:
-            err_str = str(e)
-            if "parse" in err_str.lower() or "500" in err_str:
-                # Find the approximate problematic position
-                import re as _re
-                pos_match = _re.search(r'pos (\d+)', err_str)
-                pos = int(pos_match.group(1)) if pos_match else -1
-                context_start = max(0, pos - 100)
-                context_end = min(len(clean_text), pos + 100)
-                snippet = clean_text[context_start:context_end]
-                # Show char codes around the problem area
-                if pos >= 0 and pos < len(clean_text):
-                    char_codes = [f"0x{ord(c):04x}" for c in clean_text[max(0,pos-5):pos+5]]
-                else:
-                    char_codes = []
-                logger.error(
-                    f"[compact] Summarization parse error at pos {pos}, "
-                    f"text_len={len(clean_text)}, "
-                    f"nearby_chars={char_codes}, "
-                    f"snippet=...{repr(snippet)}..."
-                )
-                # Fallback: aggressively strip non-ASCII and retry
-                ascii_text = clean_text.encode("ascii", errors="replace").decode("ascii")
-                try:
-                    response = client.complete(
-                        messages=[
-                            LLMMessage(role="system", content=(
-                                "You are a conversation summarizer. Summarize concisely, "
-                                "preserving key facts, decisions, and findings."
-                            )),
-                            LLMMessage(role="user", content=ascii_text),
-                        ],
-                        temperature=0.3,
-                        max_tokens=2000,
-                    )
-                    logger.info("[compact] ASCII fallback succeeded")
-                except Exception as e2:
-                    logger.error(f"[compact] ASCII fallback also failed: {e2}")
-                    raise
-            else:
-                raise
-        summary = response.content
-        logger.info(f"[compact] Summarized {len(text)} chars into {len(summary)} chars "
-                    f"({self._estimate_tokens([LLMMessage(role='user', content=summary)])} tokens)")
-        # Track summarizer token usage
-        if response.tokens_in > 0 and (user_id or agent_name):
-            self._track_tokens(
-                user_id or "system", response.tokens_in, response.tokens_out,
-                model=response.model or "", agent_name=agent_name or "summarizer",
-                llm_service=llm_service or "summarizer")
-        return summary
-
-
-    def _call_summarize_via_cc(self, client, text: str, target_tokens: int,
-                              user_id: str = "", agent_name: str = "",
-                              llm_service: str = "",
-                              conversation_id: str = "",
-                              compact_instructions: str = "") -> str:
-        """Summarize via Claude Code streaming — write file, ask Claude to read + call compact_result."""
         from core.file_store import FileStore
         from core.handlers.compact_result import set_compact_key, wait_for_compact_result
+
+        compact_key = "CK_" + uuid.uuid4().hex[:8]
+        file_id = FileStore.instance().store(
+            "compact_input.txt", text.encode("utf-8"), "text/plain",
+            category="compact")
+        logger.info("[compact] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
+
+        set_compact_key(compact_key)
 
         def _pub(detail):
             if conversation_id:
@@ -268,47 +131,63 @@ class AgentSummarizeMixin:
                 except Exception:
                     pass
 
-        compact_key = "CK_" + uuid.uuid4().hex[:8]
-        file_id = FileStore.instance().store(
-            "compact_input.txt", text.encode("utf-8"), "text/plain",
-            category="compact")
-        logger.info("[compact-cc] wrote %d chars as %s, key=%s", len(text), file_id, compact_key)
-
-        set_compact_key(compact_key)
-
+        _focus = f"\n- FOCUS: {compact_instructions}" if compact_instructions else ""
         prompt = (
-            f"You are a summarizer. You have EXACTLY 2 tasks:\n\n"
-            f"TASK 1: Read the file by calling:\n"
-            f"  mcp__pawflow__use_tool(tool_name='read', arguments={{\"path\": \"{file_id}\", \"source\": \"filestore\"}})\n"
-            f"  The file is large — paginate with offset/limit until you've read it all.\n\n"
-            f"TASK 2: After reading ALL pages, summarize and deliver by calling:\n"
-            f"  mcp__pawflow__use_tool(tool_name='compact_result', arguments={{\"summary\": \"<your summary>\", \"compact_key\": \"{compact_key}\"}})\n\n"
+            f"You are a summarizer. Read the file and produce a structured summary.\n\n"
+            f"STEP 1: Read the file:\n"
+            f"  read(path=\"{file_id}\", source=\"filestore\")\n"
+            f"  The file may be large — paginate with offset/limit until you've read ALL of it.\n\n"
+            f"STEP 2: After reading ALL pages, deliver your summary:\n"
+            f"  compact_result(summary=\"<your summary>\", compact_key=\"{compact_key}\")\n\n"
             f"RULES:\n"
-            f"- You may ONLY call these 2 tools: 'read' and 'compact_result'. NO other tools.\n"
-            f"- Do NOT call get_tool_schema, execute_script, bash, grep, or anything else.\n"
+            f"- You may ONLY use these 2 tools: read and compact_result.\n"
             f"- Do NOT respond with text. Your ONLY output is tool calls.\n"
             f"- Summary must be maximum {target_tokens} tokens.\n"
             f"- Use this checklist — every section MUST be present:\n"
             f"  1. USER_INTENT 2. DECISIONS 3. FILES_MODIFIED (with paths)\n"
             f"  4. ERRORS 5. CURRENT_STATE 6. PENDING 7. CONTEXT\n"
-            f"- Skip raw tool output, JSON blobs, and technical plumbing.\n"
-            + (f"- FOCUS: {compact_instructions}\n" if compact_instructions else "") +
-            f"\ncompact_key (use EXACTLY this, do NOT invent one): {compact_key}"
+            f"- Skip raw tool output, JSON blobs, and technical plumbing."
+            f"{_focus}\n"
+            f"\ncompact_key (use EXACTLY this): {compact_key}"
         )
 
-        _pub(f"Compacting {len(text)} chars via Claude Code...")
+        _pub(f"Compacting {len(text)} chars...")
+
+        # Detect provider
+        _provider = getattr(client, 'provider', '') or (
+            getattr(client, '_client', None) and getattr(client._client, 'provider', ''))
+
+        max_retries = 3
+        try:
+            if _provider == "claude-code":
+                return self._summarize_via_cc(
+                    client, prompt, file_id, compact_key, target_tokens,
+                    max_retries, _pub, conversation_id)
+            else:
+                return self._summarize_via_api(
+                    client, prompt, file_id, compact_key, target_tokens,
+                    max_retries, _pub)
+        finally:
+            try:
+                FileStore.instance().delete(file_id)
+            except Exception:
+                pass
+
+    def _summarize_via_cc(self, client, prompt: str, file_id: str,
+                          compact_key: str, target_tokens: int,
+                          max_retries: int, _pub, conversation_id: str) -> str:
+        """Run summarization via Claude Code streaming (CC handles tool loop)."""
+        from core.handlers.compact_result import set_compact_key, wait_for_compact_result
 
         # Save and clear session — compact uses a temporary session
-        # The LLMClient may be nested inside a service wrapper
         _inner = getattr(client, '_client', client)
         _saved_conv = getattr(_inner, '_conversation_id', '')
         _saved_agent = getattr(_inner, '_agent_name', '')
         _saved_event_cid = getattr(_inner, '_event_cid', '')
         _inner._conversation_id = ''
         _inner._agent_name = 'compact'
-        _inner._event_cid = ''  # prevent SSE events from leaking to parent conv
+        _inner._event_cid = ''
 
-        max_retries = 3
         try:
             for attempt in range(1, max_retries + 1):
                 _pub(f"Compacting... attempt {attempt}/{max_retries}")
@@ -316,9 +195,9 @@ class AgentSummarizeMixin:
                 if attempt > 1:
                     prompt = (
                         f"RETRY {attempt}/{max_retries}. ONLY 2 tools allowed:\n"
-                        f"1. mcp__pawflow__use_tool(tool_name='read', arguments={{\"path\": \"{file_id}\", \"source\": \"filestore\"}})\n"
-                        f"2. mcp__pawflow__use_tool(tool_name='compact_result', arguments={{\"summary\": \"...\", \"compact_key\": \"{compact_key}\"}})\n"
-                        f"Read the file, summarize in {target_tokens} tokens, call compact_result. NO other tools."
+                        f"1. read(path=\"{file_id}\", source=\"filestore\")\n"
+                        f"2. compact_result(summary=\"...\", compact_key=\"{compact_key}\")\n"
+                        f"Read the file, summarize in {target_tokens} tokens, call compact_result."
                     )
                     set_compact_key(compact_key)
                 try:
@@ -336,21 +215,18 @@ class AgentSummarizeMixin:
                 try:
                     summary = wait_for_compact_result(compact_key, timeout=10)
                     if summary:
-                        logger.info("[compact-cc] got %d chars summary (attempt %d)", len(summary), attempt)
+                        logger.info("[compact-cc] got %d chars summary (attempt %d)",
+                                    len(summary), attempt)
                         return summary
                 except TimeoutError:
                     logger.warning("[compact-cc] attempt %d: compact_result not called", attempt)
 
-            raise RuntimeError("Claude Code failed to call compact_result after 3 attempts")
+            raise RuntimeError("Claude Code failed to call compact_result after retries")
         finally:
             _inner._conversation_id = _saved_conv
             _inner._agent_name = _saved_agent
             _inner._event_cid = _saved_event_cid
-            try:
-                FileStore.instance().delete(file_id)
-            except Exception:
-                pass
-            # Clean compact workdir — session data is disposable
+            # Clean compact workdir
             try:
                 import shutil
                 from core.llm_providers.claude_code import _SESSIONS_BASE
@@ -362,20 +238,121 @@ class AgentSummarizeMixin:
             except Exception:
                 pass
 
-    def _call_summarize_with_budget(self, client: LLMClient,
-                                     text: str, max_tokens: int) -> str:
-        """Re-summarize text to fit within an approximate token budget."""
-        clean = self._sanitize_for_llm(text)
-        response = client.complete(
-            messages=[
-                LLMMessage(role="system", content=(
-                    f"Summarize the following text in approximately {max_tokens} tokens. "
-                    "Preserve all key facts, decisions, findings, and context. "
-                    "Be concise but complete. Do NOT exceed the token budget."
-                )),
-                LLMMessage(role="user", content=clean),
-            ],
-            temperature=0.3,
-            max_tokens=min(max_tokens * 2, 4096),
-        )
-        return response.content
+    def _summarize_via_api(self, client, prompt: str, file_id: str,
+                           compact_key: str, target_tokens: int,
+                           max_retries: int, _pub) -> str:
+        """Run summarization via API tool loop (OpenAI, Anthropic, Gemini).
+
+        Mini agent loop: send prompt with read + compact_result tools,
+        execute tool calls, feed results back, repeat until compact_result
+        is called or max iterations.
+        """
+        from core.handlers.compact_result import set_compact_key, wait_for_compact_result
+        from core.handlers.read import ReadHandler
+
+        read_handler = ReadHandler()
+        tools = [_READ_TOOL, _COMPACT_RESULT_TOOL]
+        max_loop = 15  # max tool-loop iterations (read pages + compact)
+
+        for attempt in range(1, max_retries + 1):
+            _pub(f"Compacting via API... attempt {attempt}/{max_retries}")
+            logger.info("[compact-api] attempt %d/%d", attempt, max_retries)
+
+            if attempt > 1:
+                prompt = (
+                    f"RETRY {attempt}/{max_retries}. ONLY 2 tools:\n"
+                    f"1. read(path=\"{file_id}\", source=\"filestore\")\n"
+                    f"2. compact_result(summary=\"...\", compact_key=\"{compact_key}\")\n"
+                    f"Read the file, summarize in {target_tokens} tokens, call compact_result."
+                )
+                set_compact_key(compact_key)
+
+            messages = [LLMMessage(role="user", content=prompt)]
+
+            for iteration in range(max_loop):
+                try:
+                    response = client.complete(
+                        messages=messages,
+                        max_tokens=min(target_tokens * 3, 8000),
+                        tools=tools,
+                        temperature=0.3,
+                    )
+                except Exception as e:
+                    logger.error("[compact-api] LLM call failed (attempt %d, iter %d): %s",
+                                 attempt, iteration, e)
+                    break
+
+                # No tool calls = LLM responded with text (shouldn't happen, but handle it)
+                if not response.tool_calls:
+                    # Check if compact_result was delivered via the global mechanism
+                    try:
+                        summary = wait_for_compact_result(compact_key, timeout=1)
+                        if summary:
+                            return summary
+                    except (TimeoutError, RuntimeError):
+                        pass
+                    # If the LLM just returned text, use it as the summary directly
+                    if response.content and len(response.content.strip()) > 50:
+                        logger.warning("[compact-api] LLM returned text instead of tool call, "
+                                       "using as summary (%d chars)", len(response.content))
+                        return response.content
+                    break
+
+                # Process tool calls
+                assistant_msg = LLMMessage(
+                    role="assistant", content=response.content or "",
+                    tool_calls=response.tool_calls)
+                messages.append(assistant_msg)
+
+                for tc in response.tool_calls:
+                    args = tc.arguments if isinstance(tc.arguments, dict) else {}
+                    tool_name = tc.name
+
+                    if tool_name == "compact_result":
+                        # Execute compact_result directly
+                        from core.handlers.compact_result import CompactResultHandler
+                        handler = CompactResultHandler()
+                        handler.execute(args)
+                        # Retrieve result
+                        try:
+                            summary = wait_for_compact_result(compact_key, timeout=5)
+                            if summary:
+                                logger.info("[compact-api] got %d chars summary "
+                                            "(attempt %d, iter %d)",
+                                            len(summary), attempt, iteration)
+                                return summary
+                        except (TimeoutError, RuntimeError):
+                            pass
+                        # Fallback: extract from arguments directly
+                        direct_summary = args.get("summary", "")
+                        if direct_summary and len(direct_summary.strip()) > 50:
+                            logger.info("[compact-api] got summary from args directly "
+                                        "(%d chars)", len(direct_summary))
+                            return direct_summary
+                        messages.append(LLMMessage(
+                            role="tool", content="Summary received.",
+                            tool_call_id=tc.id))
+
+                    elif tool_name == "read":
+                        # Execute read via handler
+                        result = read_handler.execute(args)
+                        messages.append(LLMMessage(
+                            role="tool", content=result,
+                            tool_call_id=tc.id))
+
+                    else:
+                        messages.append(LLMMessage(
+                            role="tool",
+                            content=f"Error: only 'read' and 'compact_result' tools are available.",
+                            tool_call_id=tc.id))
+
+            # Check if compact_result was called during this attempt
+            try:
+                summary = wait_for_compact_result(compact_key, timeout=2)
+                if summary:
+                    return summary
+            except (TimeoutError, RuntimeError):
+                pass
+            logger.warning("[compact-api] attempt %d: compact_result not called", attempt)
+
+        raise RuntimeError(f"API summarizer failed to call compact_result after {max_retries} attempts")

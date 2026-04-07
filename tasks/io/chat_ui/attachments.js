@@ -330,11 +330,18 @@ async function send() {
 
 function handleKey(e) {
   const input = e.target;
-  // Escape: stop/interrupt current agent
+  // Escape: force stop the selected/active agent
   if (e.key === 'Escape') {
     e.preventDefault();
-    const target = selectedAgent || 'ALL';
-    cmdAgentInterrupt(target);
+    // selectedAgent should ALWAYS have a value — resolve from active panel as fallback
+    let target = selectedAgent;
+    if (!target) {
+      const activeNames = Object.values(activeInteractions || {}).map(a => a.name || a.apiName);
+      target = activeNames.length === 1 ? activeNames[0] : '';
+    }
+    if (!target) return; // nothing to stop
+    addMsg('system', 'Stopping ' + target + '...');
+    fireAction('cancel', { agent_name: target, force: true });
     return;
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {

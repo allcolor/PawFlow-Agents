@@ -708,7 +708,9 @@ class UpdatePlanHandler(_PlanHandlerBase):
                 continue
             for s in plan["steps"]:
                 if s["index"] == step_num:
-                    # If marking done and there's a verifier, intercept
+                    # Only the CURRENT step (in_progress) can be updated
+                    if s["status"] != "in_progress":
+                        break
                     if status == "done":
                         verifier = (s.get("verifier") or
                                     plan.get("verifier", ""))

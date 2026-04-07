@@ -81,6 +81,8 @@ class BashHandler(BaseFsHandler):
                 "path": {"type": "string", "description": "Working directory for the command"},
                 "max_output": {"type": "integer", "description": "Max output chars (default: 30000, max: 150000)"},
                 "relay": {"type": "string", "description": "Relay service name. Omit for default."},
+                "source": {"type": "string", "description": "Alias for relay."},
+                "filesystem": {"type": "string", "description": "Alias for relay."},
             },
             "required": ["command"],
         }
@@ -121,7 +123,7 @@ class BashHandler(BaseFsHandler):
         if arguments.get("run_in_background"):
             return self._run_background(command, arguments)
 
-        relay = arguments.get("relay", "")
+        relay = arguments.get("relay", "") or arguments.get("source", "") or arguments.get("filesystem", "")
         svc, workdir = self._resolve(relay)
 
         # Workdir fallback (Claude Code container — exec local)

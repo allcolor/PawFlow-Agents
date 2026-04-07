@@ -2,6 +2,7 @@
 
 import logging
 import re
+import subprocess
 from typing import Any, Dict, Optional
 
 from core.handlers._fs_base import BaseFsHandler, cap_binary_output
@@ -84,6 +85,20 @@ class BashHandler(BaseFsHandler):
             "required": ["command"],
         }
 
+    # Background task storage: bg_id → {thread, output_file, command, started_at}
+    _bg_tasks: Dict[str, dict] = {}
+
+    def _resolve_timeout(self, arguments: dict) -> int:
+        """Resolve timeout: CC sends milliseconds, convert to seconds."""
+        raw = arguments.get("timeout")
+        if raw is None:
+            return 120  # default 2 minutes
+        raw = int(raw)
+        # CC sends milliseconds (max 600000). If > 1000, assume ms.
+        if raw > 1000:
+            return min(raw // 1000, 600)
+        return min(raw, 600)
+
     def execute(self, arguments: Dict[str, Any]) -> str:
         arguments = self._unwrap_json(arguments)
         arguments = self._resolve_expressions(arguments)
@@ -92,10 +107,19 @@ class BashHandler(BaseFsHandler):
             logger.warning("[bash] called with empty command. raw args: %s", repr(arguments)[:300])
             return "(no command provided — ignored)"
 
+        # Log description if provided (CC UI metadata)
+        desc = arguments.get("description", "")
+        if desc:
+            logger.info("[bash] %s: %s", desc, command[:100])
+
         # Defense-in-depth: block known dangerous patterns
         danger = _check_dangerous_command(command)
         if danger:
             return danger
+
+        # Background execution: run in thread, return immediately
+        if arguments.get("run_in_background"):
+            return self._run_background(command, arguments)
 
         relay = arguments.get("relay", "")
         svc, workdir = self._resolve(relay)
@@ -121,10 +145,9 @@ class BashHandler(BaseFsHandler):
             _bash_default = 30000
             _bash_max = 150000
             _max_out = min(int(arguments.get("max_output", _bash_default) or _bash_default), _bash_max)
+            timeout = self._resolve_timeout(arguments)
 
-            _exec_kwargs = {"shell": shell}
-            if "timeout" in arguments:
-                _exec_kwargs["timeout"] = arguments["timeout"]
+            _exec_kwargs = {"shell": shell, "timeout": timeout}
             # Pass secret env vars (injected by tool_relay_service)
             if arguments.get("_secret_env"):
                 _exec_kwargs["env"] = arguments["_secret_env"]
@@ -145,36 +168,81 @@ class BashHandler(BaseFsHandler):
         except Exception as e:
             return f"Error executing command: {e}"
 
-    def _exec_local(self, command: str, arguments: dict) -> str:
-        """Execute locally in the agent workdir (Claude Code container mode)."""
+    def _run_background(self, command: str, arguments: dict) -> str:
+        """Run command in background thread, store output to temp file."""
+        import threading, tempfile, os, time, uuid
+        bg_id = f"bg_{uuid.uuid4().hex[:8]}"
+        relay = arguments.get("relay", "")
+        svc, workdir = self._resolve(relay)
+
+        # Output file in workdir or temp
+        if workdir:
+            out_dir = workdir
+        else:
+            out_dir = tempfile.gettempdir()
+        out_path = os.path.join(out_dir, f".bash_bg_{bg_id}.out")
+
+        def _bg_run():
+            try:
+                if workdir:
+                    result = self._exec_local_raw(command, arguments)
+                elif svc and svc != "filestore":
+                    path = arguments.get("path", ".")
+                    shell = arguments.get("shell", "")
+                    timeout = self._resolve_timeout(arguments)
+                    result = svc.exec(path, command, shell=shell, timeout=timeout)
+                else:
+                    result = {"stdout": "Error: no relay", "returncode": 1}
+                output = result.get("stdout", "")
+                if result.get("stderr"):
+                    output += "\nSTDERR:\n" + result["stderr"]
+                if result.get("returncode", 0) != 0:
+                    output += f"\n(exit code: {result['returncode']})"
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(output or "(no output)")
+            except Exception as e:
+                with open(out_path, "w", encoding="utf-8") as f:
+                    f.write(f"Error: {e}")
+
+        thread = threading.Thread(target=_bg_run, daemon=True, name=f"bash-bg-{bg_id}")
+        thread.start()
+        BashHandler._bg_tasks[bg_id] = {
+            "thread": thread, "output_file": out_path,
+            "command": command[:100], "started_at": time.time(),
+        }
+        return f"Background command started (id: {bg_id}). Output file: {out_path}\nUse read(path=\"{out_path}\") to check output."
+
+    def _exec_local_raw(self, command: str, arguments: dict) -> dict:
+        """Execute locally, return dict with stdout/stderr/returncode."""
         import subprocess
         shell_name = arguments.get("shell", "") or "bash"
         cwd = arguments.get("path", "") or self._workdir
         if cwd and not cwd.startswith("/"):
             cwd = self._sandbox_path(cwd, self._workdir)
-
+        timeout = self._resolve_timeout(arguments)
         _run_kwargs = dict(shell=True, capture_output=True, text=True,
-                           cwd=cwd or self._workdir)
-        if "timeout" in arguments:
-            _run_kwargs["timeout"] = arguments["timeout"]
-        # Inject secret env vars
+                           cwd=cwd or self._workdir, timeout=timeout)
         if arguments.get("_secret_env"):
             import os
             _env = os.environ.copy()
             _env.update(arguments["_secret_env"])
             _run_kwargs["env"] = _env
+        result = subprocess.run(command, **_run_kwargs,
+            executable=f"/bin/{shell_name}" if shell_name in ("bash", "sh") else None)
+        return {"stdout": result.stdout, "stderr": result.stderr, "returncode": result.returncode}
 
+    def _exec_local(self, command: str, arguments: dict) -> str:
+        """Execute locally in the agent workdir (Claude Code container mode)."""
         try:
-            result = subprocess.run(command, **_run_kwargs,
-                executable=f"/bin/{shell_name}" if shell_name in ("bash", "sh") else None,
-            )
-            output = result.stdout
-            if result.stderr:
-                output += "\nSTDERR:\n" + result.stderr
-            if result.returncode != 0:
-                output += f"\n(exit code: {result.returncode})"
+            result = self._exec_local_raw(command, arguments)
+            output = result["stdout"]
+            if result["stderr"]:
+                output += "\nSTDERR:\n" + result["stderr"]
+            if result["returncode"] != 0:
+                output += f"\n(exit code: {result['returncode']})"
             return output or "(no output)"
         except subprocess.TimeoutExpired:
+            timeout = self._resolve_timeout(arguments)
             return f"Error: command timed out after {timeout}s"
         except Exception as e:
             return f"Error: {e}"

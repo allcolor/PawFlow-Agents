@@ -233,6 +233,28 @@ class ConversationStore:
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
 
     @staticmethod
+    def _prefix_content(content, prefix: str):
+        """Prefix content with a tag. Handles both string and multipart (list) content."""
+        if isinstance(content, str):
+            return f"{prefix}\n{content}"
+        if isinstance(content, list):
+            # Multipart: prepend text block with prefix
+            return [{"type": "text", "text": prefix}] + list(content)
+        return f"{prefix}\n{content}"
+
+    @staticmethod
+    def _strip_prefix(content, prefix: str):
+        """Strip a prefix tag from content. Handles both string and multipart (list)."""
+        if isinstance(content, str):
+            full = prefix + "\n"
+            return content[len(full):] if content.startswith(full) else content
+        if isinstance(content, list) and content:
+            first = content[0]
+            if isinstance(first, dict) and first.get("type") == "text" and first.get("text") == prefix:
+                return content[1:]
+        return content
+
+    @staticmethod
     def _transform_for_shared(msg: Dict) -> Dict:
         """Transform a message for the shared (agent-neutral) context.
 
@@ -249,12 +271,14 @@ class ConversationStore:
             if not agent_name:
                 raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
             m["role"] = "user"
-            m["content"] = f"[Agent {agent_name}]:\n{m.get('content', '')}"
+            m["content"] = ConversationStore._prefix_content(
+                m.get("content", ""), f"[Agent {agent_name}]:")
 
         elif src_type == "user":
             target = src.get("target_agent", "")
             if target:
-                m["content"] = f"[User to agent {target}]:\n{m.get('content', '')}"
+                m["content"] = ConversationStore._prefix_content(
+                    m.get("content", ""), f"[User to agent {target}]:")
 
         return m
 
@@ -277,12 +301,14 @@ class ConversationStore:
                 raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
             if agent_name != receiving_agent:
                 m["role"] = "user"
-                m["content"] = f"[Agent {agent_name}]:\n{m.get('content', '')}"
+                m["content"] = ConversationStore._prefix_content(
+                    m.get("content", ""), f"[Agent {agent_name}]:")
 
         elif src_type == "user":
             target = src.get("target_agent", "")
             if target and target != receiving_agent:
-                m["content"] = f"[User to agent {target}]:\n{m.get('content', '')}"
+                m["content"] = ConversationStore._prefix_content(
+                    m.get("content", ""), f"[User to agent {target}]:")
 
         return m
 
@@ -298,18 +324,15 @@ class ConversationStore:
         m = dict(msg)
         src = m.get("source") or {}
         src_type = src.get("type", "")
-        content = m.get("content", "")
 
         if src_type == "agent" and src.get("name") == agent_name:
-            prefix = f"[Agent {agent_name}]:\n"
-            if content.startswith(prefix):
-                m["content"] = content[len(prefix):]
+            m["content"] = ConversationStore._strip_prefix(
+                m.get("content", ""), f"[Agent {agent_name}]:")
             m["role"] = "assistant"
 
         elif src_type == "user" and src.get("target_agent") == agent_name:
-            prefix = f"[User to agent {agent_name}]:\n"
-            if content.startswith(prefix):
-                m["content"] = content[len(prefix):]
+            m["content"] = ConversationStore._strip_prefix(
+                m.get("content", ""), f"[User to agent {agent_name}]:")
 
         return m
 

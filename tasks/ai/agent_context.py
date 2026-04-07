@@ -1032,6 +1032,16 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             pass
 
+        # Inject agent diary digest
+        try:
+            from core.agent_diary import AgentDiary
+            _diary = AgentDiary.instance().build_diary_digest(
+                user_id, _active_agent_name)
+            if _diary:
+                system_prompt += f"\n\n## Your diary (past observations)\n{_diary}"
+        except Exception:
+            pass
+
         # Final update: inject the fully-built system_prompt into messages[0]
         # (must happen AFTER all modifications: narration, resilience, FS context, memory digest)
         if messages and messages[0].role == "system":

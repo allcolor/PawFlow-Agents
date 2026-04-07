@@ -25,7 +25,8 @@ class MemoryEntry:
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
                  "embedding", "agent", "conversation_id",
-                 "wing", "hall", "room", "valid_from", "ended")
+                 "wing", "hall", "room", "valid_from", "ended",
+                 "drawer_text", "closet_text")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
@@ -33,7 +34,8 @@ class MemoryEntry:
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
                  wing: str = "", hall: str = "", room: str = "",
-                 valid_from: float = 0, ended: float = 0):
+                 valid_from: float = 0, ended: float = 0,
+                 drawer_text: str = "", closet_text: str = ""):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -48,6 +50,8 @@ class MemoryEntry:
         self.room = room    # specific topic (e.g. 'auth', 'docker')
         self.valid_from = valid_from  # 0 = valid since creation
         self.ended = ended            # 0 = still valid
+        self.drawer_text = drawer_text  # verbatim original (empty = text IS the drawer)
+        self.closet_text = closet_text  # AAAK compressed summary (empty = not compressed)
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -74,6 +78,10 @@ class MemoryEntry:
             d["valid_from"] = self.valid_from
         if self.ended:
             d["ended"] = self.ended
+        if self.drawer_text:
+            d["drawer_text"] = self.drawer_text
+        if self.closet_text:
+            d["closet_text"] = self.closet_text
         return d
 
     @classmethod
@@ -93,6 +101,8 @@ class MemoryEntry:
             room=data.get("room", ""),
             valid_from=data.get("valid_from", 0),
             ended=data.get("ended", 0),
+            drawer_text=data.get("drawer_text", ""),
+            closet_text=data.get("closet_text", ""),
         )
 
     def matches(self, query: str) -> bool:
@@ -175,11 +185,23 @@ class MemoryStore:
                     self._save_user(user_id)
                     return e
 
+            # Generate AAAK closet (compressed version)
+            _closet = ""
+            try:
+                from core.aaak_dialect import Dialect
+                _dialect = Dialect()
+                _closet = _dialect.compress(text, metadata={
+                    "wing": wing, "room": room,
+                })
+            except Exception:
+                pass
             entry = MemoryEntry(text=text, tags=tags, source=source,
                                 embedding=embedding, agent=agent,
                                 conversation_id=conversation_id,
                                 wing=wing, hall=hall, room=room,
-                                valid_from=valid_from)
+                                valid_from=valid_from,
+                                drawer_text=text,  # verbatim original
+                                closet_text=_closet)  # AAAK compressed
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -190,7 +212,8 @@ class MemoryStore:
                agent_name: str = "",
                conversation_id: str = "",
                wing: str = "", hall: str = "", room: str = "",
-               as_of: float = 0) -> List[MemoryEntry]:
+               as_of: float = 0,
+               verbatim: bool = False) -> List[MemoryEntry]:
         """Retrieve memories matching query and/or tags.
 
         Scoping: returns memories visible to this agent in this conversation.

@@ -244,6 +244,9 @@ def create_default_registry() -> ToolRegistry:
     registry.register(ForgetHandler())
     from core.handlers.memory import CheckDuplicateHandler
     registry.register(CheckDuplicateHandler())
+    from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
+    registry.register(DiaryWriteHandler())
+    registry.register(DiaryReadHandler())
 
     # Knowledge Graph handlers
     from core.handlers.knowledge_graph import (

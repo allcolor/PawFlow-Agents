@@ -346,6 +346,24 @@ const HELP_DATA = {
       + '  /memory del <id>                     \u2014 Delete a memory\n'
       + '  /memory search <query>               \u2014 Search memories by text',
   },
+  '/kg': {
+    usage: '/kg [panel | add <s> <p> <o> | stats]',
+    short: 'Knowledge Graph — view, add and invalidate triples',
+    detail: 'Browse and manage the knowledge graph.\n\n'
+      + '  /kg                                  \u2014 Open KG panel (visual editor)\n'
+      + '  /kg panel                            \u2014 Open KG panel\n'
+      + '  /kg add <subject> <predicate> <object> \u2014 Quick-add a triple\n'
+      + '  /kg stats                            \u2014 Show KG statistics in chat',
+  },
+  '/diary': {
+    usage: '/diary [panel | list [type] | add <text> [#tag1 #tag2]]',
+    short: 'Agent diary (observations, decisions, learnings)',
+    detail: 'View and add entries to the current agent\'s personal diary.\n\n'
+      + '  /diary                               \u2014 Open diary panel (visual editor)\n'
+      + '  /diary list                          \u2014 List recent diary entries in chat\n'
+      + '  /diary list <type>                   \u2014 Filter by type (observation/decision/learning/reflection)\n'
+      + '  /diary add <text> [#tag1 #tag2]      \u2014 Quick add an observation entry',
+  },
   '/install': {
     usage: '/install <filename.py>',
     short: 'Install a custom tool',
@@ -557,6 +575,16 @@ const HELP_DATA = {
     short: 'Re-authenticate',
     detail: 'Redirects to the login page.',
   },
+  '/graph': {
+    usage: '/graph [panel | build | report | query <question>]',
+    short: 'Project graph — view code structure',
+    detail: 'Build, view and query the project code structure graph (AST-based).\n\n'
+      + '  /graph                   \u2014 Open project graph panel\n'
+      + '  /graph panel             \u2014 Open project graph panel\n'
+      + '  /graph build             \u2014 Build/rebuild graph from codebase (requires relay)\n'
+      + '  /graph report            \u2014 Show graph report (stats, god nodes)\n'
+      + '  /graph query <question>  \u2014 Search graph for matching edges',
+  },
 };
 
 function resolveAgentName(nameOrNick) {
@@ -673,6 +701,7 @@ const _CMD_HANDLERS = {
   '/cost':          (text, parts, cmd) => cmdCost(text),
   '/usage':         (text, parts, cmd) => cmdUsageDeprecated(),
   '/memory':        (text, parts, cmd) => cmdMemory(text, parts),
+  '/diary':         (text, parts, cmd) => cmdDiary(text, parts),
   '/tools':         (text, parts, cmd) => cmdToolsCmd(),
   '/model':         (text, parts, cmd) => cmdModel(text, parts),
   '/debug':         (text, parts, cmd) => cmdDebug(text, parts),
@@ -688,6 +717,8 @@ const _CMD_HANDLERS = {
   '/files':         (text, parts, cmd) => cmdFiles(),
   '/flows':         (text, parts, cmd) => cmdFlows(),
   '/tasks':         (text, parts, cmd) => cmdTasks(),
+  '/graph':         (text, parts, cmd) => cmdGraph(text, parts),
+  '/kg':            (text, parts, cmd) => cmdKg(text, parts),
 
   // Terminal / code-server (terminal.js)
   '/terminal':      (text, parts, cmd) => cmdTerminal(text, parts),

@@ -328,7 +328,10 @@ class ConversationStore:
 
         elif src_type == "user":
             target = src.get("target_agent", "")
-            if target and target != receiving_agent:
+            is_btw_msg = bool(src.get("btw"))
+            # btw user messages are ALWAYS prefixed (sub-context, even for target agent)
+            # Normal user messages only prefixed for non-target agents
+            if target and (target != receiving_agent or is_btw_msg):
                 m["content"] = ConversationStore._prefix_content(
                     m.get("content", ""), ConversationStore._user_prefix(target, src))
 

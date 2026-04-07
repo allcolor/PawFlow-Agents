@@ -313,6 +313,88 @@ class KnowledgeGraph:
             scored.sort(key=lambda x: -x["score"])
             return scored[:limit]
 
+    # ── Community detection ───────────────────────────────────────
+
+    def detect_communities(self, max_iterations: int = 20) -> Dict[int, List[str]]:
+        """Detect communities using label propagation (no external deps).
+
+        Returns {community_id: [entity_names]}, ordered by size descending.
+        """
+        import random
+        with self._lock:
+            # Build undirected adjacency from active triples
+            adj: Dict[str, set] = {}
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                adj.setdefault(t["subject"], set()).add(t["object"])
+                adj.setdefault(t["object"], set()).add(t["subject"])
+
+            if not adj:
+                return {}
+
+            # Initialize: each node in its own community
+            labels = {node: i for i, node in enumerate(adj)}
+            nodes = list(adj.keys())
+
+            for _ in range(max_iterations):
+                changed = False
+                random.shuffle(nodes)
+                for node in nodes:
+                    if not adj[node]:
+                        continue
+                    # Count neighbor labels
+                    counts: Dict[int, int] = {}
+                    for neighbor in adj[node]:
+                        nl = labels.get(neighbor, -1)
+                        if nl >= 0:
+                            counts[nl] = counts.get(nl, 0) + 1
+                    if not counts:
+                        continue
+                    # Pick most frequent label
+                    best = max(counts, key=counts.get)
+                    if labels[node] != best:
+                        labels[node] = best
+                        changed = True
+                if not changed:
+                    break
+
+            # Group by label
+            groups: Dict[int, List[str]] = {}
+            for node, label in labels.items():
+                groups.setdefault(label, []).append(node)
+
+            # Re-index by size descending
+            sorted_groups = sorted(groups.values(), key=len, reverse=True)
+            return {i: members for i, members in enumerate(sorted_groups)}
+
+    def get_communities_report(self) -> str:
+        """Generate a text report of communities."""
+        communities = self.detect_communities()
+        if not communities:
+            return "No communities detected (KG is empty)."
+        lines = [f"Communities ({len(communities)}):"]
+        for cid, members in communities.items():
+            # Compute cohesion: ratio of intra-community edges to total edges of members
+            member_set = set(members)
+            intra = 0
+            total = 0
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                s_in = t["subject"] in member_set
+                o_in = t["object"] in member_set
+                if s_in or o_in:
+                    total += 1
+                if s_in and o_in:
+                    intra += 1
+            cohesion = intra / max(total, 1)
+            sample = ", ".join(members[:5])
+            if len(members) > 5:
+                sample += f", ... +{len(members) - 5}"
+            lines.append(f"  [{cid}] {len(members)} entities (cohesion: {cohesion:.2f}): {sample}")
+        return "\n".join(lines)
+
     # ── Confidence helpers ─────────────────────────────────────────
 
     def add_triple(self, subject: str, predicate: str, obj: str,

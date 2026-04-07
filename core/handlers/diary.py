@@ -15,6 +15,10 @@ class DiaryWriteHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._agent_name = ""
+        self._conversation_id = ""
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
 
     @property
     def name(self) -> str:
@@ -76,6 +80,10 @@ class DiaryReadHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._agent_name = ""
+        self._conversation_id = ""
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
 
     @property
     def name(self) -> str:

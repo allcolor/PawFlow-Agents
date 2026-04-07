@@ -255,10 +255,12 @@ def create_default_registry() -> ToolRegistry:
         KgAddHandler, KgQueryHandler, KgInvalidateHandler,
         KgTimelineHandler, KgStatsHandler,
         QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler, KgHyperedgesHandler,
+        KgCommunitiesHandler,
     )
     for _kg_cls in (KgAddHandler, KgQueryHandler, KgInvalidateHandler,
                     KgTimelineHandler, KgStatsHandler,
-                    QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler, KgHyperedgesHandler):
+                    QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler,
+                    KgHyperedgesHandler, KgCommunitiesHandler):
         registry.register(_kg_cls())
 
     # Memory navigation

@@ -14,6 +14,10 @@ class ProjectGraphHandler(ToolHandler):
     def __init__(self):
         self._user_id = ""
         self._conversation_id = ""
+        self._agent_name = ""
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
 
     @property
     def name(self) -> str:

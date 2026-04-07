@@ -14,13 +14,21 @@ logger = logging.getLogger(__name__)
 
 
 class _KgBaseHandler(ToolHandler):
-    """Base for KG handlers — provides set_user_id()."""
+    """Base for KG handlers — provides set_user_id/set_conversation_id/set_agent_name."""
 
     def __init__(self):
         self._user_id = ""
+        self._conversation_id = ""
+        self._agent_name = ""
 
     def set_user_id(self, user_id: str):
         self._user_id = user_id
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
 
     def _get_kg(self):
         from core.knowledge_graph import KnowledgeGraph
@@ -63,8 +71,13 @@ class KgAddHandler(_KgBaseHandler):
                     "description": "When this fact became true (ISO date, e.g. '2026-01'). Optional.",
                 },
                 "confidence": {
-                    "type": "number",
-                    "description": "Confidence score 0-1 (default: 1.0)",
+                    "type": "string",
+                    "enum": ["EXTRACTED", "INFERRED", "AMBIGUOUS"],
+                    "description": "How confident: EXTRACTED (stated), INFERRED (deduced), AMBIGUOUS (uncertain)",
+                },
+                "source": {
+                    "type": "string",
+                    "description": "Where this fact came from (conversation, observation, etc.)",
                 },
             },
             "required": ["subject", "predicate", "object"],
@@ -75,16 +88,20 @@ class KgAddHandler(_KgBaseHandler):
             return "Error: user_id not set"
         try:
             kg = self._get_kg()
-            triple_id, contradiction = kg.add_triple(
+            result = kg.add_triple(
                 subject=arguments["subject"],
                 predicate=arguments["predicate"],
                 obj=arguments["object"],
                 valid_from=arguments.get("valid_from", ""),
-                confidence=float(arguments.get("confidence", 1.0)),
+                confidence=arguments.get("confidence", "EXTRACTED"),
+                source=arguments.get("source", ""),
             )
-            msg = f"Added: {arguments['subject']} -> {arguments['predicate']} -> {arguments['object']} (id: {triple_id})"
-            if contradiction:
-                msg += f"\n\u26a0 {contradiction}"
+            status = result.get("status", "?")
+            tid = result.get("triple_id", "?")
+            msg = f"{status}: {arguments['subject']} -> {arguments['predicate']} -> {arguments['object']} (id: {tid})"
+            contradictions = result.get("contradictions", [])
+            if contradictions:
+                msg += f"\n\u26a0 Contradicts active values: {', '.join(contradictions)}"
             return msg
         except Exception as e:
             return f"Error adding triple: {e}"
@@ -420,3 +437,23 @@ class KgHyperedgesHandler(_KgBaseHandler):
                 f"({r['count']} objects)"
             )
         return "\n".join(lines)
+
+
+class KgCommunitiesHandler(_KgBaseHandler):
+    """Detect communities in the knowledge graph."""
+
+    @property
+    def name(self) -> str:
+        return "kg_communities"
+
+    @property
+    def description(self) -> str:
+        return "Detect clusters of strongly connected entities in the knowledge graph."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        kg = self._get_kg()
+        return kg.get_communities_report()

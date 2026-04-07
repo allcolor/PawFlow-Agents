@@ -603,7 +603,7 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
     try:
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(
-            conv_id, 0,
+            conv_id, 10,  # 10s cooldown between steps
             key=f"{conv_id}::plan::{plan_id}::step{step_num}::{agent}",
             reason=f"[plan_step:{plan_id}:{step_num}] ({agent})",
             user_id=user_id,

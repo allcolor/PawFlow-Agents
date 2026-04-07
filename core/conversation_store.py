@@ -547,6 +547,21 @@ class ConversationStore:
         if count:
             logger.info(f"ConversationStore: loaded {count} conversations from disk")
 
+    @staticmethod
+    def _validate_message(m: Dict):
+        """Every message MUST have msg_id and timestamp. No exceptions."""
+        role = m.get("role", "")
+        if role in ("system",):
+            return  # system prompts are ephemeral, no msg_id needed
+        if not m.get("msg_id"):
+            raise ValueError(
+                f"BUG: message without msg_id — role={role}, "
+                f"content={str(m.get('content', ''))[:80]}")
+        if not m.get("ts") and not m.get("timestamp"):
+            raise ValueError(
+                f"BUG: message without timestamp — role={role}, "
+                f"msg_id={m.get('msg_id')}")
+
     # ══════════════════════════════════════════════════════════════════
     #  PUBLIC API
     # ══════════════════════════════════════════════════════════════════
@@ -616,6 +631,7 @@ class ConversationStore:
         # Build transcript lines (public + private)
         transcript_lines = []
         for m in public_messages:
+            self._validate_message(m)
             mid = m.get("msg_id")
             if mid and mid in existing_ids:
                 continue
@@ -625,6 +641,7 @@ class ConversationStore:
             transcript_lines.append(line)
 
         for m in private_messages:
+            self._validate_message(m)
             mid = m.get("msg_id")
             if mid and mid in existing_ids:
                 continue
@@ -695,6 +712,7 @@ class ConversationStore:
         # Build transcript lines
         transcript_lines = []
         for m in new_messages:
+            self._validate_message(m)
             line = {"t": "msg", **m}
             if "ts" not in line:
                 line["ts"] = now

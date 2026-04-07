@@ -61,8 +61,8 @@ class AgentIdentityMixin:
 
         Handles migration from old format (agent: str only) to new format
         (agents: list of conv members, agent: str for selected primary).
-        If no agent is selected, auto-selects 'assistant' (or first available).
-        Persists the change and returns the (possibly updated) active_res dict.
+        If agents list exists but no primary selected, pick first from list.
+        NEVER auto-adds agents — a conv without agents is an error.
         """
         # Migrate old format: agent (str) present but agents (list) absent
         if active_res.get("agent") and "agents" not in active_res:
@@ -70,23 +70,13 @@ class AgentIdentityMixin:
         # If agents list has entries but no primary selected, pick first
         if active_res.get("agents") and not active_res.get("agent"):
             active_res["agent"] = active_res["agents"][0]
-        if active_res.get("agent"):
-            return active_res
-        from core.resource_store import ResourceStore
-        from core.conversation_store import ConversationStore
-        rs = ResourceStore.instance()
-        default = rs.get_any("agent", "assistant", uid)
-        if not default:
-            all_agents = rs.list_all("agent", uid)
-            default = all_agents[0] if all_agents else None
-        if default:
-            dname = default["name"]
-            active_res["agent"] = dname
-            agents = active_res.setdefault("agents", [])
-            if dname not in agents:
-                agents.insert(0, dname)
+            from core.conversation_store import ConversationStore
             ConversationStore.instance().set_extra(
                 conv_id, "active_resources", active_res)
+        if not active_res.get("agent"):
+            raise ValueError(
+                f"BUG: conversation {conv_id[:16]} has no agent in active_resources — "
+                f"every conversation must have at least one agent")
         return active_res
 
 

@@ -586,16 +586,20 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
         from core.conversation_writer import ConversationWriter
         import uuid as _uuid_plan
         _msg_id = _uuid_plan.uuid4().hex[:12]
-        ConversationWriter.for_conversation(conv_id).enqueue(
+        writer = ConversationWriter.for_conversation(conv_id)
+        writer.enqueue(
             [{"role": "user", "content": _user_msg,
               "msg_id": _msg_id, "ts": time.time(),
               "source": {"type": "user", "name": user_id,
                          "target_agent": agent, "plan_id": plan_id}}],
             user_id=user_id)
+        # MUST flush before scheduling — the agent loads context on wake,
+        # the message MUST be written to disk before the agent starts.
+        writer.flush(timeout=10)
     except Exception as e:
         logger.warning("Failed to write plan step user message: %s", e)
 
-    # Wake the agent — the instruction is already in the context from the message above
+    # Wake the agent — the instruction is guaranteed in the context now
     try:
         from core.poll_scheduler import PollScheduler
         PollScheduler.instance().schedule_delay(

@@ -544,24 +544,23 @@ class AgentLoopTask(
         # whose gen_key is just conversation_id, not conversation_id:assistant
         _is_named = agent_name and agent_name != ""
         with self._conv_gen_lock:
+            # Bump ALL generation keys for this conversation + agent.
+            # This covers every possible gen_key format:
+            #   "conv", "conv:agent", "conv::plan::pid::stepN::agent",
+            #   "conv::task::tid", "conv::thought::agent", etc.
+            _prefix = f"{conversation_id}:"
+            for k in list(self._conv_generation):
+                if k == conversation_id or k.startswith(_prefix):
+                    if _is_named and agent_name.lower() not in k.lower() and k != conversation_id:
+                        continue  # different agent — don't touch
+                    self._conv_generation[k] += 1
+            # Also bump the direct keys (may not exist yet)
+            self._conv_generation[conversation_id] = \
+                self._conv_generation.get(conversation_id, 0) + 1
             if _is_named:
-                # Cancel this agent — it may be running under either:
-                #   gen_key = "conv:agent" (from /agent msg)
-                #   gen_key = "conv" (from selected agent, normal message)
-                # Bump BOTH to be safe.
                 key = f"{conversation_id}:{agent_name}"
                 self._conv_generation[key] = \
                     self._conv_generation.get(key, 0) + 1
-                self._conv_generation[conversation_id] = \
-                    self._conv_generation.get(conversation_id, 0) + 1
-            else:
-                # Cancel default assistant + all per-agent threads
-                # but NOT thought threads (they manage their own lifecycle)
-                self._conv_generation[conversation_id] = \
-                    self._conv_generation.get(conversation_id, 0) + 1
-                for k in list(self._conv_generation):
-                    if k.startswith(conversation_id + ":") and "::thought::" not in k and "::task::" not in k and "::task_verify::" not in k:
-                        self._conv_generation[k] += 1
         if not silent:
             # Publish cancellation event for SSE listeners
             from core.conversation_event_bus import ConversationEventBus

@@ -256,7 +256,10 @@ class AgentPollerMixin:
                 messages_data = store.load(entry_key)
                 if messages_data:
                     # Subsequent iteration — append "continue" as user message
-                    store.append_messages(entry_key, [{"role": "user", "content": "continue"}])
+                    import uuid as _poll_uuid
+                    store.append_messages(entry_key, [{"role": "user", "content": "continue",
+                                                       "msg_id": _poll_uuid.uuid4().hex[:12],
+                                                       "ts": time.time()}])
                     messages_data = store.load(entry_key)
                 if not messages_data:
                     # First iteration — sub-conv doesn't exist yet.

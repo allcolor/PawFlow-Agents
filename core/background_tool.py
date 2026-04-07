@@ -246,10 +246,13 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
     # 1. Write tool_result to transcript (always — visible at reload)
     try:
         from core.conversation_writer import ConversationWriter
+        import uuid as _bg_uuid
         tool_msg = {
             "role": "tool",
             "content": _result_content[:500],
             "tool_call_id": tc_id,
+            "msg_id": _bg_uuid.uuid4().hex[:12],
+            "ts": time.time(),
             "source": {"type": "system", "name": "background"},
         }
         ConversationWriter.for_conversation(conv_id).enqueue([tool_msg])
@@ -282,6 +285,8 @@ def _inject_result(tc_id: str, result_text: str, is_cancel: bool = False):
             msg = {
                 "role": "user",
                 "content": content,
+                "msg_id": _bg_uuid.uuid4().hex[:12],
+                "ts": time.time(),
                 "source": {"type": "system", "name": "background"},
             }
             ConversationWriter.for_conversation(conv_id).enqueue([msg])

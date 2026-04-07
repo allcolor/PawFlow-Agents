@@ -596,7 +596,10 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": f"Task '{task_id}' is {task.get('status', 'unknown')}, cannot send message"}).encode())
             return [flowfile]
         sub_cid = f"{conv_id}::task::{task_id}"
-        store.append_messages(sub_cid, [{"role": "user", "content": message}])
+        import uuid as _sched_uuid
+        store.append_messages(sub_cid, [{"role": "user", "content": message,
+                                          "msg_id": _sched_uuid.uuid4().hex[:12],
+                                          "ts": time.time()}])
         if task.get("status") == "paused":
             task["status"] = "active"
             all_tasks[task_id] = task

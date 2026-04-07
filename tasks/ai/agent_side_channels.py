@@ -165,11 +165,14 @@ class AgentSideChannelsMixin:
                                 "btw": True, "target_agent": agent_name}
             _btw_agent_source = {"type": "agent", "name": agent_name, "btw": True}
             from core.conversation_writer import ConversationWriter
+            import uuid as _btw_uuid
             ConversationWriter.for_conversation(conversation_id).enqueue([
                 {"role": "user", "content": f"[btw] {question}",
-                 "source": _btw_user_source, "timestamp": _btw_now},
+                 "msg_id": _btw_uuid.uuid4().hex[:12],
+                 "source": _btw_user_source, "ts": _btw_now},
                 {"role": "assistant", "content": response.content,
-                 "source": _btw_agent_source, "timestamp": _btw_now},
+                 "msg_id": _btw_uuid.uuid4().hex[:12],
+                 "source": _btw_agent_source, "ts": _btw_now},
             ])
 
             # 5. Publish done event

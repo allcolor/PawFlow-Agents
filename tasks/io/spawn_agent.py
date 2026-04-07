@@ -205,9 +205,11 @@ class SpawnAgentTask(BaseTask):
         bus = ConversationEventBus.instance()
 
         from core.conversation_writer import ConversationWriter
+        import uuid as _spawn_uuid
         ConversationWriter.for_conversation(conv_id).enqueue([{
             "role": "user",
             "content": message,
+            "msg_id": _spawn_uuid.uuid4().hex[:12],
             "source": {
                 "type": "flow",
                 "name": self.config.get("_service_id", "flow"),

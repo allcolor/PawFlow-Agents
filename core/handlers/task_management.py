@@ -54,7 +54,10 @@ def _activate_dependents(conversation_id: str, completed_task_id: str,
             _msg = "## Results from dependency tasks\n"
             for dep_id, dep_result in parent_results.items():
                 _msg += f"\n### Task {dep_id}\n{dep_result}\n"
-            store.append_messages(sub_cid, [{"role": "user", "content": _msg}])
+            import uuid as _task_uuid
+            store.append_messages(sub_cid, [{"role": "user", "content": _msg,
+                                              "msg_id": _task_uuid.uuid4().hex[:12],
+                                              "ts": time.time()}])
         activated.append(tid)
         try:
             _append_task_log(conversation_id, tid, {

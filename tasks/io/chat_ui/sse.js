@@ -704,6 +704,16 @@ function connectSSE(cid, onReady) {
     _cancelledAgents.delete(doneAgent.toLowerCase());  // allow new events for next turn
     // Finalize any open thinking block for this agent
     finalizeThinking(doneAgent);
+    // Close any pending tool calls (force stop = tool result never arrives)
+    document.querySelectorAll('.tc-bullet.pending').forEach(bullet => {
+      bullet.classList.remove('pending');
+      bullet.classList.add('done');
+      // Remove BG/kill buttons (tool is no longer running)
+      const row = bullet.closest('.msg');
+      if (row) {
+        row.querySelectorAll('.tc-bg-btn, .tc-kl-btn').forEach(b => b.remove());
+      }
+    });
     trackAgentDone(doneAgent);
     console.log('[SSE done]', doneAgent, data.response ? data.response.substring(0, 100) : '(empty)');
     // Sync message count to prevent poll from re-fetching these messages

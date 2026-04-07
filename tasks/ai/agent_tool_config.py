@@ -64,7 +64,6 @@ class AgentToolConfigMixin:
         from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
         from core.handlers.knowledge_graph import _KgBaseHandler
         from core.handlers.memory import CheckDuplicateHandler
-        from core.handlers.memory_navigate import MemoryNavigateHandler
         from core.handlers.project_graph import ProjectGraphHandler
 
         file_base_url = self.config.get("file_base_url", "")
@@ -139,15 +138,7 @@ class AgentToolConfigMixin:
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-                # Wire summarizer for relevance filtering (RecallHandler only)
-                if isinstance(h, RecallHandler) and hasattr(h, 'set_memory_llm_client'):
-                    try:
-                        _sum_client, _, _ = self._get_summarizer_client(user_id)
-                        if _sum_client:
-                            h.set_memory_llm_client(_sum_client)
-                    except Exception:
-                        pass
-            elif isinstance(h, (_KgBaseHandler, MemoryNavigateHandler)):
+            elif isinstance(h, _KgBaseHandler):
                 h.set_user_id(user_id)
                 if hasattr(h, 'set_agent_name'):
                     h.set_agent_name(agent_name)

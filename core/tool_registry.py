@@ -262,8 +262,6 @@ def create_default_registry() -> ToolRegistry:
         registry.register(_kg_cls())
 
     # Memory navigation
-    from core.handlers.memory_navigate import MemoryNavigateHandler
-    registry.register(MemoryNavigateHandler())
 
     registry.register(CreatePlanHandler())
     registry.register(UpdatePlanHandler())

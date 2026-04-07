@@ -46,6 +46,9 @@ ebooklib>=0.18
 # Terminal (Windows ConPTY)
 pywinpty>=2.0.0; sys_platform == "win32"
 
+# Embeddings (local semantic search)
+sentence-transformers>=2.2.0
+
 # Code structure graph (graphify integration — AST extraction)
 networkx>=3.0
 tree-sitter>=0.23.0

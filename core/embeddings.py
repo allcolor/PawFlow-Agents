@@ -137,9 +137,10 @@ class EmbeddingProvider:
             raise ValueError("api_key is required for OpenAI embeddings")
 
         from core.llm_client import LLMClient
-        client = LLMClient(
-            provider="openai", api_key=api_key, base_url=base_url,
-        )
+        config = {"api_key": api_key}
+        if base_url:
+            config["base_url"] = base_url
+        client = LLMClient(provider="openai", config=config)
         return client.embed(texts, model=model or "text-embedding-3-small")
 
     def _embed_local(self, texts: List[str]) -> List[List[float]]:

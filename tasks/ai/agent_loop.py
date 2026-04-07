@@ -163,10 +163,17 @@ class AgentLoopTask(
 
     @classmethod
     def force_stop_agent(cls, conversation_id: str, agent_name: str):
-        """Force stop an agent — callable without instance ref (class method)."""
+        """Force stop an agent — kill CC process + bump generation + cancel relay."""
         inst = cls._live_instance
         if inst:
+            # Bump generation — prevents any retry in agent_core
             inst.cancel_agent(conversation_id, agent_name=agent_name)
+            # Kill CC subprocess if running
+            _key = f"{conversation_id}:{agent_name}" if agent_name else conversation_id
+            with inst._active_contexts_lock:
+                _cc = inst._active_claude_client.get(_key)
+            if _cc and hasattr(_cc, 'cancel_claude_code'):
+                _cc.cancel_claude_code(force=True)
         try:
             from services.tool_relay_service import ToolRelayService
             ToolRelayService.cancel_agent(conversation_id, agent_name)

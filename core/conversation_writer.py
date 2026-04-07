@@ -148,10 +148,6 @@ class ConversationWriter:
                             self._cid, msgs,
                             user_id=item.get("user_id", ""),
                             status=item.get("status", ""))
-                        ctx_agent = item.get("context_agent")
-                        if ctx_agent:
-                            store.append_to_agent_context(
-                                self._cid, ctx_agent, msgs)
                 # Publish SSE events AFTER successful write
                 sse_events = item.get("sse_events")
                 if sse_events:

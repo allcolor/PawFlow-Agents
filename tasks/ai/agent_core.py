@@ -1319,9 +1319,10 @@ class AgentCoreMixin:
             return _make_result("interrupted")
 
         except AgentCancelled:
-            logger.info(f"[agent:{conversation_id[:8]}] cancelled — NOT flushing (cancelled tour)")
-            # Don't flush — the cancelled tour's messages should not be in the transcript
-            # The interrupt synthesis will persist its own response separately
+            logger.info(f"[agent:{conversation_id[:8]}] cancelled — flushing accumulated messages")
+            # Flush: the agent's work is valid (e.g. plan step done).
+            # The cancellation stops the agent, not the work.
+            _flush()
             def _make_result(reason=""):
                 return AgentResult(
                     response_content=response_content, conversation_id=conversation_id,

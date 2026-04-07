@@ -1050,13 +1050,14 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "`recall` to search, `forget` to delete, `memory_navigate` to browse categories"
             "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
             "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
-            "`kg_god_nodes`/`kg_surprises`/`kg_communities` for analysis"
+            "`kg_god_nodes` for most connected entities"
             "\n- **Diary**: `diary_write` for personal observations/decisions/learnings, "
             "`diary_read` to review past entries"
             "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
-            "17 languages), then action=query/report/node to explore code structure"
+            "17 languages), then action=query/report/node to explore code structure. "
+            "Only build when asked — it fetches all code files via relay."
             "\nUse memory for facts about the user/project, KG for relationships between entities, "
-            "diary for your own reflections. Build the project graph when exploring a new codebase."
+            "diary for your own reflections."
         )
 
         # Final update: inject the fully-built system_prompt into messages[0]

@@ -39,12 +39,10 @@ def auto_extract_memories(
     if not user_id or not summary:
         return 0
 
-    facts = []
-    if llm_client:
-        facts = _extract_with_llm(llm_client, summary)
+    if not llm_client:
+        return 0  # No LLM = no extraction (no heuristic fallback)
 
-    if not facts:
-        facts = _extract_heuristic(summary)
+    facts = _extract_with_llm(llm_client, summary)
 
     if not facts:
         return 0
@@ -97,31 +95,3 @@ def _extract_with_llm(client, summary: str) -> list:
     return []
 
 
-def _extract_heuristic(summary: str) -> list:
-    """Simple heuristic: extract sentences that look like facts/decisions."""
-    sentences = re.split(r'(?<=[.!?])\s+', summary)
-    # Filter for sentences that contain decision/preference/fact indicators
-    indicators = (
-        "prefer", "decided", "chose", "using", "switched",
-        "works with", "responsible", "deadline", "must", "should",
-        "always", "never", "important", "key", "role",
-    )
-    facts = []
-    for s in sentences:
-        s = s.strip()
-        if len(s) < 20 or len(s) > 300:
-            continue
-        lower = s.lower()
-        if any(ind in lower for ind in indicators):
-            # Guess category based on content
-            category = "facts"
-            if any(w in lower for w in ("prefer", "like", "want", "chose")):
-                category = "preferences"
-            elif any(w in lower for w in ("decided", "deadline", "release")):
-                category = "events"
-            elif any(w in lower for w in ("should", "must", "always", "never")):
-                category = "advice"
-            facts.append({"text": s, "category": category})
-        if len(facts) >= 5:
-            break
-    return facts

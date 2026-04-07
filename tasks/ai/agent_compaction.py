@@ -397,12 +397,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
             if stored:
                 logger.info("[compact] Auto-extracted %d memories from summary", stored)
         except Exception as e:
-            logger.debug("[compact] LLM auto-extract failed: %s, trying heuristic", e)
-            try:
-                from core.memory_auto_extract import auto_extract_memories
-                auto_extract_memories(user_id, summary, agent_name=agent_name)
-            except Exception:
-                pass
+            logger.debug("[compact] LLM auto-extract failed: %s", e)
 
     def _compact(
         self,

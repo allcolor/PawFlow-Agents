@@ -360,7 +360,7 @@ Available tool tasks (use `pawflow_help topic='tasks'` for full list):
 - `tool.kg_add` / `tool.kg_query` / `tool.kg_invalidate` — Knowledge graph triples
 - `tool.kg_timeline` / `tool.kg_stats` — KG timeline and statistics
 - `tool.query_graph` — Traverse KG with BFS/DFS
-- `tool.kg_god_nodes` / `tool.kg_surprises` / `tool.kg_hyperedges` / `tool.kg_communities` — KG analysis
+- `tool.kg_god_nodes` — Most connected KG entities
 - `tool.diary_write` / `tool.diary_read` — Agent personal diary
 - `tool.project_graph` — Build/query code structure graph (AST)
 - `tool.fetch` — Fetch a web page

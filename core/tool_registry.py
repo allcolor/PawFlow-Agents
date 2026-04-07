@@ -254,13 +254,11 @@ def create_default_registry() -> ToolRegistry:
     from core.handlers.knowledge_graph import (
         KgAddHandler, KgQueryHandler, KgInvalidateHandler,
         KgTimelineHandler, KgStatsHandler,
-        QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler, KgHyperedgesHandler,
-        KgCommunitiesHandler,
+        QueryGraphHandler, KgGodNodesHandler,
     )
     for _kg_cls in (KgAddHandler, KgQueryHandler, KgInvalidateHandler,
                     KgTimelineHandler, KgStatsHandler,
-                    QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler,
-                    KgHyperedgesHandler, KgCommunitiesHandler):
+                    QueryGraphHandler, KgGodNodesHandler):
         registry.register(_kg_cls())
 
     # Memory navigation

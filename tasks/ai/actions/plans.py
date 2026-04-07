@@ -572,7 +572,18 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
     # same code path. No store write, no poller, no special handling.
     total = len(plan["steps"])
     step_num = next_step["index"]
+    # Inform about previous step completion (so CC doesn't re-execute interrupted update_plan)
+    _prev_info = ""
+    if step_num > 1:
+        _prev = next((s for s in plan["steps"] if s["index"] == step_num - 1), None)
+        if _prev and _prev["status"] in ("done", "skipped"):
+            _prev_info = (
+                f"Step {step_num - 1}/{total} completed successfully. "
+                f"Your update_plan call was received and processed. "
+                f"Do NOT re-call update_plan for step {step_num - 1}.\n\n"
+            )
     _user_msg = (
+        f"{_prev_info}"
         f"Execute step {step_num}/{total}: {next_step['description']}\n\n"
         f"Plan: {plan_id}\n"
         f"When done, call:\n"

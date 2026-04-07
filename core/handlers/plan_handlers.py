@@ -192,6 +192,7 @@ class UpdatePlanHandler(_PlanHandlerBase):
         if not plan:
             return f"Error: plan '{plan_id}' not found."
 
+        _changed_steps = set()  # steps that ACTUALLY changed status
         for u in updates:
             step_num = int(u.get("step") or u.get("index") or 0)
             if step_num == 0:
@@ -213,10 +214,12 @@ class UpdatePlanHandler(_PlanHandlerBase):
                             s["status"] = "pending_verification"
                             if note:
                                 s["note"] = note
+                            _changed_steps.add(step_num)
                             break
                     s["status"] = status
                     if note:
                         s["note"] = note
+                    _changed_steps.add(step_num)
                     break
 
         # Auto-update plan status
@@ -249,30 +252,29 @@ class UpdatePlanHandler(_PlanHandlerBase):
         if plan["status"] == "completed":
             lines.append("Plan completed.")
 
-        # Post-hook: schedule orchestration or verification
-        # Check ACTUAL step statuses (not the request), because verifier
-        # intercept may have changed "done" → "pending_verification"
-        _actual_statuses = {s["index"]: s["status"] for s in plan["steps"]}
+        # Only act if something ACTUALLY changed (prevents cascade from re-sent updates)
+        if not _changed_steps:
+            return "\n".join(lines)
+
+        # Check what changed for orchestration decisions
         _needs_orchestrate = False
         _needs_verify = []
-        for u in updates:
-            _sn = int(u.get("step") or u.get("index") or 0)
-            _actual = _actual_statuses.get(_sn, "")
-            if _actual == "done":
+        for sn in _changed_steps:
+            _step_obj = next((s for s in plan["steps"] if s["index"] == sn), None)
+            if not _step_obj:
+                continue
+            if _step_obj["status"] == "done":
                 _needs_orchestrate = True
-            elif _actual == "pending_verification":
-                _step_obj = next((s for s in plan["steps"] if s["index"] == _sn), None)
-                if _step_obj:
-                    _v = _step_obj.get("verifier") or plan.get("verifier", "")
-                    if _v:
-                        _needs_verify.append((_sn, _v, self._agent_name))
+            elif _step_obj["status"] == "pending_verification":
+                _v = _step_obj.get("verifier") or plan.get("verifier", "")
+                if _v:
+                    _needs_verify.append((sn, _v, self._agent_name))
 
-        # Force stop the agent IMMEDIATELY — don't return a tool result,
-        # don't write anything. Just kill. The orchestrator takes over.
+        # Force stop the agent — step is done/error, agent must not continue
         _has_terminal = any(
-            _actual_statuses.get(int(u.get("step") or u.get("index") or 0), "")
+            next((s for s in plan["steps"] if s["index"] == sn), {}).get("status", "")
             in ("done", "error", "pending_verification")
-            for u in updates
+            for sn in _changed_steps
         )
         if _has_terminal and self._agent_name and self._conversation_id:
             from tasks.ai.actions.plans import force_stop_agent

@@ -36,18 +36,28 @@ class MemoryNavigateHandler(ToolHandler):
                 "action": {
                     "type": "string",
                     "enum": ["list_wings", "list_halls", "list_rooms",
-                             "get_taxonomy", "find_tunnels"],
+                             "get_taxonomy", "find_tunnels", "traverse", "graph_stats"],
                     "description": (
                         "list_wings: all project/person scopes; "
                         "list_halls: memory type categories (optionally filtered by wing); "
                         "list_rooms: topics (optionally filtered by wing); "
                         "get_taxonomy: full {wing: {hall: {room: count}}} tree; "
-                        "find_tunnels: rooms that appear in 2+ wings"
+                        "find_tunnels: rooms that appear in 2+ wings; "
+                        "traverse: walk from a room across wings via shared topics; "
+                        "graph_stats: overall memory graph statistics"
                     ),
                 },
                 "wing": {
                     "type": "string",
                     "description": "Filter by wing (for list_halls, list_rooms)",
+                },
+                "room": {
+                    "type": "string",
+                    "description": "Starting room (for traverse)",
+                },
+                "max_depth": {
+                    "type": "integer",
+                    "description": "Max traversal depth (default: 3)",
                 },
             },
             "required": ["action"],
@@ -130,5 +140,72 @@ class MemoryNavigateHandler(ToolHandler):
                 return "No tunnels found (no rooms shared across multiple wings)."
             lines = [f"- {r}: {', '.join(ws)}" for r, ws in sorted(tunnels.items())]
             return f"Tunnels ({len(tunnels)} rooms shared across wings):\n" + "\n".join(lines)
+
+        elif action == "traverse":
+            start_room = arguments.get("room", "")
+            max_depth = int(arguments.get("max_depth", 3) or 3)
+            if not start_room:
+                return "Error: 'room' parameter required for traverse"
+            # Build room→wings map
+            room_wings: Dict[str, set] = defaultdict(set)
+            for e in entries:
+                if e.room and e.wing:
+                    room_wings[e.room].add(e.wing)
+            if start_room not in room_wings:
+                return f"Room '{start_room}' not found."
+            # BFS traversal: room → wings → other rooms in those wings → ...
+            visited_rooms = set()
+            visited_wings = set()
+            queue = [(start_room, 0)]
+            paths = []
+            while queue:
+                room, depth = queue.pop(0)
+                if room in visited_rooms or depth > max_depth:
+                    continue
+                visited_rooms.add(room)
+                wings = room_wings.get(room, set())
+                for w in wings:
+                    if w in visited_wings:
+                        continue
+                    visited_wings.add(w)
+                    # Find other rooms in this wing
+                    other_rooms = {e.room for e in entries if e.wing == w and e.room and e.room != room}
+                    for r in other_rooms:
+                        if r not in visited_rooms:
+                            paths.append(f"  {'  ' * depth}{room} → [{w}] → {r}")
+                            queue.append((r, depth + 1))
+            if not paths:
+                return f"Room '{start_room}' has no connections to other rooms."
+            return f"Traverse from '{start_room}' (depth {max_depth}):\n" + "\n".join(paths)
+
+        elif action == "graph_stats":
+            wings = {e.wing for e in entries if e.wing}
+            halls = {e.hall for e in entries if e.hall}
+            rooms = {e.room for e in entries if e.room}
+            # Tunnels
+            room_wings: Dict[str, set] = defaultdict(set)
+            for e in entries:
+                if e.room and e.wing:
+                    room_wings[e.room].add(e.wing)
+            tunnels = sum(1 for ws in room_wings.values() if len(ws) >= 2)
+            # Hall distribution
+            hall_counts = defaultdict(int)
+            for e in entries:
+                hall_counts[e.hall or "(none)"] += 1
+            # Ended memories
+            ended = sum(1 for e in entries if e.ended)
+            lines = [
+                f"Total memories: {len(entries)}",
+                f"Wings: {len(wings)}",
+                f"Halls: {len(halls)}",
+                f"Rooms: {len(rooms)}",
+                f"Tunnels (shared rooms): {tunnels}",
+                f"Ended (obsolete): {ended}",
+                f"Active: {len(entries) - ended}",
+                "Hall distribution:",
+            ]
+            for h in sorted(hall_counts):
+                lines.append(f"  {h}: {hall_counts[h]}")
+            return "\n".join(lines)
 
         return f"Unknown action: {action}"

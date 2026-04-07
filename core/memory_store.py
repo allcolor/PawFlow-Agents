@@ -25,14 +25,15 @@ class MemoryEntry:
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
                  "embedding", "agent", "conversation_id",
-                 "wing", "hall", "room")
+                 "wing", "hall", "room", "valid_from", "ended")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
                  created_at: float = 0, updated_at: float = 0,
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
-                 wing: str = "", hall: str = "", room: str = ""):
+                 wing: str = "", hall: str = "", room: str = "",
+                 valid_from: float = 0, ended: float = 0):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -45,6 +46,8 @@ class MemoryEntry:
         self.wing = wing    # project/person scope (e.g. 'project:pawflow')
         self.hall = hall    # memory type category (facts/events/discoveries/preferences/advice)
         self.room = room    # specific topic (e.g. 'auth', 'docker')
+        self.valid_from = valid_from  # 0 = valid since creation
+        self.ended = ended            # 0 = still valid
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -67,6 +70,10 @@ class MemoryEntry:
             d["hall"] = self.hall
         if self.room:
             d["room"] = self.room
+        if self.valid_from:
+            d["valid_from"] = self.valid_from
+        if self.ended:
+            d["ended"] = self.ended
         return d
 
     @classmethod
@@ -84,6 +91,8 @@ class MemoryEntry:
             wing=data.get("wing", ""),
             hall=data.get("hall", ""),
             room=data.get("room", ""),
+            valid_from=data.get("valid_from", 0),
+            ended=data.get("ended", 0),
         )
 
     def matches(self, query: str) -> bool:
@@ -139,7 +148,8 @@ class MemoryStore:
                  source: str = "",
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
-                 wing: str = "", hall: str = "", room: str = "") -> MemoryEntry:
+                 wing: str = "", hall: str = "", room: str = "",
+                 valid_from: float = 0) -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
             self._ensure_loaded(user_id)
@@ -168,7 +178,8 @@ class MemoryStore:
             entry = MemoryEntry(text=text, tags=tags, source=source,
                                 embedding=embedding, agent=agent,
                                 conversation_id=conversation_id,
-                                wing=wing, hall=hall, room=room)
+                                wing=wing, hall=hall, room=room,
+                                valid_from=valid_from)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -178,7 +189,8 @@ class MemoryStore:
                limit: int = 20,
                agent_name: str = "",
                conversation_id: str = "",
-               wing: str = "", hall: str = "", room: str = "") -> List[MemoryEntry]:
+               wing: str = "", hall: str = "", room: str = "",
+               as_of: float = 0) -> List[MemoryEntry]:
         """Retrieve memories matching query and/or tags.
 
         Scoping: returns memories visible to this agent in this conversation.
@@ -195,6 +207,15 @@ class MemoryStore:
             entries = [e for e in entries if e.hall == hall]
         if room:
             entries = [e for e in entries if e.room == room]
+
+        # Temporal filtering: only entries valid at as_of time
+        if as_of:
+            entries = [e for e in entries
+                       if (not e.valid_from or e.valid_from <= as_of)
+                       and (not e.ended or e.ended > as_of)]
+        else:
+            # Default: exclude ended entries
+            entries = [e for e in entries if not e.ended]
 
         # Filter to entries visible for this agent/conversation
         visible = []
@@ -251,6 +272,18 @@ class MemoryStore:
             return ec == conversation_id
         # Private (agent+conversation): visible only if both match
         return ea == agent_name and ec == conversation_id
+
+    def end_memory(self, user_id: str, memory_id: str, ended: float = 0) -> bool:
+        """Mark a memory as ended (no longer valid). Does not delete."""
+        with self._store_lock:
+            self._ensure_loaded(user_id)
+            for e in self._memories.get(user_id, []):
+                if e.id == memory_id:
+                    e.ended = ended or time.time()
+                    e.updated_at = time.time()
+                    self._save_user(user_id)
+                    return True
+        return False
 
     def forget(self, user_id: str, memory_id: str) -> bool:
         """Delete a specific memory entry."""

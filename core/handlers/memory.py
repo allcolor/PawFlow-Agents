@@ -71,6 +71,10 @@ class RememberHandler(ToolHandler):
                     "type": "string",
                     "description": "Specific topic (e.g. 'auth', 'docker', 'ci-pipeline')",
                 },
+                "valid_from": {
+                    "type": "number",
+                    "description": "Epoch timestamp when this fact became valid (0 = since creation)",
+                },
             },
             "required": ["text"],
         }
@@ -137,12 +141,14 @@ class RememberHandler(ToolHandler):
             wing = arguments.get("wing", "")
             hall = arguments.get("hall", "")
             room = arguments.get("room", "")
+            valid_from = float(arguments.get("valid_from", 0) or 0)
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
                 embedding=embedding, agent=agent,
                 conversation_id=conv_id,
                 wing=wing, hall=hall, room=room,
+                valid_from=valid_from,
             )
             scope_label = scope
             if scope == "private":
@@ -327,6 +333,10 @@ class RecallHandler(ToolHandler):
                     "type": "string",
                     "description": "Filter by specific topic",
                 },
+                "as_of": {
+                    "type": "number",
+                    "description": "Epoch timestamp — only return memories valid at this time (0 = now, excludes ended)",
+                },
             },
         }
 
@@ -414,6 +424,7 @@ class RecallHandler(ToolHandler):
                 wing=arguments.get("wing", ""),
                 hall=arguments.get("hall", ""),
                 room=arguments.get("room", ""),
+                as_of=float(arguments.get("as_of", 0) or 0),
             )
             if not entries:
                 return "No memories found matching your query."
@@ -476,3 +487,59 @@ class ForgetHandler(ToolHandler):
             return f"Memory {memory_id} deleted." if deleted else f"Memory {memory_id} not found."
         except Exception as e:
             return f"Error deleting memory: {e}"
+
+
+class CheckDuplicateHandler(ToolHandler):
+    """Check for duplicate or similar memories before storing."""
+
+    def __init__(self):
+        self._user_id = ""
+
+    @property
+    def name(self) -> str:
+        return "check_duplicate"
+
+    @property
+    def description(self) -> str:
+        return "Check if a similar memory already exists before storing. Returns matches."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string", "description": "Text to check for duplicates"},
+                "wing": {"type": "string", "description": "Filter by wing"},
+                "hall": {"type": "string", "description": "Filter by hall"},
+            },
+            "required": ["text"],
+        }
+
+    def set_user_id(self, user_id: str):
+        self._user_id = user_id
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        text = arguments.get("text", "").strip()
+        if not text:
+            return "Error: text is required"
+        user_id = self._user_id
+        if not user_id:
+            return "Error: user_id not set"
+        try:
+            from core.memory_store import MemoryStore
+            ms = MemoryStore.instance()
+            entries = ms.recall(
+                user_id, query=text, limit=5,
+                wing=arguments.get("wing", ""),
+                hall=arguments.get("hall", ""),
+            )
+            if not entries:
+                return "No similar memories found. Safe to store."
+            lines = [f"Found {len(entries)} similar memor{'y' if len(entries) == 1 else 'ies'}:"]
+            for e in entries:
+                _exact = e.text.strip().lower() == text.strip().lower()
+                _marker = " [EXACT MATCH]" if _exact else ""
+                lines.append(f"  - [{e.id}] {e.text[:100]}{_marker}")
+            return "\n".join(lines)
+        except Exception as e:
+            return f"Error: {e}"

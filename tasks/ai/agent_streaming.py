@@ -445,6 +445,14 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
             if not _had_error:
                 self._maybe_generate_title(ctx, conversation_id, bus)
 
+            # ── Periodic auto-save memories ──
+            if not _had_error and ctx.get("use_conv_store"):
+                try:
+                    self._maybe_auto_save_memories(ctx, conversation_id)
+                except Exception as _asm_err:
+                    logger.debug("[agent:%s] auto-save memories failed: %s",
+                                 conversation_id[:8], _asm_err)
+
         except Exception:
             _had_error = True
         finally:
@@ -630,6 +638,52 @@ class AgentStreamingMixin(AgentSyncMixin, AgentSideChannelsMixin):
                         _store.set_extra(_parent_cid, "agent_tasks", _all_tasks)
                 except Exception as e:
                     logger.warning(f"[agent] Failed to auto-reschedule tasks: {e}")
+
+    _AUTO_SAVE_INTERVAL = 15  # messages between auto-saves
+
+    def _maybe_auto_save_memories(self, ctx: Dict, conversation_id: str) -> None:
+        """Periodic auto-save: extract memories every ~15 user messages."""
+        user_id = ctx.get("user_id", "")
+        agent_name = ctx.get("active_agent_name", "")
+        if not user_id:
+            return
+        try:
+            from core.conversation_store import ConversationStore
+            store = ConversationStore.instance()
+            # Track count via extras
+            _key = f"_auto_save_count:{agent_name or 'default'}"
+            _count = int(store.get_extra(conversation_id, _key) or 0)
+            _msg_count = store.message_count(conversation_id)
+            if _msg_count - _count < self._AUTO_SAVE_INTERVAL:
+                return
+            # Update counter
+            store.set_extra(conversation_id, _key, _msg_count)
+            # Get recent messages for extraction
+            page = store.load_page(conversation_id, limit=self._AUTO_SAVE_INTERVAL)
+            if not page or not page.get("messages"):
+                return
+            recent_text = "\n".join(
+                m.get("content", "")[:200] for m in page["messages"]
+                if isinstance(m.get("content"), str) and m.get("role") in ("user", "assistant")
+            )
+            if len(recent_text) < 100:
+                return
+            # Use memory_llm_service or summarizer
+            _client = None
+            try:
+                _client, _, _ = self._get_summarizer_client(user_id)
+            except Exception:
+                pass
+            if not _client:
+                return
+            self._auto_extract_memories(
+                recent_text, _client, user_id,
+                agent_name=agent_name, conversation_id=conversation_id)
+            logger.info("[agent:%s] periodic auto-save memories (msg_count=%d)",
+                        conversation_id[:8], _msg_count)
+        except Exception as e:
+            logger.debug("[agent:%s] auto-save memories failed: %s",
+                         conversation_id[:8], e)
 
     def _maybe_generate_title(self, ctx: Dict, conversation_id: str, bus) -> None:
         """Spawn a background thread to generate a conversation title if needed.

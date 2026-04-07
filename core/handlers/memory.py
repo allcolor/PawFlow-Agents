@@ -58,18 +58,10 @@ class RememberHandler(ToolHandler):
                     "enum": ["conversation", "agent", "global", "private"],
                     "description": "Where to store: conversation (this conv, all agents), agent (all convs, this agent), global (everywhere), private (this agent + this conv only). Default: agent.",
                 },
-                "wing": {
-                    "type": "string",
-                    "description": "Project or person scope (e.g. 'project:pawflow', 'person:quentin')",
-                },
-                "hall": {
+                "category": {
                     "type": "string",
                     "enum": ["facts", "events", "discoveries", "preferences", "advice"],
                     "description": "Memory type category",
-                },
-                "room": {
-                    "type": "string",
-                    "description": "Specific topic (e.g. 'auth', 'docker', 'ci-pipeline')",
                 },
                 "valid_from": {
                     "type": "number",
@@ -138,16 +130,14 @@ class RememberHandler(ToolHandler):
                 except Exception as emb_err:
                     logger.debug(f"Auto-embed failed: {emb_err}")
 
-            wing = arguments.get("wing", "")
-            hall = arguments.get("hall", "")
-            room = arguments.get("room", "")
+            category = arguments.get("category", "")
             valid_from = float(arguments.get("valid_from", 0) or 0)
             from core.memory_store import MemoryStore
             entry = MemoryStore.instance().remember(
                 user_id, text, tags, source="agent",
                 embedding=embedding, agent=agent,
                 conversation_id=conv_id,
-                wing=wing, hall=hall, room=room,
+                category=category,
                 valid_from=valid_from,
             )
             scope_label = scope
@@ -222,18 +212,10 @@ class SemanticRecallHandler(ToolHandler):
                     "type": "integer",
                     "description": "Max results to return (default: 5)",
                 },
-                "wing": {
-                    "type": "string",
-                    "description": "Filter by project/person scope",
-                },
-                "hall": {
+                "category": {
                     "type": "string",
                     "enum": ["facts", "events", "discoveries", "preferences", "advice"],
                     "description": "Filter by memory type category",
-                },
-                "room": {
-                    "type": "string",
-                    "description": "Filter by specific topic",
                 },
             },
             "required": ["query"],
@@ -269,9 +251,7 @@ class SemanticRecallHandler(ToolHandler):
                 user_id, query_embedding, limit=limit,
                 agent_name=self._agent_name,
                 conversation_id=self._conversation_id,
-                wing=arguments.get("wing", ""),
-                hall=arguments.get("hall", ""),
-                room=arguments.get("room", ""),
+                category=arguments.get("category", ""),
             )
             if not results:
                 return "No semantically similar memories found."
@@ -320,18 +300,10 @@ class RecallHandler(ToolHandler):
                     "items": {"type": "string"},
                     "description": "Filter by tags (e.g. 'preference', 'name')",
                 },
-                "wing": {
-                    "type": "string",
-                    "description": "Filter by project/person scope",
-                },
-                "hall": {
+                "category": {
                     "type": "string",
                     "enum": ["facts", "events", "discoveries", "preferences", "advice"],
                     "description": "Filter by memory type category",
-                },
-                "room": {
-                    "type": "string",
-                    "description": "Filter by specific topic",
                 },
                 "as_of": {
                     "type": "number",
@@ -421,9 +393,7 @@ class RecallHandler(ToolHandler):
                 user_id, query=query, tags=tags, limit=20,
                 agent_name=self._agent_name,
                 conversation_id=self._conversation_id,
-                wing=arguments.get("wing", ""),
-                hall=arguments.get("hall", ""),
-                room=arguments.get("room", ""),
+                category=arguments.get("category", ""),
                 as_of=float(arguments.get("as_of", 0) or 0),
             )
             if not entries:
@@ -509,8 +479,7 @@ class CheckDuplicateHandler(ToolHandler):
             "type": "object",
             "properties": {
                 "text": {"type": "string", "description": "Text to check for duplicates"},
-                "wing": {"type": "string", "description": "Filter by wing"},
-                "hall": {"type": "string", "description": "Filter by hall"},
+                "category": {"type": "string", "description": "Filter by category"},
             },
             "required": ["text"],
         }
@@ -530,8 +499,7 @@ class CheckDuplicateHandler(ToolHandler):
             ms = MemoryStore.instance()
             entries = ms.recall(
                 user_id, query=text, limit=5,
-                wing=arguments.get("wing", ""),
-                hall=arguments.get("hall", ""),
+                category=arguments.get("category", ""),
             )
             if not entries:
                 return "No similar memories found. Safe to store."

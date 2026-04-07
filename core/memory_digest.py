@@ -32,35 +32,35 @@ def build_memory_digest(user_id: str, agent_name: str = "",
         lines.append("Identity: " + "; ".join(e.text[:150] for e in identity))
 
     # L1: critical facts
-    facts = ms.recall(user_id, hall="facts", limit=5, agent_name=agent_name)
+    facts = ms.recall(user_id, category="facts", limit=5, agent_name=agent_name)
     if facts:
         lines.append("Key facts: " + "; ".join(e.text[:150] for e in facts))
 
     # L1: preferences
-    prefs = ms.recall(user_id, hall="preferences", limit=3, agent_name=agent_name)
+    prefs = ms.recall(user_id, category="preferences", limit=3, agent_name=agent_name)
     if prefs:
         lines.append("Preferences: " + "; ".join(e.text[:150] for e in prefs))
 
     # L2: recent events (sorted by date, most recent first)
-    events = ms.recall(user_id, hall="events", limit=3, agent_name=agent_name)
+    events = ms.recall(user_id, category="events", limit=3, agent_name=agent_name)
     if events:
         events.sort(key=lambda e: e.created_at, reverse=True)
         lines.append("Recent events: " + "; ".join(e.text[:120] for e in events))
 
     # L3: active decisions (facts tagged with "decision")
-    decisions = ms.recall(user_id, tags=["decision"], hall="facts", limit=3,
+    decisions = ms.recall(user_id, tags=["decision"], category="facts", limit=3,
                           agent_name=agent_name)
     if decisions:
         lines.append("Active decisions: " + "; ".join(e.text[:120] for e in decisions))
 
     # L4: discoveries/learnings
-    discoveries = ms.recall(user_id, hall="discoveries", limit=3,
+    discoveries = ms.recall(user_id, category="discoveries", limit=3,
                             agent_name=agent_name)
     if discoveries:
         lines.append("Discoveries: " + "; ".join(e.text[:120] for e in discoveries))
 
     # L4: advice
-    advice = ms.recall(user_id, hall="advice", limit=2, agent_name=agent_name)
+    advice = ms.recall(user_id, category="advice", limit=2, agent_name=agent_name)
     if advice:
         lines.append("Advice: " + "; ".join(e.text[:120] for e in advice))
 

@@ -24,28 +24,15 @@ They are interconnected:
 
 The memory system stores persistent facts per user. Memories survive across conversations and are scoped by visibility, organized by taxonomy, and support temporal validity.
 
-### 1.1 Wing / Hall / Room Taxonomy
+### 1.1 Categories
 
-Memories are organized in a three-level spatial hierarchy inspired by a memory palace:
+Memories are classified by category:
 
-| Level | Field | Purpose | Examples |
-|---|---|---|---|
-| **Wing** | `wing` | Project or person scope | `project:pawflow`, `person:quentin` |
-| **Hall** | `hall` | Memory type category | `facts`, `events`, `discoveries`, `preferences`, `advice` |
-| **Room** | `room` | Specific topic | `auth`, `docker`, `ci-pipeline`, `storage` |
+| Field | Purpose | Values |
+|---|---|---|
+| **`category`** | Memory type | `facts`, `events`, `discoveries`, `preferences`, `advice` |
 
-This hierarchy is browsable via the `memory_navigate` tool. Rooms that appear in multiple wings create "tunnels" -- cross-project connections.
-
-**Example:**
-
-```
-Wing: project:pawflow
-  Hall: facts
-    Room: auth       -> "Auth uses 9 providers including Google and GitHub"
-    Room: storage    -> "All file I/O goes through unified source/destination"
-  Hall: preferences
-    Room: ci-pipeline -> "User prefers GitHub Actions over Jenkins"
-```
+Categories are browsable via the `memory_navigate` tool.
 
 ### 1.2 Scopes
 
@@ -67,8 +54,7 @@ When recalling, results are sorted by scope priority: private > conversation > a
   "text": "User's timezone is Europe/Paris",
   "tags": ["preference", "timezone"],
   "scope": "global",
-  "hall": "preferences",
-  "room": "profile"
+  "category": "preferences"
 }
 ```
 
@@ -87,36 +73,10 @@ The `end_memory` method marks a memory as ended without deleting it. The `as_of`
 # The user switched from PostgreSQL to SQLite
 > end_memory(memory_id="a1b2c3d4e5f6")
 # Then store the new fact:
-> remember("User switched to SQLite for local storage", tags=["decision"], hall="facts", room="storage")
+> remember("User switched to SQLite for local storage", tags=["decision"], category="facts")
 ```
 
-### 1.4 AAAK Compression (Closets vs Drawers)
-
-Every memory is stored at two compression levels:
-
-- **Drawer text** (`drawer_text`): The verbatim original text as provided by the agent.
-- **Closet text** (`closet_text`): AAAK-compressed symbolic representation (~30x smaller).
-
-AAAK (Adaptive Abstracted Archival Knowledge) Dialect is a structured symbolic format readable by any LLM. It compresses text into a compact notation:
-
-```
-Header:  WING|ROOM|DATE|TITLE
-Zettel:  ZID:ENTITIES|topic_keywords|"key_quote"|WEIGHT|EMOTIONS|FLAGS
-```
-
-**Emotion codes** (abbreviated):
-`vul`=vulnerability, `joy`=joy, `fear`=fear, `trust`=trust, `grief`=grief, `wonder`=wonder, `rage`=rage, `love`=love, `hope`=hope, `despair`=despair, `peace`=peace, `humor`=humor, `tender`=tenderness, `raw`=raw honesty, `doubt`=self doubt, `relief`=relief, `anx`=anxiety, `exhaust`=exhaustion, `convict`=conviction, `passion`=quiet passion
-
-**Flags:**
-`ORIGIN` (birth of something), `CORE` (core belief/identity pillar), `SENSITIVE` (handle with care), `PIVOT` (emotional turning point), `GENESIS` (led to something existing), `DECISION` (explicit choice), `TECHNICAL` (architecture/implementation detail)
-
-**Compression example:**
-
-Input: `"We decided to use GraphQL instead of REST because the frontend team needs flexible queries"`
-
-Output: `0:???|graphql_rest_frontend|"decided to use GraphQL instead of REST"|determ|DECISION+TECHNICAL`
-
-### 1.5 Auto-Extraction Triggers
+### 1.4 Auto-Extraction Triggers
 
 Memories are extracted automatically in two situations:
 
@@ -126,19 +86,19 @@ Memories are extracted automatically in two situations:
 
 The heuristic fallback scans for sentences containing indicators like "prefer", "decided", "chose", "using", "switched", "deadline", "must", "should", "always", "never", "important", "key", "role".
 
-### 1.6 Memory Digest Injection
+### 1.5 Memory Digest Injection
 
 At every conversation turn, a compact multi-tier digest is built from the user's memories and injected into the system prompt under `## Persistent memory`. The tiers are:
 
 | Tier | Source | Max items |
 |---|---|---|
 | **L0** | Identity/profile (tags: `identity`, `profile`) | 3 |
-| **L1** | Key facts (hall: `facts`) | 5 |
-| **L1** | Preferences (hall: `preferences`) | 3 |
-| **L2** | Recent events (hall: `events`, sorted by date) | 3 |
-| **L3** | Active decisions (tags: `decision`, hall: `facts`) | 3 |
-| **L4** | Discoveries (hall: `discoveries`) | 3 |
-| **L4** | Advice (hall: `advice`) | 2 |
+| **L1** | Key facts (category: `facts`) | 5 |
+| **L1** | Preferences (category: `preferences`) | 3 |
+| **L2** | Recent events (category: `events`, sorted by date) | 3 |
+| **L3** | Active decisions (tags: `decision`, category: `facts`) | 3 |
+| **L4** | Discoveries (category: `discoveries`) | 3 |
+| **L4** | Advice (category: `advice`) | 2 |
 | **KG** | God nodes (most connected entities from Knowledge Graph) | 5 |
 
 The digest is capped at 1200 characters by default. If there are no relevant memories, nothing is injected.
@@ -284,22 +244,18 @@ The diary is a per-agent personal journal that persists across conversations. Un
   )
 ```
 
-### 3.2 AAAK Compression
+### 3.2 Diary Digest Injection
 
-Each diary entry is automatically compressed with AAAK Dialect (same as memories). The compressed version is stored in the `closet` field alongside the verbatim `text`.
+The 10 most recent diary entries are built into a compact digest (max 600 characters) and injected into the system prompt under `## Your diary (past observations)`. Each entry's text is truncated to 100 chars.
 
-### 3.3 Diary Digest Injection
-
-The 10 most recent diary entries are built into a compact digest (max 600 characters) and injected into the system prompt under `## Your diary (past observations)`. The digest prefers the AAAK-compressed `closet` version when available, falling back to the raw text (truncated to 100 chars per entry).
-
-### 3.4 Difference vs Memory
+### 3.3 Difference vs Memory
 
 | Aspect | Memory | Diary |
 |---|---|---|
 | **About** | Facts about the user, project, world | Agent's own reflections |
 | **Scope** | global / agent / conversation / private | Always per-agent |
-| **Taxonomy** | Wing / Hall / Room | Entry type + tags |
-| **Recall** | Searchable by query, tags, taxonomy | Read chronologically |
+| **Taxonomy** | Category | Entry type + tags |
+| **Recall** | Searchable by query, tags, category | Read chronologically |
 | **Storage** | JSON (one file per user) | JSONL (one file per agent per user) |
 | **Digest** | Multi-tier (L0-L4) | Last 10 entries |
 
@@ -348,49 +304,44 @@ The `source` parameter on the `build` action specifies which relay/filesystem se
 
 ## 5. Memory Navigate
 
-The `memory_navigate` tool provides 7 actions to browse the memory taxonomy:
+The `memory_navigate` tool provides 3 actions to browse the memory taxonomy:
 
 ### 5.1 Actions
 
 | Action | Description | Parameters |
 |---|---|---|
-| **`list_wings`** | List all project/person scopes with memory counts | -- |
-| **`list_halls`** | List memory type categories, optionally filtered by wing | `wing` (optional) |
-| **`list_rooms`** | List topic rooms, optionally filtered by wing | `wing` (optional) |
-| **`get_taxonomy`** | Full `{wing: {hall: {room: count}}}` tree | -- |
-| **`find_tunnels`** | Find rooms that appear in 2+ different wings (cross-project topics) | -- |
-| **`traverse`** | BFS walk from a room across wings via shared topics | `room` (required), `max_depth` (default 3) |
-| **`graph_stats`** | Overall statistics: totals, wing/hall/room counts, tunnel count, ended count, hall distribution | -- |
+| **`list_categories`** | List memory type categories with counts | -- |
+| **`get_taxonomy`** | Full `{category: count}` overview | -- |
+| **`graph_stats`** | Overall statistics: totals, category counts, ended count, category distribution | -- |
 
 ### 5.2 Examples
 
-**Browsing wings:**
+**Browsing categories:**
 
 ```
-> memory_navigate(action="list_wings")
-Wings (3):
-- person:quentin (42 memories)
-- project:pawflow (87 memories)
-- project:relay (15 memories)
+> memory_navigate(action="list_categories")
+Categories (5):
+- advice (4 memories)
+- discoveries (7 memories)
+- events (12 memories)
+- facts (42 memories)
+- preferences (15 memories)
 ```
 
-**Finding cross-project topics:**
+**Getting stats:**
 
 ```
-> memory_navigate(action="find_tunnels")
-Tunnels (2 rooms shared across wings):
-- auth: project:pawflow, project:relay
-- docker: project:pawflow, project:relay
-```
-
-**Traversing from a room:**
-
-```
-> memory_navigate(action="traverse", room="auth", max_depth=2)
-Traverse from 'auth' (depth 2):
-  auth -> [project:pawflow] -> storage
-  auth -> [project:pawflow] -> ci-pipeline
-  auth -> [project:relay] -> websocket
+> memory_navigate(action="graph_stats")
+Total memories: 80
+Categories: 5
+Ended (obsolete): 3
+Active: 77
+Category distribution:
+  advice: 4
+  discoveries: 7
+  events: 12
+  facts: 42
+  preferences: 15
 ```
 
 ---
@@ -412,8 +363,8 @@ When a conversation is compacted (context window overflow), `_auto_extract_memor
 
 ```json
 [
-  {"text": "User prefers JSON over SQLite for storage", "hall": "preferences", "room": "storage"},
-  {"text": "Auth middleware rewrite driven by compliance", "hall": "facts", "room": "auth"}
+  {"text": "User prefers JSON over SQLite for storage", "category": "preferences"},
+  {"text": "Auth middleware rewrite driven by compliance", "category": "facts"}
 ]
 ```
 
@@ -435,7 +386,7 @@ Injected under `## Persistent memory`. Contains the multi-tier digest (L0-L4 + K
 
 ### 7.2 Diary Digest
 
-Injected under `## Your diary (past observations)`. Contains the last 10 diary entries in AAAK-compressed form. Max 600 characters. Only present if the agent has diary entries.
+Injected under `## Your diary (past observations)`. Contains the last 10 diary entries (truncated). Max 600 characters. Only present if the agent has diary entries.
 
 ### 7.3 Cognitive Tools Hint
 
@@ -443,8 +394,8 @@ Always injected under `## Cognitive tools`. Tells the agent what tools are avail
 
 ```
 You have persistent memory, knowledge graph, diary, and code analysis tools:
-- Memory: remember to store facts, recall to search, forget to delete,
-  memory_navigate to browse wings/halls/rooms taxonomy
+- Memory: remember to store facts (with category), recall to search, forget to delete,
+  memory_navigate to browse categories
 - Knowledge Graph: kg_add to store relationships (subject->predicate->object),
   kg_query to find facts about an entity, query_graph for BFS/DFS traversal,
   kg_god_nodes/kg_surprises/kg_communities for analysis
@@ -479,12 +430,12 @@ Complete table of all 21 cognitive tools with their parameters:
 
 | # | Tool | Parameters | Description |
 |---|---|---|---|
-| 1 | **`remember`** | `text` (string, required), `tags` (string[]), `scope` (enum: conversation/agent/global/private), `wing` (string), `hall` (enum: facts/events/discoveries/preferences/advice), `room` (string), `valid_from` (number) | Store a fact in persistent memory |
-| 2 | **`recall`** | `query` (string), `tags` (string[]), `wing` (string), `hall` (enum: facts/events/discoveries/preferences/advice), `room` (string), `as_of` (number) | Search memories by text, tags, and taxonomy |
-| 3 | **`semantic_recall`** | `query` (string, required), `limit` (integer), `wing` (string), `hall` (enum), `room` (string) | Search memories by meaning via vector embeddings |
+| 1 | **`remember`** | `text` (string, required), `tags` (string[]), `scope` (enum: conversation/agent/global/private), `category` (enum: facts/events/discoveries/preferences/advice), `valid_from` (number) | Store a fact in persistent memory |
+| 2 | **`recall`** | `query` (string), `tags` (string[]), `category` (enum: facts/events/discoveries/preferences/advice), `as_of` (number) | Search memories by text, tags, and category |
+| 3 | **`semantic_recall`** | `query` (string, required), `limit` (integer), `category` (enum) | Search memories by meaning via vector embeddings |
 | 4 | **`forget`** | `memory_id` (string, required) | Delete a specific memory by ID |
-| 5 | **`check_duplicate`** | `text` (string, required), `wing` (string), `hall` (string) | Check if a similar memory already exists |
-| 6 | **`memory_navigate`** | `action` (enum: list_wings/list_halls/list_rooms/get_taxonomy/find_tunnels/traverse/graph_stats, required), `wing` (string), `room` (string), `max_depth` (integer) | Browse memory taxonomy structure |
+| 5 | **`check_duplicate`** | `text` (string, required), `category` (string) | Check if a similar memory already exists |
+| 6 | **`memory_navigate`** | `action` (enum: list_categories/get_taxonomy/graph_stats, required) | Browse memory taxonomy structure |
 
 ### Knowledge Graph Tools (8)
 

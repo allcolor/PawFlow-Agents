@@ -356,7 +356,7 @@ Available tool tasks (use `pawflow_help topic='tasks'` for full list):
 - `tool.remember` / `tool.recall` / `tool.forget` — Memory store/retrieve/delete
 - `tool.semantic_recall` — Search memories by vector similarity
 - `tool.check_duplicate` — Check for duplicate memories before storing
-- `tool.memory_navigate` — Browse memory taxonomy (wings/halls/rooms/tunnels)
+- `tool.memory_navigate` — Browse memory taxonomy (categories)
 - `tool.kg_add` / `tool.kg_query` / `tool.kg_invalidate` — Knowledge graph triples
 - `tool.kg_timeline` / `tool.kg_stats` — KG timeline and statistics
 - `tool.query_graph` — Traverse KG with BFS/DFS

@@ -14,13 +14,12 @@ _EXTRACT_PROMPT = """Extract 3-5 key facts from this conversation summary that w
 Focus on: user preferences, project decisions, technical choices, people/roles, deadlines.
 Skip: ephemeral task details, code snippets, debugging steps.
 
-Return a JSON array of objects with keys: "text", "hall", "room"
-- hall: one of "facts", "events", "discoveries", "preferences", "advice"
-- room: a short topic slug (e.g. "auth", "docker", "ci-pipeline")
+Return a JSON array of objects with keys: "text", "category"
+- category: one of "facts", "events", "discoveries", "preferences", "advice"
 
 Example:
-[{"text": "User prefers JSON over SQLite for storage", "hall": "preferences", "room": "storage"},
- {"text": "Auth middleware rewrite driven by compliance", "hall": "facts", "room": "auth"}]
+[{"text": "User prefers JSON over SQLite for storage", "category": "preferences"},
+ {"text": "Auth middleware rewrite driven by compliance", "category": "facts"}]
 
 Summary:
 """
@@ -64,8 +63,7 @@ def auto_extract_memories(
                 tags=["auto-extracted", "compaction"],
                 source="compaction",
                 agent=agent_name,
-                hall=fact.get("hall", "facts"),
-                room=fact.get("room", ""),
+                category=fact.get("category", "") or fact.get("hall", "facts"),
             )
             count += 1
         except Exception as e:
@@ -115,15 +113,15 @@ def _extract_heuristic(summary: str) -> list:
             continue
         lower = s.lower()
         if any(ind in lower for ind in indicators):
-            # Guess hall based on content
-            hall = "facts"
+            # Guess category based on content
+            category = "facts"
             if any(w in lower for w in ("prefer", "like", "want", "chose")):
-                hall = "preferences"
+                category = "preferences"
             elif any(w in lower for w in ("decided", "deadline", "release")):
-                hall = "events"
+                category = "events"
             elif any(w in lower for w in ("should", "must", "always", "never")):
-                hall = "advice"
-            facts.append({"text": s, "hall": hall, "room": ""})
+                category = "advice"
+            facts.append({"text": s, "category": category})
         if len(facts) >= 5:
             break
     return facts

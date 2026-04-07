@@ -3,7 +3,7 @@
 Tests cover:
 - write (basic, with type, with tags)
 - read (limit, type filter, newest first ordering)
-- build_diary_digest (max_chars, closet usage)
+- build_diary_digest (max_chars, text usage)
 - JSONL persistence (write then read from disk)
 - Per-agent isolation (different agents don't see each other's entries)
 """
@@ -14,8 +14,6 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import patch
-
 from core.agent_diary import AgentDiary
 
 
@@ -57,15 +55,10 @@ class TestWrite(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.diary.write("user1", "assistant", "")
 
-    def test_write_without_aaak(self):
-        """If AAAK is not importable, closet should be empty string."""
-        import core.agent_diary as mod
-        with patch.dict("sys.modules", {"core.aaak_dialect": None}):
-            # Force the import inside write() to fail
-            record = self.diary.write("user1", "assistant", "test entry")
-            # closet might be empty or populated depending on prior import cache;
-            # the key invariant is that write succeeds without error
-            assert "text" in record
+    def test_write_returns_text(self):
+        """Write returns a record with the text field."""
+        record = self.diary.write("user1", "assistant", "test entry")
+        assert record["text"] == "test entry"
 
 
 class TestRead(unittest.TestCase):
@@ -145,13 +138,12 @@ class TestDiaryDigest(unittest.TestCase):
         assert len(digest) <= 100
         assert digest.endswith("...")
 
-    def test_closet_preferred(self):
-        """Digest should prefer closet (AAAK compressed) text if available."""
+    def test_digest_uses_text(self):
+        """Digest should use the text field from diary entries."""
         self.diary.write("user1", "assistant", "User decided to use GraphQL")
-        entries = self.diary.read("user1", "assistant", limit=1)
-        # If closet was populated (AAAK available), digest uses it
         digest = self.diary.build_diary_digest("user1", "assistant")
         assert len(digest) > 0
+        assert "GraphQL" in digest
 
 
 class TestJSONLPersistence(unittest.TestCase):

@@ -44,20 +44,11 @@ class AgentDiary:
         path = self._diary_path(user_id, agent_name)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Compress with AAAK if available
-        _closet = ""
-        try:
-            from core.aaak_dialect import Dialect
-            _closet = Dialect().compress(entry)
-        except Exception:
-            pass
-
         record = {
             "id": uuid.uuid4().hex[:12],
             "ts": time.time(),
             "type": entry_type,  # observation, decision, learning, reflection
             "text": entry,
-            "closet": _closet,
             "tags": [t.lower().strip() for t in (tags or [])],
         }
         with open(path, "a", encoding="utf-8") as f:
@@ -97,8 +88,7 @@ class AgentDiary:
             return ""
         lines = []
         for e in entries:
-            # Use closet (AAAK compressed) if available
-            text = e.get("closet") or e.get("text", "")
+            text = e.get("text", "")
             _type = e.get("type", "")
             lines.append(f"[{_type}] {text[:100]}")
         digest = "\n".join(lines)

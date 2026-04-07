@@ -40,9 +40,9 @@ No tool accesses the server filesystem directly (except internal storage: memori
 
 ## Cognitive Tools (4 systems)
 
-- **Memory**: wing/hall/room taxonomy, scopes, temporal validity, AAAK compression
+- **Memory**: category taxonomy, scopes, temporal validity
 - **Knowledge Graph**: temporal entity-relationship triples, BFS/DFS, communities
-- **Agent Diary**: per-agent personal journal with AAAK compression
+- **Agent Diary**: per-agent personal journal
 - **Project Graph**: AST extraction via tree-sitter (17 languages), built via relay
 
 ## Key Directories

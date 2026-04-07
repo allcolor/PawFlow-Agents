@@ -25,17 +25,15 @@ class MemoryEntry:
 
     __slots__ = ("id", "text", "tags", "created_at", "updated_at", "source",
                  "embedding", "agent", "conversation_id",
-                 "wing", "hall", "room", "valid_from", "ended",
-                 "drawer_text", "closet_text")
+                 "category", "valid_from", "ended")
 
     def __init__(self, text: str, tags: List[str],
                  entry_id: str = "", source: str = "",
                  created_at: float = 0, updated_at: float = 0,
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
-                 wing: str = "", hall: str = "", room: str = "",
-                 valid_from: float = 0, ended: float = 0,
-                 drawer_text: str = "", closet_text: str = ""):
+                 category: str = "",
+                 valid_from: float = 0, ended: float = 0):
         self.id = entry_id or uuid.uuid4().hex[:12]
         self.text = text
         self.tags = [t.lower().strip() for t in tags if t.strip()]
@@ -45,13 +43,9 @@ class MemoryEntry:
         self.embedding = embedding
         self.agent = agent  # "" = not scoped to agent
         self.conversation_id = conversation_id  # "" = not scoped to conversation
-        self.wing = wing    # project/person scope (e.g. 'project:pawflow')
-        self.hall = hall    # memory type category (facts/events/discoveries/preferences/advice)
-        self.room = room    # specific topic (e.g. 'auth', 'docker')
+        self.category = category  # memory type category (facts/events/discoveries/preferences/advice)
         self.valid_from = valid_from  # 0 = valid since creation
         self.ended = ended            # 0 = still valid
-        self.drawer_text = drawer_text  # verbatim original (empty = text IS the drawer)
-        self.closet_text = closet_text  # AAAK compressed summary (empty = not compressed)
 
     def to_dict(self) -> Dict[str, Any]:
         d = {
@@ -68,20 +62,12 @@ class MemoryEntry:
             d["agent"] = self.agent
         if self.conversation_id:
             d["conversation_id"] = self.conversation_id
-        if self.wing:
-            d["wing"] = self.wing
-        if self.hall:
-            d["hall"] = self.hall
-        if self.room:
-            d["room"] = self.room
+        if self.category:
+            d["category"] = self.category
         if self.valid_from:
             d["valid_from"] = self.valid_from
         if self.ended:
             d["ended"] = self.ended
-        if self.drawer_text:
-            d["drawer_text"] = self.drawer_text
-        if self.closet_text:
-            d["closet_text"] = self.closet_text
         return d
 
     @classmethod
@@ -96,13 +82,9 @@ class MemoryEntry:
             embedding=data.get("embedding"),
             agent=data.get("agent", ""),
             conversation_id=data.get("conversation_id", ""),
-            wing=data.get("wing", ""),
-            hall=data.get("hall", ""),
-            room=data.get("room", ""),
+            category=data.get("category", "") or data.get("hall", ""),
             valid_from=data.get("valid_from", 0),
             ended=data.get("ended", 0),
-            drawer_text=data.get("drawer_text", ""),
-            closet_text=data.get("closet_text", ""),
         )
 
     def matches(self, query: str) -> bool:
@@ -112,11 +94,7 @@ class MemoryEntry:
             return True
         if any(q in tag for tag in self.tags):
             return True
-        if self.wing and q in self.wing.lower():
-            return True
-        if self.hall and q in self.hall.lower():
-            return True
-        if self.room and q in self.room.lower():
+        if self.category and q in self.category.lower():
             return True
         return False
 
@@ -158,7 +136,7 @@ class MemoryStore:
                  source: str = "",
                  embedding: Optional[List[float]] = None,
                  agent: str = "", conversation_id: str = "",
-                 wing: str = "", hall: str = "", room: str = "",
+                 category: str = "",
                  valid_from: float = 0) -> MemoryEntry:
         """Store a new memory for the user. Returns the created entry."""
         with self._store_lock:
@@ -176,32 +154,16 @@ class MemoryStore:
                         e.embedding = embedding
                     if agent:
                         e.agent = agent
-                    if wing:
-                        e.wing = wing
-                    if hall:
-                        e.hall = hall
-                    if room:
-                        e.room = room
+                    if category:
+                        e.category = category
                     self._save_user(user_id)
                     return e
 
-            # Generate AAAK closet (compressed version)
-            _closet = ""
-            try:
-                from core.aaak_dialect import Dialect
-                _dialect = Dialect()
-                _closet = _dialect.compress(text, metadata={
-                    "wing": wing, "room": room,
-                })
-            except Exception:
-                pass
             entry = MemoryEntry(text=text, tags=tags, source=source,
                                 embedding=embedding, agent=agent,
                                 conversation_id=conversation_id,
-                                wing=wing, hall=hall, room=room,
-                                valid_from=valid_from,
-                                drawer_text=text,  # verbatim original
-                                closet_text=_closet)  # AAAK compressed
+                                category=category,
+                                valid_from=valid_from)
             entries.append(entry)
             self._save_user(user_id)
             return entry
@@ -211,7 +173,7 @@ class MemoryStore:
                limit: int = 20,
                agent_name: str = "",
                conversation_id: str = "",
-               wing: str = "", hall: str = "", room: str = "",
+               category: str = "",
                as_of: float = 0,
                verbatim: bool = False) -> List[MemoryEntry]:
         """Retrieve memories matching query and/or tags.
@@ -223,13 +185,9 @@ class MemoryStore:
             self._ensure_loaded(user_id)
             entries = self._memories.get(user_id, [])
 
-        # Structural filtering (wing/hall/room)
-        if wing:
-            entries = [e for e in entries if e.wing == wing]
-        if hall:
-            entries = [e for e in entries if e.hall == hall]
-        if room:
-            entries = [e for e in entries if e.room == room]
+        # Category filtering
+        if category:
+            entries = [e for e in entries if e.category == category]
 
         # Temporal filtering: only entries valid at as_of time
         if as_of:
@@ -395,7 +353,7 @@ class MemoryStore:
                         limit: int = 10,
                         agent_name: str = "",
                         conversation_id: str = "",
-                        wing: str = "", hall: str = "", room: str = "") -> List[Tuple[MemoryEntry, float]]:
+                        category: str = "") -> List[Tuple[MemoryEntry, float]]:
         """Find memories by semantic similarity using embeddings.
 
         Filters by visibility (same scoping as recall).
@@ -407,13 +365,9 @@ class MemoryStore:
             self._ensure_loaded(user_id)
             entries = self._memories.get(user_id, [])
 
-        # Structural filtering (wing/hall/room)
-        if wing:
-            entries = [e for e in entries if e.wing == wing]
-        if hall:
-            entries = [e for e in entries if e.hall == hall]
-        if room:
-            entries = [e for e in entries if e.room == room]
+        # Category filtering
+        if category:
+            entries = [e for e in entries if e.category == category]
 
         results = []
         for e in entries:

@@ -351,7 +351,7 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 "Extract the most important facts from this conversation summary "
                 "that should be remembered for future conversations.\n"
                 "Return a JSON array of objects with keys: "
-                '"text" (the fact), "tags" (list of tags), "hall" (one of: '
+                '"text" (the fact), "tags" (list of tags), "category" (one of: '
                 'facts, events, discoveries, preferences, advice).\n'
                 "Only include facts worth remembering long-term "
                 "(user preferences, key decisions, project context). "
@@ -386,12 +386,12 @@ class AgentCompactionMixin(AgentSummarizeMixin, AgentCCContextMixin):
                 tags = [str(t).lower().strip() for t in tags if t][:5]
                 if "auto-extracted" not in tags:
                     tags.append("auto-extracted")
-                hall = item.get("hall", "facts")
-                if hall not in ("facts", "events", "discoveries", "preferences", "advice"):
-                    hall = "facts"
+                category = item.get("category", "") or item.get("hall", "facts")
+                if category not in ("facts", "events", "discoveries", "preferences", "advice"):
+                    category = "facts"
                 store.remember(
                     user_id, text, tags, source="compaction",
-                    agent=agent_name, hall=hall,
+                    agent=agent_name, category=category,
                 )
                 stored += 1
             if stored:

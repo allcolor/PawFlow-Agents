@@ -17,11 +17,11 @@ from unittest.mock import patch, MagicMock
 from core.memory_store import MemoryEntry, MemoryStore
 
 
-def _make_entry(text, tags=None, hall="", created_at=0, agent=""):
+def _make_entry(text, tags=None, category="", created_at=0, agent=""):
     return MemoryEntry(
         text=text,
         tags=tags or [],
-        hall=hall,
+        category=hall,
         created_at=created_at or 1000.0,
         agent=agent,
     )
@@ -82,7 +82,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Uses Python 3.12", ["language"],
-                            hall="facts")
+                            category="facts")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -96,7 +96,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Prefers dark theme", ["ui"],
-                            hall="preferences")
+                            category="preferences")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -110,7 +110,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Deployed v2.0 to production", ["deploy"],
-                            hall="events")
+                            category="events")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -124,7 +124,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Switched to GraphQL", ["decision"],
-                            hall="facts")
+                            category="facts")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -138,7 +138,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Found that caching helps", ["perf"],
-                            hall="discoveries")
+                            category="discoveries")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -152,7 +152,7 @@ class TestTiers(unittest.TestCase):
         mock_kg_cls.for_user.return_value = mock_kg
 
         self.store.remember("user1", "Always write tests first", ["practice"],
-                            hall="advice")
+                            category="advice")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1")
@@ -224,7 +224,7 @@ class TestMaxChars(unittest.TestCase):
         # Add lots of memories to generate a long digest
         for i in range(20):
             self.store.remember("user1", f"A very important fact number {i} " * 5,
-                                ["identity"], hall="facts")
+                                ["identity"], category="facts")
 
         from core.memory_digest import build_memory_digest
         result = build_memory_digest("user1", max_chars=200)

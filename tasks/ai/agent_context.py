@@ -1046,8 +1046,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         system_prompt += (
             "\n\n## Cognitive tools"
             "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
-            "\n- **Memory**: `remember` to store facts, `recall` to search, `forget` to delete, "
-            "`memory_navigate` to browse wings/halls/rooms taxonomy"
+            "\n- **Memory**: `remember` to store facts (with category: facts/events/discoveries/preferences/advice), "
+            "`recall` to search, `forget` to delete, `memory_navigate` to browse categories"
             "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
             "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
             "`kg_god_nodes`/`kg_surprises`/`kg_communities` for analysis"

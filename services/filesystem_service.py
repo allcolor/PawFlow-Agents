@@ -207,7 +207,7 @@ class WSListener:
         ssl_ctx = self._create_ssl_context()
         self._server = await asyncio.start_server(
             self._handle_connection, "0.0.0.0", self._port,
-            ssl=ssl_ctx,
+            ssl=ssl_ctx, reuse_address=True,
         )
         proto = "wss" if ssl_ctx else "ws"
         logger.info("Filesystem WS listener started on port %d (%s)", self._port, proto)

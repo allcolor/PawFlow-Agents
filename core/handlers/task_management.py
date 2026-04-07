@@ -634,6 +634,13 @@ class CompleteTaskHandler(ToolHandler):
                 from core.poll_scheduler import PollScheduler
                 PollScheduler.instance().cancel(
                     f"{_parent_cid}::task::{task_id}")
+                # Cleanup sub-conv context + CC session
+                _sub_cid = f"{_parent_cid}::task::{task_id}"
+                try:
+                    store.invalidate_claude_sessions(_sub_cid)
+                    store.delete(_sub_cid)
+                except Exception:
+                    pass
                 # Activate dependent tasks
                 _activated = _activate_dependents(
                     _parent_cid, task_id, result=result,
@@ -774,6 +781,13 @@ class VerifyTaskHandler(ToolHandler):
                 f"{_parent_cid}::task::{task_id}")
             PollScheduler.instance().cancel(
                 f"{_parent_cid}::task_verify::{task_id}")
+            # Cleanup sub-conv context + CC session
+            _sub_cid = f"{_parent_cid}::task::{task_id}"
+            try:
+                store.delete(_sub_cid)
+                store.invalidate_claude_sessions(_sub_cid)
+            except Exception:
+                pass
             # Activate dependent tasks
             _activated = _activate_dependents(
                 _parent_cid, task_id, result=_result,

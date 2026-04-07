@@ -497,6 +497,13 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
                 # Force-stop the running task agent immediately
                 _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
+                # Cleanup sub-conv context + CC session
+                _sub_cid = f"{conv_id}::task::{tid}"
+                try:
+                    store.invalidate_claude_sessions(_sub_cid)
+                    store.delete(_sub_cid)
+                except Exception:
+                    pass
                 # Remove instance from agent_tasks — only task_def + log remain
                 del all_tasks[tid]
                 continue  # skip all_tasks[tid] = task below
@@ -519,6 +526,13 @@ def _handle_scheduling(self, action, body, store, user_id, flowfile):
                 scheduler.cancel(f"{conv_id}::task::{tid}")
                 scheduler.cancel(f"{conv_id}::task_verify::{tid}")
                 _kill_running_task_agent(self, conv_id, tid, task.get("agent", ""), force=True)
+                # Cleanup sub-conv context + CC session
+                _sub_cid = f"{conv_id}::task::{tid}"
+                try:
+                    store.invalidate_claude_sessions(_sub_cid)
+                    store.delete(_sub_cid)
+                except Exception:
+                    pass
                 # Remove from dict entirely
                 del all_tasks[tid]
                 # Also delete task log

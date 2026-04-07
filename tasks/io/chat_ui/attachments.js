@@ -328,20 +328,32 @@ async function send() {
   }
 }
 
+let _lastEscapeTime = 0;
+let _lastEscapeTarget = '';
+
 function handleKey(e) {
   const input = e.target;
-  // Escape: force stop the selected/active agent
+  // Escape: 1st = graceful interrupt, 2nd (within 5s) = force stop
   if (e.key === 'Escape') {
     e.preventDefault();
-    // selectedAgent should ALWAYS have a value — resolve from active panel as fallback
     let target = selectedAgent;
     if (!target) {
       const activeNames = Object.values(activeInteractions || {}).map(a => a.name || a.apiName);
       target = activeNames.length === 1 ? activeNames[0] : '';
     }
-    if (!target) return; // nothing to stop
-    addMsg('system', 'Stopping ' + target + '...');
-    fireAction('cancel', { agent_name: target, force: true });
+    if (!target) return;
+    const now = Date.now();
+    const isRepeat = _lastEscapeTarget === target && (now - _lastEscapeTime) < 5000;
+    _lastEscapeTarget = target;
+    _lastEscapeTime = now;
+    if (isRepeat) {
+      addMsg('system', 'Force stopping ' + target + '...');
+      fireAction('cancel', { agent_name: target, force: true });
+      _lastEscapeTarget = '';  // reset so next Escape is graceful again
+    } else {
+      addMsg('system', 'Interrupting ' + target + '... (press Escape again to force stop)');
+      fireAction('interrupt', { agent_name: target });
+    }
     return;
   }
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {

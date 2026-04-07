@@ -1,78 +1,78 @@
-# Documentation Technique et Fonctionnelle - PawFlow
+# Technical and Functional Documentation - PawFlow
 
-## Table des Matières
+## Table of Contents
 
-1. [Vue d'Ensemble](#1-vue-densemble)
-2. [Architecture Logicielle](#2-architecture-logicielle)
-3. [Concepts Fondamentaux](#3-concepts-fondamentaux)
-4. [Format des Flux JSON](#4-format-des-flux-json)
-5. [Interface Task](#5-interface-task)
-6. [Interface Service](#6-interface-service)
-7. [Interface Flow et Group](#7-interface-flow-et-group)
-8. [FlowFile et Attributs](#8-flowfile-et-attributs)
-9. [Système de Configuration](#9-système-de-configuration)
-10. [Gestion des Variables Runtime](#10-gestion-des-variables-runtime)
-11. [Référence Complète des Tâches](#11-référence-complète-des-tâches)
-12. [Référence Complète des Services](#12-référence-complète-des-services)
-13. [API du Moteur d'Exécution](#13-api-du-moteur-dexécution)
-14. [GUI - Spécifications Techniques](#14-gui---spécifications-techniques)
-15. [Sécurité et Authentification](#15-sécurité-et-authentification)
-16. [Tests et Qualité](#16-tests-et-quality)
-17. [Déploiement et Production](#17-déploiement-et-production)
+1. [Overview](#1-overview)
+2. [Software Architecture](#2-software-architecture)
+3. [Fundamental Concepts](#3-fundamental-concepts)
+4. [JSON Flow Format](#4-json-flow-format)
+5. [Task Interface](#5-task-interface)
+6. [Service Interface](#6-service-interface)
+7. [Flow and Group Interface](#7-flow-and-group-interface)
+8. [FlowFile and Attributes](#8-flowfile-and-attributes)
+9. [Configuration System](#9-configuration-system)
+10. [Runtime Variable Management](#10-runtime-variable-management)
+11. [Complete Task Reference](#11-complete-task-reference)
+12. [Complete Service Reference](#12-complete-service-reference)
+13. [Execution Engine API](#13-execution-engine-api)
+14. [GUI - Technical Specifications](#14-gui---technical-specifications)
+15. [Security and Authentication](#15-security-and-authentication)
+16. [Tests and Quality](#16-tests-and-quality)
+17. [Deployment and Production](#17-deployment-and-production)
 
 ---
 
-## 1. Vue d'Ensemble
+## 1. Overview
 
-### 1.1. Objectif du Projet
+### 1.1. Project Objective
 
-PawFlow est un framework Python de type Apache NiFi permettant de créer, déployer et monitorer des pipelines de données complexes. Il sépare clairement deux états :
+PawFlow is an Apache NiFi-style Python framework for creating, deploying, and monitoring complex data pipelines. It clearly separates two states:
 
-- **État Création** : Design et édition des flux, services et tâches dans un dépôt (Git/DB/Fichier)
-- **État Runtime** : Déploiement, configuration et exécution des flux avec gestion des variables
+- **Creation State**: Design and editing of flows, services, and tasks in a repository (Git/DB/File)
+- **Runtime State**: Deployment, configuration, and execution of flows with variable management
 
-### 1.2. Principes de Conception
+### 1.2. Design Principles
 
-1. **Séparation des préoccupations** : Tâches, Services, Flux et Groupes sont modélisés indépendamment
-2. **Configuration externalisée** : Les paramètres sont stockés dans le JSON, les overrides au runtime
-3. **Extensibilité** : Nouveaux types de tâches/services ajoutables sans modification du core
-4. **Flow-based programming** : Les données circulent via des FlowFiles entre les composants
-5. **Déclaratif** : Les flux sont définis dans des fichiers JSON lisibles et éditables
+1. **Separation of concerns**: Tasks, Services, Flows, and Groups are modeled independently
+2. **Externalized configuration**: Parameters are stored in JSON, overrides at runtime
+3. **Extensibility**: New task/service types can be added without modifying the core
+4. **Flow-based programming**: Data flows via FlowFiles between components
+5. **Declarative**: Flows are defined in readable and editable JSON files
 
-### 1.3. Architecture Hiérarchique
+### 1.3. Hierarchical Architecture
 
 ```
 Repository
-├── Services (réutilisables)
-├── Tasks (traitements unitaires)
-├── Flows (orchestration de tâches)
-│   └── Groups (regroupement logique)
-└── Variables (overrides runtime)
+├── Services (reusable)
+├── Tasks (unit processing)
+├── Flows (task orchestration)
+│   └── Groups (logical grouping)
+└── Variables (runtime overrides)
 ```
 
 ---
 
-## 2. Architecture Logicielle
+## 2. Software Architecture
 
-### 2.1. Structure du Projet
+### 2.1. Project Structure
 
 ```
 pawflow/
 ├── core/
 │   ├── __init__.py
-│   ├── interface_task.py        # Interface abstraite Task
-│   ├── interface_service.py     # Interface abstraite Service
-│   ├── interface_flow.py        # Interface abstraite Flow
-│   ├── interface_group.py       # Interface abstraite Group
-│   ├── flowfile.py              # Classe FlowFile et Attributes
-│   ├── config_manager.py        # Gestion configuration (Git/DB/FS)
-│   ├── variable_resolver.py     # Résolution des variables runtime
-│   └── exceptions.py            # Exceptions personnalisées
+│   ├── interface_task.py        # Abstract Task interface
+│   ├── interface_service.py     # Abstract Service interface
+│   ├── interface_flow.py        # Abstract Flow interface
+│   ├── interface_group.py       # Abstract Group interface
+│   ├── flowfile.py              # FlowFile and Attributes class
+│   ├── config_manager.py        # Configuration management (Git/DB/FS)
+│   ├── variable_resolver.py     # Runtime variable resolution
+│   └── exceptions.py            # Custom exceptions
 │
 ├── tasks/
 │   ├── __init__.py
-│   ├── base_task.py             # Implémentation de base
-│   ├── system/                  # Tâches système
+│   ├── base_task.py             # Base implementation
+│   ├── system/                  # System tasks
 │   │   ├── log_task.py
 │   │   ├── replace_text_task.py
 │   │   ├── wait_task.py
@@ -90,13 +90,13 @@ pawflow/
 │   │   ├── db_task.py
 │   │   └── ...
 │   └── control/
-│       ├── flow_task.py         # Appeler un autre flow
+│       ├── flow_task.py         # Call another flow
 │       ├── route_task.py
 │       └── split_task.py
 │
 ├── services/
 │   ├── __init__.py
-│   ├── base_service.py          # Implémentation de base
+│   ├── base_service.py          # Base implementation
 │   ├── auth/
 │   │   ├── oauth2_authenticator.py
 │   │   ├── oauth2_bearer_validator.py
@@ -112,15 +112,15 @@ pawflow/
 │
 ├── engine/
 │   ├── __init__.py
-│   ├── flow_parser.py           # Parser JSON de flux
-│   ├── flow_validator.py        # Validation des flux
-│   ├── executor.py              # Moteur d'exécution
-│   ├── scheduler.py             # Scheduler des tâches
-│   └── error_handler.py         # Gestion erreurs et retries
+│   ├── flow_parser.py           # JSON flow parser
+│   ├── flow_validator.py        # Flow validation
+│   ├── executor.py              # Execution engine
+│   ├── scheduler.py             # Task scheduler
+│   └── error_handler.py         # Error handling and retries
 │
 ├── gui/
 │   ├── __init__.py
-│   ├── editor/                  # GUI de création
+│   ├── editor/                  # Creation GUI
 │   │   ├── app.py
 │   │   ├── components/
 │   │   │   ├── flow_canvas.py
@@ -129,7 +129,7 @@ pawflow/
 │   │   └── handlers/
 │   │       ├── save_handler.py
 │   │       └── import_export.py
-│   └── runtime/                 # GUI de runtime
+│   └── runtime/                 # Runtime GUI
 │       ├── app.py
 │       ├── dashboard.py
 │       ├── logs_viewer.py
@@ -137,9 +137,9 @@ pawflow/
 │
 ├── config/
 │   ├── __init__.py
-│   ├── config.py                # Configuration globale
+│   ├── config.py                # Global configuration
 │   └── storage/
-│       ├── storage_factory.py   # Factory pour Git/DB/FS
+│       ├── storage_factory.py   # Factory for Git/DB/FS
 │       ├── git_storage.py
 │       ├── sqlite_storage.py
 │       └── filesystem_storage.py
@@ -147,10 +147,10 @@ pawflow/
 ├── tests/
 ├── examples/
 ├── docs/
-└── main.py                      # Point d'entrée
+└── main.py                      # Entry point
 ```
 
-### 2.2. Diagramme de Classes Principales
+### 2.2. Main Class Diagram
 
 ```
 ┌─────────────────────┐
@@ -163,7 +163,7 @@ pawflow/
 │ + get_schema()      │
 └─────────────────────┘
          │
-         │ hérite
+         │ inherits
          ▼
 ┌─────────────────────┐
 │   BaseTask          │
@@ -192,7 +192,7 @@ pawflow/
 │ + get_schema()      │
 └─────────────────────┘
          │
-         │ hérite
+         │ inherits
          ▼
 ┌─────────────────────┐
 │   BaseService       │
@@ -224,72 +224,72 @@ pawflow/
 │      Flow           │
 ├─────────────────────┤
 │ - name: str         │
-│ - entries: list     │  # Entrées (sources)
-│ - exits: list       │  # Sorties (destinations)
+│ - entries: list     │  # Entries (sources)
+│ - exits: list       │  # Exits (destinations)
 │ - tasks: dict       │  # Mapping task_id -> TaskConfig
-│ - relations: list   │  # Relations entre tâches
-│ - parameters: dict  │  # Paramètres globaux
+│ - relations: list   │  # Relations between tasks
+│ - parameters: dict  │  # Global parameters
 └─────────────────────┘
 ```
 
 ---
 
-## 3. Concepts Fondamentaux
+## 3. Fundamental Concepts
 
-### 3.1. Les Quatre Types d'Objets
+### 3.1. The Four Object Types
 
 #### 3.1.1. Services
-Les services sont des composants réutilisables qui fournissent des capacités spécifiques :
-- **Authentification** : OAuth2, JWT, Basic Auth
-- **Connectivité** : DB, SFTP, HTTP, Pulsar, S3
-- **Utilitaires** : HTTPS Manager, Rate Limiter
+Services are reusable components that provide specific capabilities:
+- **Authentication**: OAuth2, JWT, Basic Auth
+- **Connectivity**: DB, SFTP, HTTP, Pulsar, S3
+- **Utilities**: HTTPS Manager, Rate Limiter
 
-**Caractéristiques** :
-- Lifecycle indépendant (connect/disconnect)
-- Peuvent être partagés entre plusieurs tâches
-- Configuration persistante dans le repository
+**Characteristics**:
+- Independent lifecycle (connect/disconnect)
+- Can be shared between multiple tasks
+- Persistent configuration in the repository
 
-#### 3.1.2. Tâches
-Les tâches sont des unités de traitement atomiques :
-- **Transformation** : ReplaceText, Convert, Filter
-- **IO** : HTTP, SFTP, DB, S3
-- **Contrôle** : Wait, Notify, Split, Route
-- **Custom** : Script Python, Shell command
+#### 3.1.2. Tasks
+Tasks are atomic processing units:
+- **Transformation**: ReplaceText, Convert, Filter
+- **IO**: HTTP, SFTP, DB, S3
+- **Control**: Wait, Notify, Split, Route
+- **Custom**: Python Script, Shell command
 
-**Caractéristiques** :
-- Acceptent un FlowFile en entrée
-- Produisent un ou plusieurs FlowFiles en sortie
-- Exposent leurs paramètres via une interface standardisée
+**Characteristics**:
+- Accept a FlowFile as input
+- Produce one or more FlowFiles as output
+- Expose their parameters via a standardized interface
 
-#### 3.1.3. Flux (Flow)
-Un flux est une orchestration de tâches :
-- **Entrées** : Sources de données (0 à N)
-- **Sorties** : Destinations finales (0 à N)
-- **Tâches** : Composants intermédiaires
-- **Relations** : Connections entre tâches (avec routing)
+#### 3.1.3. Flows
+A flow is a task orchestration:
+- **Entries**: Data sources (0 to N)
+- **Exits**: Final destinations (0 to N)
+- **Tasks**: Intermediate components
+- **Relations**: Connections between tasks (with routing)
 
-**Caractéristiques** :
-- Déclaratif (fichier JSON)
-- Paramétrable et overrideable au runtime
-- Peuvent appeler d'autres flux (composition)
+**Characteristics**:
+- Declarative (JSON file)
+- Configurable and overridable at runtime
+- Can call other flows (composition)
 
-#### 3.1.4. Groupes
-Les groupes permettent d'organiser visuellement et logiquement :
-- Regroupement de tâches/flux
-- Arborescence hiérarchique
-- Scope de configuration
+#### 3.1.4. Groups
+Groups allow visual and logical organization:
+- Grouping of tasks/flows
+- Hierarchical tree structure
+- Configuration scope
 
-### 3.2. Les FlowFiles
+### 3.2. FlowFiles
 
-Un FlowFile représente une unité de données circulant dans le pipeline :
+A FlowFile represents a unit of data flowing through the pipeline:
 
 ```python
 class FlowFile:
-    content: bytes              # Contenu binaire
-    attributes: Dict[str, str]  # Métadonnées
-    process_id: str             # UUID de l'instance
+    content: bytes              # Binary content
+    attributes: Dict[str, str]  # Metadata
+    process_id: str             # Instance UUID
     
-    # Méthodes utilitaires
+    # Utility methods
     def get_attribute(key: str) -> Optional[str]
     def set_attribute(key: str, value: str)
     def delete_attribute(key: str)
@@ -297,17 +297,17 @@ class FlowFile:
     def write_content(data: bytes)
 ```
 
-**Attributs standards** :
-- `filename` : Nom du fichier original
-- `fileSize` : Taille en octets
-- `timestamp` : Timestamp d'entrée
-- `uuid` : UUID unique
-- `batch.id` : ID du batch
-- `error.count` : Nombre d'erreurs
+**Standard attributes**:
+- `filename`: Original file name
+- `fileSize`: Size in bytes
+- `timestamp`: Entry timestamp
+- `uuid`: Unique UUID
+- `batch.id`: Batch ID
+- `error.count`: Error count
 
-### 3.3. Les Relations
+### 3.3. Relations
 
-Une relation définit comment les FlowFiles circulent entre composants :
+A relation defines how FlowFiles flow between components:
 
 ```json
 {
@@ -319,37 +319,37 @@ Une relation définit comment les FlowFiles circulent entre composants :
 }
 ```
 
-**Types de relations** :
-- `success` : Tâche terminée avec succès
-- `failure` : Tâche a échoué
-- `timeout` : Tâche a timeout
-- `any` : N'importe quel état
+**Relation types**:
+- `success`: Task completed successfully
+- `failure`: Task failed
+- `timeout`: Task timed out
+- `any`: Any state
 
-**Stratégies de routage** :
-- `direct` : Envoi direct au destinataire
-- `round_robin` : Distribution cyclique
-- `load_balance` : Équilibrage de charge
+**Routing strategies**:
+- `direct`: Direct send to recipient
+- `round_robin`: Cyclic distribution
+- `load_balance`: Load balancing
 
 ---
 
-## 4. Format des Flux JSON
+## 4. JSON Flow Format
 
-### 4.1. Structure Générale
+### 4.1. General Structure
 
 ```json
 {
   "$schema": "http://pawflow.org/schemas/flow-v1.json",
   "metadata": {
-    "name": "mon-flux",
+    "name": "my-flow",
     "version": "1.0.0",
-    "description": "Description du flux",
-    "author": "nom.prénom",
+    "description": "Flow description",
+    "author": "first.last",
     "created": "2024-01-01T00:00:00Z",
     "modified": "2024-01-15T00:00:00Z"
   },
   "parameters": {
     "param1": "value1",
-    "param2": "${variable_runtime}"
+    "param2": "${runtime_variable}"
   },
   "entries": [
     {
@@ -368,7 +368,7 @@ Une relation définit comment les FlowFiles circulent entre composants :
   "tasks": {
     "task_1": {
       "type": "replace_text",
-      "name": "Remplacer texte",
+      "name": "Replace text",
       "parameters": {
         "search": "old",
         "replace": "new"
@@ -377,7 +377,7 @@ Une relation définit comment les FlowFiles circulent entre composants :
   },
   "groups": {
     "group_1": {
-      "name": "Groupe de traitement",
+      "name": "Processing group",
       "tasks": ["task_1", "task_2"],
       "x": 100,
       "y": 100,
@@ -395,7 +395,7 @@ Une relation définit comment les FlowFiles circulent entre composants :
     }
   ],
   "variables": {
-    "variable_runtime": {
+    "runtime_variable": {
       "type": "string|secret|reference",
       "default": "default_value",
       "description": "Description",
@@ -405,19 +405,19 @@ Une relation définit comment les FlowFiles circulent entre composants :
 }
 ```
 
-### 4.2. Schema Complet
+### 4.2. Complete Schema
 
-Voir fichier : `docs/schemas/flow-v1.json` (à créer)
+See file: `docs/schemas/flow-v1.json` (to be created)
 
-### 4.3. Exemple Complexe
+### 4.3. Complex Example
 
-Voir : `examples/complex_flow.json`
+See: `examples/complex_flow.json`
 
 ---
 
-## 5. Interface Task
+## 5. Task Interface
 
-### 5.1. Définition de l'Interface
+### 5.1. Interface Definition
 
 ```python
 from abc import ABC, abstractmethod
@@ -425,75 +425,75 @@ from typing import Dict, Any, List, Optional
 from core.flowfile import FlowFile
 
 class Task(ABC):
-    """Interface abstraite pour toutes les tâches."""
+    """Abstract interface for all tasks."""
     
-    # Métadonnées de la tâche (class attributes)
-    TYPE: str                    # Type unique (ex: "log", "http")
-    VERSION: str                 # Version de l'implémentation
-    NAME: str                    # Nom affiché
-    DESCRIPTION: str             # Description détaillée
-    ICON: str                    # Icône pour l'UI
+    # Task metadata (class attributes)
+    TYPE: str                    # Unique type (e.g.: "log", "http")
+    VERSION: str                 # Implementation version
+    NAME: str                    # Display name
+    DESCRIPTION: str             # Detailed description
+    ICON: str                    # Icon for the UI
     
     @abstractmethod
     def __init__(self, config: Dict[str, Any]):
         """
-        Initialiser la tâche avec sa configuration.
+        Initialize the task with its configuration.
         
         Args:
-            config: Dictionnaire des paramètres de la tâche
+            config: Dictionary of task parameters
         """
         pass
     
     @abstractmethod
     def execute(self, flowfile: FlowFile) -> List[FlowFile]:
         """
-        Exécuter la tâche sur un FlowFile.
+        Execute the task on a FlowFile.
         
         Args:
-            flowfile: FlowFile d'entrée
+            flowfile: Input FlowFile
             
         Returns:
-            Liste de FlowFiles de sortie (1 ou plusieurs)
+            List of output FlowFiles (1 or more)
         """
         pass
     
     @abstractmethod
     def get_parameter_schema(self) -> Dict[str, Any]:
         """
-        Retourner le schéma des paramètres pour l'UI.
+        Return the parameter schema for the UI.
         
         Returns:
-            Schema décrivant chaque paramètre (type, validation, etc.)
+            Schema describing each parameter (type, validation, etc.)
         """
         pass
     
     def validate(self) -> List[str]:
         """
-        Valider la configuration de la tâche.
+        Validate the task configuration.
         
         Returns:
-            Liste de messages d'erreur (vide si valide)
+            List of error messages (empty if valid)
         """
         pass
     
     def initialize(self):
         """
-        Initialiser la tâche (appelé avant l'exécution).
+        Initialize the task (called before execution).
         """
         pass
     
     def cleanup(self):
         """
-        Nettoyage de la tâche (appelé après exécution).
+        Clean up the task (called after execution).
         """
         pass
 ```
 
-### 5.2. Implémentation de Base
+### 5.2. Base Implementation
 
 ```python
 class BaseTask(Task):
-    """Implémentation de base avec fonctionnalités communes."""
+    """Base implementation with common functionality."""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -501,35 +501,35 @@ class BaseTask(Task):
         self._validate_config()
     
     def _parse_parameters(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Résoudre les variables dans les paramètres."""
+        """Resolve variables in parameters."""
         resolved = {}
         for key, value in config.items():
             if isinstance(value, str) and value.startswith('${'):
-                # Résolution de variable
+                # Variable resolution
                 resolved[key] = VariableResolver.resolve(value)
             else:
                 resolved[key] = value
         return resolved
     
     def _validate_config(self):
-        """Valider la configuration."""
+        """Validate the configuration."""
         errors = []
         schema = self.get_parameter_schema()
         for param_name, param_schema in schema.items():
             if param_schema.get('required', False):
                 if param_name not in self.parameters:
-                    errors.append(f"Paramètre requis manquant : {param_name}")
+                    errors.append(f"Missing required parameter: {param_name}")
         if errors:
             raise ValueError("; ".join(errors))
 ```
 
-### 5.3. Exemple d'Implémentation
+### 5.3. Implementation Example
 
 ```python
 class LogTask(BaseTask):
     TYPE = "log"
     NAME = "Log"
-    DESCRIPTION = "Logguer un message"
+    DESCRIPTION = "Log a message"
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -540,7 +540,7 @@ class LogTask(BaseTask):
         import logging
         logger = logging.getLogger(self.__class__.__name__)
         
-        # Logguer le message
+        # Log the message
         msg = self.message.format(
             **{k: flowfile.get_attribute(k) for k in flowfile.attributes}
         )
@@ -549,9 +549,9 @@ class LogTask(BaseTask):
             logger.debug(msg)
         elif self.level == 'INFO':
             logger.info(msg)
-        # ... autres niveaux
+        # ... other levels
         
-        # Retourner le FlowFile inchangé
+        # Return the FlowFile unchanged
         return [flowfile]
     
     def get_parameter_schema(self) -> Dict[str, Any]:
@@ -559,7 +559,7 @@ class LogTask(BaseTask):
             'message': {
                 'type': 'string',
                 'required': True,
-                'description': 'Message à logguer',
+                'description': 'Message to log',
                 'placeholder': 'Message: ${filename}'
             },
             'level': {
@@ -570,67 +570,67 @@ class LogTask(BaseTask):
         }
 ```
 
-### 5.4. Catalogue Complet des Tâches
+### 5.4. Complete Task Catalog
 
-Voir section 11 pour la liste complète avec schémas de paramètres.
+See section 11 for the complete list with parameter schemas.
 
 ---
 
-## 6. Interface Service
+## 6. Service Interface
 
-### 6.1. Définition de l'Interface
+### 6.1. Interface Definition
 
 ```python
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
 
 class Service(ABC):
-    """Interface abstraite pour tous les services."""
+    """Abstract interface for all services."""
     
-    # Métadonnées (class attributes)
-    TYPE: str                    # Type unique
+    # Metadata (class attributes)
+    TYPE: str                    # Unique type
     VERSION: str                 # Version
-    NAME: str                    # Nom affiché
+    NAME: str                    # Display name
     DESCRIPTION: str             # Description
     
     @abstractmethod
     def __init__(self, config: Dict[str, Any]):
-        """Initialiser le service."""
+        """Initialize the service."""
         pass
     
     @abstractmethod
     def connect(self):
-        """Établir la connexion au service."""
+        """Establish the connection to the service."""
         pass
     
     @abstractmethod
     def disconnect(self):
-        """Fermer la connexion."""
+        """Close the connection."""
         pass
     
     @abstractmethod
     def get_parameter_schema(self) -> Dict[str, Any]:
-        """Schema des paramètres."""
+        """Parameter schema."""
         pass
     
     def validate(self) -> List[str]:
-        """Valider la configuration."""
+        """Validate the configuration."""
         pass
     
     def health_check(self) -> bool:
-        """Vérifier l'état de santé du service."""
+        """Check the service health status."""
         pass
     
     def get_instance(self):
-        """Retourner l'instance connectée (pour utilisation par les tâches)."""
+        """Return the connected instance (for use by tasks)."""
         pass
 ```
 
-### 6.2. Gestion du Lifecycle
+### 6.2. Lifecycle Management
 
 ```python
 class BaseService(Service):
-    """Implémentation de base avec gestion du lifecycle."""
+    """Base implementation with lifecycle management."""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
@@ -639,7 +639,7 @@ class BaseService(Service):
         self._validated = False
     
     def connect(self):
-        """Établir la connexion avec gestion d'erreurs."""
+        """Establish the connection with error handling."""
         if self._connection is not None:
             return
         
@@ -647,10 +647,10 @@ class BaseService(Service):
             self._connection = self._create_connection()
             self._validated = True
         except Exception as e:
-            raise ServiceConnectionError(f"Échec connexion : {e}")
+            raise ServiceConnectionError(f"Connection failed: {e}")
     
     def disconnect(self):
-        """Fermer la connexion proprement."""
+        """Close the connection cleanly."""
         if self._connection is not None:
             try:
                 self._close_connection()
@@ -658,31 +658,31 @@ class BaseService(Service):
                 self._connection = None
     
     def __enter__(self):
-        """Support du contexte contextuel."""
+        """Context manager support."""
         self.connect()
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Fermer la connexion après utilisation."""
+        """Close the connection after use."""
         self.disconnect()
     
     @abstractmethod
     def _create_connection(self):
-        """Créer la connexion réelle (implémenté par sous-classe)."""
+        """Create the actual connection (implemented by subclass)."""
         pass
     
     @abstractmethod
     def _close_connection(self):
-        """Fermer la connexion réelle."""
+        """Close the actual connection."""
         pass
 ```
 
-### 6.3. Exemple de Service
+### 6.3. Service Example
 
 ```python
 class SFTPService(BaseService):
     TYPE = "sftp_connection"
-    NAME = "Connexion SFTP"
+    NAME = "SFTP Connection"
     
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -721,7 +721,7 @@ class SFTPService(BaseService):
             self._connection.close()
     
     def get_connection(self):
-        """Retourner le client SFTP."""
+        """Return the SFTP client."""
         return self._connection
     
     def get_parameter_schema(self):
@@ -729,7 +729,7 @@ class SFTPService(BaseService):
             'host': {
                 'type': 'string',
                 'required': True,
-                'description': 'Hôte SFTP'
+                'description': 'SFTP host'
             },
             'port': {
                 'type': 'integer',
@@ -754,9 +754,9 @@ class SFTPService(BaseService):
 
 ---
 
-## 7. Interface Flow et Group
+## 7. Flow and Group Interface
 
-### 7.1. Interface Flow
+### 7.1. Flow Interface
 
 ```python
 from typing import Dict, List, Optional
@@ -765,7 +765,7 @@ from core.task import Task
 from core.service import Service
 
 class Flow:
-    """Orchestration de tâches."""
+    """Task orchestration."""
     
     def __init__(self, config: Dict[str, Any]):
         self.name = config['name']
@@ -774,29 +774,29 @@ class Flow:
         self.parameters = config.get('parameters', {})
         self.variables = config.get('variables', {})
         
-        # Entrées et sorties
+        # Entries and exits
         self.entries = self._parse_entries(config.get('entries', []))
         self.exits = self._parse_exits(config.get('exits', []))
         
-        # Tâches
+        # Tasks
         self.tasks = self._parse_tasks(config.get('tasks', {}))
         
-        # Groupes
+        # Groups
         self.groups = self._parse_groups(config.get('groups', {}))
         
         # Relations
         self.relations = self._parse_relations(config.get('relations', []))
     
     def _parse_entries(self, entries_config: List[Dict]) -> List[Dict]:
-        """Parser les entrées."""
+        """Parse entries."""
         return entries_config
     
     def _parse_exits(self, exits_config: List[Dict]) -> List[Dict]:
-        """Parser les sorties."""
+        """Parse exits."""
         return exits_config
     
     def _parse_tasks(self, tasks_config: Dict) -> Dict[str, Task]:
-        """Parser et instancier les tâches."""
+        """Parse and instantiate tasks."""
         tasks = {}
         for task_id, task_config in tasks_config.items():
             task_class = TaskFactory.get(task_config['type'])
@@ -805,33 +805,33 @@ class Flow:
         return tasks
     
     def _parse_groups(self, groups_config: Dict) -> Dict[str, Dict]:
-        """Parser les groupes."""
+        """Parse groups."""
         return groups_config
     
     def _parse_relations(self, relations_config: List[Dict]) -> List[Dict]:
-        """Parser les relations."""
+        """Parse relations."""
         return relations_config
     
     def execute(self, input_flowfile: Optional[FlowFile] = None) -> List[FlowFile]:
         """
-        Exécuter le flow.
+        Execute the flow.
         
         Args:
-            input_flowfile: FlowFile optionnel pour les entrées
+            input_flowfile: Optional FlowFile for entries
             
         Returns:
-            Liste des FlowFiles de sortie
+            List of output FlowFiles
         """
-        # Créer les FlowFiles d'entrée
+        # Create input FlowFiles
         flowfiles = self._create_input_flowfiles(input_flowfile)
         
-        # Exécuter le DAG
+        # Execute the DAG
         output_flowfiles = self._execute_dag(flowfiles)
         
         return output_flowfiles
     
     def _create_input_flowfiles(self, input_flowfile: Optional[FlowFile]) -> List[FlowFile]:
-        """Créer les FlowFiles initiaux."""
+        """Create initial FlowFiles."""
         flowfiles = []
         for entry in self.entries:
             ff = FlowFile(
@@ -842,8 +842,8 @@ class Flow:
         return flowfiles
     
     def _execute_dag(self, flowfiles: List[FlowFile]) -> List[FlowFile]:
-        """Exécuter le DAG des tâches."""
-        # Topological sort des tâches
+        """Execute the task DAG."""
+        # Topological sort of tasks
         sorted_tasks = self._topological_sort()
         
         # Execution
@@ -859,12 +859,12 @@ class Flow:
         return current_flowfiles
     
     def _topological_sort(self) -> List[str]:
-        """Tri topologique des tâches."""
-        # Implémentation de l'algorithme de tri topologique
+        """Topological sort of tasks."""
+        # Implementation of topological sort algorithm
         pass
     
     def get_statistics(self) -> Dict[str, Any]:
-        """Retourner les statistiques du flow."""
+        """Return flow statistics."""
         return {
             'name': self.name,
             'total_tasks': len(self.tasks),
@@ -874,11 +874,11 @@ class Flow:
         }
 ```
 
-### 7.2. Interface Group
+### 7.2. Group Interface
 
 ```python
 class Group:
-    """Regroupement logique de tâches."""
+    """Logical grouping of tasks."""
     
     def __init__(self, config: Dict[str, Any]):
         self.id = config['id']
@@ -887,32 +887,32 @@ class Group:
         self.tasks = config.get('tasks', [])
         self.flows = config.get('flows', [])
         
-        # Position et dimension pour l'UI
+        # Position and dimensions for the UI
         self.x = config.get('x', 0)
         self.y = config.get('y', 0)
         self.width = config.get('width', 400)
         self.height = config.get('height', 200)
     
     def add_task(self, task_id: str):
-        """Ajouter une tâche au groupe."""
+        """Add a task to the group."""
         if task_id not in self.tasks:
             self.tasks.append(task_id)
     
     def remove_task(self, task_id: str):
-        """Retirer une tâche du groupe."""
+        """Remove a task from the group."""
         if task_id in self.tasks:
             self.tasks.remove(task_id)
     
     def get_children(self) -> List[str]:
-        """Retourner tous les enfants (tâches + sous-groupes)."""
+        """Return all children (tasks + subgroups)."""
         return self.tasks.copy()
 ```
 
 ---
 
-## 8. FlowFile et Attributs
+## 8. FlowFile and Attributes
 
-### 8.1. Classe FlowFile
+### 8.1. FlowFile Class
 
 ```python
 import uuid
@@ -920,7 +920,7 @@ from typing import Dict, Optional, BinaryIO
 from datetime import datetime
 
 class FlowFile:
-    """Représente une unité de données dans le pipeline."""
+    """Represents a unit of data in the pipeline."""
     
     def __init__(
         self,
@@ -933,68 +933,68 @@ class FlowFile:
         self.process_id = process_id or str(uuid.uuid4())
         self._original_content = content.copy()
     
-    # --- Accès aux attributs ---
+    # --- Attribute access ---
     
     def get_attribute(self, key: str, default: Optional[str] = None) -> Optional[str]:
-        """Récupérer un attribut."""
+        """Retrieve an attribute."""
         return self.attributes.get(key, default)
     
     def set_attribute(self, key: str, value: str):
-        """Définir un attribut."""
+        """Set an attribute."""
         self.attributes[key] = str(value)
     
     def delete_attribute(self, key: str):
-        """Supprimer un attribut."""
+        """Delete an attribute."""
         if key in self.attributes:
             del self.attributes[key]
     
     def get_attributes(self) -> Dict[str, str]:
-        """Récupérer tous les attributs."""
+        """Retrieve all attributes."""
         return self.attributes.copy()
     
     def set_attributes(self, attributes: Dict[str, str]):
-        """Définir tous les attributs."""
+        """Set all attributes."""
         self.attributes = attributes.copy()
     
-    # --- Gestion du contenu ---
+    # --- Content management ---
     
     def get_content(self) -> bytes:
-        """Récupérer le contenu."""
+        """Retrieve the content."""
         return self.content
     
     def set_content(self, content: bytes):
-        """Définir le contenu."""
+        """Set the content."""
         self.content = content
     
     def write_content(self, file_obj: BinaryIO):
-        """Écrire le contenu depuis un fichier."""
+        """Write content from a file."""
         self.content = file_obj.read()
     
     def read_content(self) -> BinaryIO:
-        """Lire le contenu comme fichier."""
+        """Read content as a file."""
         from io import BytesIO
         return BytesIO(self.content)
     
     def clone(self) -> 'FlowFile':
-        """Créer une copie."""
+        """Create a copy."""
         return FlowFile(
             content=self.content.copy(),
             attributes=self.attributes.copy(),
             process_id=str(uuid.uuid4())
         )
     
-    # --- Méthodes utilitaires ---
+    # --- Utility methods ---
     
     def size(self) -> int:
-        """Taille du contenu."""
+        """Content size."""
         return len(self.content)
     
     def is_empty(self) -> bool:
-        """Vérifier si vide."""
+        """Check if empty."""
         return len(self.content) == 0
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convertir en dictionnaire (pour sérialisation)."""
+        """Convert to dictionary (for serialization)."""
         return {
             'process_id': self.process_id,
             'size': len(self.content),
@@ -1005,41 +1005,41 @@ class FlowFile:
         return f"FlowFile(process_id={self.process_id}, size={len(self.content)})"
 ```
 
-### 8.2. Attributs Standards
+### 8.2. Standard Attributes
 
 ```python
 STANDARD_ATTRIBUTES = {
-    # Métadonnées de base
-    'filename': 'Nom du fichier original',
-    'fileSize': 'Taille en octets',
-    'timestamp': 'Timestamp d\'entrée (ISO8601)',
-    'uuid': 'UUID unique du FlowFile',
+    # Basic metadata
+    'filename': 'Original file name',
+    'fileSize': 'Size in bytes',
+    'timestamp': 'Entry timestamp (ISO8601)',
+    'uuid': 'Unique FlowFile UUID',
     
-    # Contrôle de flux
-    'batch.id': 'ID du batch',
-    'process.id': 'ID du processus',
-    'route.key': 'Clé de routage',
+    # Flow control
+    'batch.id': 'Batch ID',
+    'process.id': 'Process ID',
+    'route.key': 'Routing key',
     
-    # Erreurs
-    'error.message': 'Message d\'erreur',
-    'error.count': 'Nombre d\'erreurs',
-    'retry.count': 'Nombre de tentatives',
+    # Errors
+    'error.message': 'Error message',
+    'error.count': 'Error count',
+    'retry.count': 'Retry count',
     
-    # Données
-    'mime.type': 'Type MIME',
-    'encoding': 'Encodage',
-    'line.count': 'Nombre de lignes',
+    # Data
+    'mime.type': 'MIME type',
+    'encoding': 'Encoding',
+    'line.count': 'Line count',
     
-    # Système
-    'pawflow.task.id': 'ID de la tâche en cours',
-    'pawflow.flow.id': 'ID du flow',
-    'pawflow.execution.id': 'ID de l\'exécution'
+    # System
+    'pawflow.task.id': 'Current task ID',
+    'pawflow.flow.id': 'Flow ID',
+    'pawflow.execution.id': 'Execution ID'
 }
 ```
 
 ---
 
-## 9. Système de Configuration
+## 9. Configuration System
 
 ### 9.1. Config Manager
 
@@ -1055,47 +1055,47 @@ class StorageType(Enum):
     POSTGRES = "postgres"
 
 class ConfigStorage(ABC):
-    """Interface abstraite pour le stockage."""
+    """Abstract interface for storage."""
     
     @abstractmethod
     def save_flow(self, flow_id: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder un flux."""
+        """Save a flow."""
         pass
     
     @abstractmethod
     def load_flow(self, flow_id: str) -> Optional[Dict[str, Any]]:
-        """Charger un flux."""
+        """Load a flow."""
         pass
     
     @abstractmethod
     def delete_flow(self, flow_id: str) -> bool:
-        """Supprimer un flux."""
+        """Delete a flow."""
         pass
     
     @abstractmethod
     def list_flows(self) -> List[str]:
-        """Lister tous les flux."""
+        """List all flows."""
         pass
     
     @abstractmethod
     def save_task(self, task_type: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder une tâche custom."""
+        """Save a custom task."""
         pass
     
     @abstractmethod
     def load_service(self, service_type: str, config: Dict[str, Any]) -> bool:
-        """Sauvegarder un service."""
+        """Save a service."""
         pass
 
 class ConfigManager:
-    """Manager principal de configuration."""
+    """Main configuration manager."""
     
     def __init__(self, storage_type: StorageType, config: Dict[str, Any]):
         self.storage_type = storage_type
         self.storage = self._create_storage(storage_type, config)
     
     def _create_storage(self, storage_type: StorageType, config: Dict[str, Any]):
-        """Factory pour créer le bon storage."""
+        """Factory to create the appropriate storage."""
         if storage_type == StorageType.FILESYSTEM:
             from config.storage.filesystem_storage import FilesystemStorage
             return FilesystemStorage(config)
@@ -1120,7 +1120,7 @@ class ConfigManager:
         return self.storage.list_flows()
 ```
 
-### 9.2. Fichier de Configuration Global
+### 9.2. Global Configuration File
 
 ```python
 # config/config.py
@@ -1137,9 +1137,9 @@ class StorageType(Enum):
 
 @dataclass
 class Config:
-    """Configuration globale de l'application."""
+    """Global application configuration."""
     
-    # Stockage
+    # Storage
     storage_type: StorageType = StorageType.FILESYSTEM
     storage_config: Dict[str, Any] = None
     
@@ -1159,7 +1159,7 @@ class Config:
     gui_host: str = "0.0.0.0"
     gui_port: int = 8501
     
-    # Variables globales
+    # Global variables
     global_variables: Dict[str, Any] = None
     
     def __post_init__(self):
@@ -1170,11 +1170,11 @@ class Config:
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Config':
-        """Créer Config depuis un dictionnaire."""
+        """Create Config from a dictionary."""
         return cls(**data)
     
     def to_dict(self) -> Dict[str, Any]:
-        """Convertir en dictionnaire."""
+        """Convert to dictionary."""
         return {
             'storage_type': self.storage_type.value,
             'storage_config': self.storage_config,
@@ -1194,9 +1194,9 @@ class Config:
 
 ---
 
-## 10. Gestion des Variables Runtime
+## 10. Runtime Variable Management
 
-### 10.1. Système de Variables
+### 10.1. Variable System
 
 ```python
 from typing import Dict, Any, Optional
@@ -1212,7 +1212,7 @@ class VariableType(Enum):
     JSON = "json"
 
 class Variable:
-    """Représentation d'une variable."""
+    """Representation of a variable."""
     
     def __init__(
         self,
@@ -1232,64 +1232,64 @@ class Variable:
         self.value: Optional[Any] = None
     
     def resolve(self, context: Dict[str, Any]) -> Any:
-        """Résoudre la valeur dans un contexte."""
-        # 1. Chercher dans le contexte
+        """Resolve the value in a context."""
+        # 1. Look in the context
         if self.name in context:
             self.value = context[self.name]
-        # 2. Utiliser la valeur par défaut
+        # 2. Use the default value
         elif self.default is not None:
             self.value = self.default
-        # 3. Lever erreur si requis
+        # 3. Raise error if required
         elif self.required:
-            raise ValueError(f"Variable requise non définie : {self.name}")
-        # 4. None si non requis
+            raise ValueError(f"Required variable not defined: {self.name}")
+        # 4. None if not required
         else:
             self.value = None
         
         return self.value
     
     def validate(self, value: Any) -> List[str]:
-        """Valider une valeur pour la variable."""
+        """Validate a value for the variable."""
         errors = []
         
         if value is None:
             if self.required:
-                errors.append(f"Variable requise : {self.name}")
+                errors.append(f"Required variable: {self.name}")
             return errors
         
-        # Validation par type
+        # Type validation
         if self.var_type == VariableType.INTEGER:
             if not isinstance(value, int):
-                errors.append(f"Type attendu : integer, reçu : {type(value)}")
+                errors.append(f"Expected type: integer, received: {type(value)}")
         elif self.var_type == VariableType.FLOAT:
             if not isinstance(value, (int, float)):
-                errors.append(f"Type attendu : float, reçu : {type(value)}")
-        # ... autres types
+                errors.append(f"Expected type: float, received: {type(value)}")
+        # ... other types
         
         return errors
 
 class VariableResolver:
-    """Résolveur de variables dans les paramètres."""
+    """Variable resolver for parameters."""
     
     _variables: Dict[str, Variable] = {}
     _context: Dict[str, Any] = {}
     
     @classmethod
     def register_variables(cls, variables: Dict[str, Variable]):
-        """Enregistrer les variables d'un flow."""
+        """Register a flow's variables."""
         cls._variables.update(variables)
     
     @classmethod
     def set_context(cls, context: Dict[str, Any]):
-        """Définir le contexte de résolution."""
+        """Set the resolution context."""
         cls._context = context
     
     @classmethod
     def resolve(cls, value: str) -> Any:
         """
-        Résoudre une chaîne contenant des variables.
+        Resolve a string containing variables.
         
-        Exemple: "Hello ${name}!" -> "Hello John!"
+        Example: "Hello ${name}!" -> "Hello John!"
         """
         if not isinstance(value, str) or '${' not in value:
             return value
@@ -1299,7 +1299,7 @@ class VariableResolver:
     
     @classmethod
     def resolve_all(cls, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Résoudre toutes les variables dans une configuration."""
+        """Resolve all variables in a configuration."""
         resolved = {}
         for key, value in config.items():
             if isinstance(value, str):
@@ -1316,39 +1316,39 @@ class VariableResolver:
         return resolved
 ```
 
-### 10.2. Override des Paramètres
+### 10.2. Parameter Overrides
 
 ```python
 class ParameterOverride:
-    """Permet de override les paramètres au runtime."""
+    """Allows overriding parameters at runtime."""
     
     def __init__(self, flow_id: str):
         self.flow_id = flow_id
         self.overrides: Dict[str, Dict[str, Any]] = {}
     
     def set_task_parameter(self, task_id: str, param_name: str, value: Any):
-        """Override un paramètre de tâche."""
+        """Override a task parameter."""
         if task_id not in self.overrides:
             self.overrides[task_id] = {}
         self.overrides[task_id][param_name] = value
     
     def set_flow_parameter(self, param_name: str, value: Any):
-        """Override un paramètre de flow."""
+        """Override a flow parameter."""
         if 'flow' not in self.overrides:
             self.overrides['flow'] = {}
         self.overrides['flow'][param_name] = value
     
     def apply(self, config: Dict[str, Any]) -> Dict[str, Any]:
-        """Appliquer les overrides à une configuration."""
+        """Apply overrides to a configuration."""
         import copy
         resolved = copy.deepcopy(config)
         
-        # Appliquer les overrides de flow
+        # Apply flow overrides
         if 'flow' in self.overrides:
             for key, value in self.overrides['flow'].items():
                 resolved[key] = value
         
-        # Appliquer les overrides de tâches
+        # Apply task overrides
         if 'tasks' in resolved and 'tasks' in self.overrides:
             for task_id, task_config in resolved['tasks'].items():
                 if task_id in self.overrides['tasks']:
@@ -1361,4 +1361,4 @@ class ParameterOverride:
 
 ---
 
-*(Le document continue dans les fichiers suivants...)*
+*(The document continues in the following files...)*

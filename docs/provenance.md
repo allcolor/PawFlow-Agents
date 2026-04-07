@@ -1,127 +1,127 @@
-# Système de Provenance - PawFlow
+# Provenance System - PawFlow
 
-Le système de provenance de PawFlow permet de tracer le cycle de vie complet de chaque FlowFile à travers le pipeline de traitement. Il enregistre tous les événements significatifs pour permettre l'audit, le débogage et la reconstruction du lignage des données.
-
----
-
-## Objectifs
-
-1. **Traçabilité complète** : Savoir où chaque FlowFile a été et ce qui lui est arrivé
-2. **Audit** : Conserver l'historique des traitements pour la conformité
-3. **Débogage** : Retracer les erreurs jusqu'à leur source
-4. **Lignage** : Comprendre les relations parent/enfant entre FlowFiles
-5. **Performance** : Statistiques par tâche et par flow
+PawFlow's provenance system allows tracing the complete lifecycle of each FlowFile through the processing pipeline. It records all significant events to enable auditing, debugging, and data lineage reconstruction.
 
 ---
 
-## Types d'Événements de Provenance
+## Objectives
 
-PawFlow définit **7 types d'événements** :
-
-| Type | Quand | Contexte |
-|------|-------|----------|
-| **CREATE** | Création initiale d'un FlowFile | Entrée du flow |
-| **RECEIVE** | Une tâche commence à traiter un FlowFile | Début d'exécution de tâche |
-| **SEND** | FlowFile transmis sans modification | Sortie de tâche (contenu inchangé) |
-| **MODIFY** | Contenu ou attributs modifiés | Sortie de tâche (contenu changé) |
-| **CLONE** | FlowFile dupliqué pour branching | DAG avec plusieurs successeurs |
-| **DROP** | FlowFile jeté après erreur | Échec après max_retries |
-| **ROUTE** | FlowFile routé vers une sortie spécifique | RouteOnAttribute |
+1. **Complete traceability**: Know where each FlowFile has been and what happened to it
+2. **Audit**: Retain processing history for compliance
+3. **Debugging**: Trace errors back to their source
+4. **Lineage**: Understand parent/child relationships between FlowFiles
+5. **Performance**: Statistics per task and per flow
 
 ---
 
-## ProvenanceEvent : Structure
+## Provenance Event Types
+
+PawFlow defines **7 event types**:
+
+| Type | When | Context |
+|------|------|---------|
+| **CREATE** | Initial creation of a FlowFile | Flow entry |
+| **RECEIVE** | A task begins processing a FlowFile | Start of task execution |
+| **SEND** | FlowFile forwarded without modification | Task output (content unchanged) |
+| **MODIFY** | Content or attributes modified | Task output (content changed) |
+| **CLONE** | FlowFile duplicated for branching | DAG with multiple successors |
+| **DROP** | FlowFile discarded after error | Failure after max_retries |
+| **ROUTE** | FlowFile routed to a specific output | RouteOnAttribute |
+
+---
+
+## ProvenanceEvent: Structure
 
 ```python
 @dataclass
 class ProvenanceEvent:
-    event_id: str          # UUID unique de l'événement
+    event_id: str          # Unique event UUID
     event_type: ProvenanceEventType
     timestamp: datetime
 
-    # Identifiants
-    flowfile_id: str                    # ID du FlowFile concerné
-    parent_flowfile_ids: List[str]      # Parents (pour CLONE, MODIFY)
-    child_flowfile_ids: List[str]       # Enfants
-    task_id: str                        # Tâche qui a généré l'événement
-    task_type: str                      # Type de la tâche
-    flow_id: str                        # Flow concerné
+    # Identifiers
+    flowfile_id: str                    # ID of the concerned FlowFile
+    parent_flowfile_ids: List[str]      # Parents (for CLONE, MODIFY)
+    child_flowfile_ids: List[str]       # Children
+    task_id: str                        # Task that generated the event
+    task_type: str                      # Task type
+    flow_id: str                        # Concerned flow
 
-    # Données
-    content_size: int                   # Taille du contenu en bytes
-    attributes: Dict[str, str]          # Copie des attributs au moment de l'événement
-    details: str                        # Description textuelle
-    duration_ms: float                  # Durée du traitement (ms)
+    # Data
+    content_size: int                   # Content size in bytes
+    attributes: Dict[str, str]          # Copy of attributes at the time of the event
+    details: str                        # Text description
+    duration_ms: float                  # Processing duration (ms)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Sérialisation en dictionnaire."""
+        """Serialization to dictionary."""
 ```
 
 ---
 
-## ProvenanceRepository : Stockage et Requêtes
+## ProvenanceRepository: Storage and Queries
 
-### Initialisation
+### Initialization
 
 ```python
 from engine.provenance import ProvenanceRepository
 
-# Créer un repository (max 100,000 événements par défaut)
+# Create a repository (max 100,000 events by default)
 repo = ProvenanceRepository(max_events=100000)
 ```
 
-### Enregistrement (thread-safe, FIFO)
+### Recording (thread-safe, FIFO)
 
 ```python
 repo.record(ProvenanceEvent(
     event_type=ProvenanceEventType.CREATE,
     flowfile_id="ff-123",
     flow_id="my-flow",
-    details="FlowFile d'entrée"
+    details="Input FlowFile"
 ))
 ```
 
-Quand `max_events` est dépassé, les événements les plus anciens sont automatiquement supprimés (FIFO eviction).
+When `max_events` is exceeded, the oldest events are automatically removed (FIFO eviction).
 
-### Filtrage
+### Filtering
 
 ```python
-# Par FlowFile
+# By FlowFile
 events = repo.get_events(flowfile_id="ff-123")
 
-# Par tâche
+# By task
 events = repo.get_events(task_id="log-task")
 
-# Par type d'événement
+# By event type
 events = repo.get_events(event_type=ProvenanceEventType.MODIFY)
 
-# Par flow
+# By flow
 events = repo.get_events(flow_id="my-flow")
 
-# Combiné avec limite
+# Combined with limit
 events = repo.get_events(flowfile_id="ff-123", event_type=ProvenanceEventType.MODIFY, limit=10)
 ```
 
-### Reconstruction du lignage
+### Lineage reconstruction
 
 ```python
-# Lignage complet d'un FlowFile (parents + enfants récursifs)
+# Complete lineage of a FlowFile (recursive parents + children)
 lineage = repo.get_lineage("ff-123")
 
 for event in lineage:
     print(f"{event.event_type.value}: {event.flowfile_id[:8]}... → {event.details}")
 ```
 
-Le lignage suit les relations `parent_flowfile_ids` et `child_flowfile_ids` récursivement pour reconstruire l'historique complet.
+The lineage follows `parent_flowfile_ids` and `child_flowfile_ids` relationships recursively to reconstruct the complete history.
 
-### Événements par flow
+### Events by flow
 
 ```python
 events = repo.get_flow_events("my-flow")
-# Retourne tous les événements triés par timestamp
+# Returns all events sorted by timestamp
 ```
 
-### Statistiques
+### Statistics
 
 ```python
 stats = repo.to_dict()
@@ -133,16 +133,16 @@ stats = repo.to_dict()
 # }
 ```
 
-### Nettoyage
+### Cleanup
 
 ```python
-repo.clear()           # Vider le repository
-repo.size()            # Nombre d'événements
+repo.clear()           # Empty the repository
+repo.size()            # Number of events
 ```
 
 ---
 
-## Intégration avec FlowExecutor
+## Integration with FlowExecutor
 
 ### Activation
 
@@ -153,34 +153,34 @@ from engine.executor import FlowExecutor
 repo = ProvenanceRepository()
 executor = FlowExecutor(provenance=repo)
 
-# La provenance est optionnelle : passer None (défaut) la désactive
+# Provenance is optional: passing None (default) disables it
 executor_no_prov = FlowExecutor(provenance=None)
 ```
 
-### Quand chaque événement est émis
+### When each event is emitted
 
-#### CREATE — Entrée du flow
+#### CREATE -- Flow entry
 
 ```python
-# Dans execute_flow(), après création des FlowFiles d'entrée
+# In execute_flow(), after creating input FlowFiles
 for ff in flowfiles:
     self._record_event(ProvenanceEventType.CREATE, ff, flow.id,
-                       details="FlowFile d'entrée")
+                       details="Input FlowFile")
 ```
 
-#### RECEIVE — Début du traitement par une tâche
+#### RECEIVE -- Start of processing by a task
 
 ```python
-# Dans _execute_task_with_retry(), avant task.execute()
+# In _execute_task_with_retry(), before task.execute()
 self._record_event(ProvenanceEventType.RECEIVE, flowfile, flow_id,
                    task_id=task_id, task_type=task_type)
 ```
 
-#### MODIFY / SEND — Sortie de tâche
+#### MODIFY / SEND -- Task output
 
 ```python
-# Dans _execute_task_with_retry(), après task.execute()
-# MODIFY si contenu ou attributs ont changé, sinon SEND
+# In _execute_task_with_retry(), after task.execute()
+# MODIFY if content or attributes changed, otherwise SEND
 for out_ff in result:
     modified = (out_ff.content != original_content or
                 dict(out_ff.attributes) != original_attrs)
@@ -188,11 +188,11 @@ for out_ff in result:
     self._record_event(evt_type, out_ff, flow_id, ...)
 ```
 
-#### CLONE — Branching du DAG
+#### CLONE -- DAG branching
 
 ```python
-# Dans _execute_dag(), quand un résultat doit aller vers plusieurs successeurs
-# Le premier successeur reçoit l'original, les suivants reçoivent des clones
+# In _execute_dag(), when a result must go to multiple successors
+# The first successor receives the original, the rest receive clones
 for i, successor in enumerate(successors):
     if i == 0:
         task_queue[successor].extend(result)
@@ -201,34 +201,34 @@ for i, successor in enumerate(successors):
             cloned = r_ff.clone()
             self._record_event(ProvenanceEventType.CLONE, cloned, flow.id,
                                parent_ids=[r_ff.process_id],
-                               details=f"Clone pour branche {successor}")
+                               details=f"Clone for branch {successor}")
 ```
 
-#### DROP — Échec après retries
+#### DROP -- Failure after retries
 
 ```python
-# Dans _execute_task_with_retry(), après épuisement des retries
+# In _execute_task_with_retry(), after exhausting retries
 self._record_event(ProvenanceEventType.DROP, flowfile, flow_id,
                    task_id=task_id, task_type=task_type,
-                   details=f"Erreur après {self.max_retries} retries: {last_error}")
+                   details=f"Error after {self.max_retries} retries: {last_error}")
 ```
 
-### Provenance dans les résultats
+### Provenance in results
 
-Quand la provenance est activée, les statistiques sont incluses dans `ExecutionResult` :
+When provenance is enabled, statistics are included in `ExecutionResult`:
 
 ```python
 result = executor.execute_flow(flow, input_flowfiles=[ff])
 
 if result.success and 'provenance' in result.statistics:
     prov_stats = result.statistics['provenance']
-    print(f"Total événements: {prov_stats['total_events']}")
-    print(f"Par type: {prov_stats['events_by_type']}")
+    print(f"Total events: {prov_stats['total_events']}")
+    print(f"By type: {prov_stats['events_by_type']}")
 ```
 
 ---
 
-## Exemple complet
+## Complete example
 
 ```python
 from core import Flow, FlowFile, Task
@@ -237,29 +237,29 @@ from engine.provenance import ProvenanceRepository, ProvenanceEventType
 from tasks.system.log_task import LogTask
 from tasks.system.update_attribute import UpdateAttributeTask
 
-# 1. Créer le repository
+# 1. Create the repository
 repo = ProvenanceRepository()
 
-# 2. Créer un flow avec branching
+# 2. Create a flow with branching
 flow = Flow({'name': 'Provenance Demo'})
 flow.tasks = {
     'update': UpdateAttributeTask({'attributes': {'processed': 'true'}}),
-    'log_a': LogTask({'message': 'Branche A'}),
-    'log_b': LogTask({'message': 'Branche B'}),
+    'log_a': LogTask({'message': 'Branch A'}),
+    'log_b': LogTask({'message': 'Branch B'}),
 }
 flow.relations = [
     {'from': 'update', 'to': 'log_a'},
     {'from': 'update', 'to': 'log_b'},
 ]
 
-# 3. Exécuter avec provenance
+# 3. Execute with provenance
 executor = FlowExecutor(max_retries=1, provenance=repo)
 ff = FlowFile(content=b'hello world', attributes={'source': 'test'})
 result = executor.execute_flow(flow, input_flowfiles=[ff])
 
-# 4. Analyser
-print(f"Succès: {result.success}")
-print(f"Événements: {repo.size()}")
+# 4. Analyze
+print(f"Success: {result.success}")
+print(f"Events: {repo.size()}")
 
 for event in repo.get_flow_events(flow.id):
     print(f"  {event.event_type.value:8s} | ff={event.flowfile_id[:8]}... "
@@ -270,6 +270,6 @@ for event in repo.get_flow_events(flow.id):
 
 ## Thread-Safety
 
-Le `ProvenanceRepository` utilise un `threading.Lock` pour garantir la sécurité en accès concurrent. Toutes les méthodes publiques (`record`, `get_events`, `get_lineage`, `get_flow_events`, `clear`, `size`, `to_dict`) sont thread-safe.
+The `ProvenanceRepository` uses a `threading.Lock` to guarantee safety under concurrent access. All public methods (`record`, `get_events`, `get_lineage`, `get_flow_events`, `clear`, `size`, `to_dict`) are thread-safe.
 
-Cela permet une utilisation sûre avec le `FlowExecutor` qui exécute les tâches en parallèle via `ThreadPoolExecutor`.
+This allows safe usage with the `FlowExecutor` which executes tasks in parallel via `ThreadPoolExecutor`.

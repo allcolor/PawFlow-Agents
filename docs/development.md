@@ -1,24 +1,24 @@
-# Guide de Développement - PawFlow
+# Development Guide - PawFlow
 
-Ce guide s'adresse aux développeurs qui souhaitent étendre PawFlow en créant de nouvelles tâches, services, ou en contribuant au code source.
+This guide is intended for developers who want to extend PawFlow by creating new tasks, services, or contributing to the source code.
 
 ---
 
-## Comment Créer une Nouvelle Task
+## How to Create a New Task
 
-### Étape 1 : Structure du fichier
+### Step 1: File structure
 
-Créez un nouveau fichier dans le répertoire `tasks/` correspondant à la catégorie :
+Create a new file in the `tasks/` directory corresponding to the category:
 
 ```
 tasks/
-├── system/       # Tâches système (log, wait, fail, etc.)
-├── io/           # Tâches I/O (fichiers, HTTP)
-├── data/         # Tâches de transformation de données
-└── control/      # Tâches de contrôle de flux
+├── system/       # System tasks (log, wait, fail, etc.)
+├── io/           # I/O tasks (files, HTTP)
+├── data/         # Data transformation tasks
+└── control/      # Flow control tasks
 ```
 
-### Étape 2 : Implémenter la classe
+### Step 2: Implement the class
 
 ```python
 # tasks/data/my_transform.py
@@ -27,12 +27,12 @@ from core import FlowFile, Task
 
 
 class MyTransformTask(Task):
-    """Transforme le contenu en majuscules."""
+    """Transforms the content to uppercase."""
 
-    TYPE = "myTransform"       # Type unique (identifiant)
+    TYPE = "myTransform"       # Unique type (identifier)
     VERSION = "1.0.0"
-    NAME = "My Transform"      # Nom affiché dans l'UI
-    DESCRIPTION = "Convertit le contenu en majuscules"
+    NAME = "My Transform"      # Name displayed in the UI
+    DESCRIPTION = "Converts content to uppercase"
     ICON = "🔠"
 
     def __init__(self, config: Dict[str, Any]):
@@ -50,22 +50,22 @@ class MyTransformTask(Task):
             'encoding': {
                 'type': 'string',
                 'required': False,
-                'description': 'Encodage du contenu',
+                'description': 'Content encoding',
                 'default': 'utf-8'
             }
         }
 ```
 
-### Étape 3 : Enregistrer la tâche
+### Step 3: Register the task
 
-Ajouter l'import dans `tasks/__init__.py` dans la fonction `register_all_tasks()` :
+Add the import in `tasks/__init__.py` inside the `register_all_tasks()` function:
 
 ```python
 from tasks.data.my_transform import MyTransformTask
 TaskFactory.register(MyTransformTask)
 ```
 
-### Étape 4 : Utiliser dans un flow
+### Step 4: Use in a flow
 
 ```python
 from core import Flow, FlowFile
@@ -81,7 +81,7 @@ result = executor.execute_flow(flow, input_flowfiles=[FlowFile(content=b'hello')
 # result.output_flowfiles[0].get_content() == b'HELLO'
 ```
 
-### Étape 5 : Écrire les tests
+### Step 5: Write the tests
 
 ```python
 import pytest
@@ -103,18 +103,18 @@ def test_empty_content():
     assert results[0].get_content() == b''
 ```
 
-### Points importants
+### Important points
 
-- **TYPE doit être unique** : c'est l'identifiant pour la TaskFactory
-- **execute() retourne toujours une List[FlowFile]** : même vide ou avec un seul élément
-- **get_parameter_schema()** est utilisé par l'UI et l'API pour les formulaires de config
-- **Config plate** : les tasks reçoivent un dict plat `{"key": "val"}`, PAS `{"parameters": {"key": "val"}}`
-- **Utiliser `get_content()`/`set_content()`** au lieu de `.content` pour le support streaming
-- **Services injectés** : accéder aux services partagés via `self.get_service("service_id")`
+- **TYPE must be unique**: it is the identifier for the TaskFactory
+- **execute() always returns a List[FlowFile]**: even if empty or with a single element
+- **get_parameter_schema()** is used by the UI and API for configuration forms
+- **Flat config**: tasks receive a flat dict `{"key": "val"}`, NOT `{"parameters": {"key": "val"}}`
+- **Use `get_content()`/`set_content()`** instead of `.content` for streaming support
+- **Injected services**: access shared services via `self.get_service("service_id")`
 
 ---
 
-## Comment Créer un Nouveau Service
+## How to Create a New Service
 
 ```python
 # services/my_database.py
@@ -123,11 +123,11 @@ from core import Service
 
 
 class MyDatabaseService(Service):
-    """Service de connexion à PostgreSQL."""
+    """PostgreSQL connection service."""
 
     TYPE = "myDatabase"
     NAME = "My Database"
-    DESCRIPTION = "Connexion PostgreSQL"
+    DESCRIPTION = "PostgreSQL connection"
 
     def __init__(self, config: Dict[str, Any]):
         super().__init__(config)
@@ -162,176 +162,176 @@ class MyDatabaseService(Service):
         }
 ```
 
-Les services sont automatiquement connectés au démarrage par le FlowExecutor et le ContinuousFlowExecutor. Les tasks peuvent y accéder via `self.get_service("service_id")`.
+Services are automatically connected at startup by the FlowExecutor and ContinuousFlowExecutor. Tasks can access them via `self.get_service("service_id")`.
 
 ---
 
-## Comment Créer un Plugin (.pfp)
+## How to Create a Plugin (.pfp)
 
-### Structure du plugin
+### Plugin structure
 
 ```
-mon-plugin/
-├── plugin.json          # Descripteur (obligatoire)
-├── requirements.txt     # Dépendances pip (optionnel)
+my-plugin/
+├── plugin.json          # Descriptor (required)
+├── requirements.txt     # pip dependencies (optional)
 ├── tasks/
-│   └── mon_task.py      # Tâches personnalisées
+│   └── my_task.py       # Custom tasks
 ├── services/
-│   └── mon_service.py   # Services personnalisés
+│   └── my_service.py    # Custom services
 └── flows/
-    └── mon_flow.json    # Flows pré-configurés
+    └── my_flow.json     # Pre-configured flows
 ```
 
 ### plugin.json
 
 ```json
 {
-    "id": "com.example.mon-plugin",
-    "name": "Mon Plugin",
+    "id": "com.example.my-plugin",
+    "name": "My Plugin",
     "version": "1.0.0",
-    "author": "Auteur",
-    "description": "Description du plugin",
+    "author": "Author",
+    "description": "Plugin description",
     "min_pawflow_version": "1.0.0",
-    "tasks": ["tasks/mon_task.py:MonTaskClass"],
-    "services": ["services/mon_service.py:MonServiceClass"],
-    "flows": ["flows/mon_flow.json"]
+    "tasks": ["tasks/my_task.py:MyTaskClass"],
+    "services": ["services/my_service.py:MyServiceClass"],
+    "flows": ["flows/my_flow.json"]
 }
 ```
 
-### Packager en .pfp
+### Package as .pfp
 
 ```python
 from core.plugin import create_plugin_archive
-create_plugin_archive("mon-plugin/", "mon-plugin-1.0.0.pfp")
+create_plugin_archive("my-plugin/", "my-plugin-1.0.0.pfp")
 ```
 
-### Installer
+### Install
 
 ```python
 from core.plugin import PluginManager
 pm = PluginManager()
-pm.install("mon-plugin-1.0.0.pfp")
+pm.install("my-plugin-1.0.0.pfp")
 pm.load_all()
 ```
 
-Ou via l'API REST :
+Or via the REST API:
 ```bash
 curl -X POST http://localhost:8000/api/v1/plugins/upload \
-  -F "file=@mon-plugin-1.0.0.pfp" \
+  -F "file=@my-plugin-1.0.0.pfp" \
   -H "Authorization: Bearer <token>"
 ```
 
 ---
 
-## API REST
+## REST API
 
-L'API est accessible à `http://localhost:8000` avec documentation Swagger à `/docs`.
+The API is accessible at `http://localhost:8000` with Swagger documentation at `/docs`.
 
-### Démarrer l'API
+### Start the API
 
 ```bash
 python -m api.app                    # port 8000
-python -m api.app --port 9000        # port custom
-python -m api.app --reload           # mode dev
+python -m api.app --port 9000        # custom port
+python -m api.app --reload           # dev mode
 ```
 
-### Authentification
+### Authentication
 
 ```bash
-# Login (si auth activée)
+# Login (if auth is enabled)
 TOKEN=$(curl -s -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"username":"admin","password":"admin"}' | jq -r .session_id)
 
-# Utiliser le token
+# Use the token
 curl http://localhost:8000/api/v1/flows/ -H "Authorization: Bearer $TOKEN"
 
-# Ou utiliser une API key
+# Or use an API key
 curl http://localhost:8000/api/v1/flows/ -H "Authorization: Bearer <api_key>"
 ```
 
-### Endpoints principaux
+### Main endpoints
 
-| Préfixe | Description |
-|---------|-------------|
-| `/api/v1/auth` | Login, logout, users, API keys, OAuth2, rôles |
+| Prefix | Description |
+|--------|-------------|
+| `/api/v1/auth` | Login, logout, users, API keys, OAuth2, roles |
 | `/api/v1/flows` | CRUD flows, validate, import/export |
-| `/api/v1/execution` | Batch, continu (start/stop/inject), task actions |
+| `/api/v1/execution` | Batch, continuous (start/stop/inject), task actions |
 | `/api/v1/monitoring` | Bulletins, provenance, streaming stats |
-| `/api/v1/scheduler` | CRUD jobs CRON, start/stop scheduler |
-| `/api/v1/tasks` | Task/service types et schémas de paramètres |
-| `/api/v1/workers` | Workers distants, health, register/unregister |
+| `/api/v1/scheduler` | CRUD CRON jobs, start/stop scheduler |
+| `/api/v1/tasks` | Task/service types and parameter schemas |
+| `/api/v1/workers` | Remote workers, health, register/unregister |
 | `/api/v1/plugins` | Install/uninstall/upload plugins |
 | `/api/v1/system` | Health, info, security status |
 
 ---
 
-## Lancer les Tests
+## Running the Tests
 
 ```bash
-# Tous les tests (758)
+# All tests (758)
 pytest tests/ -v
 
-# API REST
+# REST API
 pytest tests/test_api.py -v                  # 39 tests
 
-# Exécution continue
+# Continuous execution
 pytest tests/test_continuous_executor.py -v  # 22 tests
 
-# Sécurité + checkpoint
+# Security + checkpoint
 pytest tests/test_security_checkpoint.py -v  # 29 tests
 
-# Avec couverture
+# With coverage
 pytest tests/ --cov=core --cov=engine --cov=tasks --cov=api --cov-report=term-missing
 ```
 
 ---
 
-## Conventions de Code
+## Code Conventions
 
-### Nommage
+### Naming
 
-- **Classes** : PascalCase (`LogTask`, `FlowExecutor`)
-- **Fonctions/méthodes** : snake_case (`execute_flow`, `get_attribute`)
-- **Variables** : snake_case (`input_directory`, `max_retries`)
-- **Constantes de classe** : UPPER_CASE (`TYPE`, `VERSION`, `NAME`)
-- **Fichiers** : snake_case (`log_task.py`, `flow_executor.py`)
+- **Classes**: PascalCase (`LogTask`, `FlowExecutor`)
+- **Functions/methods**: snake_case (`execute_flow`, `get_attribute`)
+- **Variables**: snake_case (`input_directory`, `max_retries`)
+- **Class constants**: UPPER_CASE (`TYPE`, `VERSION`, `NAME`)
+- **Files**: snake_case (`log_task.py`, `flow_executor.py`)
 
 ### Style
 
 - PEP 8
-- Type hints sur les signatures publiques
-- Docstrings pour les classes et méthodes publiques
-- Imports groupés : standard, third-party, local
+- Type hints on public signatures
+- Docstrings for public classes and methods
+- Grouped imports: standard, third-party, local
 
-### Config des tasks
+### Task config
 
 ```python
-# CORRECT : dict plat
+# CORRECT: flat dict
 task = MyTask({"key": "value", "other": "val"})
 
-# INCORRECT : ne pas wrapper dans "parameters"
-task = MyTask({"parameters": {"key": "value"}})  # NON
+# INCORRECT: do not wrap in "parameters"
+task = MyTask({"parameters": {"key": "value"}})  # NO
 ```
 
-Le FlowParser gère le wrapping `parameters` pour les fichiers JSON, mais les tasks lisent toujours `self.config.get("key")` directement.
+The FlowParser handles the `parameters` wrapping for JSON files, but tasks always read `self.config.get("key")` directly.
 
 ---
 
-## Phases complétées
+## Completed phases
 
-| Phase | Description | Statut |
+| Phase | Description | Status |
 |-------|-------------|--------|
 | 1 | Core (FlowFile, Task, Service, Flow, Executor) | ✅ Done |
-| 2 | Tasks de base (log, replaceText, getFile, putFile, etc.) | ✅ Done |
+| 2 | Base tasks (log, replaceText, getFile, putFile, etc.) | ✅ Done |
 | 3 | Expression Language (`${...}`, Jinja2) | ✅ Done |
 | 4 | +30 tasks (SQL, JSON, CSV, cache, compress, etc.) | ✅ Done |
 | 5 | Services (DB, Cache, HTTP, LLM) | ✅ Done |
-| 6 | Runtime (continu, scheduler, connections, backpressure) | ✅ Done |
-| 7 | GUI Streamlit (5 pages), CLI | ✅ Done |
-| 8 | Workers distants, streaming, plugins | ✅ Done |
-| 9 | Sécurité (RBAC, OAuth2, sessions, API keys) | ✅ Done |
-| 10 | API REST (FastAPI, 85+ endpoints, auth middleware) | ✅ Done |
+| 6 | Runtime (continuous, scheduler, connections, backpressure) | ✅ Done |
+| 7 | Streamlit GUI (5 pages), CLI | ✅ Done |
+| 8 | Remote workers, streaming, plugins | ✅ Done |
+| 9 | Security (RBAC, OAuth2, sessions, API keys) | ✅ Done |
+| 10 | REST API (FastAPI, 85+ endpoints, auth middleware) | ✅ Done |
 | 10b | API Client, cluster mode, storage backends, NiFi converter | ✅ Done |
 | 11 | Docker deployment (Dockerfile, docker-compose, documentation) | ✅ Done |
 | 12 | Production hardening, observability, scaling | Planned |

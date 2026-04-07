@@ -1,0 +1,325 @@
+"""Tests for ConversationStore — directory-based conversation storage.
+
+Tests cover:
+- save / create conversation
+- append_messages — add messages to transcript
+- load_page — pagination
+- message_count — returns int
+- get_extra / set_extra — key-value metadata
+- list_conversations — filtered by user
+- delete — removes conversation
+- save_agent_context / load_agent_context — per-agent context
+- agent_flush — flush agent messages to shared
+"""
+
+import time
+import uuid
+import pytest
+from unittest.mock import patch
+
+from core.conversation_store import ConversationStore
+
+
+def _msg(role="user", content="hello", source=None, **kw):
+    """Build a minimal valid message dict."""
+    m = {
+        "role": role,
+        "content": content,
+        "msg_id": uuid.uuid4().hex[:12],
+        "ts": time.time(),
+    }
+    if source:
+        m["source"] = source
+    m.update(kw)
+    return m
+
+
+@pytest.fixture(autouse=True)
+def reset_singleton():
+    """Reset ConversationStore singleton before and after each test."""
+    ConversationStore.reset()
+    yield
+    ConversationStore.reset()
+
+
+@pytest.fixture
+def store(tmp_path):
+    """Create a ConversationStore backed by a temp directory."""
+    s = ConversationStore(store_dir=str(tmp_path / "conversations"))
+    return s
+
+
+@pytest.fixture
+def conv(store):
+    """Create a conversation and return (store, conv_id, user_id)."""
+    cid = store.generate_id()
+    user_id = "testuser"
+    store.save(cid, [], user_id=user_id)
+    return store, cid, user_id
+
+
+# ── Create / Save ────────────────────────────────────────────────────
+
+class TestCreateConversation:
+
+    def test_save_returns_working_cid(self, store):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        assert store.exists(cid)
+
+    def test_generate_id_is_string(self, store):
+        cid = store.generate_id()
+        assert isinstance(cid, str)
+        assert len(cid) == 16
+
+    def test_save_requires_user_id(self, store):
+        cid = store.generate_id()
+        with pytest.raises(ValueError, match="user_id"):
+            store.save(cid, [], user_id="")
+
+    def test_save_with_initial_messages(self, store):
+        cid = store.generate_id()
+        msgs = [_msg(content="first"), _msg(role="assistant", content="reply")]
+        store.save(cid, msgs, user_id="alice")
+        assert store.message_count(cid) == 2
+
+
+# ── append_messages ──────────────────────────────────────────────────
+
+class TestAppendMessages:
+
+    def test_append_increases_count(self, conv):
+        store, cid, uid = conv
+        assert store.message_count(cid) == 0
+        store.append_messages(cid, [_msg(content="hi")], user_id=uid)
+        assert store.message_count(cid) == 1
+
+    def test_append_multiple(self, conv):
+        store, cid, uid = conv
+        msgs = [_msg(content=f"msg{i}") for i in range(5)]
+        store.append_messages(cid, msgs, user_id=uid)
+        assert store.message_count(cid) == 5
+
+    def test_append_deduplicates(self, conv):
+        store, cid, uid = conv
+        m = _msg(content="dup")
+        store.append_messages(cid, [m], user_id=uid)
+        store.append_messages(cid, [m], user_id=uid)  # same msg_id
+        assert store.message_count(cid) == 1
+
+    def test_append_to_nonexistent_creates(self, store):
+        cid = store.generate_id()
+        store.append_messages(cid, [_msg(content="x")], user_id="bob")
+        assert store.exists(cid)
+        assert store.message_count(cid) == 1
+
+
+# ── load_page (pagination) ──────────────────────────────────────────
+
+class TestLoadPage:
+
+    def test_load_page_empty(self, conv):
+        store, cid, uid = conv
+        result = store.load_page(cid, limit=10, offset=0)
+        assert result is not None
+        assert result["messages"] == []
+        assert result["total_count"] == 0
+
+    def test_load_page_returns_messages(self, conv):
+        store, cid, uid = conv
+        msgs = [_msg(content=f"m{i}") for i in range(10)]
+        store.append_messages(cid, msgs, user_id=uid)
+        result = store.load_page(cid, limit=5, offset=0)
+        assert result is not None
+        assert len(result["messages"]) == 5
+        assert result["total_count"] == 10
+        assert result["has_more"] is True
+
+    def test_load_page_offset(self, conv):
+        store, cid, uid = conv
+        msgs = [_msg(content=f"m{i}") for i in range(10)]
+        store.append_messages(cid, msgs, user_id=uid)
+        result = store.load_page(cid, limit=5, offset=5)
+        assert result is not None
+        assert len(result["messages"]) == 5
+        assert result["has_more"] is False
+
+    def test_load_page_nonexistent(self, store):
+        result = store.load_page("nonexistent", limit=10, offset=0)
+        assert result is None
+
+
+# ── message_count ────────────────────────────────────────────────────
+
+class TestMessageCount:
+
+    def test_count_zero_initially(self, conv):
+        store, cid, uid = conv
+        assert store.message_count(cid) == 0
+
+    def test_count_after_append(self, conv):
+        store, cid, uid = conv
+        store.append_messages(cid, [_msg(), _msg(), _msg()], user_id=uid)
+        assert store.message_count(cid) == 3
+
+
+# ── get_extra / set_extra ────────────────────────────────────────────
+
+class TestExtras:
+
+    def test_set_and_get(self, conv):
+        store, cid, uid = conv
+        store.set_extra(cid, "title", "My Chat")
+        assert store.get_extra(cid, "title") == "My Chat"
+
+    def test_get_default(self, conv):
+        store, cid, uid = conv
+        assert store.get_extra(cid, "missing", default="nope") == "nope"
+
+    def test_overwrite_extra(self, conv):
+        store, cid, uid = conv
+        store.set_extra(cid, "key", "v1")
+        store.set_extra(cid, "key", "v2")
+        assert store.get_extra(cid, "key") == "v2"
+
+    def test_set_extra_on_nonexistent_returns_false(self, store):
+        assert store.set_extra("fake_id", "key", "val") is False
+
+    def test_complex_value(self, conv):
+        store, cid, uid = conv
+        val = {"nested": [1, 2, 3], "flag": True}
+        store.set_extra(cid, "data", val)
+        assert store.get_extra(cid, "data") == val
+
+
+# ── list_conversations ───────────────────────────────────────────────
+
+class TestListConversations:
+
+    def test_list_empty(self, store):
+        assert store.list_conversations(user_id="nobody") == []
+
+    def test_list_returns_created(self, store):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        convs = store.list_conversations(user_id="alice")
+        assert len(convs) == 1
+        assert convs[0]["conversation_id"] == cid
+
+    def test_list_filters_by_user(self, store):
+        cid1 = store.generate_id()
+        cid2 = store.generate_id()
+        store.save(cid1, [], user_id="alice")
+        store.save(cid2, [], user_id="bob")
+        alice_convs = store.list_conversations(user_id="alice")
+        assert len(alice_convs) == 1
+        assert alice_convs[0]["conversation_id"] == cid1
+
+    def test_list_includes_title(self, store):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.set_extra(cid, "title", "Chat Title")
+        convs = store.list_conversations(user_id="alice")
+        assert convs[0]["title"] == "Chat Title"
+
+
+# ── delete ───────────────────────────────────────────────────────────
+
+class TestDelete:
+
+    def test_delete_returns_true(self, conv):
+        store, cid, uid = conv
+        assert store.exists(cid)
+        result = store.delete(cid)
+        assert result is True
+
+    def test_delete_nonexistent_raises(self, store):
+        # _conv_dir raises ValueError when conv is unknown and no user_id given
+        with pytest.raises(ValueError):
+            store.delete("no_such_conv")
+
+    def test_delete_clears_from_list(self, store):
+        cid = store.generate_id()
+        store.save(cid, [], user_id="alice")
+        store.delete(cid)
+        assert store.list_conversations(user_id="alice") == []
+
+
+# ── save_agent_context / load_agent_context ──────────────────────────
+
+class TestAgentContext:
+
+    def test_save_and_load(self, conv):
+        store, cid, uid = conv
+        ctx = [{"role": "system", "content": "You are helpful."},
+               _msg(role="user", content="hi")]
+        store.save_agent_context(cid, "agent1", ctx)
+        loaded = store.load_agent_context(cid, "agent1")
+        assert loaded is not None
+        assert len(loaded) == 2
+        assert loaded[0]["content"] == "You are helpful."
+
+    def test_load_nonexistent_returns_none(self, conv):
+        store, cid, uid = conv
+        assert store.load_agent_context(cid, "ghost") is None
+
+    def test_save_replaces_context(self, conv):
+        store, cid, uid = conv
+        store.save_agent_context(cid, "agent1", [_msg(content="old")])
+        store.save_agent_context(cid, "agent1", [_msg(content="new")])
+        loaded = store.load_agent_context(cid, "agent1")
+        assert len(loaded) == 1
+        assert loaded[0]["content"] == "new"
+
+    def test_save_on_nonexistent_conv_returns_false(self, store):
+        assert store.save_agent_context("fake", "a", [_msg()]) is False
+
+
+# ── agent_flush ──────────────────────────────────────────────────────
+
+class TestAgentFlush:
+
+    @patch.object(ConversationStore, "_git_init")
+    @patch.object(ConversationStore, "git_snapshot")
+    def test_flush_adds_to_transcript(self, _snap, _git, conv):
+        store, cid, uid = conv
+        pub = [_msg(role="assistant", content="answer",
+                     source={"type": "agent", "name": "bot"})]
+        store.agent_flush(cid, "bot", public_messages=pub,
+                          private_messages=[], user_id=uid)
+        assert store.message_count(cid) == 1
+
+    @patch.object(ConversationStore, "_git_init")
+    @patch.object(ConversationStore, "git_snapshot")
+    def test_flush_writes_agent_context(self, _snap, _git, conv):
+        store, cid, uid = conv
+        pub = [_msg(role="assistant", content="ctx msg",
+                     source={"type": "agent", "name": "bot"})]
+        store.agent_flush(cid, "bot", public_messages=pub,
+                          private_messages=[], user_id=uid)
+        ctx = store.load_agent_context(cid, "bot")
+        assert ctx is not None
+        assert any("ctx msg" in m.get("content", "") for m in ctx)
+
+    @patch.object(ConversationStore, "_git_init")
+    @patch.object(ConversationStore, "git_snapshot")
+    def test_flush_private_not_in_shared(self, _snap, _git, conv):
+        store, cid, uid = conv
+        priv = [_msg(role="assistant", content="secret",
+                      source={"type": "agent", "name": "bot"})]
+        store.agent_flush(cid, "bot", public_messages=[],
+                          private_messages=priv, user_id=uid)
+        shared = store.load_agent_context(cid, "")  # shared context
+        # Private messages should not appear in shared
+        if shared:
+            assert not any("secret" in m.get("content", "") for m in shared)
+
+    @patch.object(ConversationStore, "_git_init")
+    @patch.object(ConversationStore, "git_snapshot")
+    def test_flush_creates_conv_if_needed(self, _snap, _git, store):
+        cid = store.generate_id()
+        pub = [_msg(role="assistant", content="hi",
+                     source={"type": "agent", "name": "bot"})]
+        store.agent_flush(cid, "bot", public_messages=pub,
+                          private_messages=[], user_id="newuser")
+        assert store.exists(cid)

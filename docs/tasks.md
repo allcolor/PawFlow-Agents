@@ -1,407 +1,335 @@
-# Catalogue des Tâches - PawFlow
+# Task Catalog - PawFlow
 
-Ce document décrit toutes les tâches disponibles dans PawFlow, organisées par catégorie.
+PawFlow ships **101 built-in tasks** organized into **5 categories**. Each task is a
+processing node in a flow: it receives a FlowFile, transforms or routes it, and
+emits one or more FlowFiles downstream.
 
----
-
-## Organisation
-
-PawFlow regroupe les tâches en **4 catégories** :
-
-1. **System** : Tâches système de base (log, wait, fail, etc.)
-2. **IO** : Tâches d'entrée/sortie (fichiers, HTTP)
-3. **Data** : Tâches de transformation de données
-4. **Control** : Tâches de contrôle de flux
+Additionally, every agent tool is automatically exposed as a `tool.*` flow task
+via the ToolTaskAdapter, giving flows access to the full agent toolbox without
+code duplication.
 
 ---
 
-## Récapitulatif
+## Categories at a Glance
 
-| Catégorie | Tâche | Type | Description |
-|-----------|-------|------|-------------|
-| **System** | LogTask | `log` | Logguer un message |
-| | ReplaceTextTask | `replaceText` | Remplacer du texte |
-| | WaitTask | `wait` | Attendre une durée |
-| | FailTask | `fail` | Échouer explicitement |
-| | UpdateAttributeTask | `updateAttribute` | Modifier les attributs |
-| **IO** | GetFileTask | `getFile` | Lire un fichier |
-| | PutFileTask | `putFile` | Écrire un fichier |
-| | FetchHTTPTask | `fetchHTTP` | Requêtes HTTP |
-| **Data** | TransformJSONTask | `transformJSON` | Transformer JSON |
-| **Control** | RouteOnAttributeTask | `routeOnAttribute` | Router par attribut |
-| | SplitContentTask | `splitContent` | Découper un contenu |
-| | MergeContentTask | `mergeContent` | Fusionner des contenus |
+| Category | Count | Purpose |
+|----------|------:|---------|
+| **System** | 11 | Core utilities: logging, attribute manipulation, scripting, scheduling |
+| **IO** | 51 | External I/O: files, HTTP, messaging, email, relays, auth, admin UI |
+| **Data** | 27 | Content transformation: JSON, CSV, XML, SQL, caching, LLM inference |
+| **Control** | 11 | Flow logic: routing, splitting, merging, throttling, signaling |
+| **AI** | 1 | Agent loop: LLM agent with tool-use (function calling) |
 
 ---
 
-## Tâches Système
+## System Tasks (11)
 
-### LogTask
+| Type | Description |
+|------|-------------|
+| `cronTrigger` | Generate a FlowFile on a CRON schedule |
+| `executeScript` | Execute a Python script on FlowFile content |
+| `fail` | Explicitly fail a FlowFile |
+| `generateFlowFile` | Generate new FlowFiles with configurable content |
+| `hashContent` | Hash the content of a FlowFile |
+| `listFiles` | List files in a directory with filtering and tracking |
+| `log` | Log a message with formatting |
+| `replace_text` | Replace text in FlowFile content |
+| `reporting` | Collect and report execution metrics as FlowFile content |
+| `updateAttribute` | Modify FlowFile attributes (add, update, delete) |
+| `wait` | Wait for a configured duration before continuing |
 
-**TYPE** : `log` | **Fichier** : `tasks/system/log_task.py`
+---
 
-Loggue un message avec formatage. Supporte les placeholders `${attribut}`.
+## IO Tasks (51)
 
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `message` | string | Oui | - | Message à logguer |
-| `level` | string | Non | INFO | Niveau (DEBUG, INFO, WARNING, ERROR) |
-| `logger_name` | string | Non | - | Nom du logger |
-| `include_attributes` | boolean | Non | false | Inclure les attributs dans le log |
+| Type | Description |
+|------|-------------|
+| `adminAction` | Handle PawFlow admin API requests |
+| `agentSSEStream` | Stream agent events to the client via SSE |
+| `assignTaskToAgent` | Assign a recurring task to an agent in a linked conversation |
+| `cancelAgentTask` | Cancel a recurring task assigned to an agent |
+| `consumeKafka` | Consume messages from a Kafka topic |
+| `consumeMQTT` | Consume messages from an MQTT topic |
+| `createConversation` | Create a new conversation for publishing messages or spawning agents |
+| `discordReceiver` | Receive messages from a Discord bot |
+| `discordSend` | Send a message to a Discord channel |
+| `fetchHTTP` | HTTP request with intelligent scraping (anti-bot, JS rendering) |
+| `filesystemOps` | Perform filesystem operations via a filesystem service |
+| `getAzureBlob` | Download a blob from Azure Blob Storage |
+| `getFTP` | Download a file from an FTP or FTPS server |
+| `getFile` | Read a file from the filesystem |
+| `getGCS` | Download an object from Google Cloud Storage |
+| `getS3` | Download an object from AWS S3 or compatible storage |
+| `getSFTP` | Download a file from an SFTP server |
+| `handleHTTPResponse` | Send an HTTP response back through the HTTP listener |
+| `httpReceiver` | Receive HTTP requests from a shared HTTP listener service |
+| `listSFTP` | List files on an SFTP server with filtering and tracking |
+| `listenHTTP` | Generate a FlowFile from HTTP request data (simulated for pipeline use) |
+| `notifySlack` | Send a message to Slack via Incoming Webhook |
+| `oauthCallback` | Handle OAuth2 provider callback and create user session |
+| `oauthLogout` | Invalidate session and clear authentication cookie |
+| `oauthRedirect` | Redirect user to OAuth2 provider for login |
+| `publishKafka` | Publish FlowFile content to a Kafka topic |
+| `publishMQTT` | Publish FlowFile content to an MQTT topic |
+| `publishMessage` | Publish a message into a linked conversation |
+| `putAzureBlob` | Upload a blob to Azure Blob Storage |
+| `putFTP` | Upload a file to an FTP or FTPS server |
+| `putFile` | Write a FlowFile to the filesystem |
+| `putGCS` | Upload an object to Google Cloud Storage |
+| `putS3` | Upload an object to AWS S3 or compatible storage |
+| `putSFTP` | Upload a file to an SFTP server |
+| `readConversation` | Read messages from a linked conversation |
+| `scraplingFetch` | Fetch web pages with anti-bot handling, JS rendering, and CSS selectors |
+| `sendEmail` | Send an email via SMTP (password or OAuth2 for Gmail/Microsoft) |
+| `serveAdminUI` | Serve the native PawFlow administration interface |
+| `serveAssets` | Serve static assets (JS, CSS, images) from the flow directory |
+| `serveChatUI` | Serve an HTML chat interface for the agent |
+| `serveFile` | Serve a file from the temporary file store |
+| `serveLogin` | Dynamic login page with multi-provider support |
+| `slackReceiver` | Receive messages from a Slack bot |
+| `slackSend` | Send a message to Slack via Incoming Webhook |
+| `spawnAgent` | Spawn an agent in a linked conversation (sync or async) |
+| `telegramReceiver` | Receive messages from a Telegram bot |
+| `telegramSend` | Send a message to a Telegram chat |
+| `validateHTTPAuth` | Validate Bearer/Basic authentication on HTTP requests |
+| `validateSessionAuth` | Validate cookie/bearer session authentication |
+| `whatsappReceiver` | Receive messages from WhatsApp |
+| `whatsappSend` | Send a message via WhatsApp |
 
-```python
-from tasks.system.log_task import LogTask
+---
 
-task = LogTask({
-    'message': 'Traitement: ${filename}, taille: ${fileSize}',
-    'level': 'INFO',
-    'include_attributes': True
-})
+## Data Tasks (27)
+
+| Type | Description |
+|------|-------------|
+| `attributesToJSON` | Convert FlowFile attributes to JSON content |
+| `base64Encode` | Encode or decode FlowFile content in Base64 |
+| `compressContent` | Compress or decompress FlowFile content |
+| `convertAvroToJSON` | Convert binary Avro content to JSON |
+| `convertCSVToJSON` | Convert CSV content to JSON |
+| `convertCharset` | Convert content character encoding |
+| `convertJSONToAvro` | Convert JSON content to binary Avro |
+| `convertJSONToCSV` | Convert JSON content to CSV |
+| `convertJSONToParquet` | Convert JSON content to Parquet |
+| `convertParquetToJSON` | Convert Parquet content to JSON |
+| `countText` | Count lines, words, and characters in FlowFile content |
+| `detectDuplicate` | Detect duplicate FlowFiles based on content hash or attribute |
+| `evaluateJSONPath` | Evaluate simple JSONPath expressions on JSON content |
+| `executeSQL` | Execute a SQL query and return results as JSON |
+| `extractText` | Extract text from FlowFile content using regex |
+| `fetchDistributedMapCache` | Retrieve a value from the distributed map cache by key |
+| `filterContent` | Filter content lines by a regex pattern |
+| `getCache` | Retrieve FlowFile content from cache |
+| `inferLLM` | Send content to an LLM and get the response |
+| `parseXML` | Convert XML content to JSON |
+| `putCache` | Store FlowFile content in cache |
+| `putDistributedMapCache` | Store a value in the distributed map cache by key |
+| `putSQL` | Execute a SQL statement (INSERT/UPDATE/DELETE) |
+| `splitJSON` | Split a JSON array into individual FlowFiles, one per element |
+| `transformJSON` | Transform JSON content (extract, modify, filter) |
+| `transformXML` | Transform XML content using XSLT or operations |
+| `validateJSON` | Validate that FlowFile content is well-formed JSON |
+
+---
+
+## Control Tasks (11)
+
+| Type | Description |
+|------|-------------|
+| `controlRate` | Throttle FlowFile throughput by adding delay |
+| `duplicateContent` | Create copies of FlowFile content |
+| `funnel` | Merge multiple connections into a single output |
+| `inputPort` | Input port for sub-flow or process-group entry |
+| `mergeContent` | Merge multiple FlowFiles into one (supports correlation) |
+| `notify` | Send a signal to the SignalRegistry |
+| `outputPort` | Output port for sub-flow or process-group exit |
+| `routeOnAttribute` | Route FlowFiles based on attribute values |
+| `splitContent` | Split a FlowFile by a separator |
+| `stopFlow` | Stop the current flow execution |
+| `waitForSignal` | Wait for a signal from the SignalRegistry before continuing |
+
+---
+
+## AI Tasks (1)
+
+| Type | Description |
+|------|-------------|
+| `agentLoop` | LLM agent with tool-use loop (function calling) |
+
+The `agentLoop` task is the core AI processor. It runs a full agent loop: sends
+messages to an LLM, receives tool-call requests, executes tools, and returns the
+final response as FlowFile content. Supports streaming, multi-agent delegation,
+and context compaction.
+
+---
+
+## How Tasks Work
+
+Every task follows the same contract:
+
+1. **FlowFile in** -- The task receives a FlowFile containing content (bytes) and
+   attributes (string key-value metadata).
+2. **Process** -- The task reads configuration parameters, inspects or transforms
+   the FlowFile content and attributes, and performs its work (I/O, computation,
+   routing, etc.).
+3. **FlowFile out** -- The task returns a list of FlowFiles. Most tasks return a
+   single FlowFile; splitters return many; filters may return none.
+
+Tasks can also set attributes on outgoing FlowFiles (e.g., `http.status.code`
+after an HTTP fetch, `fragment.index` after a split).
+
+---
+
+## Referencing Tasks in Flows
+
+Flows are defined as JSON DAGs. Each node references a task by its **type string**:
+
+```json
+{
+  "id": "fetch-data",
+  "type": "fetchHTTP",
+  "config": {
+    "url": "https://api.example.com/data",
+    "method": "GET"
+  },
+  "connections": {
+    "success": ["transform-step"]
+  }
+}
+```
+
+The `type` field must match the task's `TYPE` class attribute exactly (case-sensitive).
+
+---
+
+## Tool Tasks (`tool.*` prefix)
+
+PawFlow automatically wraps every agent tool handler as a flow task via the
+`ToolTaskAdapter`. This means any tool an agent can call is also available as a
+flow node, with the type `tool.<handler_name>`.
+
+**How it works:**
+- At startup, `register_tool_tasks()` iterates all registered `ToolHandler`
+  instances and creates a dynamic `Task` subclass for each one.
+- Arguments are resolved from three sources (in priority order): FlowFile content
+  (JSON), FlowFile attributes, and static task configuration.
+- The output FlowFile contains the tool result as content, plus `tool.name` and
+  `tool.status` attributes.
+
+**Excluded tools** (agent-internal, not useful as flow nodes):
+`get_tool_schema`, `use_tool`, `schedule_recheck`, `complete_task`,
+`verify_task`, `manage_resource`, `create_tool`, `pawflow_help`,
+`update_plan`, `create_plan`, `link_identity`, `browser_action`.
+
+**Available tool tasks include:**
+
+| Type | Description |
+|------|-------------|
+| `tool.execute_script` | Run a script (bash, Python, etc.) |
+| `tool.web_search` | Search the web |
+| `tool.fetch` | Fetch a web page with anti-bot handling |
+| `tool.share_file` | Create and share a file |
+| `tool.schedule_continuation` | Schedule a continuation for later |
+| `tool.local_files` | Manage local files on the filesystem |
+| `tool.generate_image` | Generate an image via an image model |
+| `tool.generate_video` | Generate a video via a video model |
+| `tool.generate_audio` | Generate audio via an audio model |
+| `tool.get_image_model_info` | Get info about available image models |
+| `tool.remember` | Store a memory in the agent's memory |
+| `tool.recall` | Recall memories by keyword search |
+| `tool.semantic_recall` | Recall memories by semantic similarity |
+| `tool.forget` | Delete a memory |
+| `tool.check_duplicate` | Check if a memory already exists |
+| `tool.memory_navigate` | Navigate and browse agent memory |
+| `tool.diary_write` | Write a diary entry |
+| `tool.diary_read` | Read diary entries |
+| `tool.assign_task` | Assign a recurring task to an agent |
+| `tool.notify_user` | Send a notification to the user |
+| `tool.ask_user` | Ask the user a question and wait for a reply |
+| `tool.delegate` | Spawn or delegate work to another agent |
+| `tool.get_agent_results` | Retrieve results from a delegated agent |
+| `tool.show_file` | Display a file to the user |
+| `tool.manage_flow` | Manage flows (start, stop, status) |
+| `tool.store_secret` | Store a secret securely |
+| `tool.list_secrets` | List stored secrets |
+| `tool.read_history` | Read conversation history |
+| `tool.compact_result` | Compact a long tool result |
+| `tool.read_parent_context` | Read the parent agent's context |
+| `tool.run_tests` | Run project tests |
+| `tool.security_scan` | Run a security scan |
+| `tool.screen` | Capture a screenshot |
+| `tool.project_graph` | Query or update the project knowledge graph |
+| `tool.kg_add` | Add nodes/edges to the knowledge graph |
+| `tool.kg_query` | Query the knowledge graph |
+| `tool.kg_invalidate` | Invalidate knowledge graph entries |
+| `tool.kg_timeline` | View knowledge graph timeline |
+| `tool.kg_stats` | Get knowledge graph statistics |
+| `tool.query_graph` | Run a graph query |
+| `tool.kg_god_nodes` | Find highly connected nodes in the knowledge graph |
+| `tool.kg_surprises` | Find surprising patterns in the knowledge graph |
+| `tool.kg_hyperedges` | Query hyperedges in the knowledge graph |
+| `tool.kg_communities` | Detect communities in the knowledge graph |
+| `tool.read` | Read a file |
+| `tool.write` | Write a file |
+| `tool.edit` | Edit a file (find and replace) |
+| `tool.batch_edit` | Batch edit multiple files |
+| `tool.apply_patch` | Apply a unified diff patch |
+| `tool.find_replace` | Find and replace text in files |
+| `tool.delete` | Delete a file |
+| `tool.mkdir` | Create a directory |
+| `tool.stat` | Get file metadata |
+| `tool.exists` | Check if a file exists |
+| `tool.list_dir` | List directory contents |
+| `tool.glob` | Find files matching a glob pattern |
+| `tool.grep` | Search file contents with regex |
+| `tool.bash` | Run a bash command |
+| `tool.notebook_edit` | Edit a Jupyter notebook cell |
+| `tool.copy` | Copy a file |
+| `tool.see` | View an image or screenshot |
+| `tool.delete_tool` | Delete a user-created dynamic tool |
+| `tool.approve_plan` | Approve a plan for execution |
+| `tool.assign_plan` | Assign a plan to an agent |
+| `tool.cancel_plan` | Cancel an active plan |
+| `tool.delete_plan` | Delete a plan |
+| `tool.verify_plan_step` | Mark a plan step as verified |
+
+**Example -- using an image generation tool in a flow:**
+
+```json
+{
+  "id": "make-image",
+  "type": "tool.generate_image",
+  "config": {
+    "prompt": "A sunset over the ocean",
+    "model": "dall-e-3"
+  },
+  "connections": {
+    "success": ["save-result"]
+  }
+}
 ```
 
 ---
 
-### ReplaceTextTask
+## Creating Custom Tasks
 
-**TYPE** : `replaceText` | **Fichier** : `tasks/system/replace_text.py`
-
-Remplace du texte dans le contenu d'un FlowFile.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `search_string` | string | Oui | - | Chaîne à rechercher |
-| `replacement_string` | string | Non | "" | Chaîne de remplacement |
-| `case_sensitive` | boolean | Non | true | Sensible à la casse |
-| `regex` | boolean | Non | false | Utiliser une expression régulière |
-| `multiline` | boolean | Non | false | Multi-lignes pour regex |
-
-```python
-from tasks.system.replace_text import ReplaceTextTask
-
-# Remplacement simple
-task = ReplaceTextTask({'search_string': 'old', 'replacement_string': 'new'})
-
-# Remplacement regex
-task = ReplaceTextTask({
-    'search_string': r'\d+',
-    'replacement_string': 'NUMBER',
-    'regex': True
-})
-```
-
----
-
-### WaitTask
-
-**TYPE** : `wait` | **Fichier** : `tasks/system/wait_task.py`
-
-Attend une durée avant de continuer.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `duration` | integer | Oui | - | Durée d'attente |
-| `duration_unit` | string | Non | MS | Unité (MS, SEC, MIN, HOUR) |
-
-```python
-from tasks.system.wait_task import WaitTask
-
-task = WaitTask({'duration': 2, 'duration_unit': 'SEC'})
-```
-
----
-
-### FailTask
-
-**TYPE** : `fail` | **Fichier** : `tasks/system/fail_task.py`
-
-Échoue explicitement un FlowFile (utile pour tester le retry ou signaler une erreur métier).
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `message` | string | Non | "Task forced failure" | Message d'erreur |
-| `terminate` | boolean | Non | true | Terminer le flow entier |
-
-```python
-from tasks.system.fail_task import FailTask
-
-task = FailTask({'message': 'Validation échouée: données invalides'})
-```
-
----
-
-### UpdateAttributeTask
-
-**TYPE** : `updateAttribute` | **Fichier** : `tasks/system/update_attribute.py`
-
-Modifie les attributs d'un FlowFile (ajouter, modifier, supprimer).
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `set` | map | Non | {} | Attributs à ajouter/modifier |
-| `delete` | list | Non | [] | Attributs à supprimer |
-
-Les valeurs supportent les références `${attribut}` vers d'autres attributs.
-
-```python
-from tasks.system.update_attribute import UpdateAttributeTask
-
-task = UpdateAttributeTask({
-    'set': {
-        'full.path': '${directory}/${filename}',
-        'status': 'processed'
-    },
-    'delete': ['temp.key']
-})
-```
-
----
-
-## Tâches IO
-
-### GetFileTask
-
-**TYPE** : `getFile` | **Fichier** : `tasks/io/get_file.py`
-
-Lit un fichier depuis le système de fichiers.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `input_directory` | string | Oui | - | Répertoire source |
-| `file_filter` | string | Non | * | Filtre glob (ex: `*.csv`) |
-| `recursive` | boolean | Non | false | Parcourir les sous-répertoires |
-| `keep_source` | boolean | Non | true | Conserver le fichier source |
-
-**Attributs ajoutés** : `filename`, `absolute.path`, `path`, `fileSize`
-
-```python
-from tasks.io.get_file import GetFileTask
-
-task = GetFileTask({
-    'input_directory': '/data/input',
-    'file_filter': '*.json',
-    'recursive': True
-})
-```
-
----
-
-### PutFileTask
-
-**TYPE** : `putFile` | **Fichier** : `tasks/io/put_file.py`
-
-Écrit un FlowFile sur le système de fichiers.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `output_directory` | string | Oui | - | Répertoire de destination |
-| `conflict_resolution` | string | Non | replace | Stratégie si fichier existant (replace, fail, ignore, rename) |
-| `create_dirs` | boolean | Non | true | Créer le répertoire si inexistant |
-
-**Attributs ajoutés** : `output.path`, `output.filename`
-
-```python
-from tasks.io.put_file import PutFileTask
-
-task = PutFileTask({
-    'output_directory': '/data/output',
-    'conflict_resolution': 'rename',
-    'create_dirs': True
-})
-```
-
----
-
-### FetchHTTPTask
-
-**TYPE** : `fetchHTTP` | **Fichier** : `tasks/io/fetch_http.py`
-
-Effectue une requête HTTP.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `url` | string | Oui | - | URL de la requête |
-| `method` | string | Non | GET | Méthode HTTP (GET, POST, PUT, DELETE, PATCH) |
-| `headers` | map | Non | {} | En-têtes HTTP |
-| `timeout` | integer | Non | 30 | Timeout en secondes |
-| `body_source` | string | Non | none | Source du body (none, flowfile, config) |
-| `body` | string | Non | - | Body si body_source=config |
-
-**Attributs ajoutés** : `http.status.code`, `http.url`, `http.method`, `mime.type`, `fileSize`
-
-```python
-from tasks.io.fetch_http import FetchHTTPTask
-
-# GET
-task = FetchHTTPTask({'url': 'https://api.example.com/data'})
-
-# POST avec body depuis le FlowFile
-task = FetchHTTPTask({
-    'url': 'https://api.example.com/submit',
-    'method': 'POST',
-    'headers': {'Content-Type': 'application/json'},
-    'body_source': 'flowfile'
-})
-```
-
----
-
-## Tâches Data
-
-### TransformJSONTask
-
-**TYPE** : `transformJSON` | **Fichier** : `tasks/data/transform_json.py`
-
-Transforme du contenu JSON.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `operation` | string | Oui | - | Opération (extract, set, delete, flatten) |
-| `json_path` | string | Non | $ | Chemin JSON pour extract |
-| `set_values` | map | Non | {} | Valeurs pour set |
-| `delete_keys` | list | Non | [] | Clés pour delete |
-| `output_format` | string | Non | json | Format de sortie |
-
-#### Opérations
-
-- **extract** : Extraire par chemin (`$.data.items`)
-- **set** : Ajouter/modifier des valeurs
-- **delete** : Supprimer des clés
-- **flatten** : Aplatir (`{"a": {"b": 1}}` → `{"a.b": 1}`)
-
-```python
-from tasks.data.transform_json import TransformJSONTask
-
-# Extraire
-task = TransformJSONTask({'operation': 'extract', 'json_path': '$.data'})
-
-# Modifier
-task = TransformJSONTask({'operation': 'set', 'set_values': {'processed': True}})
-
-# Supprimer
-task = TransformJSONTask({'operation': 'delete', 'delete_keys': ['temp', 'debug']})
-
-# Aplatir
-task = TransformJSONTask({'operation': 'flatten'})
-```
-
----
-
-## Tâches de Contrôle
-
-### RouteOnAttributeTask
-
-**TYPE** : `routeOnAttribute` | **Fichier** : `tasks/control/route_on_attribute.py`
-
-Route les FlowFiles vers différentes sorties selon leurs attributs.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `routing_strategy` | string | Non | route_to_matched | Stratégie (route_to_matched, route_to_all) |
-| `routes` | map | Oui | - | Routes avec conditions |
-
-#### Opérateurs de condition
-
-| Opérateur | Description |
-|-----------|-------------|
-| `equals` | Égalité exacte |
-| `not_equals` | Différent |
-| `contains` | Contient la sous-chaîne |
-| `matches_regex` | Match une expression régulière |
-| `greater_than` | Plus grand que |
-| `less_than` | Plus petit que |
-| `is_empty` | Attribut vide |
-| `is_not_empty` | Attribut non vide |
-
-**Attribut ajouté** : `route` (nom de la route choisie ou `unmatched`)
-
-```python
-from tasks.control.route_on_attribute import RouteOnAttributeTask
-
-task = RouteOnAttributeTask({
-    'routing_strategy': 'route_to_matched',
-    'routes': {
-        'csv': {'attribute': 'filename', 'operator': 'contains', 'value': '.csv'},
-        'json': {'attribute': 'filename', 'operator': 'contains', 'value': '.json'},
-    }
-})
-```
-
----
-
-### SplitContentTask
-
-**TYPE** : `splitContent` | **Fichier** : `tasks/control/split_content.py`
-
-Découpe le contenu d'un FlowFile en plusieurs FlowFiles.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `separator` | string | Non | \n | Séparateur |
-| `keep_separator` | boolean | Non | false | Conserver le séparateur |
-| `max_splits` | integer | Non | 0 | Max de découpes (0 = illimité) |
-
-**Attributs ajoutés** : `fragment.index`, `fragment.count`, `fileSize`
-
-```python
-from tasks.control.split_content import SplitContentTask
-
-# Split par ligne
-task = SplitContentTask({'separator': '\n'})
-
-# Split CSV limité à 10 fragments
-task = SplitContentTask({'separator': ',', 'max_splits': 10})
-```
-
-**Exemple** : Input `"a,b,c"` avec separator `,` → 3 FlowFiles : `"a"`, `"b"`, `"c"`
-
----
-
-### MergeContentTask
-
-**TYPE** : `mergeContent` | **Fichier** : `tasks/control/merge_content.py`
-
-Fusionne plusieurs FlowFiles en un seul. Accumule les FlowFiles dans un buffer interne.
-
-| Paramètre | Type | Requis | Défaut | Description |
-|-----------|------|--------|--------|-------------|
-| `separator` | string | Non | \n | Séparateur entre contenus |
-| `min_entries` | integer | Non | 2 | Nombre minimum avant fusion |
-| `header` | string | Non | - | En-tête ajouté au début |
-| `footer` | string | Non | - | Pied de page ajouté à la fin |
-
-**Attributs ajoutés** : `merge.count`, `fileSize`
-
-```python
-from tasks.control.merge_content import MergeContentTask
-
-task = MergeContentTask({
-    'separator': ',',
-    'min_entries': 3,
-    'header': 'col1,col2\n',
-    'footer': '\n# EOF'
-})
-```
-
-**Note** : MergeContent utilise un buffer interne (stateful). Non thread-safe si la même instance est utilisée par plusieurs threads.
-
----
-
-## Créer une tâche personnalisée
-
-Voir [development.md](development.md) pour le guide complet.
+See [development.md](development.md) for the full guide.
 
 ```python
 from core import FlowFile, Task
 
 class MyTask(Task):
     TYPE = "myCustom"
-    NAME = "Ma Tâche"
+    DESCRIPTION = "Does something useful"
 
     def get_parameter_schema(self):
         return {'param': {'type': 'string', 'required': True}}
 
     def execute(self, flowfile):
-        # Traitement...
+        value = self.config.get('param', '')
         flowfile.set_attribute('processed', 'true')
         return [flowfile]
 ```
+
+Register the task by placing the file under `tasks/<category>/` and it will be
+auto-discovered at startup.

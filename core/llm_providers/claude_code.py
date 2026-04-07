@@ -560,7 +560,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 text=True,
                 encoding="utf-8",
             )
-            self._claude_proc = proc
+            # Ephemeral streams (btw) don't register proc — they don't
+            # need preempt/cancel and must not overwrite the main agent's proc.
+            if not getattr(self, '_ephemeral_stream', False):
+                self._claude_proc = proc
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary
             if self._pool_container_name:

@@ -685,11 +685,10 @@ class AgentLoopTask(
                     pass
                 # Send graceful interrupt on stdin
                 _cc_client.cancel_claude_code(force=False)
+                # Bump generation so the agent loop won't retry after CC concludes
+                self.cancel_agent(conversation_id, agent_name=agent_name, silent=True)
                 logger.info(f"[agent:{conversation_id[:8]}] claude-code interrupt: "
-                            f"tools cancelled + stdin interrupt sent")
-                # Don't cancel_agent / don't spawn synthesis — Claude Code
-                # will emit a result event, the stream loop exits, and
-                # the agent loop publishes 'done' normally.
+                            f"tools cancelled + stdin interrupt + generation bumped")
                 return
             else:
                 # Stale client — process dead, clean up and finish

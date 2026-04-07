@@ -259,11 +259,11 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             plan["status"] = "completed"
         _save_plan(conv_id, plan, user_id)
         _publish(conv_id, "plan_updated", {"plan": plan})
-        # Force stop the agent that just finished this step
-        if step_agent and status in ("done", "error"):
+        # Force stop the agent that was working on this step
+        if step_agent and status in ("done", "error", "skipped"):
             _force_stop_agent(self, conv_id, step_agent)
-        # Orchestrate next step (if not completed and not error)
-        if status == "done" and plan["status"] != "completed":
+        # Orchestrate next step (if not completed and status progresses the plan)
+        if status in ("done", "skipped") and plan["status"] != "completed":
             _orchestrate_next_step(self, conv_id, plan_id, user_id)
         flowfile.set_content(json.dumps({"plan": plan}, ensure_ascii=False).encode())
         return [flowfile]
@@ -485,6 +485,12 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
             return [flowfile]
         for s in plan["steps"]:
             if s["index"] == step:
+                if paused and s["status"] == "in_progress":
+                    # Pausing a running step: force stop + revert to pending
+                    agent = s.get("assigned_to", "")
+                    if agent:
+                        _force_stop_agent(self, conv_id, agent)
+                    s["status"] = "pending"
                 s["paused"] = bool(paused)
                 break
         _save_plan(conv_id, plan, user_id)

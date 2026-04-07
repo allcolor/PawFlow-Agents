@@ -277,6 +277,16 @@ class UpdatePlanHandler(_PlanHandlerBase):
         if _has_terminal and self._agent_name and self._conversation_id:
             from tasks.ai.actions.plans import force_stop_agent
             force_stop_agent(self._conversation_id, self._agent_name)
+            # Invalidate CC session — next step must start fresh.
+            # Otherwise CC resumes with the interrupted update_plan in context
+            # and re-executes it, skipping the next step entirely.
+            try:
+                from core.conversation_store import ConversationStore
+                ConversationStore.instance().set_extra(
+                    self._conversation_id,
+                    f"claude_session:{self._agent_name}", "")
+            except Exception:
+                pass
 
         # Orchestrate next step / schedule verifiers
         _uid = self._user_id

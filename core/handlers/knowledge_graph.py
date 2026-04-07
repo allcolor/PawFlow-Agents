@@ -45,8 +45,25 @@ class KgAddHandler(_KgBaseHandler):
     @property
     def description(self) -> str:
         return (
-            "Add a fact as a (subject, predicate, object) triple to the knowledge graph. "
-            "Returns the triple ID and warns if a contradiction is detected."
+            "Add a fact as a (subject, predicate, object) triple to the knowledge graph.\n"
+            "The KG stores structured relationships between entities — use it for facts that "
+            "have a clear subject-relationship-object structure (e.g., 'Quentin -> works_on -> PawFlow').\n\n"
+            "Key parameters:\n"
+            "- subject (required): The entity the fact is about (e.g., 'Quentin', 'PawFlow', 'Python').\n"
+            "- predicate (required): The relationship verb (e.g., 'uses', 'works_on', 'prefers', "
+            "'is_a', 'has_feature'). Use consistent predicates for the same relationship type.\n"
+            "- object (required): The target entity or value (e.g., 'PostgreSQL', 'dark_mode').\n"
+            "- confidence: How certain the fact is.\n"
+            "  'EXTRACTED' (default) — directly stated by the user or found in a source.\n"
+            "  'INFERRED' — deduced from context but not explicitly stated.\n"
+            "  'AMBIGUOUS' — uncertain or potentially conflicting information.\n"
+            "- valid_from: ISO date string (e.g., '2026-01') marking when the fact became true. "
+            "Enables temporal queries with as_of in kg_query.\n"
+            "- source: Where the fact came from (e.g., 'conversation', 'web search', 'code analysis').\n\n"
+            "Contradiction detection: If you add a triple that conflicts with an existing active triple "
+            "(same subject+predicate, different object), the system warns you. Use kg_invalidate to "
+            "expire the old fact first if the new one supersedes it.\n\n"
+            "For unstructured text that doesn't fit a triple pattern, use remember instead."
         )
 
     @property
@@ -117,8 +134,21 @@ class KgQueryHandler(_KgBaseHandler):
     @property
     def description(self) -> str:
         return (
-            "Query the knowledge graph for all facts about an entity. "
-            "Returns outgoing and/or incoming relationships."
+            "Query the knowledge graph for all facts about a specific entity.\n"
+            "Returns the entity's relationships — both where it appears as subject (outgoing) "
+            "and where it appears as object (incoming).\n\n"
+            "Key parameters:\n"
+            "- entity (required): The entity name to look up (e.g., 'Quentin', 'PawFlow'). "
+            "Case-sensitive — use the exact name as stored.\n"
+            "- direction: Filter which relationships to return.\n"
+            "  'both' (default) — all relationships involving this entity.\n"
+            "  'outgoing' — only facts where this entity is the subject (entity -> pred -> ?).\n"
+            "  'incoming' — only facts where this entity is the object (? -> pred -> entity).\n"
+            "- as_of: ISO date string for temporal queries. Returns only facts that were valid "
+            "at the given date. Omit to see all facts (current and expired).\n\n"
+            "Results show each triple with its current/expired status and validity dates. "
+            "For broader graph exploration across multiple entities, use query_graph instead. "
+            "For free-text memory search, use recall or semantic_recall."
         )
 
     @property
@@ -177,7 +207,22 @@ class KgInvalidateHandler(_KgBaseHandler):
 
     @property
     def description(self) -> str:
-        return "Mark a knowledge graph fact as expired/no longer true."
+        return (
+            "Mark a knowledge graph triple as expired (no longer true).\n\n"
+            "This is a soft delete — the triple remains in the graph with an end date "
+            "but is no longer considered 'current'. This preserves history so temporal "
+            "queries (as_of) can still find it. Use this when a fact changes over time "
+            "(e.g., someone changes jobs, a project switches technologies).\n\n"
+            "Key parameters:\n"
+            "- subject (required): The subject entity of the triple to invalidate.\n"
+            "- predicate (required): The relationship of the triple.\n"
+            "- object (required): The object entity of the triple.\n"
+            "- ended: ISO date string for when the fact stopped being true. "
+            "Defaults to today if omitted.\n\n"
+            "Typical workflow: kg_invalidate the old fact, then kg_add the new one. "
+            "For example, to update someone's employer: invalidate 'Alice -> works_at -> OldCo' "
+            "then add 'Alice -> works_at -> NewCo'."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -222,7 +267,19 @@ class KgTimelineHandler(_KgBaseHandler):
 
     @property
     def description(self) -> str:
-        return "View a chronological timeline of knowledge graph facts, optionally filtered by entity."
+        return (
+            "View a chronological timeline of knowledge graph facts, ordered by valid_from date.\n\n"
+            "Shows when facts were added and whether they are still current or have expired. "
+            "Useful for understanding the history of an entity or seeing how the knowledge "
+            "graph evolved over time.\n\n"
+            "Key parameters:\n"
+            "- entity: Filter the timeline to facts involving this specific entity. "
+            "Omit to see the full timeline across all entities.\n"
+            "- limit: Max entries to return (default 20). Increase for a fuller history.\n\n"
+            "Each entry shows: [date] subject -> predicate -> object (current/expired status). "
+            "For a summary overview of the graph, use kg_stats instead. "
+            "For exploring connections from a specific entity, use kg_query."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -272,7 +329,16 @@ class KgStatsHandler(_KgBaseHandler):
 
     @property
     def description(self) -> str:
-        return "Get summary statistics about the knowledge graph (entities, triples, relationship types)."
+        return (
+            "Get summary statistics about the knowledge graph.\n\n"
+            "Returns a quick overview including: total number of entities, total triples "
+            "(broken down into current vs expired), and the list of relationship types "
+            "(predicates) used in the graph.\n\n"
+            "Takes no parameters. Use this to get a sense of the graph's size and "
+            "structure before diving into specific queries. Useful for answering questions "
+            "like 'how much do you know about me?' or before deciding whether to use "
+            "kg_query or query_graph for exploration."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -304,9 +370,23 @@ class QueryGraphHandler(_KgBaseHandler):
     @property
     def description(self) -> str:
         return (
-            "Traverse the knowledge graph to find connections related to a question. "
-            "BFS = broad context around matching entities. "
-            "DFS = trace a specific path through the graph."
+            "Traverse the knowledge graph to find connections related to a natural language question.\n"
+            "Unlike kg_query (which looks up a single entity), this tool starts from keyword-matched "
+            "seed entities and explores outward through the graph.\n\n"
+            "Key parameters:\n"
+            "- question (required): Keywords or a question. Entities whose names match any word "
+            "in the question become seed nodes for traversal.\n"
+            "- mode: Traversal strategy.\n"
+            "  'bfs' (default) — Breadth-first search. Explores all neighbors at each depth level "
+            "before going deeper. Best for getting broad context around an entity — 'tell me "
+            "everything related to X'.\n"
+            "  'dfs' — Depth-first search. Follows one path as deep as possible before backtracking. "
+            "Best for tracing specific chains of relationships — 'how is X connected to Y?'.\n"
+            "- depth: Max traversal hops from seed entities (default 3). Higher values explore "
+            "more of the graph but return more results. Keep low (2-3) for focused queries.\n"
+            "- max_results: Max triples to return (default 50). Acts as a safety limit.\n\n"
+            "Results include confidence levels for each triple. For single-entity lookups, "
+            "use kg_query. For the most connected entities, use kg_god_nodes."
         )
 
     @property
@@ -354,7 +434,18 @@ class KgGodNodesHandler(_KgBaseHandler):
 
     @property
     def description(self) -> str:
-        return "Return the most connected entities in the knowledge graph."
+        return (
+            "Return the most connected entities (god nodes) in the knowledge graph, "
+            "ranked by total degree (number of incoming + outgoing relationships).\n\n"
+            "God nodes are the central hubs of the knowledge graph — entities that appear "
+            "in the most triples. These are good starting points for exploration and help "
+            "identify the most important topics/people/concepts stored.\n\n"
+            "Key parameters:\n"
+            "- limit: Max entities to return (default 10).\n\n"
+            "Each result shows the entity name and its connection count. "
+            "Use this to answer questions like 'what are the main topics you know about?' "
+            "or to find seed entities for deeper query_graph traversals."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

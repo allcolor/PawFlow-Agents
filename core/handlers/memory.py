@@ -32,11 +32,27 @@ class RememberHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Store a fact or piece of information in persistent memory. "
-            "Use this to remember user preferences, important context, "
-            "or anything that should be recalled in future conversations. "
-            "By default the memory is scoped to your agent. Set global=true "
-            "to make it accessible to all agents."
+            "Store a fact or piece of information in persistent long-term memory.\n"
+            "Use this to remember user preferences, important facts, project context, "
+            "or anything that should survive across conversations.\n\n"
+            "Key parameters:\n"
+            "- text (required): The fact to store. Keep it concise and self-contained.\n"
+            "- category: Organizes memories by type. Use 'facts' for objective info (names, "
+            "dates, technical details), 'events' for things that happened, 'discoveries' for "
+            "new findings, 'preferences' for user likes/dislikes/settings, 'advice' for "
+            "guidance or rules the user wants enforced.\n"
+            "- scope: Controls visibility across agents and conversations.\n"
+            "  'agent' (default) — visible in all conversations but only to this agent.\n"
+            "  'global' — visible to ALL agents in ALL conversations.\n"
+            "  'conversation' — visible to all agents but only in THIS conversation.\n"
+            "  'private' — visible only to this agent in this conversation.\n"
+            "- tags: Free-form labels for retrieval. Use consistent tags like 'preference', "
+            "'project:name', 'person:name'. Recalled memories can be filtered by tags.\n"
+            "- valid_from: Epoch timestamp for temporal facts (e.g., 'user started job on X'). "
+            "Enables as_of queries in recall to see what was true at a given time.\n\n"
+            "Before storing, consider using check_duplicate to avoid redundant entries. "
+            "For structured relationships between entities, prefer kg_add instead. "
+            "Memories are auto-embedded for semantic_recall if an embedding provider is configured."
         )
 
     @property
@@ -194,9 +210,25 @@ class SemanticRecallHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Search memories by meaning and similarity (semantic search). "
-            "Use this when keyword search (recall) doesn't find what you need, "
-            "or when the user asks about a topic using different words than stored."
+            "Search memories by meaning and similarity using vector embeddings (semantic search).\n"
+            "This finds memories whose MEANING is close to the query, even if the exact words "
+            "differ. For example, querying 'favorite color' would match a memory stored as "
+            "'the user prefers blue for UI themes'.\n\n"
+            "When to use semantic_recall vs recall:\n"
+            "- Use semantic_recall when the user asks about a topic and you don't know the "
+            "exact words used when the memory was stored, or when keyword search returned "
+            "no results. Best for conceptual/topical queries.\n"
+            "- Use recall when you know specific keywords or tags to filter by, or when you "
+            "need exact phrase matching. Best for precise lookups.\n\n"
+            "Key parameters:\n"
+            "- query (required): Natural language description of what you're looking for. "
+            "Longer, more descriptive queries produce better results than single words.\n"
+            "- limit: Max results (default 5). Increase for broader searches.\n"
+            "- category: Filter to a specific memory type (facts/events/discoveries/"
+            "preferences/advice) before ranking by similarity.\n\n"
+            "Results include a similarity score (0-1, higher = more similar). "
+            "Requires an embedding provider to be configured — returns an error if unavailable. "
+            "Each result includes the memory ID, which can be used with forget to delete."
         )
 
     @property
@@ -280,9 +312,27 @@ class RecallHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Search persistent memory for previously stored facts, preferences, "
-            "or context. Use this at the start of conversations or when the user "
-            "references something you should know."
+            "Search persistent memory for previously stored facts, preferences, or context "
+            "using keyword matching and tag filtering.\n\n"
+            "Use this at the start of conversations to load relevant context, or whenever "
+            "the user references something you should already know. Also use it to find "
+            "memory IDs before calling forget.\n\n"
+            "Key parameters:\n"
+            "- query: Text to search for in memory content. Matches by substring/keyword. "
+            "Can be omitted if filtering by tags alone.\n"
+            "- tags: Filter by one or more tags (e.g. ['preference', 'project:pawflow']). "
+            "Only memories that have ALL specified tags are returned.\n"
+            "- category: Filter by memory type — 'facts', 'events', 'discoveries', "
+            "'preferences', or 'advice'. Narrows results to a specific kind.\n"
+            "- as_of: Epoch timestamp for temporal queries. Returns only memories that were "
+            "valid at that point in time (using valid_from/valid_to). Use 0 or omit for "
+            "'current' memories only.\n\n"
+            "Scope visibility rules: You see memories scoped to 'global', your own agent "
+            "scope, the current conversation scope, and your private scope. You do NOT see "
+            "other agents' agent-scoped or private memories.\n\n"
+            "Returns up to 20 results with scope icons: global, agent, conversation, or "
+            "private. Each result includes the memory ID for use with forget. "
+            "For meaning-based search when keywords don't match, use semantic_recall instead."
         )
 
     @property
@@ -363,7 +413,18 @@ class ForgetHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Delete a specific memory by its ID. Use recall first to find the ID."
+        return (
+            "Permanently delete a specific memory entry by its ID.\n\n"
+            "Use recall or semantic_recall first to find the memory and its ID, "
+            "then pass that ID here. This is a hard delete — the memory is removed "
+            "from the store and cannot be recovered.\n\n"
+            "Key parameters:\n"
+            "- memory_id (required): The ID of the memory to delete, as shown in "
+            "recall results (e.g., the value in square brackets like [abc123]).\n\n"
+            "Use this when the user asks to forget something, when a memory is outdated "
+            "and should be replaced (forget old + remember new), or when check_duplicate "
+            "reveals redundant entries that should be cleaned up."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -407,7 +468,21 @@ class CheckDuplicateHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Check if a similar memory already exists before storing. Returns matches."
+        return (
+            "Check if a similar memory already exists before storing a new one.\n\n"
+            "Call this BEFORE remember to avoid creating duplicate or near-duplicate "
+            "entries. Returns up to 5 existing memories that match the given text, "
+            "with exact matches clearly flagged.\n\n"
+            "Key parameters:\n"
+            "- text (required): The text you intend to store. Will be compared against "
+            "existing memories using keyword matching.\n"
+            "- category: Optionally narrow the duplicate check to a specific category "
+            "(facts/events/discoveries/preferences/advice).\n\n"
+            "If the result says 'No similar memories found. Safe to store.' — proceed "
+            "with remember. If exact or near matches are found, decide whether to skip "
+            "storing, update the existing memory (forget + remember), or store anyway "
+            "if the new fact adds distinct information."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

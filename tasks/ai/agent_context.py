@@ -1042,12 +1042,37 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         except Exception:
             pass
 
-        # Cognitive tools hint — tell agents what's available
+        # Tool usage guidelines (CC-level guidance)
+        system_prompt += (
+            "\n\n## Using your tools"
+            "\n- Do NOT use bash to run commands when a dedicated tool is available:"
+            "\n  - File search: Use `glob` (NOT find or ls)"
+            "\n  - Content search: Use `grep` (NOT grep or rg in bash)"
+            "\n  - Read files: Use `read` (NOT cat/head/tail)"
+            "\n  - Edit files: Use `edit` (NOT sed or awk)"
+            "\n  - Write files: Use `write` (NOT echo redirection)"
+            "\n- When issuing multiple commands:"
+            "\n  - Independent commands: make multiple tool calls in parallel"
+            "\n  - Dependent commands: chain with && in a single bash call"
+            "\n  - Use ; only when you don't care if earlier commands fail"
+            "\n- Avoid unnecessary sleep commands:"
+            "\n  - Do not sleep between commands that can run immediately"
+            "\n  - Use `run_in_background` for long-running commands"
+            "\n  - Do not retry failing commands in a sleep loop — diagnose the root cause"
+            "\n- For git commands:"
+            "\n  - Always create NEW commits rather than amending (unless explicitly asked)"
+            "\n  - Never skip hooks (--no-verify) unless explicitly asked"
+            "\n  - Never force push to main/master"
+            "\n  - Never commit unless the user explicitly asks"
+            "\n  - Prefer adding specific files over `git add -A` or `git add .`"
+        )
+
+        # Cognitive tools hint
         system_prompt += (
             "\n\n## Cognitive tools"
             "\nYou have persistent memory, knowledge graph, diary, and code analysis tools:"
             "\n- **Memory**: `remember` to store facts (with category: facts/events/discoveries/preferences/advice), "
-            "`recall` to search, `forget` to delete, `memory_navigate` to browse categories"
+            "`recall` to search, `forget` to delete"
             "\n- **Knowledge Graph**: `kg_add` to store relationships (subject→predicate→object), "
             "`kg_query` to find facts about an entity, `query_graph` for BFS/DFS traversal, "
             "`kg_god_nodes` for most connected entities"

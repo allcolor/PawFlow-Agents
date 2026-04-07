@@ -255,11 +255,24 @@ class ConversationStore:
         return content
 
     @staticmethod
+    def _agent_prefix(agent_name: str, source: Dict) -> str:
+        """Build the [Agent X]: or [Agent X in Task Y]: prefix."""
+        task_id = source.get("task_id", "")
+        if task_id:
+            return f"[Agent {agent_name} in Task {task_id}]:"
+        return f"[Agent {agent_name}]:"
+
+    @staticmethod
+    def _user_prefix(target: str, source: Dict) -> str:
+        """Build the [User to agent X]: prefix."""
+        return f"[User to agent {target}]:"
+
+    @staticmethod
     def _transform_for_shared(msg: Dict) -> Dict:
         """Transform a message for the shared (agent-neutral) context.
 
         ALL messages are prefixed — shared belongs to no agent.
-        - Agent messages: role→user, content prefixed [Agent X]:
+        - Agent messages: role→user, content prefixed [Agent X]: or [Agent X in Task Y]:
         - User messages: content prefixed [User to agent X]:
         """
         m = dict(msg)
@@ -272,13 +285,13 @@ class ConversationStore:
                 raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
             m["role"] = "user"
             m["content"] = ConversationStore._prefix_content(
-                m.get("content", ""), f"[Agent {agent_name}]:")
+                m.get("content", ""), ConversationStore._agent_prefix(agent_name, src))
 
         elif src_type == "user":
             target = src.get("target_agent", "")
             if target:
                 m["content"] = ConversationStore._prefix_content(
-                    m.get("content", ""), f"[User to agent {target}]:")
+                    m.get("content", ""), ConversationStore._user_prefix(target, src))
 
         return m
 
@@ -286,7 +299,8 @@ class ConversationStore:
     def _transform_for_other_agent(msg: Dict, receiving_agent: str) -> Dict:
         """Transform a message for injection into a specific agent's context.
 
-        - Own agent messages (source.name == receiving_agent): unchanged
+        - Own agent messages WITHOUT task: unchanged (role=assistant)
+        - Own agent messages FROM task: prefixed [Agent X in Task Y]: (task is a sub-context)
         - Other agent messages: role→user, content prefixed [Agent X]:
         - User messages to receiving_agent: unchanged
         - User messages to other agent: content prefixed [User to agent X]:
@@ -299,16 +313,20 @@ class ConversationStore:
             agent_name = src.get("name")
             if not agent_name:
                 raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
-            if agent_name != receiving_agent:
+            is_own = (agent_name == receiving_agent)
+            has_task = bool(src.get("task_id"))
+            # Own messages from tasks are prefixed (task = separate sub-context)
+            # Own messages from normal conv are NOT prefixed (role=assistant)
+            if not is_own or has_task:
                 m["role"] = "user"
                 m["content"] = ConversationStore._prefix_content(
-                    m.get("content", ""), f"[Agent {agent_name}]:")
+                    m.get("content", ""), ConversationStore._agent_prefix(agent_name, src))
 
         elif src_type == "user":
             target = src.get("target_agent", "")
             if target and target != receiving_agent:
                 m["content"] = ConversationStore._prefix_content(
-                    m.get("content", ""), f"[User to agent {target}]:")
+                    m.get("content", ""), ConversationStore._user_prefix(target, src))
 
         return m
 
@@ -316,8 +334,9 @@ class ConversationStore:
     def _personalize_from_shared(msg: Dict, agent_name: str) -> Dict:
         """Personalize a shared-context message for a specific agent.
 
-        Reverses _transform_for_shared for this agent's own messages:
-        - [Agent {me}]: → strip prefix, role=assistant
+        Reverses _transform_for_shared for this agent's own NON-TASK messages:
+        - [Agent {me}]: (no task) → strip prefix, role=assistant
+        - [Agent {me} in Task Y]: → keep prefix (task = sub-context, not own response)
         - [User to agent {me}]: → strip prefix
         - Everything else: keep as-is (already prefixed for "others")
         """
@@ -326,9 +345,12 @@ class ConversationStore:
         src_type = src.get("type", "")
 
         if src_type == "agent" and src.get("name") == agent_name:
-            m["content"] = ConversationStore._strip_prefix(
-                m.get("content", ""), f"[Agent {agent_name}]:")
-            m["role"] = "assistant"
+            # Only un-prefix own messages that are NOT from a task
+            if not src.get("task_id"):
+                m["content"] = ConversationStore._strip_prefix(
+                    m.get("content", ""), f"[Agent {agent_name}]:")
+                m["role"] = "assistant"
+            # Task messages stay prefixed — they're from a sub-context
 
         elif src_type == "user" and src.get("target_agent") == agent_name:
             m["content"] = ConversationStore._strip_prefix(

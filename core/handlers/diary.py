@@ -27,8 +27,24 @@ class DiaryWriteHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Write an entry to your personal diary. Entries persist across "
-            "conversations and help you maintain domain expertise."
+            "Write an entry to your personal agent diary. Diary entries persist across "
+            "conversations and help you maintain continuity, track decisions, and build "
+            "domain expertise over time.\n\n"
+            "Key parameters:\n"
+            "- entry (required): The diary text. Write in first person as yourself.\n"
+            "- type: Categorizes the entry. Choose based on what you're recording:\n"
+            "  'observation' (default) — something you noticed or learned from the user/task. "
+            "Use for noting patterns, user behaviors, or environmental facts.\n"
+            "  'decision' — a choice you made and why. Record the reasoning so future you "
+            "understands the tradeoff (e.g., 'chose X over Y because...').\n"
+            "  'learning' — a new skill, technique, or domain insight you acquired during "
+            "a task. Helps build expertise across conversations.\n"
+            "  'reflection' — a meta-observation about your own performance, approach, "
+            "or something you'd do differently next time.\n"
+            "- tags: Free-form labels for organizing entries.\n\n"
+            "The diary is private to your agent — other agents cannot read it. "
+            "Use diary_read to review your past entries. Unlike remember (which stores "
+            "facts about the user/world), the diary stores YOUR thoughts and experiences."
         )
 
     @property
@@ -91,7 +107,18 @@ class DiaryReadHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Read your recent diary entries. Shows your past observations and decisions."
+        return (
+            "Read your recent diary entries, ordered newest first.\n\n"
+            "Use this to recall your own past observations, decisions, learnings, and "
+            "reflections from previous conversations. Helpful at the start of a session "
+            "to re-establish context about ongoing work.\n\n"
+            "Key parameters:\n"
+            "- limit: Max entries to return (default 10). Increase to see more history.\n"
+            "- type: Filter by entry type — 'observation', 'decision', 'learning', or "
+            "'reflection'. Omit to see all types.\n\n"
+            "Each entry shows its type, timestamp, and text. The diary is private to "
+            "your agent — only you can read your own entries."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

@@ -69,13 +69,31 @@ class ExecuteScriptHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Execute Python code and return the result. "
-            "Auto-detects execution target: uses the connected relay if available, "
-            "falls back to server sandbox. Set destination='sandbox' to force sandbox. "
-            "File I/O uses URL schemes: "
-            "open('filestore://name.zip', 'wb') to create downloadable files, "
-            "open('fs://service_name/path', 'rb'/'wb') for filesystem services. "
-            "Safe imports: math, json, re, csv, datetime, zipfile, pathlib, etc."
+            "Execute Python code and return the result.\n\n"
+            "Execution target (auto-detected):\n"
+            "- If a relay is connected, code runs on the user's machine via the relay. "
+            "This gives full access to the user's Python environment, installed packages, "
+            "and filesystem.\n"
+            "- If no relay is connected, code runs in a server-side sandbox with restricted "
+            "imports. Force sandbox mode with destination='sandbox'.\n"
+            "- You can specify a relay service name in destination to target a specific machine.\n\n"
+            "Getting output:\n"
+            "- Use print() to produce output — all printed text is captured and returned.\n"
+            "- Set a variable named 'result' and its value will be returned (sandbox mode only).\n"
+            "- If neither print() nor result is used, you get 'Script executed (no output)'.\n\n"
+            "File I/O (sandbox mode):\n"
+            "- open('filestore://name.zip', 'wb') — creates a downloadable file in FileStore.\n"
+            "- open('fs://service_name/path', 'rb'/'wb') — reads/writes via a filesystem service.\n\n"
+            "Key parameters:\n"
+            "- code (required): Python code to execute. Can be a single expression ('2+2') "
+            "or a full script with multiple statements.\n"
+            "- destination: 'sandbox' (force server sandbox), a relay service name, or omit "
+            "for auto-detection.\n"
+            "- max_output: Max output characters (default 4000). Larger outputs are "
+            "auto-saved to FileStore and a download link is returned.\n\n"
+            "Available in sandbox: math, json, re, csv, datetime, collections, itertools, "
+            "functools, statistics, zipfile, pathlib, textwrap, html, base64, hashlib, "
+            "urllib.parse, and more. No network access or os/subprocess in sandbox mode."
         )
 
     @property
@@ -254,7 +272,18 @@ class WebSearchHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Search the web. Returns titles, URLs and snippets. Parameters: query (required), max_results (int, default 5)."
+        return (
+            "Search the web using DuckDuckGo and return results with titles, URLs, and snippets.\n\n"
+            "Use this when you need to find current information, look up documentation, "
+            "verify facts, or research topics that are beyond your training data. "
+            "No API key required — uses DuckDuckGo HTML lite.\n\n"
+            "Key parameters:\n"
+            "- query (required): The search query string. Be specific for better results.\n"
+            "- max_results: Number of results to return (default 5).\n\n"
+            "Returns a list of results, each with title, URL, and a text snippet. "
+            "To read the full content of a result page, use fetch with the URL. "
+            "For API calls or raw HTTP requests, use fetch with mode='raw' instead."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

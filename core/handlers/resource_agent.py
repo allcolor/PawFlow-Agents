@@ -602,9 +602,18 @@ class ShowFileHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Display a file to the USER in their chat viewer panel. "
-            "Use this to show results to the user (images, PDFs, code). "
-            "If YOU need to analyze a file yourself, use 'see' or 'read' instead."
+            "Display a file to the USER in their chat viewer panel.\n\n"
+            "This opens a file in the user's UI — it does NOT return the file content to you. "
+            "Use this when the user asks to SEE something (an image, a PDF, a code file, a chart). "
+            "If YOU need to analyze or read the file content yourself, use 'see' or 'read' instead.\n\n"
+            "Key parameters:\n"
+            "- file_id: The FileStore file ID (from execute_script output, upload results, etc.).\n"
+            "- filename: Alternative to file_id — search by filename in FileStore.\n"
+            "- path + service: Show a file from a filesystem service (relay). Provide both "
+            "the file path and the service name.\n\n"
+            "Supports images (PNG, JPG, SVG), PDFs, code files, text, and other file types "
+            "that the chat UI can render. The file must exist in FileStore or on the specified "
+            "filesystem service."
         )
 
     @property

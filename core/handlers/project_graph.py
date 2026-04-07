@@ -33,9 +33,29 @@ class ProjectGraphHandler(BaseFsHandler):
     @property
     def description(self) -> str:
         return (
-            "Build or query the structural code graph of the current project. "
-            "Actions: build (index codebase via relay), query (traverse graph), "
-            "report (summary), node (entity details)."
+            "Build or query a structural code graph of the current project codebase.\n"
+            "The graph represents code entities (functions, classes, modules, imports) and "
+            "their relationships, extracted via AST parsing.\n\n"
+            "Actions:\n"
+            "- build: Fetches ALL code files from the project via the connected relay, then "
+            "runs AST extraction server-side. Supports 17 languages (Python, JS/TS, Java, Go, "
+            "Rust, C/C++, etc.). WARNING: this fetches every code file in the project root — "
+            "only run when the user explicitly asks to index/analyze the codebase. Requires "
+            "a relay connection (not filestore).\n"
+            "- query: Traverse the built graph using a keyword question. Uses BFS to find "
+            "entities matching the query words, then expands outward through relationships. "
+            "Set depth to control how far to explore (default 3). Requires build first.\n"
+            "- report: Get a summary of the graph including total nodes/edges, god nodes "
+            "(most connected entities), and structural statistics. Quick overview of the "
+            "codebase structure.\n"
+            "- node: Get detailed information about a specific code entity — its file, "
+            "location, type, and neighboring entities. Pass the entity name in 'question'.\n\n"
+            "Key parameters:\n"
+            "- action (required): One of build/query/report/node.\n"
+            "- path: Project root path for build (default '.').\n"
+            "- question: Search text for query/node actions.\n"
+            "- depth: Traversal depth for query (default 3).\n"
+            "- source: Relay service name for build (omit for default relay)."
         )
 
     @property

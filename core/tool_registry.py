@@ -247,14 +247,18 @@ def create_default_registry() -> ToolRegistry:
     from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
     registry.register(DiaryWriteHandler())
     registry.register(DiaryReadHandler())
+    from core.handlers.project_graph import ProjectGraphHandler
+    registry.register(ProjectGraphHandler())
 
     # Knowledge Graph handlers
     from core.handlers.knowledge_graph import (
         KgAddHandler, KgQueryHandler, KgInvalidateHandler,
         KgTimelineHandler, KgStatsHandler,
+        QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler, KgHyperedgesHandler,
     )
     for _kg_cls in (KgAddHandler, KgQueryHandler, KgInvalidateHandler,
-                    KgTimelineHandler, KgStatsHandler):
+                    KgTimelineHandler, KgStatsHandler,
+                    QueryGraphHandler, KgGodNodesHandler, KgSurprisesHandler, KgHyperedgesHandler):
         registry.register(_kg_cls())
 
     # Memory navigation

@@ -275,3 +275,148 @@ class KgStatsHandler(_KgBaseHandler):
             )
         except Exception as e:
             return f"Error getting stats: {e}"
+
+
+class QueryGraphHandler(_KgBaseHandler):
+    """Traverse the knowledge graph with a question."""
+
+    @property
+    def name(self) -> str:
+        return "query_graph"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Traverse the knowledge graph to find connections related to a question. "
+            "BFS = broad context around matching entities. "
+            "DFS = trace a specific path through the graph."
+        )
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": "Question or keywords to search"},
+                "mode": {
+                    "type": "string", "enum": ["bfs", "dfs"],
+                    "description": "bfs (broad) or dfs (deep path). Default: bfs",
+                },
+                "depth": {"type": "integer", "description": "Max traversal depth (default: 3)"},
+                "max_results": {"type": "integer", "description": "Max triples to return (default: 50)"},
+            },
+            "required": ["question"],
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        question = arguments.get("question", "")
+        if not question:
+            return "Error: question is required"
+        kg = self._get_kg()
+        results = kg.query_graph(
+            question,
+            mode=arguments.get("mode", "bfs"),
+            depth=int(arguments.get("depth", 3) or 3),
+            max_results=int(arguments.get("max_results", 50) or 50),
+        )
+        if not results:
+            return f"No connections found for: {question}"
+        lines = [f"Graph traversal for '{question}' ({len(results)} connections):"]
+        for r in results:
+            conf = r.get("confidence", "EXTRACTED")
+            lines.append(f"  [{conf}] {r['subject']} → {r['predicate']} → {r['object']}")
+        return "\n".join(lines)
+
+
+class KgGodNodesHandler(_KgBaseHandler):
+    """Return the most connected entities in the knowledge graph."""
+
+    @property
+    def name(self) -> str:
+        return "kg_god_nodes"
+
+    @property
+    def description(self) -> str:
+        return "Return the most connected entities in the knowledge graph."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max entities (default: 10)"},
+            },
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        kg = self._get_kg()
+        nodes = kg.god_nodes(limit=int(arguments.get("limit", 10) or 10))
+        if not nodes:
+            return "No entities in the knowledge graph."
+        lines = ["Most connected entities:"]
+        for n in nodes:
+            lines.append(f"  {n['entity']} ({n['connections']} connections)")
+        return "\n".join(lines)
+
+
+class KgSurprisesHandler(_KgBaseHandler):
+    """Find surprising cross-domain connections."""
+
+    @property
+    def name(self) -> str:
+        return "kg_surprises"
+
+    @property
+    def description(self) -> str:
+        return "Find surprising or unexpected connections across different domains in the knowledge graph."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Max results (default: 10)"},
+            },
+        }
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        kg = self._get_kg()
+        results = kg.surprises(limit=int(arguments.get("limit", 10) or 10))
+        if not results:
+            return "No surprising connections found."
+        lines = ["Surprising connections (ranked by score):"]
+        for r in results:
+            lines.append(
+                f"  [{r['confidence']}] {r['subject']} → {r['predicate']} → {r['object']} "
+                f"(surprise score: {r['score']})"
+            )
+        return "\n".join(lines)
+
+
+class KgHyperedgesHandler(_KgBaseHandler):
+    """Find group relationships (3+ objects with same subject+predicate)."""
+
+    @property
+    def name(self) -> str:
+        return "kg_hyperedges"
+
+    @property
+    def description(self) -> str:
+        return "Find group relationships where one entity has 3+ objects for the same predicate."
+
+    @property
+    def parameters_schema(self) -> Dict[str, Any]:
+        return {"type": "object", "properties": {}}
+
+    def execute(self, arguments: Dict[str, Any]) -> str:
+        kg = self._get_kg()
+        results = kg.get_hyperedges()
+        if not results:
+            return "No group relationships found."
+        lines = ["Group relationships:"]
+        for r in results:
+            lines.append(
+                f"  {r['subject']} → {r['predicate']} → [{', '.join(r['objects'])}] "
+                f"({r['count']} objects)"
+            )
+        return "\n".join(lines)

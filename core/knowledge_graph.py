@@ -59,48 +59,8 @@ class KnowledgeGraph:
         if name not in self._entities:
             self._entities[name] = {"type": "", "created_at": time.time()}
 
-    def add_triple(self, subject: str, predicate: str, obj: str,
-                   valid_from: str = "", confidence: float = 1.0,
-                   source: str = "") -> Tuple[str, Optional[str]]:
-        """Add a fact triple. Returns (triple_id, contradiction_warning or None)."""
-        with self._lock:
-            self._ensure_entity(subject)
-            self._ensure_entity(obj)
-
-            # Check contradiction: same subject+predicate, different object, still active
-            contradiction = None
-            others = [
-                t["object"] for t in self._triples
-                if t["subject"] == subject and t["predicate"] == predicate
-                and t["object"] != obj and t["valid_to"] == ""
-            ]
-            if others:
-                contradiction = (
-                    f"Contradiction: {subject} -> {predicate} already has active value(s): "
-                    + ", ".join(others)
-                    + f". New value: {obj}. Consider invalidating the old fact."
-                )
-
-            # Check duplicate
-            for t in self._triples:
-                if (t["subject"] == subject and t["predicate"] == predicate
-                        and t["object"] == obj and t["valid_to"] == ""):
-                    return t["id"], contradiction
-
-            triple = {
-                "id": uuid.uuid4().hex[:12],
-                "subject": subject,
-                "predicate": predicate,
-                "object": obj,
-                "valid_from": valid_from,
-                "valid_to": "",
-                "confidence": confidence,
-                "source": source,
-                "extracted_at": time.time(),
-            }
-            self._triples.append(triple)
-            self._save()
-            return triple["id"], contradiction
+    # add_triple is defined below (after graph traversal methods)
+    # with full confidence tracking (EXTRACTED/INFERRED/AMBIGUOUS)
 
     def query_entity(self, entity: str, as_of: str = "",
                      direction: str = "both") -> List[Dict[str, Any]]:
@@ -198,6 +158,221 @@ class KnowledgeGraph:
                 "current_facts": current,
                 "expired_facts": len(self._triples) - current,
                 "relationship_types": preds,
+            }
+
+    # ── Graph traversal (BFS/DFS) ────────────────────────────────
+
+    def query_graph(self, question: str, mode: str = "bfs",
+                    depth: int = 3, max_results: int = 50) -> List[Dict]:
+        """Traverse the KG from entities matching the question.
+
+        Args:
+            question: text to match against entity names
+            mode: 'bfs' (broad context) or 'dfs' (trace a path)
+            depth: max traversal depth
+            max_results: max triples to return
+        """
+        with self._lock:
+            # Find matching entities
+            q = question.lower()
+            seeds = [
+                name for name in self._entities
+                if q in name.lower() or any(
+                    w in name.lower() for w in q.split() if len(w) > 2
+                )
+            ]
+            if not seeds:
+                # Try matching in triple subjects/objects
+                for t in self._triples:
+                    if t["valid_to"]:
+                        continue
+                    for field in ("subject", "object"):
+                        if q in t[field].lower() and t[field] not in seeds:
+                            seeds.append(t[field])
+            if not seeds:
+                return []
+
+            # Build adjacency from active triples
+            adj: Dict[str, List[Dict]] = {}
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                adj.setdefault(t["subject"], []).append(t)
+                adj.setdefault(t["object"], []).append(t)
+
+            visited = set()
+            results = []
+
+            if mode == "dfs":
+                # DFS: trace deep paths from first seed
+                def _dfs(entity, d):
+                    if d <= 0 or entity in visited or len(results) >= max_results:
+                        return
+                    visited.add(entity)
+                    for t in adj.get(entity, []):
+                        results.append(t)
+                        other = t["object"] if t["subject"] == entity else t["subject"]
+                        _dfs(other, d - 1)
+                _dfs(seeds[0], depth)
+            else:
+                # BFS: broad context around all seeds
+                queue = [(s, 0) for s in seeds]
+                while queue and len(results) < max_results:
+                    entity, d = queue.pop(0)
+                    if entity in visited or d > depth:
+                        continue
+                    visited.add(entity)
+                    for t in adj.get(entity, []):
+                        if t["id"] not in {r["id"] for r in results}:
+                            results.append(t)
+                        other = t["object"] if t["subject"] == entity else t["subject"]
+                        if other not in visited:
+                            queue.append((other, d + 1))
+
+            return [{
+                "subject": t["subject"],
+                "predicate": t["predicate"],
+                "object": t["object"],
+                "confidence": t.get("confidence", 1.0),
+                "source": t.get("source", ""),
+            } for t in results]
+
+    # ── God nodes ──────────────────────────────────────────────────
+
+    def god_nodes(self, limit: int = 10) -> List[Dict]:
+        """Return the most connected entities in the KG."""
+        with self._lock:
+            degree: Dict[str, int] = {}
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                degree[t["subject"]] = degree.get(t["subject"], 0) + 1
+                degree[t["object"]] = degree.get(t["object"], 0) + 1
+            ranked = sorted(degree.items(), key=lambda x: -x[1])
+            return [
+                {"entity": name, "connections": count}
+                for name, count in ranked[:limit]
+            ]
+
+    # ── Hyperedges ─────────────────────────────────────────────────
+
+    def get_hyperedges(self) -> List[Dict]:
+        """Find group relationships: same subject+predicate with 3+ objects."""
+        with self._lock:
+            groups: Dict[str, List[str]] = {}
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                key = f"{t['subject']}::{t['predicate']}"
+                groups.setdefault(key, []).append(t["object"])
+            return [
+                {"subject": key.split("::")[0],
+                 "predicate": key.split("::")[1],
+                 "objects": objs,
+                 "count": len(objs)}
+                for key, objs in groups.items()
+                if len(objs) >= 3
+            ]
+
+    # ── Surprising connections ─────────────────────────────────────
+
+    def surprises(self, limit: int = 10) -> List[Dict]:
+        """Find surprising cross-domain connections."""
+        with self._lock:
+            # Score each active triple by "surprise"
+            scored = []
+            for t in self._triples:
+                if t["valid_to"]:
+                    continue
+                score = 0
+                s, o = t["subject"], t["object"]
+                # Cross-entity-type bonus
+                s_type = self._entities.get(s, {}).get("type", "")
+                o_type = self._entities.get(o, {}).get("type", "")
+                if s_type and o_type and s_type != o_type:
+                    score += 2
+                # INFERRED bonus
+                conf = t.get("confidence", 1.0)
+                if isinstance(conf, str):
+                    if conf == "AMBIGUOUS":
+                        score += 3
+                    elif conf == "INFERRED":
+                        score += 2
+                elif conf < 0.8:
+                    score += 2
+                # Low-connection entities bonus (peripheral → hub)
+                s_deg = sum(1 for x in self._triples if x["subject"] == s or x["object"] == s)
+                o_deg = sum(1 for x in self._triples if x["subject"] == o or x["object"] == o)
+                if min(s_deg, o_deg) <= 2 and max(s_deg, o_deg) >= 5:
+                    score += 2
+                if score > 0:
+                    scored.append({
+                        "subject": s, "predicate": t["predicate"], "object": o,
+                        "confidence": conf, "score": score,
+                    })
+            scored.sort(key=lambda x: -x["score"])
+            return scored[:limit]
+
+    # ── Confidence helpers ─────────────────────────────────────────
+
+    def add_triple(self, subject: str, predicate: str, obj: str,
+                   valid_from: str = "", confidence=1.0,
+                   source: str = "") -> Dict:
+        """Add a fact triple. Returns dict with status + optional contradiction."""
+        # Accept both float and string confidence
+        _conf = confidence
+        _conf_score = 0.0
+        if isinstance(confidence, str):
+            _conf = confidence.upper()
+            if _conf not in ("EXTRACTED", "INFERRED", "AMBIGUOUS"):
+                _conf = "EXTRACTED"
+            _conf_score = {"EXTRACTED": 1.0, "INFERRED": 0.7, "AMBIGUOUS": 0.3}.get(_conf, 1.0)
+        else:
+            _conf_score = float(confidence)
+            if _conf_score >= 0.9:
+                _conf = "EXTRACTED"
+            elif _conf_score >= 0.5:
+                _conf = "INFERRED"
+            else:
+                _conf = "AMBIGUOUS"
+
+        with self._lock:
+            self._ensure_entity(subject)
+            self._ensure_entity(obj)
+
+            # Check contradiction
+            contradictions = []
+            for t in self._triples:
+                if (t["subject"] == subject and t["predicate"] == predicate
+                        and t["object"] != obj and t["valid_to"] == ""):
+                    contradictions.append(t["object"])
+
+            # Check duplicate
+            for t in self._triples:
+                if (t["subject"] == subject and t["predicate"] == predicate
+                        and t["object"] == obj and t["valid_to"] == ""):
+                    return {
+                        "status": "duplicate", "triple_id": t["id"],
+                        "contradictions": contradictions,
+                    }
+
+            triple = {
+                "id": uuid.uuid4().hex[:12],
+                "subject": subject,
+                "predicate": predicate,
+                "object": obj,
+                "valid_from": valid_from,
+                "valid_to": "",
+                "confidence": _conf,
+                "confidence_score": _conf_score,
+                "source": source,
+                "extracted_at": time.time(),
+            }
+            self._triples.append(triple)
+            self._save()
+            return {
+                "status": "added", "triple_id": triple["id"],
+                "contradictions": contradictions,
             }
 
     # ── Factory ────────────────────────────────────────────────────

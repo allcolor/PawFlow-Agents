@@ -64,6 +64,17 @@ def build_memory_digest(user_id: str, agent_name: str = "",
     if advice:
         lines.append("Advice: " + "; ".join(e.text[:120] for e in advice))
 
+    # KG: god nodes (most connected entities)
+    try:
+        from core.knowledge_graph import KnowledgeGraph
+        kg = KnowledgeGraph.for_user(user_id)
+        gods = kg.god_nodes(limit=5)
+        if gods:
+            lines.append("Central topics: " + ", ".join(
+                f"{g['entity']}({g['connections']})" for g in gods))
+    except Exception:
+        pass
+
     if not lines:
         return ""
 

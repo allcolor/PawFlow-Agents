@@ -596,6 +596,12 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
         # MUST flush before scheduling — the agent loads context on wake,
         # the message MUST be written to disk before the agent starts.
         writer.flush(timeout=10)
+        # Publish SSE so frontend renders the step message BEFORE thinking starts
+        _publish(conv_id, "new_message", {
+            "role": "user", "content": _user_msg, "msg_id": _msg_id,
+            "source": {"type": "user", "name": user_id,
+                       "target_agent": agent, "plan_id": plan_id},
+        })
     except Exception as e:
         logger.warning("Failed to write plan step user message: %s", e)
 

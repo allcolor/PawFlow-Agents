@@ -61,6 +61,18 @@ function connectSSE(cid, onReady) {
     }
   }
 
+  // Plan step instructions — render BEFORE agent starts thinking
+  eventSource.addEventListener('new_message', (e) => {
+    lastSSEActivity = Date.now();
+    const data = e.data ? JSON.parse(e.data) : {};
+    if (data.role && data.content) {
+      addMsg(data.role, data.content, {
+        source: data.source, msg_id: data.msg_id,
+      });
+      scrollBottom();
+    }
+  });
+
   eventSource.addEventListener('thinking', (e) => {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};

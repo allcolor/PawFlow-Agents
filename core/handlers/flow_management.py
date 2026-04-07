@@ -741,6 +741,24 @@ class UpdatePlanHandler(ToolHandler):
         lines.append("\nSTOP here. The orchestrator will handle the next step.")
         if plan["status"] == "completed":
             lines.append("Plan completed.")
+
+        # Post-hook: schedule orchestration for the next step (async)
+        # This runs after the tool result is sent back to the LLM.
+        _has_done = any(
+            u.get("status") == "done" for u in updates
+        )
+        if _has_done and plan["status"] != "completed":
+            import threading
+            def _post_orchestrate():
+                try:
+                    from tasks.ai.actions.plans import orchestrate_next_step
+                    orchestrate_next_step(
+                        self._conversation_id, plan_id,
+                        self._agent_name)
+                except Exception as e:
+                    logger.warning("Plan post-orchestrate failed: %s", e)
+            threading.Thread(target=_post_orchestrate, daemon=True).start()
+
         return "\n".join(lines)
 
 
@@ -1068,6 +1086,19 @@ class VerifyPlanStepHandler(ToolHandler):
                 except Exception:
                     pass
 
+                # Orchestrate next step if plan not completed
+                if plan["status"] != "completed":
+                    import threading
+                    def _post_orchestrate_verify():
+                        try:
+                            from tasks.ai.actions.plans import orchestrate_next_step
+                            orchestrate_next_step(
+                                self._conversation_id, plan_id,
+                                self._agent_name)
+                        except Exception as e:
+                            logger.warning("Plan verify post-orchestrate failed: %s", e)
+                    threading.Thread(target=_post_orchestrate_verify, daemon=True).start()
+
                 return (
                     f"Step {step_num} approved."
                     + (f" Reason: {reason}" if reason else "")
@@ -1088,28 +1119,21 @@ class VerifyPlanStepHandler(ToolHandler):
                 except Exception:
                     pass
 
-                # Re-trigger the executor for this step
-                if executor and executor != "user":
-                    try:
-                        from core.poll_scheduler import PollScheduler
-                        PollScheduler.instance().schedule_delay(
-                            self._conversation_id, 0,
-                            key=(f"{self._conversation_id}::plan::"
-                                 f"{plan_id}::step{step_num}::{executor}"),
-                            reason=(f"[plan_step:{plan_id}:{step_num}] "
-                                    f"({executor})"),
-                            user_id="",
-                        )
+                # Re-trigger the assigned agent for rework
+                assigned = step.get("assigned_to") or plan.get("created_by", "")
+                if assigned and assigned != "user":
+                    import threading
+                    def _post_rework():
                         try:
-                            from tasks.ai.agent_loop import AgentLoopTask
-                            AgentLoopTask.wake_poller()
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
+                            from tasks.ai.actions.plans import orchestrate_next_step
+                            orchestrate_next_step(
+                                self._conversation_id, plan_id, assigned)
+                        except Exception as e:
+                            logger.warning("Plan reject re-orchestrate failed: %s", e)
+                    threading.Thread(target=_post_rework, daemon=True).start()
 
                 return (
-                    f"Step {step_num} rejected and sent back to {executor}."
+                    f"Step {step_num} rejected and sent back to {assigned}."
                     + (f" Reason: {reason}" if reason else "")
                 )
         except Exception as e:

@@ -480,6 +480,11 @@ def _handle_plans(self, action, body, store, user_id, flowfile):
 
 # ── Orchestrator ──────────────────────────────────────────────────────
 
+def orchestrate_next_step(conv_id, plan_id, user_id):
+    """Find and schedule the next pending step. Standalone — callable from handlers."""
+    return _orchestrate_next_step(None, conv_id, plan_id, user_id)
+
+
 def _orchestrate_next_step(self, conv_id, plan_id, user_id):
     """Find and schedule the next pending step.
 
@@ -555,9 +560,9 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id):
         _msg_id = _uuid_plan.uuid4().hex[:12]
         ConversationWriter.for_conversation(conv_id).enqueue(
             [{"type": "msg", "role": "user", "content": _user_msg,
-              "msg_id": _msg_id, "ts": time.time(),
+              "msg_id": _msg_id, "ts": time.time(), "display_only": True,
               "source": {"type": "plan", "plan_id": plan_id}}],
-            user_id=user_id, context_agent=agent)
+            user_id=user_id)
     except Exception as e:
         logger.warning("Failed to write plan step user message: %s", e)
 

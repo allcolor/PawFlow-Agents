@@ -138,6 +138,9 @@ class ConversationStore:
     def git_snapshot(self, cid: str, message: str = ""):
         """Commit current state as a snapshot (called after agent turn end).
 
+        Uses selective git add (known files only) instead of git add -A
+        to avoid scanning the entire working tree on large repos.
+
         Uses the per-conversation lock to prevent race conditions when
         multiple agents flush simultaneously.
         """
@@ -147,10 +150,18 @@ class ConversationStore:
         lock = self._get_conv_lock(cid)
         with lock:
             try:
-                status = self._git(cid, "status", "--porcelain")
-                if not status.stdout.strip():
-                    return  # nothing changed
-                self._git(cid, "add", "-A")
+                # Selective add: transcript + shared + extras + all agent contexts
+                files = ["transcript.jsonl", "shared.jsonl", "extras.json"]
+                for entry in conv_dir.iterdir():
+                    if entry.is_dir() and entry.name != ".git":
+                        ctx = entry / "context.jsonl"
+                        if ctx.exists():
+                            files.append(f"{entry.name}/context.jsonl")
+                self._git(cid, "add", "--", *files, check=False)
+                # Commit only if something staged
+                diff = self._git(cid, "diff", "--cached", "--quiet", check=False)
+                if diff.returncode == 0:
+                    return  # nothing staged
                 msg = message or f"snapshot {time.strftime('%H:%M:%S')}"
                 self._git(cid, "commit", "-m", msg, "-q")
                 logger.debug("[convstore] git snapshot for %s: %s", cid[:8], msg)
@@ -454,7 +465,10 @@ class ConversationStore:
     def _ensure_loaded(self):
         if self._loaded:
             return
-        self._loaded = True
+        with self._lock:  # class-level lock (also used for singleton)
+            if self._loaded:
+                return
+            self._loaded = True
         count = 0
         # Scan data/conversations/{user}/{conv_id}/ directories
         for user_dir in self._store_dir.iterdir():

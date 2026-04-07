@@ -519,6 +519,104 @@ function cmdUsageDeprecated() {
   return true;
 }
 
+function cmdKg(text, parts) {
+  const sub = (parts[1] || '').toLowerCase();
+  if (!sub || sub === 'panel') {
+    cmdShowKg();
+  } else if (sub === 'add') {
+    const subject = parts[2] || '';
+    const predicate = parts[3] || '';
+    const object = parts.slice(4).join(' ');
+    if (!subject || !predicate || !object) {
+      addMsg('system', 'Usage: /kg add <subject> <predicate> <object>');
+      return true;
+    }
+    kgQuickAdd(subject, predicate, object);
+  } else if (sub === 'stats') {
+    kgShowStats();
+  } else {
+    addMsg('system', 'Usage: /kg [panel | add <subject> <predicate> <object> | stats]');
+  }
+  return true;
+}
+
+function cmdDiary(text, parts) {
+  const sub = (parts[1] || '').toLowerCase();
+  if (!sub || sub === 'panel') {
+    cmdShowDiary();
+  } else if (sub === 'list') {
+    const typeFilter = parts[2] || null;
+    cmdDiaryList(typeFilter);
+  } else if (sub === 'add') {
+    const rest = text.replace(/^\/diary\s+add\s*/i, '').trim();
+    if (!rest) { addMsg('system', 'Usage: /diary add <text> [#tag1 #tag2]'); return true; }
+    const tagMatches = rest.match(/#(\S+)/g) || [];
+    const tags = tagMatches.map(t => t.slice(1));
+    let entryText = rest.replace(/#\S+/g, '').trim();
+    if (!entryText) { addMsg('system', 'Usage: /diary add <text> [#tag1 #tag2]'); return true; }
+    const args = { entry: entryText, type: 'observation' };
+    if (tags.length) args.tags = tags;
+    action$('call_tool', { tool_name: 'diary_write', arguments: args }).subscribe({
+      next: (data) => {
+        addMsg('system', 'Diary entry added: ' + (data.result || data.text || 'OK'));
+      },
+      error: (e) => addMsg('error', 'Failed: ' + e.message),
+    });
+  } else {
+    addMsg('system', 'Usage: /diary [panel | list [type] | add <text> [#tag1 #tag2]]');
+  }
+  return true;
+}
+
+function cmdGraph(text, parts) {
+  var sub = (parts[1] || '').toLowerCase();
+  if (!sub || sub === 'panel') {
+    showProjectGraphOverlay();
+  } else if (sub === 'build') {
+    addMsg('system', 'Building project graph...');
+    action$('call_tool', {
+      tool_name: 'project_graph',
+      arguments: { action: 'build' },
+      positional_args: [],
+    }).subscribe({
+      next: function(data) {
+        if (data.error) { addMsg('error', data.error); return; }
+        var text = typeof data === 'string' ? data : (data.result || data.message || JSON.stringify(data));
+        addMsg('system', text);
+      },
+      error: function(e) { addMsg('error', 'Build failed: ' + e.message); },
+    });
+  } else if (sub === 'report') {
+    action$('project_graph_report', {}).subscribe({
+      next: function(data) {
+        if (data.error) { addMsg('error', data.error); return; }
+        if (!data.has_graph) { addMsg('system', 'No project graph built yet. Use /graph build first.'); return; }
+        addMsg('system', data.report || 'No report available.');
+      },
+      error: function(e) { addMsg('error', 'Report failed: ' + e.message); },
+    });
+  } else if (sub === 'query') {
+    var question = parts.slice(2).join(' ').trim();
+    if (!question) { addMsg('system', 'Usage: /graph query <question>'); return true; }
+    action$('project_graph_query', { question: question }).subscribe({
+      next: function(data) {
+        if (data.error) { addMsg('error', data.error); return; }
+        var edges = data.edges || [];
+        if (edges.length === 0) { addMsg('system', 'No connections found for: ' + question); return; }
+        var lines = ['Project graph query "' + question + '" (' + edges.length + ' edges):'];
+        edges.forEach(function(e) {
+          lines.push('  ' + (e.source || '?') + ' \u2192 ' + (e.relation || '?') + ' \u2192 ' + (e.target || '?') + ' [' + (e.confidence || 'EXTRACTED') + ']');
+        });
+        addMsg('system', lines.join('\n'));
+      },
+      error: function(e) { addMsg('error', 'Query failed: ' + e.message); },
+    });
+  } else {
+    addMsg('system', 'Usage: /graph [panel | build | report | query <question>]');
+  }
+  return true;
+}
+
 function cmdRelay(text, parts) {
   var sub = (parts[1] || '').toLowerCase();
   if (!sub || sub === 'status') {

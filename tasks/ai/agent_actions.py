@@ -23,6 +23,7 @@ from tasks.ai.actions.files_fs import _handle_files_fs
 from tasks.ai.actions.misc import _handle_misc
 from tasks.ai.actions.account_linking import _handle_account_linking
 from tasks.ai.actions.memory_prompts import _handle_memory_prompts
+from tasks.ai.actions.cognitive_ui import _handle_cognitive_ui
 from tasks.ai.actions.usage import _handle_usage
 from tasks.ai.actions.plans import _handle_plans
 from tasks.ai.actions.command_dispatch import _handle_command_dispatch
@@ -44,6 +45,7 @@ _ACTION_HANDLERS = [
     _handle_misc,
     _handle_account_linking,
     _handle_memory_prompts,
+    _handle_cognitive_ui,
     _handle_usage,
     _handle_plans,
 ]

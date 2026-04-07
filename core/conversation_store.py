@@ -659,6 +659,7 @@ class ConversationStore:
                                        for m in ctx_public]
                         self._append_ctx_file(cid, other, transformed)
 
+        self._invalidate_ctx_cache(cid)
         self._reload_cache(cid)
         # Git snapshot after agent turn
         self.git_snapshot(cid, f"agent:{agent_name}")
@@ -723,6 +724,7 @@ class ConversationStore:
                                        for m in ctx_msgs]
                         self._append_ctx_file(cid, agent, transformed)
 
+        self._invalidate_ctx_cache(cid)
         self._reload_cache(cid)
 
     def _get_transcript_msg_ids(self, cid: str) -> set:

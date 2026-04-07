@@ -256,10 +256,12 @@ class ConversationStore:
 
     @staticmethod
     def _agent_prefix(agent_name: str, source: Dict) -> str:
-        """Build the [Agent X]: or [Agent X in Task Y]: prefix."""
+        """Build the [Agent X]: or [Agent X in Task Y]: or [Agent X in /btw]: prefix."""
         task_id = source.get("task_id", "")
         if task_id:
             return f"[Agent {agent_name} in Task {task_id}]:"
+        if source.get("btw"):
+            return f"[Agent {agent_name} in /btw]:"
         return f"[Agent {agent_name}]:"
 
     @staticmethod
@@ -314,10 +316,10 @@ class ConversationStore:
             if not agent_name:
                 raise ValueError(f"Agent message without source.name — msg_id={m.get('msg_id', '?')}")
             is_own = (agent_name == receiving_agent)
-            has_task = bool(src.get("task_id"))
-            # Own messages from tasks are prefixed (task = separate sub-context)
+            is_sub_context = bool(src.get("task_id")) or bool(src.get("btw"))
+            # Own messages from sub-contexts (task, btw) are prefixed
             # Own messages from normal conv are NOT prefixed (role=assistant)
-            if not is_own or has_task:
+            if not is_own or is_sub_context:
                 m["role"] = "user"
                 m["content"] = ConversationStore._prefix_content(
                     m.get("content", ""), ConversationStore._agent_prefix(agent_name, src))
@@ -345,12 +347,12 @@ class ConversationStore:
         src_type = src.get("type", "")
 
         if src_type == "agent" and src.get("name") == agent_name:
-            # Only un-prefix own messages that are NOT from a task
-            if not src.get("task_id"):
+            # Only un-prefix own messages that are NOT from a sub-context
+            if not src.get("task_id") and not src.get("btw"):
                 m["content"] = ConversationStore._strip_prefix(
                     m.get("content", ""), f"[Agent {agent_name}]:")
                 m["role"] = "assistant"
-            # Task messages stay prefixed — they're from a sub-context
+            # Sub-context messages (task, btw) stay prefixed
 
         elif src_type == "user" and src.get("target_agent") == agent_name:
             m["content"] = ConversationStore._strip_prefix(

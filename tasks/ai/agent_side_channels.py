@@ -69,6 +69,15 @@ class AgentSideChannelsMixin:
                 })
                 return
 
+            # For CC providers: use a transient sub-conv (like tasks).
+            # The CC session lives only for this btw call, then is destroyed.
+            _is_cc = hasattr(client, 'cancel_claude_code')
+            _btw_conv_id = f"{conversation_id}::btw::{agent_name}"
+            if _is_cc:
+                client._conversation_id = _btw_conv_id
+                client._agent_name = agent_name
+                client._user_id = user_id
+
             # 2. Build lightweight context: system + last N messages (truncated)
             raw = store.load(conversation_id) or []
             recent = self._deserialize_messages(raw[-6:]) if len(raw) > 6 else self._deserialize_messages(raw)
@@ -125,6 +134,16 @@ class AgentSideChannelsMixin:
                 max_tokens=1024,
                 callback=on_btw_token,
             )
+
+            # 3b. Cleanup transient CC session (like task cleanup)
+            if _is_cc:
+                try:
+                    store.invalidate_claude_sessions(_btw_conv_id)
+                    store.delete(_btw_conv_id)
+                except Exception:
+                    pass
+                # Restore client conv_id to parent (for next normal use)
+                client._conversation_id = conversation_id
 
             # 4. Persist btw Q&A in conversation history
             import time as _btw_time

@@ -66,6 +66,8 @@ function connectSSE(cid, onReady) {
     lastSSEActivity = Date.now();
     const data = e.data ? JSON.parse(e.data) : {};
     if (data.role && data.content) {
+      // Dedup by msg_id — don't render if already in DOM
+      if (data.msg_id && document.querySelector('[data-msgid="' + data.msg_id + '"]')) return;
       addMsg(data.role, data.content, {
         source: data.source, msg_id: data.msg_id,
       });

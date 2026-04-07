@@ -595,11 +595,12 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
 
     def _send_step():
         """Send via _execute_streaming — identical to user typing the message."""
-        import json as _j
+        import json as _j, uuid as _uuid_step
         from core import FlowFile as _FF
+        _msg_id = _uuid_step.uuid4().hex[:12]
         # Publish SSE FIRST so frontend renders the message before agent starts
         _publish(conv_id, "new_message", {
-            "role": "user", "content": _user_msg,
+            "role": "user", "content": _user_msg, "msg_id": _msg_id,
             "source": {"type": "user", "name": user_id,
                        "target_agent": agent, "plan_id": plan_id},
         })
@@ -607,6 +608,7 @@ def _orchestrate_next_step(self, conv_id, plan_id, user_id, delay: int = 10):
             "message": _user_msg,
             "conversation_id": conv_id,
             "target_agent": agent,
+            "msg_id": _msg_id,
         })
         ff = _FF(body.encode("utf-8"))
         ff.set_attribute("http.auth.principal", user_id)

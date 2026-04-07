@@ -809,6 +809,11 @@ class AgentCoreMixin:
                                 response = _llm_call(llm_context)
                                 _resume_retried = True
                             except Exception as retry_err:
+                                # Check if this was a force stop, not a real error
+                                try:
+                                    emitter.check_cancelled()
+                                except AgentCancelled:
+                                    raise
                                 logger.error("Claude-code full-context retry failed: %s", retry_err)
                                 emitter.on_fatal_error(f"LLM call failed: {retry_err}")
                                 _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"
@@ -835,6 +840,10 @@ class AgentCoreMixin:
                                 _check_budget(ctx, total_tokens_in, total_tokens_out)
                                 response = _llm_call(llm_context)
                             except Exception as retry_err:
+                                try:
+                                    emitter.check_cancelled()
+                                except AgentCancelled:
+                                    raise
                                 logger.error(f"LLM retry failed: {retry_err}")
                                 emitter.on_fatal_error(f"LLM call failed: {retry_err}")
                                 _fatal_error = True; _fatal_error_msg = _fatal_error_msg or f"LLM call failed: {retry_err}"

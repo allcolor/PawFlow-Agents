@@ -166,8 +166,10 @@ class ToolRegistry:
             # (drop-in compat with Claude Code built-in tool signatures)
             if isinstance(args, dict):
                 _CC_ALIASES = {
-                    "file_path": "path",  # Read, Write, Edit
-                    "include": "glob",    # Grep
+                    "file_path": "path",      # Read, Write, Edit
+                    "include": "glob",        # Grep
+                    "notebook_path": "path",  # NotebookEdit
+                    "edit_mode": "operation",  # NotebookEdit
                 }
                 for _cc_name, _pf_name in _CC_ALIASES.items():
                     if _cc_name in args and _pf_name not in args:

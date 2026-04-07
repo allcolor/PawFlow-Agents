@@ -963,8 +963,8 @@ class RelayService(BaseService):
     def search(self, path: str, pattern: str, recursive: bool = True):
         return self._request("search", path, pattern=pattern, recursive=recursive)
 
-    def grep(self, path: str, regex: str, recursive: bool = True):
-        return self._request("grep", path, regex=regex, recursive=recursive)
+    def grep(self, path: str, regex: str, recursive: bool = True, **kwargs):
+        return self._request("grep", path, regex=regex, recursive=recursive, **kwargs)
 
     def find_replace(self, path: str, pattern: str, replacement: str):
         return self._request("find_replace", path, pattern=pattern, replacement=replacement)

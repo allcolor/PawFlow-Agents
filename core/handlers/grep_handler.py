@@ -92,9 +92,32 @@ class GrepHandler(BaseFsHandler):
         if svc is None:
             return self._no_target_error(source)
 
-        # Relay service: pass all params (relay executes via its own rg)
+        # Relay service: pass all CC params through
         try:
-            results = svc.grep(path, pattern, recursive)
+            _grep_kwargs = {}
+            if glob_pattern:
+                _grep_kwargs["glob"] = glob_pattern
+            if output_mode != "files_with_matches":
+                _grep_kwargs["output_mode"] = output_mode
+            if case_insensitive:
+                _grep_kwargs["case_insensitive"] = True
+            if context_before:
+                _grep_kwargs["context_before"] = context_before
+            if context_after:
+                _grep_kwargs["context_after"] = context_after
+            if not show_line_numbers:
+                _grep_kwargs["show_line_numbers"] = False
+            if file_type:
+                _grep_kwargs["file_type"] = file_type
+            if multiline:
+                _grep_kwargs["multiline"] = True
+            if limit != 250:
+                _grep_kwargs["limit"] = limit
+            if offset:
+                _grep_kwargs["offset"] = offset
+            results = svc.grep(path, pattern, recursive, **_grep_kwargs)
+            if isinstance(results, str):
+                return results  # relay returned formatted text
             lines = [f"{r['path']}:{r['line_number']}: {r['line']}" for r in results[:limit]]
             total = len(results)
             if total > limit:

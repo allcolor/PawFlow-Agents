@@ -773,7 +773,10 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                 raise CCCompactDetected(
                     f"Too many phantom tool calls ({count} in {_PHANTOM_WINDOW}s)")
 
+        self._stall_killed = False  # set by watchdog — retry must be unconditional
+
         def _stall_watchdog():
+            pass  # _stall_killed is on self
             while not _watchdog_stop.is_set():
                 if _stall_start_time and not _got_assistant:
                     elapsed = time.monotonic() - _stall_start_time
@@ -781,6 +784,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                         logger.warning(
                             "[claude-code] Stall detected (%.0fs with no assistant "
                             "response) — killing process for retry", elapsed)
+                        self._stall_killed = True
                         try:
                             proc.kill()
                         except OSError:
@@ -794,6 +798,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                             "[claude-code] Tool-result stall (%.0fs since last "
                             "tool_result, no pending tools, no assistant) "
                             "— killing for retry", elapsed)
+                        self._stall_killed = True
                         try:
                             proc.kill()
                         except OSError:

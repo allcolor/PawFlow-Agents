@@ -781,15 +781,19 @@ class AgentCoreMixin:
                             break
                         # Claude-code resume failed → invalidate session, retry
                         # with full context (first-message flow).
-                        # But NOT if the agent was cancelled (interrupt) — that's
-                        # intentional, not a connection failure.
-                        _was_cancelled = False
-                        try:
-                            emitter.check_cancelled()
-                        except AgentCancelled:
-                            _was_cancelled = True
-                        if _was_cancelled:
-                            raise AgentCancelled()
+                        # Stall kill = transparent retry, no cancel check.
+                        # Force stop = intentional cancel, raise AgentCancelled.
+                        _is_stall = getattr(client, '_stall_killed', False)
+                        if _is_stall:
+                            client._stall_killed = False  # reset for retry
+                        else:
+                            _was_cancelled = False
+                            try:
+                                emitter.check_cancelled()
+                            except AgentCancelled:
+                                _was_cancelled = True
+                            if _was_cancelled:
+                                raise AgentCancelled()
                         _is_auth_error = "auth" in err_str.lower() or "401" in err_str
                         if _is_claude_code and ctx.get("_claude_has_session") and not _is_auth_error:
                             logger.warning("[claude-code] resume failed (%s), "

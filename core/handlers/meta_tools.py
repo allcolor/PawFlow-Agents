@@ -26,7 +26,20 @@ class GetToolSchemaHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Get the JSON schema for a tool by name. Call this before using a tool to learn its parameters."
+        return (
+            "Retrieve the full JSON schema (name, description, parameters) for a\n"
+            "tool by name. This is the first step in the lazy tool discovery pattern.\n\n"
+            "Instead of receiving all tool schemas upfront (which can exceed context\n"
+            "limits), you start with only get_tool_schema and use_tool. Use this\n"
+            "tool to inspect any tool's parameters BEFORE calling it via use_tool.\n\n"
+            "Parameters:\n"
+            "  tool_name -- exact name of the tool to inspect.\n\n"
+            "Returns the tool's name, display_name, description, and full parameter\n"
+            "schema. If the tool does not exist, returns the list of all available\n"
+            "tool names so you can pick the right one.\n\n"
+            "Workflow: get_tool_schema(tool_name='X') -> read the schema ->\n"
+            "use_tool(tool_name='X', arguments={...}) with correct arguments."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -66,7 +79,22 @@ class UseToolHandler(ToolHandler):
 
     @property
     def description(self) -> str:
-        return "Execute a tool by name with the given arguments. Call get_tool_schema first to know the parameters."
+        return (
+            "Execute any registered tool by name, passing arguments as a JSON object.\n"
+            "This is the execution half of the lazy tool discovery pattern.\n\n"
+            "IMPORTANT: Always call get_tool_schema first to learn the tool's\n"
+            "parameter schema. Passing unknown or mistyped arguments will return an\n"
+            "error listing the valid parameter names.\n\n"
+            "Parameters:\n"
+            "  tool_name  -- exact name of the tool to execute.\n"
+            "  arguments  -- JSON object of arguments matching the tool's schema.\n\n"
+            "The tool executes with the same permissions and context as a direct\n"
+            "tool call. Results are returned as-is from the underlying handler.\n\n"
+            "You cannot call get_tool_schema or use_tool recursively through this\n"
+            "tool -- they must be called as top-level tool calls.\n\n"
+            "Workflow: get_tool_schema(tool_name='X') -> read the schema ->\n"
+            "use_tool(tool_name='X', arguments={...})."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

@@ -106,10 +106,26 @@ class CreateToolHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Create a new tool from Python code. The tool becomes immediately "
-            "available for use. Parameters are injected as local variables in "
-            "the code. The code has access to env vars ($VAR) and can use "
-            "imports (os, json, urllib, etc). Use print() for output."
+            "Create a new tool at runtime from Python code. The tool is registered\n"
+            "immediately and becomes callable by the LLM in the same conversation.\n\n"
+            "How it works:\n"
+            "  1. You define a tool_name (snake_case), description, optional\n"
+            "     parameters (JSON Schema), and the Python code body.\n"
+            "  2. When the tool is called, each parameter value is injected as a\n"
+            "     local variable (e.g. parameter 'post_id' becomes the variable\n"
+            "     post_id in the code).\n"
+            "  3. The code executes on the relay (same sandbox as execute_script).\n"
+            "     Use print() to produce output returned to the LLM.\n"
+            "  4. The tool is persisted to the conversation -- it will be reloaded\n"
+            "     automatically if the conversation is resumed later.\n\n"
+            "Parameters:\n"
+            "  tool_name        -- unique snake_case identifier (alphanumeric + _).\n"
+            "  tool_description -- shown to the LLM; describe what the tool does.\n"
+            "  parameters       -- JSON Schema properties object (optional).\n"
+            "  code             -- Python source. Has access to env vars ($VAR),\n"
+            "                      standard imports (os, json, urllib, etc).\n\n"
+            "Use this when a task requires a reusable operation that does not exist\n"
+            "in the built-in tool set. Cannot override built-in tool names."
         )
 
     @property

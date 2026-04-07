@@ -327,7 +327,20 @@ class ApprovePlanHandler(_PlanHandlerBase):
 
     @property
     def description(self) -> str:
-        return "Approve a plan that is pending approval. Only approve plans you did not create yourself."
+        return (
+            "Approve a plan that is currently in pending_approval status, advancing it\n"
+            "to the approved state so that the orchestrator can begin execution.\n\n"
+            "This is the gate between planning and doing: a plan created by one agent\n"
+            "must be approved before any steps run. Only approve plans you did NOT\n"
+            "create yourself -- this enforces a review boundary.\n\n"
+            "Parameters:\n"
+            "  plan_id  -- the plan ID returned by create_plan (e.g. p_abc12345).\n\n"
+            "After approval the orchestrator picks the first pending step, assigns it\n"
+            "to the designated agent, and starts execution automatically. You do not\n"
+            "need to call assign_plan separately unless you want to reassign steps.\n\n"
+            "Use this when: the user explicitly approves, or when a reviewer agent\n"
+            "validates the plan structure and decides it is ready."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -474,7 +487,19 @@ class CancelPlanHandler(_PlanHandlerBase):
 
     @property
     def description(self) -> str:
-        return "Cancel a plan. Steps in progress may still complete."
+        return (
+            "Cancel a plan, halting any further step orchestration.\n\n"
+            "Sets the plan status to 'cancelled'. Steps that are already in_progress\n"
+            "on a running agent may still finish their current work, but the\n"
+            "orchestrator will NOT start any new steps after cancellation.\n\n"
+            "Parameters:\n"
+            "  plan_id  -- the plan ID to cancel (e.g. p_abc12345).\n\n"
+            "Use this when: the user asks to abort, the plan is no longer relevant,\n"
+            "or a critical error makes remaining steps pointless. Cancellation is\n"
+            "permanent -- to resume work, create a new plan.\n\n"
+            "A cancelled plan is still visible in the conversation for reference.\n"
+            "To remove it entirely, use delete_plan instead."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:
@@ -523,7 +548,18 @@ class DeletePlanHandler(_PlanHandlerBase):
 
     @property
     def description(self) -> str:
-        return "Permanently delete a plan from the conversation."
+        return (
+            "Permanently delete a plan and all its step data from the conversation.\n\n"
+            "Unlike cancel_plan (which keeps the plan visible for reference), this\n"
+            "removes the plan file from disk entirely. The UI will no longer show it.\n\n"
+            "Parameters:\n"
+            "  plan_id  -- the plan ID to delete (e.g. p_abc12345).\n\n"
+            "Use this when: the plan was created by mistake, is a duplicate, or the\n"
+            "user explicitly asks to clean up old plans. Prefer cancel_plan when you\n"
+            "want to stop execution but keep the history.\n\n"
+            "WARNING: This is irreversible. Any in-progress agents working on steps\n"
+            "of this plan will lose their plan context on next update_plan call."
+        )
 
     @property
     def parameters_schema(self) -> Dict[str, Any]:

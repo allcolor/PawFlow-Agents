@@ -12,7 +12,26 @@ class NotebookEditHandler(BaseFsHandler):
 
     @property
     def description(self):
-        return "Edit a Jupyter notebook cell (edit, insert, or delete)."
+        return (
+            "Edit a Jupyter notebook (.ipynb) cell by index.\n\n"
+            "Three operations are supported:\n"
+            "  edit   -- replace the content of an existing cell (default).\n"
+            "  insert -- insert a new cell BEFORE the given cell_index.\n"
+            "  delete -- remove the cell at cell_index.\n\n"
+            "Cell indices are 0-based (first cell = 0). The path must be an\n"
+            "absolute path to the .ipynb file on the target filesystem service.\n\n"
+            "Parameters:\n"
+            "  path       -- absolute path to the notebook file.\n"
+            "  cell_index -- 0-based index of the target cell.\n"
+            "  new_source -- the replacement or new cell content (required for\n"
+            "                edit and insert; ignored for delete).\n"
+            "  cell_type  -- 'code' or 'markdown' (used by insert; edit preserves\n"
+            "                the existing type if omitted).\n"
+            "  operation  -- 'edit' (default), 'insert', or 'delete'.\n"
+            "  filesystem -- filesystem service name; omit for the default service.\n\n"
+            "This tool executes on the relay, so the notebook must be accessible\n"
+            "from the connected filesystem service."
+        )
 
     @property
     def parameters_schema(self):

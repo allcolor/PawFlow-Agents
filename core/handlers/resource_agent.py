@@ -565,8 +565,18 @@ class GetAgentResultsHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Get results from agents spawned with wait=false. "
-            "Pass the task_ids returned by delegate."
+            "Retrieve results from sub-agents that were previously spawned in\n"
+            "the background using delegate with wait=false.\n\n"
+            "When you call delegate(wait=false), it returns immediately with a list\n"
+            "of task_ids. Use this tool to poll for their completion and collect\n"
+            "the responses.\n\n"
+            "Parameters:\n"
+            "  task_ids -- array of task ID strings returned by the delegate call.\n\n"
+            "Each result includes the agent name, status (running / done / error),\n"
+            "the agent's response text, token usage, and tools called.\n\n"
+            "NOTE: In the current implementation, background agent results are not\n"
+            "persisted -- prefer delegate with wait=true (the default) unless you\n"
+            "have a specific reason to run agents in the background."
         )
 
     @property

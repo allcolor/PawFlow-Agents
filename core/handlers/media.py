@@ -165,9 +165,19 @@ class VideoGenerationHandler(ToolHandler):
     @property
     def description(self) -> str:
         return (
-            "Generate a video from a text prompt. "
-            "Returns a download URL for the generated video. "
-            "Be descriptive in your prompt for best results."
+            "Generate a video from a text prompt using the active video generation\n"
+            "service (provider-dependent -- e.g. Runway, Kling, etc.).\n\n"
+            "Returns a download URL (FileStore) or writes directly to a filesystem\n"
+            "service when destination + path are provided.\n\n"
+            "Parameters:\n"
+            "  prompt          -- detailed description of the video to generate.\n"
+            "  negative_prompt -- what to avoid (optional).\n"
+            "  duration        -- length in seconds (provider-dependent limits).\n"
+            "  width / height  -- resolution in pixels (optional).\n"
+            "  destination     -- 'filestore' (default) or a filesystem service name.\n"
+            "  path            -- file path when destination is a filesystem service.\n\n"
+            "Be descriptive in your prompt for best results. Generation may take\n"
+            "30 seconds to several minutes depending on the provider and duration."
         )
 
     @property

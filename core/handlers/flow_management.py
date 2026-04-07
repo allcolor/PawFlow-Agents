@@ -770,35 +770,36 @@ class UpdatePlanHandler(_PlanHandlerBase):
                     if _v:
                         _needs_verify.append((_sn, _v, self._agent_name))
 
-        # Force stop the agent — step is done, agent must not continue.
-        # cancel_agent bumps generation → check_cancelled prevents any retry.
+        # Force stop the agent IMMEDIATELY — don't return a tool result,
+        # don't write anything. Just kill. The orchestrator takes over.
         _has_terminal = any(
             _actual_statuses.get(int(u.get("step") or u.get("index") or 0), "")
             in ("done", "error", "pending_verification")
             for u in updates
         )
         if _has_terminal and self._agent_name and self._conversation_id:
-            import threading
-            def _post_force_stop():
-                try:
-                    from tasks.ai.actions.plans import force_stop_agent
-                    force_stop_agent(self._conversation_id, self._agent_name)
-                except Exception as e:
-                    logger.warning("Plan post force-stop failed: %s", e)
-            threading.Thread(target=_post_force_stop, daemon=True).start()
+            from tasks.ai.actions.plans import force_stop_agent
+            force_stop_agent(self._conversation_id, self._agent_name)
 
+        # Orchestrate next step / schedule verifiers
+        _uid = self._user_id
         if plan["status"] != "completed":
-            import threading
             if _needs_orchestrate:
-                def _post_orchestrate():
-                    try:
-                        from tasks.ai.actions.plans import orchestrate_next_step
-                        orchestrate_next_step(
-                            self._conversation_id, plan_id,
-                            self._agent_name)
-                    except Exception as e:
-                        logger.warning("Plan post-orchestrate failed: %s", e)
-                threading.Thread(target=_post_orchestrate, daemon=True).start()
+                from tasks.ai.actions.plans import orchestrate_next_step
+                orchestrate_next_step(self._conversation_id, plan_id, _uid)
+            for _step_n, _verifier, _executor in _needs_verify:
+                try:
+                    from core.poll_scheduler import PollScheduler
+                    PollScheduler.instance().schedule_delay(
+                        self._conversation_id, 0,
+                        key=f"{self._conversation_id}::plan::{plan_id}::verify{_step_n}::{_verifier}",
+                        reason=f"[plan_verify:{plan_id}:{_step_n}:{_executor}] ({_verifier})",
+                        user_id=_uid,
+                    )
+                    from tasks.ai.agent_loop import AgentLoopTask
+                    AgentLoopTask.wake_poller()
+                except Exception as e:
+                    logger.warning("Plan post-verify schedule failed: %s", e)
             for _step_n, _verifier, _executor in _needs_verify:
                 def _post_verify(sn=_step_n, vf=_verifier, ex=_executor):
                     try:

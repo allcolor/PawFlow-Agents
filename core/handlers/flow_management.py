@@ -515,12 +515,26 @@ class FlowManagerHandler(ToolHandler):
             logger.warning("Failed to cleanup conversation flows: %s", e)
 
 
-class CreatePlanHandler(ToolHandler):
-    """Create a structured plan for a multi-step task."""
+class _PlanHandlerBase(ToolHandler):
+    """Base for plan handlers — provides conversation_id, agent_name, user_id."""
 
     def __init__(self):
         self._conversation_id = ""
         self._agent_name = ""
+        self._user_id = ""
+
+    def set_conversation_id(self, cid: str):
+        self._conversation_id = cid
+
+    def set_agent_name(self, name: str):
+        self._agent_name = name
+
+    def set_user_id(self, uid: str):
+        self._user_id = uid
+
+
+class CreatePlanHandler(_PlanHandlerBase):
+    """Create a structured plan for a multi-step task."""
 
     @property
     def name(self) -> str:
@@ -602,7 +616,7 @@ class CreatePlanHandler(ToolHandler):
             plan["conversation_id"] = self._conversation_id
             try:
                 from core.plan_store import PlanStore
-                PlanStore.instance().save("", self._conversation_id, plan)
+                PlanStore.instance().save(self._user_id, self._conversation_id, plan)
                 try:
                     from core.conversation_event_bus import ConversationEventBus
                     ConversationEventBus.instance().publish_event(
@@ -618,12 +632,8 @@ class CreatePlanHandler(ToolHandler):
             lines.append(f"  \u25cb {s['index']}. {s['description']}")
         return "\n".join(lines)
 
-class UpdatePlanHandler(ToolHandler):
+class UpdatePlanHandler(_PlanHandlerBase):
     """Update the status of steps in a plan."""
-
-    def __init__(self):
-        self._conversation_id = ""
-        self._agent_name = ""
 
     @property
     def name(self) -> str:
@@ -683,7 +693,7 @@ class UpdatePlanHandler(ToolHandler):
             return "Error: no conversation context"
 
         from core.plan_store import PlanStore
-        plan = PlanStore.instance().get("", self._conversation_id, plan_id)
+        plan = PlanStore.instance().get(self._user_id, self._conversation_id, plan_id)
         if not plan:
             return f"Error: plan '{plan_id}' not found."
 
@@ -718,7 +728,7 @@ class UpdatePlanHandler(ToolHandler):
             plan["status"] = "completed"
 
         # Persist to file (no JSONL duplication)
-        PlanStore.instance().save("", self._conversation_id, plan)
+        PlanStore.instance().save(self._user_id, self._conversation_id, plan)
         try:
             from core.conversation_event_bus import ConversationEventBus
             ConversationEventBus.instance().publish_event(
@@ -742,31 +752,57 @@ class UpdatePlanHandler(ToolHandler):
         if plan["status"] == "completed":
             lines.append("Plan completed.")
 
-        # Post-hook: schedule orchestration for the next step (async)
-        # This runs after the tool result is sent back to the LLM.
-        _has_done = any(
-            u.get("status") == "done" for u in updates
-        )
-        if _has_done and plan["status"] != "completed":
+        # Post-hook: schedule orchestration or verification
+        # Check ACTUAL step statuses (not the request), because verifier
+        # intercept may have changed "done" → "pending_verification"
+        _actual_statuses = {s["index"]: s["status"] for s in plan["steps"]}
+        _needs_orchestrate = False
+        _needs_verify = []
+        for u in updates:
+            _sn = int(u.get("step") or u.get("index") or 0)
+            _actual = _actual_statuses.get(_sn, "")
+            if _actual == "done":
+                _needs_orchestrate = True
+            elif _actual == "pending_verification":
+                _step_obj = next((s for s in plan["steps"] if s["index"] == _sn), None)
+                if _step_obj:
+                    _v = _step_obj.get("verifier") or plan.get("verifier", "")
+                    if _v:
+                        _needs_verify.append((_sn, _v, self._agent_name))
+
+        if plan["status"] != "completed":
             import threading
-            def _post_orchestrate():
-                try:
-                    from tasks.ai.actions.plans import orchestrate_next_step
-                    orchestrate_next_step(
-                        self._conversation_id, plan_id,
-                        self._agent_name)
-                except Exception as e:
-                    logger.warning("Plan post-orchestrate failed: %s", e)
-            threading.Thread(target=_post_orchestrate, daemon=True).start()
+            if _needs_orchestrate:
+                def _post_orchestrate():
+                    try:
+                        from tasks.ai.actions.plans import orchestrate_next_step
+                        orchestrate_next_step(
+                            self._conversation_id, plan_id,
+                            self._agent_name)
+                    except Exception as e:
+                        logger.warning("Plan post-orchestrate failed: %s", e)
+                threading.Thread(target=_post_orchestrate, daemon=True).start()
+            for _step_n, _verifier, _executor in _needs_verify:
+                def _post_verify(sn=_step_n, vf=_verifier, ex=_executor):
+                    try:
+                        from core.poll_scheduler import PollScheduler
+                        PollScheduler.instance().schedule_delay(
+                            self._conversation_id, 0,
+                            key=f"{self._conversation_id}::plan::{plan_id}::verify{sn}::{vf}",
+                            reason=f"[plan_verify:{plan_id}:{sn}:{ex}] ({vf})",
+                            user_id="",
+                        )
+                        from tasks.ai.agent_loop import AgentLoopTask
+                        AgentLoopTask.wake_poller()
+                    except Exception as e:
+                        logger.warning("Plan post-verify schedule failed: %s", e)
+                threading.Thread(target=_post_verify, daemon=True).start()
 
         return "\n".join(lines)
 
 
-class ApprovePlanHandler(ToolHandler):
+class ApprovePlanHandler(_PlanHandlerBase):
     """Approve a plan (agent can approve plans created by other agents)."""
-
-    def __init__(self):
-        self._conversation_id = ""
 
     @property
     def name(self) -> str:
@@ -795,13 +831,13 @@ class ApprovePlanHandler(ToolHandler):
             return "Error: plan_id required"
         try:
             from core.plan_store import PlanStore
-            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
+            plan = PlanStore.instance().get(self._user_id, self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             if plan["status"] != "pending_approval":
                 return f"Plan is already {plan['status']}"
             plan["status"] = "approved"
-            PlanStore.instance().save("", self._conversation_id, plan)
+            PlanStore.instance().save(self._user_id, self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -813,7 +849,7 @@ class ApprovePlanHandler(ToolHandler):
             return f"Error: {e}"
 
 
-class AssignPlanHandler(ToolHandler):
+class AssignPlanHandler(_PlanHandlerBase):
     """Assign a plan to an agent, creating tasks for execution."""
 
     def __init__(self):
@@ -859,7 +895,7 @@ class AssignPlanHandler(ToolHandler):
 
         try:
             from core.plan_store import PlanStore
-            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
+            plan = PlanStore.instance().get(self._user_id, self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             if plan["status"] == "cancelled":
@@ -896,7 +932,7 @@ class AssignPlanHandler(ToolHandler):
                         s["assigned_to"] = agent
                         assigned_count += 1
 
-            PlanStore.instance().save("", self._conversation_id, plan)
+            PlanStore.instance().save(self._user_id, self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -909,7 +945,7 @@ class AssignPlanHandler(ToolHandler):
             return f"Error: {e}"
 
 
-class CancelPlanHandler(ToolHandler):
+class CancelPlanHandler(_PlanHandlerBase):
     """Cancel a plan."""
 
     def __init__(self):
@@ -942,11 +978,11 @@ class CancelPlanHandler(ToolHandler):
             return "Error: plan_id required"
         try:
             from core.plan_store import PlanStore
-            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
+            plan = PlanStore.instance().get(self._user_id, self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
             plan["status"] = "cancelled"
-            PlanStore.instance().save("", self._conversation_id, plan)
+            PlanStore.instance().save(self._user_id, self._conversation_id, plan)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -958,7 +994,7 @@ class CancelPlanHandler(ToolHandler):
             return f"Error: {e}"
 
 
-class DeletePlanHandler(ToolHandler):
+class DeletePlanHandler(_PlanHandlerBase):
     """Delete a plan permanently."""
 
     def __init__(self):
@@ -991,7 +1027,7 @@ class DeletePlanHandler(ToolHandler):
             return "Error: plan_id required"
         try:
             from core.plan_store import PlanStore
-            PlanStore.instance().delete("", self._conversation_id, plan_id)
+            PlanStore.instance().delete(self._user_id, self._conversation_id, plan_id)
             try:
                 from core.conversation_event_bus import ConversationEventBus
                 ConversationEventBus.instance().publish_event(
@@ -1003,7 +1039,7 @@ class DeletePlanHandler(ToolHandler):
             return f"Error: {e}"
 
 
-class VerifyPlanStepHandler(ToolHandler):
+class VerifyPlanStepHandler(_PlanHandlerBase):
     """Verify (approve or reject) a plan step that is pending verification."""
 
     def __init__(self):
@@ -1052,7 +1088,7 @@ class VerifyPlanStepHandler(ToolHandler):
 
         try:
             from core.plan_store import PlanStore
-            plan = PlanStore.instance().get("", self._conversation_id, plan_id)
+            plan = PlanStore.instance().get(self._user_id, self._conversation_id, plan_id)
             if not plan:
                 return f"Error: plan '{plan_id}' not found"
 
@@ -1077,7 +1113,7 @@ class VerifyPlanStepHandler(ToolHandler):
                 if all(s in ("done", "skipped") for s in statuses):
                     plan["status"] = "completed"
 
-                PlanStore.instance().save("", self._conversation_id, plan)
+                PlanStore.instance().save(self._user_id, self._conversation_id, plan)
 
                 try:
                     from core.conversation_event_bus import ConversationEventBus
@@ -1110,7 +1146,7 @@ class VerifyPlanStepHandler(ToolHandler):
                 if reason:
                     step["note"] = (step.get("note", "") + f" [rejected: {reason}]").strip()
 
-                PlanStore.instance().save("", self._conversation_id, plan)
+                PlanStore.instance().save(self._user_id, self._conversation_id, plan)
 
                 try:
                     from core.conversation_event_bus import ConversationEventBus

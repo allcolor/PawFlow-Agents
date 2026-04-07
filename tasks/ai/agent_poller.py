@@ -517,6 +517,7 @@ class AgentPollerMixin:
             _active_agent or ctx.get("active_agent_name", ""),
             _is_task, _is_task_verify, is_random_thought,
             _is_plan_step, _is_plan_verify,
+            user_id=_poll_uid,
         )
         ctx["messages"].append(LLMMessage(role="user", content=checkin_content))
         ctx["_base_message_count"] = len(ctx["messages"])
@@ -558,17 +559,18 @@ class AgentPollerMixin:
                             is_task: bool, is_task_verify: bool,
                             is_random_thought: bool,
                             is_plan_step: bool = False,
-                            is_plan_verify: bool = False) -> str:
+                            is_plan_verify: bool = False,
+                            user_id: str = "") -> str:
         """Build the check-in prompt for a poll-triggered agent run."""
         from core.conversation_store import ConversationStore as _CS3
 
         if is_plan_verify:
             return self._build_plan_verify_checkin(
-                conversation_id, scheduled_reasons, agent_name)
+                conversation_id, scheduled_reasons, agent_name, user_id=user_id)
 
         if is_plan_step:
             return self._build_plan_step_checkin(
-                conversation_id, scheduled_reasons, agent_name)
+                conversation_id, scheduled_reasons, agent_name, user_id=user_id)
 
         if is_task:
             _all_tasks = _CS3.instance().get_extra(conversation_id, "agent_tasks") or {}
@@ -700,7 +702,8 @@ class AgentPollerMixin:
 
     def _build_plan_step_checkin(self, conversation_id: str,
                                  scheduled_reasons: List[str],
-                                 agent_name: str) -> str:
+                                 agent_name: str,
+                                 user_id: str = "") -> str:
         """Build check-in prompt for a plan step execution."""
         import re
         from core.conversation_store import ConversationStore as _CS4
@@ -719,7 +722,7 @@ class AgentPollerMixin:
             return "[System: Plan step scheduled but no plan_id found.]"
 
         from core.plan_store import PlanStore
-        plan = PlanStore.instance().get("", conversation_id, plan_id)
+        plan = PlanStore.instance().get(user_id, conversation_id, plan_id)
         if not plan:
             return f"[System: Plan {plan_id} not found.]"
 
@@ -758,7 +761,8 @@ class AgentPollerMixin:
 
     def _build_plan_verify_checkin(self, conversation_id: str,
                                     scheduled_reasons: List[str],
-                                    agent_name: str) -> str:
+                                    agent_name: str,
+                                    user_id: str = "") -> str:
         """Build check-in prompt for a plan step verification."""
         import re
         from core.conversation_store import ConversationStore as _CS5
@@ -780,7 +784,7 @@ class AgentPollerMixin:
             return "[System: Plan verification scheduled but no plan_id found.]"
 
         from core.plan_store import PlanStore
-        plan = PlanStore.instance().get("", conversation_id, plan_id)
+        plan = PlanStore.instance().get(user_id, conversation_id, plan_id)
         if not plan:
             return f"[System: Plan {plan_id} not found.]"
 

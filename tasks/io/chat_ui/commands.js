@@ -702,6 +702,7 @@ const _CMD_HANDLERS = {
   '/usage':         (text, parts, cmd) => cmdUsageDeprecated(),
   '/memory':        (text, parts, cmd) => cmdMemory(text, parts),
   '/diary':         (text, parts, cmd) => cmdDiary(text, parts),
+  '/learn':         (text, parts, cmd) => cmdLearn(text, parts),
   '/tools':         (text, parts, cmd) => cmdToolsCmd(),
   '/model':         (text, parts, cmd) => cmdModel(text, parts),
   '/debug':         (text, parts, cmd) => cmdDebug(text, parts),

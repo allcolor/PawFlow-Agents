@@ -1081,8 +1081,11 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             "\n- **Project Graph**: `project_graph` with action=build to index a codebase (AST, "
             "17 languages), then action=query/report/node to explore code structure. "
             "Only build when asked — it fetches all code files via relay."
+            "\n- **Learn**: `learn` to analyze user messages from the current conversation and "
+            "extract insights about their preferences, frustrations, and communication style. "
+            "Use at the end of long conversations or when asked."
             "\nUse memory for facts about the user/project, KG for relationships between entities, "
-            "diary for your own reflections."
+            "diary for your own reflections, learn for user-centric meta-analysis."
         )
 
         # Final update: inject the fully-built system_prompt into messages[0]

@@ -63,6 +63,7 @@ class AgentToolConfigMixin:
         from core.handlers.compact_result import CompactResultHandler
         from core.handlers.diary import DiaryWriteHandler, DiaryReadHandler
         from core.handlers.knowledge_graph import _KgBaseHandler
+        from core.handlers.learn import LearnHandler
         from core.handlers.memory import CheckDuplicateHandler
         from core.handlers.project_graph import ProjectGraphHandler
 
@@ -144,7 +145,7 @@ class AgentToolConfigMixin:
                     h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):
                     h.set_conversation_id(conversation_id)
-            elif isinstance(h, (DiaryWriteHandler, DiaryReadHandler)):
+            elif isinstance(h, (DiaryWriteHandler, DiaryReadHandler, LearnHandler)):
                 h.set_user_id(user_id)
                 h.set_agent_name(agent_name)
                 if hasattr(h, 'set_conversation_id'):

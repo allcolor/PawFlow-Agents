@@ -540,6 +540,19 @@ function cmdKg(text, parts) {
   return true;
 }
 
+function cmdLearn(text, parts) {
+  const limit = parseInt(parts[1]) || 50;
+  addMsg('system', `Analyzing ${limit} recent user messages...`);
+  action$('learn', { limit }).subscribe({
+    next: (data) => {
+      if (data.error) { addMsg('error', data.error); return; }
+      addMsg('system', data.result || 'No insights extracted.');
+    },
+    error: (e) => addMsg('error', 'Learn failed: ' + e.message),
+  });
+  return true;
+}
+
 function cmdDiary(text, parts) {
   const sub = (parts[1] || '').toLowerCase();
   if (!sub || sub === 'panel') {

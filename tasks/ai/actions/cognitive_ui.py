@@ -182,4 +182,24 @@ def _handle_cognitive_ui(self, action, body, store, user_id, flowfile):
             flowfile.set_content(json.dumps({"error": str(e)}).encode())
         return [flowfile]
 
+    # ── Learn ──────────────────────────────────────────────────────
+
+    if action == "learn":
+        conv_id = body.get("conversation_id", "")
+        if not conv_id:
+            flowfile.set_content(json.dumps({"error": "Missing conversation_id"}).encode())
+            return [flowfile]
+        limit = int(body.get("limit", 50) or 50)
+        try:
+            from core.handlers.learn import LearnHandler
+            handler = LearnHandler()
+            handler.set_user_id(user_id)
+            handler.set_agent_name(body.get("agent_name", ""))
+            handler.set_conversation_id(conv_id)
+            result = handler.execute({"limit": limit})
+            flowfile.set_content(json.dumps({"result": result}, ensure_ascii=False).encode())
+        except Exception as e:
+            flowfile.set_content(json.dumps({"error": str(e)}).encode())
+        return [flowfile]
+
     return None  # Not our action

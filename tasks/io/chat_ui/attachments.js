@@ -336,12 +336,12 @@ function handleKey(e) {
   // Escape: 1st = graceful interrupt, 2nd (within 5s) = force stop
   if (e.key === 'Escape') {
     e.preventDefault();
-    let target = selectedAgent;
-    if (!target) {
-      const activeNames = Object.values(activeInteractions || {}).map(a => a.name || a.apiName);
-      target = activeNames.length === 1 ? activeNames[0] : '';
+    if (!selectedAgent) {
+      console.error('BUG: selectedAgent is empty — this should never happen');
+      addMsg('error', 'BUG: no agent selected (selectedAgent is empty)');
+      return;
     }
-    if (!target) return;
+    const target = selectedAgent;
     const now = Date.now();
     const isRepeat = _lastEscapeTarget === target && (now - _lastEscapeTime) < 5000;
     _lastEscapeTarget = target;

@@ -169,7 +169,10 @@ function _renderHistory(data) {
   currentOffset = data.raw_count || (data.messages || []).length;
   hasMoreMessages = data.has_more || false;
   _updateLoadMoreBanner();
-  selectedAgent = data.active_agent || '';
+  if (!data.active_agent) {
+    console.error('BUG: server returned empty active_agent — conversation must always have an agent');
+  }
+  selectedAgent = data.active_agent || selectedAgent;
   // Custom CSS theme
   let themeEl = document.getElementById('custom-theme');
   if (data.custom_css) {

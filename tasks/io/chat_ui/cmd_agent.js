@@ -212,19 +212,22 @@ function updateActiveAgentBadge() {
 }
 
 function cmdAgentSelect(name) {
-  const isDefault = !name;
-  if (!conversationId) {
-    pendingAgent = isDefault ? null : name;
-    selectedAgent = isDefault ? '' : name;
-    updateActiveAgentBadge();
-    addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected (will activate on first message).`);
+  if (!name) {
+    addMsg('error', 'BUG: agent name required for select');
     return;
   }
-  action$('select_agent', { name: isDefault ? '' : name }).subscribe(data => {
-    if (data.error) { addMsg('error', data.error); return; }
-    selectedAgent = isDefault ? '' : name;
+  if (!conversationId) {
+    pendingAgent = name;
+    selectedAgent = name;
     updateActiveAgentBadge();
-    addMsg('system', isDefault ? 'Switched to default agent (assistant).' : `Agent '${name}' selected. Messages now go to ${name}.`);
+    addMsg('system', `Agent '${name}' selected (will activate on first message).`);
+    return;
+  }
+  action$('select_agent', { name }).subscribe(data => {
+    if (data.error) { addMsg('error', data.error); return; }
+    selectedAgent = name;
+    updateActiveAgentBadge();
+    addMsg('system', `Agent '${name}' selected. Messages now go to ${name}.`);
     loadResources();
   });
 }

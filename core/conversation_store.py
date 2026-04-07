@@ -266,7 +266,9 @@ class ConversationStore:
 
     @staticmethod
     def _user_prefix(target: str, source: Dict) -> str:
-        """Build the [User to agent X]: prefix."""
+        """Build the [User to agent X]: or [User to agent X in /btw]: prefix."""
+        if source.get("btw"):
+            return f"[User to agent {target} in /btw]:"
         return f"[User to agent {target}]:"
 
     @staticmethod

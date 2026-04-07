@@ -73,7 +73,11 @@ class AgentSideChannelsMixin:
             # The CC session lives only for this btw call, then is destroyed.
             _is_cc = hasattr(client, 'cancel_claude_code')
             _btw_conv_id = f"{conversation_id}::btw::{agent_name}"
+            _saved_conv_id = None
+            _saved_proc = None
             if _is_cc:
+                _saved_conv_id = getattr(client, '_conversation_id', '')
+                _saved_proc = getattr(client, '_claude_proc', None)
                 client._conversation_id = _btw_conv_id
                 client._agent_name = agent_name
                 client._user_id = user_id
@@ -142,8 +146,10 @@ class AgentSideChannelsMixin:
                     store.delete(_btw_conv_id)
                 except Exception:
                     pass
-                # Restore client conv_id to parent (for next normal use)
-                client._conversation_id = conversation_id
+                # Restore client state so main agent isn't affected
+                client._conversation_id = _saved_conv_id or conversation_id
+                if _saved_proc is not None:
+                    client._claude_proc = _saved_proc
 
             # 4. Persist btw Q&A in conversation history
             import time as _btw_time
@@ -171,6 +177,16 @@ class AgentSideChannelsMixin:
 
         except Exception as e:
             logger.error(f"[btw:{conversation_id[:8]}] error: {e}", exc_info=True)
+            # Cleanup CC state on error too
+            if _is_cc:
+                try:
+                    store.invalidate_claude_sessions(_btw_conv_id)
+                    store.delete(_btw_conv_id)
+                except Exception:
+                    pass
+                client._conversation_id = _saved_conv_id or conversation_id
+                if _saved_proc is not None:
+                    client._claude_proc = _saved_proc
             bus.publish_event(conversation_id, "btw_done", {
                 "agent_name": agent_name,
                 "error": str(e),

@@ -167,6 +167,7 @@ class ToolRegistry:
             if isinstance(args, dict):
                 _CC_ALIASES = {
                     "file_path": "path",  # Read, Write, Edit
+                    "include": "glob",    # Grep
                 }
                 for _cc_name, _pf_name in _CC_ALIASES.items():
                     if _cc_name in args and _pf_name not in args:

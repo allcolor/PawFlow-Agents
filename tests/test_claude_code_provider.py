@@ -186,6 +186,10 @@ class TestCompleteClaude(unittest.TestCase):
         self.client._conversation_id = "test-conv"
         self.client._agent_name = "test-agent"
         self.client._user_id = "test-user"
+        # Skip credential check — no real Claude Code on CI
+        self._cred_patcher = patch.object(self.client, '_setup_credentials')
+        self._cred_patcher.start()
+        self.addCleanup(self._cred_patcher.stop)
 
     def _mock_popen(self, returncode=0, stdout="", stderr="", side_effect=None):
         """Patch _pool_popen on the provider to return a mock proc."""

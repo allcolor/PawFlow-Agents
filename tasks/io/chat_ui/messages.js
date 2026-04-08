@@ -857,7 +857,9 @@ function _renderDelegateTraceContent(content, trace, message) {
       + escapeHtml(display) + '(' + escapeHtml(argSummary) + ')</div>';
   }
   const doneEntry = trace.find(e => e.type === 'done');
-  if (content) {
+  if (doneEntry && doneEntry.status === 'needs_input' && doneEntry.question) {
+    html += '<div class="delegate-question">\u{1F4AC} ' + renderMarkdown(doneEntry.question) + '</div>';
+  } else if (content) {
     html += '<div class="delegate-response">\u{1F4E8} ' + renderMarkdown(content) + '</div>';
   } else if (doneEntry && doneEntry.error) {
     html += '<div class="delegate-error">\u274C ' + escapeHtml(doneEntry.error) + '</div>';
@@ -882,8 +884,8 @@ function renderDelegateBlock(content, extra) {
   const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
   const doneEntry = trace.find(e => e.type === 'done');
   const status = doneEntry ? (doneEntry.status || 'done') : 'done';
-  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
-  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'cancelled' ? '#f0ad4e' : '#e94560');
+  const statusIcon = status === 'completed' ? '\u2713 done' : (status === 'needs_input' ? '\u{1F4AC} waiting' : '\u2718 ' + status);
+  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'needs_input' || status === 'cancelled' ? '#f0ad4e' : '#e94560');
   // Group header (first agent)
   let html = '<summary class="delegate-header">\u{1F500} '
     + '<span class="delegate-src">' + escapeHtml(displayAgentName(parentAgent)) + '</span> \u2192 '
@@ -907,8 +909,8 @@ function renderDelegateSubBlock(content, extra) {
   const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
   const doneEntry = trace.find(e => e.type === 'done');
   const status = doneEntry ? (doneEntry.status || 'done') : 'done';
-  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
-  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'cancelled' ? '#f0ad4e' : '#e94560');
+  const statusIcon = status === 'completed' ? '\u2713 done' : (status === 'needs_input' ? '\u{1F4AC} waiting' : '\u2718 ' + status);
+  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'needs_input' || status === 'cancelled' ? '#f0ad4e' : '#e94560');
   let html = '<summary class="delegate-sub-header">\u25b8 '
     + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
     + svcLabel

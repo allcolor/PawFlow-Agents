@@ -355,7 +355,10 @@ class SpawnAgentsHandler(ToolHandler):
             "Delegate tasks to one or more agents. "
             "Each agent runs independently with its own LLM service and tools. "
             "Waits for all results by default (wait=true). "
-            "Set wait=false to run in background."
+            "Set wait=false to run in background. "
+            "Agents can use ask_parent to pause and ask you a question — "
+            "you'll get status=needs_input with the question. "
+            "Use resume with the task_id to continue the conversation."
         )
         if self._available_agents:
             base += (
@@ -398,6 +401,10 @@ class SpawnAgentsHandler(ToolHandler):
                             "persist": {
                                 "type": "boolean",
                                 "description": "Keep the sub-agent's conversation context after completion (default: false). Use true for long research tasks or agents you'll call again — they'll resume where they left off.",
+                            },
+                            "resume": {
+                                "type": "string",
+                                "description": "Resume a paused agent by providing the task_id from a previous needs_input result. The message field becomes the response to the agent's question.",
                             },
                         },
                         "required": ["agent", "message"],
@@ -449,7 +456,8 @@ class SpawnAgentsHandler(ToolHandler):
         for spec in tasks_spec:
             agent_name = spec.get("agent", "")
             message = spec.get("message", "")
-            task_id = spec.get("id", uuid.uuid4().hex[:8])
+            resume_id = spec.get("resume", "")
+            task_id = resume_id or spec.get("id", uuid.uuid4().hex[:8])
 
             try:
                 extra_skills = spec.get("skills") or []
@@ -461,7 +469,8 @@ class SpawnAgentsHandler(ToolHandler):
                 task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
                 task.delegate_tc_id = _delegate_tc_id
-                task.persist = bool(spec.get("persist", False))
+                # Resume implies persist (sub-conv must exist)
+                task.persist = bool(spec.get("persist", False)) or bool(resume_id)
 
                 # Resolve context mode
                 context_mode = spec.get("context", "isolated")
@@ -531,6 +540,8 @@ class SpawnAgentsHandler(ToolHandler):
             entry["tools_called"] = r.tools_called
             if _persist_map.get(r.task_id):
                 entry["persisted"] = True
+            if r.question:
+                entry["question"] = r.question
             output.append(entry)
 
         return json.dumps(output, ensure_ascii=False, indent=2)

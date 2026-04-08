@@ -91,9 +91,10 @@ class AgentResult:
     tools_called: List[str] = field(default_factory=list)
     iterations: int = 0
     duration_ms: float = 0.0
-    status: str = "pending"  # pending, running, completed, error, timeout
+    status: str = "pending"  # pending, running, completed, error, timeout, cancelled, needs_input
     model: str = ""
     provider: str = ""
+    question: str = ""  # question for parent agent (ask_parent)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -273,6 +274,28 @@ class SubAgentExecutor:
         # Build tool definitions (filtered if agent specifies a whitelist)
         tool_defs, tool_handlers = self._build_tools(task.tools)
 
+        # Inject ask_parent tool for sub-agents (enables ping-pong dialog)
+        if task.source_agent:
+            tool_defs.append(LLMToolDefinition(
+                name="ask_parent",
+                description=(
+                    "Ask the parent agent a question and wait for their response. "
+                    "Use this when you need clarification, a decision, or additional "
+                    "input from the agent that spawned you. Your execution will pause "
+                    "until the parent responds. The parent may choose not to respond."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "question": {
+                            "type": "string",
+                            "description": "The question or request for the parent agent",
+                        },
+                    },
+                    "required": ["question"],
+                },
+            ))
+
         # Set parent conversation ID on read_parent_context tool
         for h in self._registry.list_tools():
             if hasattr(h, 'set_parent_conversation_id') and task.parent_conversation_id:
@@ -334,6 +357,7 @@ class SubAgentExecutor:
         # Sub-conversation persistence
         # "full" context mode = work directly in parent conv (no sub-context)
         sub_conv_id = ""
+        _resumed = False
         if task.parent_conversation_id and task.context_mode != "full":
             sub_conv_id = f"{task.parent_conversation_id}::task::{task.id}"
             # Try to resume existing sub-conversation
@@ -343,8 +367,14 @@ class SubAgentExecutor:
                 existing = store.load(sub_conv_id)
                 if existing and len(existing) > 1:
                     messages = self._deserialize_sub_messages(existing)
-                    logger.info("Resuming sub-conv %s with %d messages",
-                                sub_conv_id, len(messages))
+                    # Append the new message as parent's response (resume)
+                    messages.append(LLMMessage(
+                        role="user", content=task.message,
+                        source=user_source,
+                    ))
+                    _resumed = True
+                    logger.info("Resuming sub-conv %s with %d messages (+1 new)",
+                                sub_conv_id, len(messages) - 1)
                 else:
                     messages = self._build_initial_context(
                         task, sys_prompt, user_source)
@@ -449,6 +479,36 @@ class SubAgentExecutor:
                         result.error = "Cancelled by user"
                         result.status = "cancelled"
                         break
+
+                    # Intercept ask_parent — break loop, return question to parent
+                    if tc.name == "ask_parent":
+                        _question = (tc.arguments or {}).get("question", "")
+                        result.question = _question
+                        result.status = "needs_input"
+                        # Force persist so the sub-conv survives for resume
+                        task.persist = True
+                        # Add the ask_parent call + a synthetic tool result to messages
+                        # so the LLM context is coherent on resume
+                        messages.append(LLMMessage(
+                            role="assistant", content="",
+                            tool_calls=[tc], source=agent_source,
+                        ))
+                        messages.append(LLMMessage(
+                            role="tool",
+                            content="[Waiting for parent agent response...]",
+                            tool_call_id=tc.id,
+                        ))
+                        self._emit("sub_agent_tool", {
+                            "agent_name": task.agent_name,
+                            "task_id": task.id,
+                            "tool": "ask_parent",
+                            "arguments": {"question": _question[:200]},
+                            "tc_id": tc.id,
+                            "iteration": result.iterations,
+                            "delegate_tc_id": task.delegate_tc_id,
+                        })
+                        break
+
                     result.tools_called.append(tc.name)
                     # Truncate args for SSE (avoid huge payloads)
                     _tc_args_preview = {}
@@ -518,7 +578,7 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
-                if result.status in ("timeout", "cancelled"):
+                if result.status in ("timeout", "cancelled", "needs_input"):
                     break
             else:
                 # Max iterations reached — force synthesis
@@ -539,7 +599,7 @@ class SubAgentExecutor:
             _clear_cancelled(task.id)
 
         result.duration_ms = (time.time() - start) * 1000
-        self._emit("sub_agent_done", {
+        _done_data = {
             "agent_name": task.agent_name,
             "task_id": task.id,
             "status": result.status,
@@ -556,19 +616,27 @@ class SubAgentExecutor:
             "model": result.model,
             "provider": result.provider,
             "delegate_tc_id": task.delegate_tc_id,
-        })
+        }
+        if result.question:
+            _done_data["question"] = result.question[:500]
+        self._emit("sub_agent_done", _done_data)
 
         if _trace_created:
             try:
                 from core.conversation_store import ConversationStore
+                _trace_done = {
+                    "type": "done", "status": result.status,
+                    "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
+                    "iterations": result.iterations,
+                    "tools_called": result.tools_called,
+                    "model": result.model, "error": result.error,
+                }
+                if result.question:
+                    _trace_done["question"] = result.question[:500]
                 ConversationStore.instance().append_display_trace(
                     task.parent_conversation_id, task.id,
-                    {"type": "done", "status": result.status,
-                     "tokens_in": result.tokens_in, "tokens_out": result.tokens_out,
-                     "iterations": result.iterations,
-                     "tools_called": result.tools_called,
-                     "model": result.model, "error": result.error},
-                    content_update=result.response or result.error or "",
+                    _trace_done,
+                    content_update=result.response or result.question or result.error or "",
                 )
             except Exception as _te:
                 logger.debug("Failed to append done trace: %s", _te)

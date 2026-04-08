@@ -588,6 +588,8 @@ function connectSSE(cid, onReady) {
       const statusEl = block.summary.querySelector('.delegate-sub-status') || block.summary.querySelector('.delegate-status');
       if (data.status === 'completed') {
         if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
+      } else if (data.status === 'needs_input') {
+        if (statusEl) { statusEl.textContent = '\u{1F4AC} waiting for parent'; statusEl.style.color = '#f0ad4e'; }
       } else if (data.status === 'cancelled') {
         if (statusEl) { statusEl.textContent = '\u2718 cancelled'; statusEl.style.color = '#f0ad4e'; }
       } else if (data.status === 'error' || data.status === 'timeout') {
@@ -596,8 +598,13 @@ function connectSSE(cid, onReady) {
       // Remove cancel button
       const cancelBtn = block.summary.querySelector('.delegate-cancel-btn');
       if (cancelBtn) cancelBtn.remove();
-      // Add response or error
-      if (data.response) {
+      // Add question (ask_parent), response, or error
+      if (data.status === 'needs_input' && data.question) {
+        const qEl = document.createElement('div');
+        qEl.className = 'delegate-question';
+        qEl.innerHTML = '\u{1F4AC} ' + renderMarkdown(data.question);
+        block.content.appendChild(qEl);
+      } else if (data.response) {
         const respEl = document.createElement('div');
         respEl.className = 'delegate-response';
         respEl.innerHTML = '\u{1F4E8} ' + renderMarkdown(data.response);
@@ -618,18 +625,20 @@ function connectSSE(cid, onReady) {
       parts.push((data.tools_called || []).length + ' tools');
       statsEl.textContent = parts.join(' \u00b7 ');
       block.content.appendChild(statsEl);
-      // Auto-collapse sub-block in multi-agent mode
+      // Auto-collapse (but not for needs_input — keep visible)
       const group = delegateTcId && _delegateGroups[delegateTcId];
-      if (group && group.total > 1) {
-        setTimeout(() => { block.el.removeAttribute('open'); }, 1500);
-      }
-      // Check if all sub-blocks in group are done
-      if (group) {
-        group.doneCount++;
-        if (group.doneCount >= group.total) {
-          const groupStatus = group.summary.querySelector('.delegate-status');
-          if (groupStatus) { groupStatus.textContent = '\u2713 done'; groupStatus.style.color = '#4ecdc4'; }
-          setTimeout(() => { group.el.removeAttribute('open'); }, 2000);
+      if (data.status !== 'needs_input') {
+        if (group && group.total > 1) {
+          setTimeout(() => { block.el.removeAttribute('open'); }, 1500);
+        }
+        // Check if all sub-blocks in group are done
+        if (group) {
+          group.doneCount++;
+          if (group.doneCount >= group.total) {
+            const groupStatus = group.summary.querySelector('.delegate-status');
+            if (groupStatus) { groupStatus.textContent = '\u2713 done'; groupStatus.style.color = '#4ecdc4'; }
+            setTimeout(() => { group.el.removeAttribute('open'); }, 2000);
+          }
         }
       }
       scrollBottom();

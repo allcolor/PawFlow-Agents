@@ -337,6 +337,10 @@ class SpawnAgentsHandler(ToolHandler):
         self._local.source_agent = agent_name
         self._local.source_llm_service = llm_service
 
+    def set_delegate_tc_id(self, tc_id: str) -> None:
+        """Set the tool_call ID of the delegate call (thread-local)."""
+        self._local.delegate_tc_id = tc_id
+
     def set_available_agents(self, names: List[str]):
         """Set the list of available agent names (for description injection)."""
         self._available_agents = list(names)
@@ -421,6 +425,7 @@ class SpawnAgentsHandler(ToolHandler):
         # Thread-safe source agent (each agent loop runs in its own thread)
         _src_agent = getattr(self._local, 'source_agent', '') or ''
         _src_svc = getattr(self._local, 'source_llm_service', '') or ''
+        _delegate_tc_id = getattr(self._local, 'delegate_tc_id', '') or ''
 
         # Resolve self-name and nicknames to detect self-calls
         _self_names = {_src_agent.lower()} if _src_agent else set()
@@ -451,6 +456,7 @@ class SpawnAgentsHandler(ToolHandler):
                 task.source_agent = _src_agent
                 task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
+                task.delegate_tc_id = _delegate_tc_id
 
                 # Resolve context mode
                 context_mode = spec.get("context", "isolated")

@@ -352,11 +352,60 @@ function connectSSE(cid, onReady) {
     }
   });
 
+  // ── Delegate blocks ──────────────────────────────────────────
+  const _delegateBlocks = {};
+
+  function _getDelegateBlock(delegateTcId, srcAgent, dstAgent, llmService, message) {
+    if (!delegateTcId) return null;
+    if (_delegateBlocks[delegateTcId]) return _delegateBlocks[delegateTcId];
+    const details = document.createElement('details');
+    details.className = 'msg delegate-block';
+    details.setAttribute('open', '');
+    const summary = document.createElement('summary');
+    summary.className = 'delegate-header';
+    const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+    summary.innerHTML = '\u{1F500} <span class="delegate-src">' + escapeHtml(displayAgentName(srcAgent))
+      + '</span> \u2192 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
+      + svcLabel
+      + ' <span class="delegate-status">\u25cf running</span>';
+    details.appendChild(summary);
+    const content = document.createElement('div');
+    content.className = 'delegate-body';
+    details.appendChild(content);
+    // Show the message from parent agent
+    if (message) {
+      const msgEl = document.createElement('div');
+      msgEl.className = 'delegate-message';
+      msgEl.innerHTML = '\u{1F4E9} ' + renderMarkdown(message);
+      content.appendChild(msgEl);
+    }
+    // Insert into DOM
+    const container = document.getElementById('messages');
+    const typingEl = document.getElementById('typing');
+    if (typingEl) container.insertBefore(details, typingEl);
+    else container.appendChild(details);
+    scrollBottom();
+    _delegateBlocks[delegateTcId] = {el: details, content: content, summary: summary, agent: dstAgent, srcAgent: srcAgent};
+    return _delegateBlocks[delegateTcId];
+  }
+
+  function _delegateBlockAppend(delegateTcId, childEl) {
+    const block = _delegateBlocks[delegateTcId];
+    if (block && childEl) {
+      block.content.appendChild(childEl);
+      scrollBottom();
+    }
+  }
+
   // Sub-agent visibility
   eventSource.addEventListener('sub_agent_start', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
+    // Create delegate block if we have a tc_id
+    if (data.delegate_tc_id) {
+      _getDelegateBlock(data.delegate_tc_id, data.source_agent || '', data.agent_name || '', data.llm_service || '', data.message || '');
+    }
   });
 
   eventSource.addEventListener('sub_agent_iteration', (e) => {
@@ -380,6 +429,46 @@ function connectSSE(cid, onReady) {
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'sub-agent';
     trackAgentTool(agentName, data.tool);
+    // Add tool call to delegate block
+    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+      const el = document.createElement('div');
+      el.className = 'delegate-tool';
+      if (data.tc_id) el.dataset.tcId = data.tc_id;
+      const display = (_TOOL_DISPLAY[data.tool] || data.tool || '?');
+      let argSummary = '';
+      if (data.arguments && typeof data.arguments === 'object') {
+        const keys = Object.keys(data.arguments);
+        if (keys.length === 1) {
+          argSummary = String(data.arguments[keys[0]]).substring(0, 120);
+        } else if (keys.length > 1) {
+          argSummary = keys.map(k => k + '=' + String(data.arguments[k]).substring(0, 60)).join(', ').substring(0, 120);
+        }
+      }
+      el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + escapeHtml(display) + '(' + escapeHtml(argSummary) + ')';
+      _delegateBlockAppend(data.delegate_tc_id, el);
+    }
+  });
+
+  eventSource.addEventListener('sub_agent_tool_result', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    // Attach result to tool call in delegate block
+    if (data.delegate_tc_id && data.tc_id && _delegateBlocks[data.delegate_tc_id]) {
+      const block = _delegateBlocks[data.delegate_tc_id];
+      const tcEl = block.content.querySelector('[data-tc-id="' + data.tc_id + '"]');
+      if (tcEl) {
+        const bullet = tcEl.querySelector('.tc-bullet');
+        if (bullet) { bullet.classList.remove('pending'); bullet.classList.add('done'); }
+        if (data.result) {
+          const resDiv = document.createElement('div');
+          resDiv.className = 'delegate-tool-result';
+          const firstLine = data.result.split('\n')[0].substring(0, 120);
+          resDiv.innerHTML = '<details><summary>\u23bf ' + escapeHtml(firstLine) + '</summary>'
+            + '<pre class="tc-output">' + escapeHtml(data.result) + '</pre></details>';
+          tcEl.appendChild(resDiv);
+        }
+      }
+    }
   });
 
   eventSource.addEventListener('sub_agent_done', (e) => {
@@ -387,23 +476,60 @@ function connectSSE(cid, onReady) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent);
-    const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
-    const srcInfo = data.source_agent ? displayAgentName(data.source_agent) + ' \u2192 ' : '';
-    const header = srcInfo + displayAgentName(agent) + svcInfo;
-    if (data.response && !_CONTEXT_ACKS.has((data.response || '').trim())) {
-      const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
-      if (data.source_agent) extra.source.reply_to = data.source_agent;
-      extra.model = data.model || '';
-      extra.provider = data.provider || '';
-      extra.tokens_in = data.tokens_in || 0;
-      extra.tokens_out = data.tokens_out || 0;
-      extra.duration_ms = (data.duration_s || 0) * 1000;
-      extra.ts = data.ts;
-      addMsg('assistant', data.response, extra);
-    } else if (data.error) {
-      addMsg('agent-result', 'Error: ' + data.error, agent);
+    // Finalize delegate block
+    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+      const block = _delegateBlocks[data.delegate_tc_id];
+      // Update status
+      const statusEl = block.summary.querySelector('.delegate-status');
+      if (data.status === 'completed') {
+        if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
+      } else if (data.status === 'error' || data.status === 'timeout') {
+        if (statusEl) { statusEl.textContent = '\u2718 ' + data.status; statusEl.style.color = '#e94560'; }
+      }
+      // Add response or error
+      if (data.response) {
+        const respEl = document.createElement('div');
+        respEl.className = 'delegate-response';
+        respEl.innerHTML = '\u{1F4E8} ' + renderMarkdown(data.response);
+        block.content.appendChild(respEl);
+      } else if (data.error) {
+        const errEl = document.createElement('div');
+        errEl.className = 'delegate-error';
+        errEl.textContent = '\u274C ' + data.error;
+        block.content.appendChild(errEl);
+      }
+      // Add stats line
+      const tokensK = ((data.tokens_in || 0) + (data.tokens_out || 0)) / 1000;
+      const statsEl = document.createElement('div');
+      statsEl.className = 'delegate-stats';
+      const parts = [];
+      if (data.model) parts.push(data.model);
+      parts.push('\u2191' + (data.tokens_in || 0) + ' \u2193' + (data.tokens_out || 0));
+      if (data.duration_s) parts.push(data.duration_s + 's');
+      parts.push((data.tools_called || []).length + ' tools');
+      statsEl.textContent = parts.join(' \u00b7 ');
+      block.content.appendChild(statsEl);
+      // Auto-collapse after brief display
+      setTimeout(() => { block.el.removeAttribute('open'); }, 2000);
+      scrollBottom();
+    } else {
+      // Fallback: no delegate block — render as standalone message (legacy)
+      const svcInfo = data.llm_service ? ' via ' + data.llm_service : '';
+      if (data.response && !_CONTEXT_ACKS.has((data.response || '').trim())) {
+        const extra = { source: { type: 'agent', name: agent, llm_service: data.llm_service || '' } };
+        if (data.source_agent) extra.source.reply_to = data.source_agent;
+        extra.model = data.model || '';
+        extra.provider = data.provider || '';
+        extra.tokens_in = data.tokens_in || 0;
+        extra.tokens_out = data.tokens_out || 0;
+        extra.duration_ms = (data.duration_s || 0) * 1000;
+        extra.ts = data.ts;
+        addMsg('assistant', data.response, extra);
+      } else if (data.error) {
+        addMsg('agent-result', 'Error: ' + data.error, agent);
+      }
+      scrollBottom();
     }
-    scrollBottom();
   });
 
   // Track cancelled agents — suppress their events until done/new message
@@ -430,6 +556,13 @@ function connectSSE(cid, onReady) {
       tcs.el = null; tcs.text = '';
     }
     trackAgentTool(tcAgent, data.tool);
+    // Hide delegate tool_call — the delegate block replaces it
+    if (data.tool === 'delegate') {
+      // Store tc_id so we can suppress the tool_result too
+      if (data.tc_id) _delegateBlocks['__tc__' + data.tc_id] = true;
+      if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
+      return;
+    }
     // Single rendering path: addMsg handles ALL tool_call rendering
     const tcExtra = {
       tool_name: data.tool,
@@ -470,8 +603,10 @@ function connectSSE(cid, onReady) {
     const data = JSON.parse(e.data);
     if (_cancelledAgents.has((data.agent_name || '').toLowerCase()) && data.via !== 'claude-code') return;
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
-    // Try to attach to matching tool_call element
+    // Suppress delegate tool_result — the delegate block shows the response
     const tcId = data.tc_id || '';
+    if (tcId && _delegateBlocks['__tc__' + tcId]) return;
+    // Try to attach to matching tool_call element
     if (tcId) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');
       if (tcEl) {

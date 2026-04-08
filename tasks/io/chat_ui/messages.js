@@ -238,7 +238,8 @@ function addMsg(role, text, extra) {
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {
-    el.innerHTML = timeHtml + renderSubAgentTrace(text, extra);
+    el.className = 'msg delegate-block';
+    el.innerHTML = renderDelegateBlock(text, extra);
   } else if (role === 'error') {
     el.innerHTML = timeHtml + badge + renderMarkdown(text);
   } else if (role === 'agent-result') {
@@ -786,6 +787,66 @@ function renderMultiAgentTree(traces) {
       + '<span style="color:#4ecdc4">' + escapeHtml(t.status || 'Done') + '</span></div>';
   }
   html += '</div></div>';
+  return html;
+}
+
+function renderDelegateBlock(content, extra) {
+  const source = (extra && extra.source) || {};
+  const trace = (extra && extra.trace) || [];
+  const agentName = source.name || 'sub-agent';
+  const parentAgent = source.parent_agent || '';
+  const llmService = source.llm_service || '';
+  const message = source.message || '';
+  const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+  // Summary stats from trace
+  const doneEntry = trace.find(e => e.type === 'done');
+  const totalTools = trace.filter(e => e.type === 'tool_call').length;
+  const tokensIn = doneEntry ? (doneEntry.tokens_in || 0) : 0;
+  const tokensOut = doneEntry ? (doneEntry.tokens_out || 0) : 0;
+  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
+  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
+  const statusColor = status === 'completed' ? '#4ecdc4' : '#e94560';
+  // Header
+  let html = '<summary class="delegate-header">\u{1F500} '
+    + '<span class="delegate-src">' + escapeHtml(displayAgentName(parentAgent)) + '</span> \u2192 '
+    + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
+    + svcLabel
+    + ' <span class="delegate-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
+    + '</summary>';
+  html += '<div class="delegate-body">';
+  // Message from parent
+  if (message) {
+    html += '<div class="delegate-message">\u{1F4E9} ' + renderMarkdown(message) + '</div>';
+  }
+  // Tool calls
+  const toolCalls = trace.filter(e => e.type === 'tool_call');
+  for (const tc of toolCalls) {
+    const display = (_TOOL_DISPLAY[tc.tool] || tc.tool || '?');
+    let argSummary = '';
+    if (tc.arguments && typeof tc.arguments === 'object') {
+      const keys = Object.keys(tc.arguments);
+      if (keys.length === 1) {
+        argSummary = String(tc.arguments[keys[0]]).substring(0, 120);
+      } else if (keys.length > 1) {
+        argSummary = keys.map(k => k + '=' + String(tc.arguments[k]).substring(0, 60)).join(', ').substring(0, 120);
+      }
+    }
+    html += '<div class="delegate-tool"><span class="tc-bullet done">\u25cf</span> '
+      + escapeHtml(display) + '(' + escapeHtml(argSummary) + ')</div>';
+  }
+  // Response
+  if (content) {
+    html += '<div class="delegate-response">\u{1F4E8} ' + renderMarkdown(content) + '</div>';
+  } else if (doneEntry && doneEntry.error) {
+    html += '<div class="delegate-error">\u274C ' + escapeHtml(doneEntry.error) + '</div>';
+  }
+  // Stats
+  const parts = [];
+  if (doneEntry && doneEntry.model) parts.push(doneEntry.model);
+  parts.push('\u2191' + tokensIn + ' \u2193' + tokensOut);
+  parts.push(totalTools + ' tools');
+  html += '<div class="delegate-stats">' + parts.join(' \u00b7 ') + '</div>';
+  html += '</div>';
   return html;
 }
 

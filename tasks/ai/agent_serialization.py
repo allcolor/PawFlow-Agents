@@ -121,6 +121,7 @@ class AgentSerializationMixin:
         """
         result = []
         _tc_id_to_name = {}  # tool_call_id → display name (for tool_result matching)
+        _delegate_tc_ids = set()  # tc_ids for delegate calls (hidden, replaced by delegate blocks)
         _META_TOOLS = {"get_tool_schema"}
         for raw_idx, m in enumerate(raw_messages):
             role = m.get("role", "")
@@ -185,6 +186,10 @@ class AgentSerializationMixin:
                     _tc_name, _tc_args = unwrap_mcp_tool(_tc_name, _tc_args)
                     if _tc_name in _META_TOOLS:
                         continue
+                    # Hide delegate tool_calls — replaced by delegate blocks (sub_agent_trace)
+                    if _tc_name == "delegate":
+                        _delegate_tc_ids.add(tc.get("id", ""))
+                        continue
                     _tc_args_str = json.dumps(_tc_args, ensure_ascii=False)[:500] if _tc_args else ""
                     # Format source label
                     _src_agent = (_tc_source or {}).get("name", "") if _tc_source else ""
@@ -233,6 +238,9 @@ class AgentSerializationMixin:
             elif role == "tool" and tool_call_id:
                 # Skip results for hidden meta tools
                 if _tc_id_to_name.get(tool_call_id) in _META_TOOLS:
+                    continue
+                # Skip delegate tool results — shown inside delegate blocks
+                if tool_call_id in _delegate_tc_ids:
                     continue
                 # Tool result message — strip security wrapper for display
                 display_content = content

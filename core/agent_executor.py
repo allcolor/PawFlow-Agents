@@ -55,6 +55,7 @@ class AgentTask:
     context_mode: str = "isolated"  # isolated, last:N, summary:N, full
     context_messages: Optional[List] = None  # pre-resolved context messages
     parent_conversation_id: str = ""  # for read_parent_context tool
+    delegate_tc_id: str = ""  # tool_call ID of the delegate call in parent conversation
 
 
 @dataclass
@@ -195,6 +196,7 @@ class SubAgentExecutor:
             "source_agent": task.source_agent,
             "source_llm_service": task.source_llm_service,
             "llm_service": task.llm_service,
+            "delegate_tc_id": task.delegate_tc_id,
         })
 
         # Create display-only trace message in parent conversation
@@ -210,6 +212,9 @@ class SubAgentExecutor:
                         "parent_agent": task.source_agent or "",
                         "task_id": task.id,
                         "depth": _depth,
+                        "delegate_tc_id": task.delegate_tc_id,
+                        "message": task.message,
+                        "llm_service": task.llm_service,
                     },
                     user_id=task.user_id,
                 )
@@ -346,6 +351,7 @@ class SubAgentExecutor:
                     "total_tools": len(result.tools_called),
                     "tokens_in": result.tokens_in,
                     "tokens_out": result.tokens_out,
+                    "delegate_tc_id": task.delegate_tc_id,
                 })
                 if _trace_created:
                     try:
@@ -396,18 +402,28 @@ class SubAgentExecutor:
                         result.status = "timeout"
                         break
                     result.tools_called.append(tc.name)
+                    # Truncate args for SSE (avoid huge payloads)
+                    _tc_args_preview = {}
+                    if tc.arguments:
+                        for k, v in tc.arguments.items():
+                            vs = str(v)
+                            _tc_args_preview[k] = vs[:200] if len(vs) > 200 else vs
                     self._emit("sub_agent_tool", {
                         "agent_name": task.agent_name,
                         "task_id": task.id,
                         "tool": tc.name,
+                        "arguments": _tc_args_preview,
+                        "tc_id": tc.id,
                         "iteration": result.iterations,
+                        "delegate_tc_id": task.delegate_tc_id,
                     })
                     if _trace_created:
                         try:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().append_display_trace(
                                 task.parent_conversation_id, task.id,
-                                {"type": "tool_call", "tool": tc.name},
+                                {"type": "tool_call", "tool": tc.name,
+                                 "arguments": _tc_args_preview},
                             )
                         except Exception:
                             pass
@@ -415,6 +431,17 @@ class SubAgentExecutor:
                         tc, tool_handlers, task.agent_name,
                         conversation_id=task.parent_conversation_id,
                         user_id=task.user_id)
+                    # Emit tool result for delegate block display
+                    _result_preview = (tool_result[:500] if isinstance(tool_result, str)
+                                       else str(tool_result)[:500])
+                    self._emit("sub_agent_tool_result", {
+                        "agent_name": task.agent_name,
+                        "task_id": task.id,
+                        "tool": tc.name,
+                        "tc_id": tc.id,
+                        "result": _result_preview,
+                        "delegate_tc_id": task.delegate_tc_id,
+                    })
                     messages.append(LLMMessage(
                         role="tool",
                         content=tool_result,
@@ -478,6 +505,7 @@ class SubAgentExecutor:
             "llm_service": task.llm_service,
             "model": result.model,
             "provider": result.provider,
+            "delegate_tc_id": task.delegate_tc_id,
         })
 
         if _trace_created:

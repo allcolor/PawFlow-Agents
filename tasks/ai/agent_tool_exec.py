@@ -135,11 +135,12 @@ class AgentToolExecMixin:
                     )
                     if approval != "approved":
                         return tc, f"Error: Tool '{tc.name}' was {approval} by the user."
-            # Re-inject thread-local source agent (needed in pool threads)
+            # Re-inject thread-local source agent + delegate tc_id (needed in pool threads)
             from core.tool_registry import SpawnAgentsHandler
             for h in registry.list_tools():
                 if isinstance(h, SpawnAgentsHandler):
                     h.set_source_agent(agent_name, agent_svc)
+                    h.set_delegate_tc_id(tc.id)
                     break
             try:
                 # Resolve $VAR / ${VAR} in arguments before execution

@@ -95,7 +95,7 @@ Spans for each task execution in the pipeline engine, exportable to Jaeger, Zipk
 These were shipped as part of the alpha development cycle:
 
 - Hard cost cap per conversation (budget limits with 80% warning threshold)
-- @file mention with autocomplete in the web chat
+- `@file` mention in PawCode CLI
 - Agent instructions file (`.md`) that survives context compaction
 - Permission modes (read-only / approve-edits / auto) with quick toggle
 - `!cmd` inline bash execution in PawCode CLI
@@ -109,7 +109,7 @@ These were shipped as part of the alpha development cycle:
 - Crash recovery and flow versioning
 - i18n (English, French, Spanish)
 - Cluster mode with leader election
-- 15 built-in flow templates
+- 13 built-in flow templates
 
 ---
 

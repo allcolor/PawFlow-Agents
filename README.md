@@ -174,7 +174,7 @@ Expressions resolve through a cascade: secrets → flow parameters → conversat
 - File explorer with relay filesystem access
 - Context editor (view/edit agent context)
 - Conversation management with auto-titles
-- Drag & drop file attachments and `@file` mentions
+- Drag & drop file attachments
 - 60+ slash commands (`/agent`, `/memory`, `/relay`, `/run`, `/plan`, ...)
 - Escape key: 1x = graceful interrupt, 2x = force stop
 - Multi-agent with agent switching

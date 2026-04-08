@@ -64,12 +64,15 @@ class AgentUtilsMixin:
         svc_id = service_id or ""
         client, svc = self._resolve_llm_service(svc_id, user_id)
         if not client and self.config.get("api_key"):
+            _fallback_cfg = {
+                "api_key": self.config["api_key"],
+                "base_url": self.config.get("base_url", ""),
+                "model": default_model,
+                "timeout": int(self.config.get("timeout", 120)),
+            }
             client = LLMClient(
                 provider=self.config.get("provider", "openai"),
-                api_key=self.config["api_key"],
-                base_url=self.config.get("base_url", ""),
-                default_model=default_model,
-                timeout=int(self.config.get("timeout", 120)),
+                config=_fallback_cfg,
             )
             svc = None
         if not client and raise_on_missing:

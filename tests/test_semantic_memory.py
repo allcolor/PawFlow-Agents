@@ -399,7 +399,7 @@ class TestLLMClientEmbed:
     def test_error_missing_api_key(self):
         from core.llm_client import LLMClient
         with pytest.raises(Exception):
-            client = LLMClient(provider="openai", api_key=None)
+            client = LLMClient(provider="openai", config={"api_key": ""})
             client.embed(["hello"])
 
 

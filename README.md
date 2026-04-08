@@ -151,21 +151,22 @@ Memory digests and diary entries are automatically injected into the system prom
 
 Flows are defined in JSON, executed as DAGs, and support backpressure, checkpointing, crash recovery, parameter contexts, subflows, and CRON scheduling.
 
-### NiFi Import
-
-Import existing Apache NiFi flows (XML or JSON export) with automatic processor mapping, Groovy-to-Python script conversion (LLM-assisted), and process group support.
-
 ### Expression Language
 
 40+ chainable operations for dynamic configuration:
 
 ```
-${user.name}                    → "QUENTIN"
-totoz            → uses fallback if empty
-${content}   → first CSV field, trimmed
-d5c16d9e-1fbe-437a-9f10-a4507d539985                              → generates a UUID
-${date}     → "2026-04-08"
+${name:upper}                                     → "ALICE"
+${api_key:default("not-set")}                      → uses fallback if empty
+${status:equals("active"):then("ON"):else("OFF")}  → conditional logic
+${csv_line:split(","):index(0):trim}               → first CSV field, trimmed
+${response:json_get("data.items.0.id")}             → extract from JSON
+${content:hash_sha256}                              → hash a value
+${:uuid}                                            → generate a UUID
+${:now:format("yyyy-MM-dd")}                         → "2026-04-08"
 ```
+
+Expressions resolve through a cascade: secrets → flow parameters → conversation → user → global → environment variables. See [Expression Language docs](docs/EXPRESSION_LANGUAGE.md) for the full reference.
 
 ## Web Chat
 
@@ -185,14 +186,14 @@ ${date}     → "2026-04-08"
 | Provider | Status |
 |----------|--------|
 | Built-in (username/password) | Ready |
-| Google | Ready |
-| GitHub | Ready |
-| Microsoft | Ready |
-| X (Twitter) | Ready |
-| Facebook | Ready |
-| Amazon | Ready |
-| Telegram | Ready |
-| Generic OAuth2 | Ready |
+| Google | Ready, tested |
+| GitHub | Ready, not tested |
+| Microsoft | Ready, not tested |
+| X (Twitter) | Ready, not tested |
+| Facebook | Ready, not tested |
+| Amazon | Ready, not tested |
+| Telegram | Ready, not tested |
+| Generic OAuth2 | Ready, tested |
 
 ## Configuration
 
@@ -235,12 +236,13 @@ pytest tests/ -v    # 2500+ tests across 30+ test files
 See [ROADMAP.md](ROADMAP.md) for the full roadmap.
 
 Key upcoming areas:
+
 - Voice input (push-to-talk / transcription)
 - Git worktree isolation for parallel agents
 - Mobile PWA client
-- Additional LLM providers (Ollama, Mistral, vLLM)
-- PawFlow as MCP server
-- Skill marketplace
+- Marketplace for agents, skills, tools, MCP servers, tasks, and flows
+- Full flow editor
+- Installation wizard
 
 ## Contributing
 

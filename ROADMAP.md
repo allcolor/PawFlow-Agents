@@ -15,7 +15,6 @@ The alpha release includes:
 - **80+ Built-in Tools** — Filesystem, bash, code editing, web fetch, image/video/audio generation, security scanning, memory, knowledge graph.
 - **Persistent Memory** — Semantic memory, knowledge graphs, agent diaries, project graphs that survive across conversations.
 - **Web Chat** — SSE streaming, file explorer, context editor, 60+ slash commands, @file mentions, multi-agent switching.
-- **NiFi Import** — Import Apache NiFi flows with automatic processor mapping and LLM-assisted Groovy-to-Python conversion.
 - **Authentication** — 9 OAuth providers, JWT tokens, API keys, RBAC.
 - **Docker Support** — Containerized deployment with relay for isolated tool execution.
 - **PawCode CLI** — Claude Code-compatible terminal client.
@@ -41,6 +40,12 @@ Expose PawFlow's tools via the Model Context Protocol so other agents (Claude Co
 
 ### Mobile client (PWA)
 Progressive Web App installable on iOS and Android. Offline caching, push notifications when agents respond, mobile-optimized layout.
+
+### Full flow editor
+Visual drag-and-drop flow editor in the web UI. Create, edit, and deploy pipelines without writing JSON. Node palette, connection wiring, live validation, and real-time execution monitoring.
+
+### Installation wizard
+Guided first-run setup: configure LLM providers, create first agent, set authentication, and deploy default flows. Replaces the manual `.env` + JSON configuration for new users.
 
 ### Headless JSON mode
 Single-shot API endpoint that runs an agent and returns structured JSON. No SSE, no streaming — designed for CI/CD, scripts, and webhooks. Optional JSON schema for structured output.
@@ -68,8 +73,8 @@ React to file changes automatically — run tests, lint, or trigger agents when 
 
 ## Future
 
-### Skill marketplace
-Community repository for sharing skills, tools, and flow templates. Browse, search, install with `/install skill_name`.
+### Marketplace
+Community repository for sharing agents, skills, tools, MCP servers, tasks, and flow templates. Browse, search, install with `/install name`.
 
 ### Additional messaging channels
 Microsoft Teams, Matrix, Signal, IRC — building on the existing Telegram/Discord/Slack/WhatsApp channel framework.
@@ -99,7 +104,6 @@ These were shipped as part of the alpha development cycle:
 - Flow debugger with breakpoints, stepping, and FlowFile inspection
 - Data preview and flow diff
 - Event triggers (file watcher, webhook, event-driven, polling)
-- NiFi import with process group support
 - Parameter context injection and subflow mapping
 - Plugin versioning (semver, upgrade/downgrade, dependencies)
 - Crash recovery and flow versioning

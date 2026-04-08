@@ -78,8 +78,9 @@ class ClusterState:
                 continue
             path = os.path.join(self._state_dir, fname)
             try:
-                with open(path) as f:
-                    data = json.load(f)
+                with self._lock:
+                    with open(path) as f:
+                        data = json.load(f)
                 info = InstanceInfo(
                     instance_id=data["instance_id"],
                     role=InstanceRole(data["role"]),

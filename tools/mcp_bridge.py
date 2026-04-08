@@ -411,18 +411,23 @@ def main():
                 tool_name = args.get("tool_name", "")
                 tool_args_raw = args.get("arguments", {})
                 _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
-                # Unwrap JSON string arguments (CC sometimes double-encodes)
+                # Unwrap JSON string arguments (CC sometimes double/triple-encodes)
                 tool_args = tool_args_raw
                 _decode_failed = False
+                _unwrap_passes = 0
                 for _ in range(3):
                     if not isinstance(tool_args, str):
                         break
                     try:
+                        _prev = tool_args
                         tool_args = json.loads(tool_args)
+                        _unwrap_passes += 1
                     except (json.JSONDecodeError, TypeError) as _je:
-                        _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} raw={str(tool_args)[:200]}")
+                        _log(f"USE_TOOL {tool_name} JSON decode FAILED (pass {_unwrap_passes+1}): {_je} value={str(tool_args)[:200]}")
                         _decode_failed = True
                         break
+                if _unwrap_passes > 0:
+                    _log(f"USE_TOOL {tool_name} unwrapped {_unwrap_passes} pass(es): {type(tool_args_raw).__name__} → {type(tool_args).__name__}")
                 # Decode failed on non-empty input → error (don't silently send {})
                 if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
                     result = (f"Error: failed to decode arguments for {tool_name}. "

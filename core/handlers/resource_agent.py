@@ -395,6 +395,10 @@ class SpawnAgentsHandler(ToolHandler):
                                 "items": {"type": "string"},
                                 "description": "Skill names to inject into the delegate agent's prompt (replaces the agent's own assigned_skills)",
                             },
+                            "persist": {
+                                "type": "boolean",
+                                "description": "Keep the sub-agent's conversation context after completion (default: false). Use true for long research tasks or agents you'll call again — they'll resume where they left off.",
+                            },
                         },
                         "required": ["agent", "message"],
                     },
@@ -457,6 +461,7 @@ class SpawnAgentsHandler(ToolHandler):
                 task.source_agent_nickname = _src_nickname
                 task.source_llm_service = _src_svc
                 task.delegate_tc_id = _delegate_tc_id
+                task.persist = bool(spec.get("persist", False))
 
                 # Resolve context mode
                 context_mode = spec.get("context", "isolated")
@@ -510,6 +515,7 @@ class SpawnAgentsHandler(ToolHandler):
             })
 
         # Format results
+        _persist_map = {t.id: t.persist for t in agent_tasks}
         output = []
         for r in results:
             entry = {
@@ -523,6 +529,8 @@ class SpawnAgentsHandler(ToolHandler):
                 entry["error"] = r.error
             entry["tokens"] = {"in": r.tokens_in, "out": r.tokens_out}
             entry["tools_called"] = r.tools_called
+            if _persist_map.get(r.task_id):
+                entry["persisted"] = True
             output.append(entry)
 
         return json.dumps(output, ensure_ascii=False, indent=2)

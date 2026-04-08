@@ -76,6 +76,7 @@ class AgentTask:
     context_messages: Optional[List] = None  # pre-resolved context messages
     parent_conversation_id: str = ""  # for read_parent_context tool
     delegate_tc_id: str = ""  # tool_call ID of the delegate call in parent conversation
+    persist: bool = False  # keep sub-conversation after completion (for multi-turn delegates)
 
 
 @dataclass
@@ -572,13 +573,16 @@ class SubAgentExecutor:
             except Exception as _te:
                 logger.debug("Failed to append done trace: %s", _te)
 
-        # Cleanup sub-conversation (unless agent scheduled continuation)
-        if sub_conv_id and result.status in ("completed", "error", "timeout", "cancelled"):
+        # Cleanup sub-conversation (unless persist=True)
+        if sub_conv_id and not task.persist and result.status in ("completed", "error", "timeout", "cancelled"):
             try:
                 from core.conversation_store import ConversationStore
                 ConversationStore.instance().delete(sub_conv_id)
             except Exception:
                 pass
+        elif sub_conv_id and task.persist:
+            logger.info("[sub-agent:%s] Persisting sub-conversation %s",
+                        task.agent_name, sub_conv_id)
 
         return result
 

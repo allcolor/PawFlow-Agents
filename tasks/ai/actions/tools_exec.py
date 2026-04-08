@@ -259,9 +259,12 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
             if _call_conv_id:
                 import uuid as _uuid
                 tc_id = _uuid.uuid4().hex[:12]
+                _now = time.time()
                 msgs = [
                     {
                         "role": "assistant", "content": "",
+                        "msg_id": _uuid.uuid4().hex[:12],
+                        "timestamp": _now,
                         "source": source,
                         "tool_calls": [{
                             "id": tc_id,
@@ -273,6 +276,8 @@ def _handle_tools_exec(self, action, body, store, user_id, flowfile):
                         "role": "tool",
                         "content": result_text,
                         "tool_call_id": tc_id,
+                        "msg_id": _uuid.uuid4().hex[:12],
+                        "timestamp": _now,
                     },
                 ]
                 try:

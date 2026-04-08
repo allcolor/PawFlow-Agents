@@ -13,7 +13,8 @@ from core.tool_registry import ToolRegistry
 logger = logging.getLogger(__name__)
 
 
-def _find_cc_session_jsonl(conv_id: str, agent_name: str, store) -> str:
+def _find_cc_session_jsonl(conv_id: str, agent_name: str, store,
+                           user_id: str = "") -> str:
     """Find the JSONL file path for an active Claude Code session."""
     import os
     import glob as _glob
@@ -26,7 +27,9 @@ def _find_cc_session_jsonl(conv_id: str, agent_name: str, store) -> str:
     from core.llm_providers.claude_code import _SESSIONS_BASE
     if not conv_id or not agent_name:
         raise ValueError(f"BUG: conv_id={conv_id!r}, agent_name={agent_name!r} required for CC session")
-    workdir = os.path.join(_SESSIONS_BASE, conv_id, agent_name)
+    # Path is: _SESSIONS_BASE/{user_id}/{conv_id}/{agent}/
+    uid = user_id or store.get_user_id(conv_id) or "default"
+    workdir = os.path.join(_SESSIONS_BASE, uid, conv_id, agent_name)
     projects_dir = os.path.join(workdir, "projects", "-workspace")
     jsonl_path = os.path.join(projects_dir, f"{session_id}.jsonl")
 
@@ -110,9 +113,10 @@ def _rewrite_cc_session(conv_id: str, agent_name: str, store,
                 sum(1 for e in entries if e["_keep"]))
 
 
-def _load_cc_session_context(conv_id: str, agent_name: str, store) -> list:
+def _load_cc_session_context(conv_id: str, agent_name: str, store,
+                             user_id: str = "") -> list:
     """Load Claude Code session JSONL and convert to PawFlow message format."""
-    jsonl_path = _find_cc_session_jsonl(conv_id, agent_name, store)
+    jsonl_path = _find_cc_session_jsonl(conv_id, agent_name, store, user_id=user_id)
     if not jsonl_path:
         return []
 
@@ -592,7 +596,7 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             return [flowfile]
 
         # Load paginated context (tail-first like load_page)
-        if _ctx_agent == "transcript" or not _ctx_agent:
+        if _ctx_agent == "transcript":
             page = store.load_page(conv_id, limit=_limit, offset=_offset, user_id=user_id)
             if page is None:
                 flowfile.set_content(json.dumps({"error": "Conversation not found"}).encode())
@@ -601,9 +605,20 @@ def _handle_context_ops(self, action, body, store, user_id, flowfile):
             total_count = page["total_count"]
             has_more = page["has_more"]
             diverged = False
+        elif not _ctx_agent or _ctx_agent == "shared":
+            # Shared context — load from shared.jsonl (not transcript)
+            context_data = _ctx_load(conv_id, "")
+            if context_data is None:
+                context_data = []
+            total_count = len(context_data)
+            end = len(context_data) - _offset
+            start = max(0, end - _limit)
+            context_data = context_data[start:end]
+            has_more = start > 0
+            diverged = True
         elif _ctx_agent.startswith("cc_session:"):
             _cc_agent = _ctx_agent[len("cc_session:"):]
-            context_data = _load_cc_session_context(conv_id, _cc_agent, store)
+            context_data = _load_cc_session_context(conv_id, _cc_agent, store, user_id=user_id)
             total_count = len(context_data)
             has_more = False
             diverged = True

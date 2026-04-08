@@ -232,12 +232,31 @@ class ConversationStore:
     # ── Context file helpers ──────────────────────────────────────────
 
     def _append_ctx_file(self, cid: str, agent: str, messages: List[Dict]):
-        """Append messages to an agent's context file."""
+        """Append messages to an agent's context file (dedup by msg_id)."""
         path = self._agent_ctx_path(cid, agent)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # Collect existing msg_ids to avoid duplicates
+        existing_ids = set()
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        mid = json.loads(line).get("msg_id", "")
+                        if mid:
+                            existing_ids.add(mid)
+                    except json.JSONDecodeError:
+                        pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
+                mid = m.get("msg_id", "")
+                if mid and mid in existing_ids:
+                    continue  # skip duplicate
                 f.write(json.dumps(m, ensure_ascii=False) + "\n")
+                if mid:
+                    existing_ids.add(mid)
 
     @staticmethod
     def _prefix_content(content, prefix: str):
@@ -373,12 +392,31 @@ class ConversationStore:
         return m
 
     def _append_shared_ctx(self, cid: str, messages: List[Dict]):
-        """Append transformed messages to the shared context file."""
+        """Append transformed messages to the shared context file (dedup by msg_id)."""
         path = self._shared_ctx_path(cid)
+        # Collect existing msg_ids to avoid duplicates
+        existing_ids = set()
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        mid = json.loads(line).get("msg_id", "")
+                        if mid:
+                            existing_ids.add(mid)
+                    except json.JSONDecodeError:
+                        pass
         with open(path, "a", encoding="utf-8") as f:
             for m in messages:
+                mid = m.get("msg_id", "")
+                if mid and mid in existing_ids:
+                    continue  # skip duplicate
                 xf = self._transform_for_shared(m)
                 f.write(json.dumps(xf, ensure_ascii=False) + "\n")
+                if mid:
+                    existing_ids.add(mid)
 
     def _read_ctx_file(self, path: Path) -> List[Dict]:
         """Read all messages from a context JSONL file."""
@@ -667,13 +705,33 @@ class ConversationStore:
                 self._append_ctx_file(cid, agent_name, all_agent)
 
             # 3. Append to shared context + transformed to other agents' contexts
-            if ctx_public:
-                self._append_shared_ctx(cid, ctx_public)
+            # Shared context = conversation only — NO tool results, NO context injections.
+            # Assistant messages WITH tool_calls: keep the text, strip tool_calls.
+            shared_msgs = []
+            for m in ctx_public:
+                if m.get("role") == "tool":
+                    continue  # tool results never in shared
+                if (m.get("source") or {}).get("type") == "context":
+                    continue  # system/context injections never in shared
+                if m.get("tool_calls"):
+                    # Keep the assistant text, drop tool_calls
+                    m_copy = dict(m)
+                    m_copy.pop("tool_calls", None)
+                    m_copy.pop("tool_call_id", None)
+                    # Only include if there's actual text content
+                    content = m_copy.get("content", "")
+                    if content and str(content).strip():
+                        shared_msgs.append(m_copy)
+                else:
+                    shared_msgs.append(m)
+            if shared_msgs:
+                self._append_shared_ctx(cid, shared_msgs)
                 cache = self._load_cache(cid)
                 for other in cache.get("agents", set()):
                     if other and other != agent_name:
+                        # Only conversation messages — no tool plumbing
                         transformed = [self._transform_for_other_agent(m, other)
-                                       for m in ctx_public]
+                                       for m in shared_msgs]
                         self._append_ctx_file(cid, other, transformed)
 
         self._invalidate_ctx_cache(cid)

@@ -121,11 +121,13 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             _agent_infos = []
             for _a in _all_agents:
                 _info = {"name": _a["name"]}
-                # First line of prompt as description
-                _prompt = _a.get("prompt", "") or ""
-                _first_line = _prompt.split("\n")[0].strip()[:120]
-                if _first_line:
-                    _info["description"] = _first_line
+                # Prefer explicit description, fall back to first line of prompt
+                _desc = (_a.get("description", "") or "").strip()[:120]
+                if not _desc:
+                    _prompt = _a.get("prompt", "") or ""
+                    _desc = _prompt.split("\n")[0].strip()[:120]
+                if _desc:
+                    _info["description"] = _desc
                 _info["llm_service"] = resolve_value(_a.get("llm_service", ""), owner=_uid_for_agents) or ""
                 if _a.get("tools"):
                     _info["tools"] = _a["tools"]

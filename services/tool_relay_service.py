@@ -212,8 +212,8 @@ class ToolRelayService(BaseService):
             _tool = msg.get("tool_name", "")
             # Defensive: double-encoded JSON string
             _decode_ok = True
+            _original = _raw_args
             if isinstance(_raw_args, str):
-                _original = _raw_args
                 try:
                     _raw_args = json.loads(_raw_args)
                 except (json.JSONDecodeError, TypeError):

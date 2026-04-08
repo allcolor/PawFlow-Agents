@@ -214,15 +214,15 @@ class ToolRelayService(BaseService):
                 try:
                     _raw_args = json.loads(_raw_args)
                 except (json.JSONDecodeError, TypeError):
-                    pass
+                    logger.warning("[tool-relay] JSON decode failed for %s args: %s",
+                                   msg.get("tool_name", "?"), str(_raw_args)[:200])
             _tool = msg.get("tool_name", "")
             if not _raw_args or _raw_args == {}:
-                logger.warning("[tool-relay] EMPTY ARGS received for %s (request=%s) raw msg keys: %s",
-                               _tool, request_id, list(msg.keys()))
-                # Don't execute tools with empty args — return empty result
-                # This is a phantom call from CC's incremental update pattern
+                logger.warning("[tool-relay] EMPTY ARGS for %s (request=%s) — returning error",
+                               _tool, request_id)
                 return {"type": "response", "request_id": request_id,
-                        "result": ""}
+                        "result": f"Error: {_tool} called with no arguments. "
+                                  "Required arguments are missing."}
             return self._handle_execute(
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,

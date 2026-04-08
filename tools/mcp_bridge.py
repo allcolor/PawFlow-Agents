@@ -409,18 +409,29 @@ def main():
                     result = str(result)
             elif name == "use_tool":
                 tool_name = args.get("tool_name", "")
-                tool_args = args.get("arguments", {})
+                tool_args_raw = args.get("arguments", {})
+                _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
+                # Unwrap JSON string arguments (CC sometimes double-encodes)
+                tool_args = tool_args_raw
                 for _ in range(3):
                     if not isinstance(tool_args, str):
                         break
                     try:
                         tool_args = json.loads(tool_args)
-                    except (json.JSONDecodeError, TypeError):
+                    except (json.JSONDecodeError, TypeError) as _je:
+                        _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} raw={str(tool_args)[:200]}")
+                        # Don't silently swallow — return error to CC so it can retry
+                        tool_args = {"_decode_error": str(_je), "_raw": str(tool_args_raw)[:500]}
                         break
-                # Skip phantom calls: tool has required args but called with none
+                # If after unwrap we still have a string, something is wrong
+                if isinstance(tool_args, str):
+                    _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
+                    tool_args = {"_decode_error": "arguments is not a dict", "_raw": tool_args[:500]}
+                _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
+                # Empty args after unwrap — error if tool has required params
                 if tool_name and (not tool_args or tool_args == {}) and _has_required_args(tool_name):
-                    _log(f"SKIP phantom {tool_name}()")
-                    result = ""
+                    _log(f"SKIP phantom {tool_name}() — no args after unwrap")
+                    result = f"Error: {tool_name} called with no arguments. Required arguments are missing."
                 else:
                     result = client.request("execute_tool",
                                             tool_name=tool_name,

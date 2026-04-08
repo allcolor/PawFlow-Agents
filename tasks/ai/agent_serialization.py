@@ -197,32 +197,19 @@ class AgentSerializationMixin:
                     _src_label = _src_agent
                     if _src_svc:
                         _src_label += f" via {_src_svc}"
-                    # Special formatting for delegate
-                    if _tc_name == "delegate" and isinstance(_tc_args, dict):
-                        tasks = _tc_args.get("tasks", [])
-                        if tasks and isinstance(tasks, list):
-                            lines = []
-                            for t in tasks:
-                                dst = t.get("agent", "?")
-                                preview = (t.get("message", "") or "")[:80]
-                                lines.append(f"➡ {_src_label} → {dst}" + (f": {preview}" if preview else ""))
-                            _display = "\n".join(lines)
-                        else:
-                            _display = f"🔧 [{_src_label}] {_tc_name}"
-                    else:
-                        # Format args preview
-                        _args_preview = ""
-                        if isinstance(_tc_args, dict) and _tc_args:
-                            _parts = []
-                            for k, v in _tc_args.items():
-                                vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
-                                _parts.append(f"{k}={vs}")
-                            _args_preview = ", ".join(_parts)
-                            if len(_args_preview) > 120:
-                                _args_preview = _args_preview[:120] + "..."
-                        _display = f"🔧 [{_src_label}] {_tc_name}"
-                        if _args_preview:
-                            _display += f"({_args_preview})"
+                    # Format args preview
+                    _args_preview = ""
+                    if isinstance(_tc_args, dict) and _tc_args:
+                        _parts = []
+                        for k, v in _tc_args.items():
+                            vs = v[:60] if isinstance(v, str) else json.dumps(v, ensure_ascii=False)[:60]
+                            _parts.append(f"{k}={vs}")
+                        _args_preview = ", ".join(_parts)
+                        if len(_args_preview) > 120:
+                            _args_preview = _args_preview[:120] + "..."
+                    _display = f"🔧 [{_src_label}] {_tc_name}"
+                    if _args_preview:
+                        _display += f"({_args_preview})"
                     _tc_entry2 = {
                         "type": "tool_call", "role": "assistant",
                         "content": _display,

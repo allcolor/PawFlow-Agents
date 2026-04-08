@@ -379,11 +379,29 @@ class SubAgentExecutor:
                 if not result.provider and client:
                     result.provider = getattr(client, 'provider', '') or ''
 
+                # Emit thinking if present
+                if response.thinking and task.delegate_tc_id:
+                    self._emit("sub_agent_thinking", {
+                        "agent_name": task.agent_name,
+                        "task_id": task.id,
+                        "thinking": response.thinking[:2000],
+                        "delegate_tc_id": task.delegate_tc_id,
+                    })
+
                 # No tool calls → final response
                 if not response.tool_calls:
                     result.response = response.content
                     result.status = "completed"
                     break
+
+                # Emit intermediate text (assistant said something + tool_calls)
+                if response.content and task.delegate_tc_id:
+                    self._emit("sub_agent_text", {
+                        "agent_name": task.agent_name,
+                        "task_id": task.id,
+                        "text": response.content[:1000],
+                        "delegate_tc_id": task.delegate_tc_id,
+                    })
 
                 # Process tool calls
                 agent_source = {"type": "agent", "name": task.agent_name}

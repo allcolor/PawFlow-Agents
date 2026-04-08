@@ -424,6 +424,29 @@ function connectSSE(cid, onReady) {
     updateActivePanel();
   });
 
+  eventSource.addEventListener('sub_agent_thinking', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+      const el = document.createElement('details');
+      el.className = 'delegate-thinking';
+      el.innerHTML = '<summary>\u{1F4AD} Thinking...</summary>'
+        + '<div class="delegate-thinking-content">' + escapeHtml(data.thinking || '') + '</div>';
+      _delegateBlockAppend(data.delegate_tc_id, el);
+    }
+  });
+
+  eventSource.addEventListener('sub_agent_text', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+      const el = document.createElement('div');
+      el.className = 'delegate-text';
+      el.innerHTML = renderMarkdown(data.text || '');
+      _delegateBlockAppend(data.delegate_tc_id, el);
+    }
+  });
+
   eventSource.addEventListener('sub_agent_tool', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);

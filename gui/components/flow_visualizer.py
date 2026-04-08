@@ -130,7 +130,7 @@ class FlowVisualizer:
         self._dot.attr("graph", label=f"{self.flow.name}\n{self.flow.description}")
         self._dot.attr("graph", labelloc="t", fontsize="14")
 
-    def _add_task_node(self, task_id: str, task: Task):
+    def _add_task_node(self, task_id: str, task: Task, show_labels: bool = True):
         """
         Ajouter un nœud de tâche au graphique.
 
@@ -191,20 +191,9 @@ class FlowVisualizer:
         if not GRAPHVIZ_AVAILABLE:
             logger.warning("graphviz non disponible - fichier non généré")
             return
-
-    def render_as_svg(self, show_labels: bool = True) -> Optional[str]:
-        """
-        Sauvegarder le graphique dans un fichier.
-
-        Args:
-            filepath: Chemin de sortie
-            show_labels: Afficher les labels détaillés
-        """
         dot_source = self.render(show_labels)
-
         with open(filepath, "w", encoding="utf-8") as f:
             f.write(dot_source)
-
         logger.info(f"Graphique sauvegardé: {filepath}")
 
     def render_as_svg(self, show_labels: bool = True) -> Optional[str]:

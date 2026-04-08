@@ -563,7 +563,8 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
             _publish_command_result(conversation_id, {
                 "ok": True, "message": "Claude Code credentials saved!"})
 
-        threading.Thread(target=_bg_relay_login, daemon=True, name=f"relay-login-{relay_id}").start()
+        import threading as _threading  # noqa: F811
+        _threading.Thread(target=_bg_relay_login, daemon=True, name=f"relay-login-{relay_id}").start()
 
         flowfile.set_content(json.dumps({
             "ok": True, "message": "Login started — authorize in the browser that opens on the relay."
@@ -699,7 +700,6 @@ def _handle_service_flow(self, action, body, store, user_id, flowfile):
                 })
 
         _conv_id = conversation_id
-        import threading
         threading.Thread(target=_bg_setup, daemon=True, name=f"vnc-login-{session_id}").start()
 
         flowfile.set_content(json.dumps({

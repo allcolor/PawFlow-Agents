@@ -415,7 +415,7 @@ def _render_new_executor_form():
 
             # Allow flow parameters to override max_workers
             _eff_workers = max_workers
-            _fp = flow_dict.get('parameters', {})
+            _fp = flow.parameters if hasattr(flow, 'parameters') else {}
             if cont_params and 'max_workers' in cont_params:
                 _eff_workers = int(cont_params['max_workers'])
             elif 'max_workers' in _fp:

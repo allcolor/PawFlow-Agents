@@ -341,9 +341,9 @@ class SpawnAgentsHandler(ToolHandler):
         """Set the tool_call ID of the delegate call (thread-local)."""
         self._local.delegate_tc_id = tc_id
 
-    def set_available_agents(self, names: List[str]):
-        """Set the list of available agent names (for description injection)."""
-        self._available_agents = list(names)
+    def set_available_agents(self, agents: List):
+        """Set the list of available agents (names or dicts with details)."""
+        self._available_agents = list(agents)
 
     @property
     def name(self) -> str:
@@ -361,10 +361,28 @@ class SpawnAgentsHandler(ToolHandler):
             "Use resume with the task_id to continue the conversation."
         )
         if self._available_agents:
-            base += (
-                f"\n\nAvailable agents: {', '.join(self._available_agents)}. "
-                f"Use these exact names in the 'agent' field."
-            )
+            lines = []
+            for a in self._available_agents:
+                if isinstance(a, dict):
+                    name = a.get("name", "")
+                    desc = a.get("description", "") or ""
+                    svc = a.get("llm_service", "") or ""
+                    tools = a.get("tools") or []
+                    parts = [f"- {name}"]
+                    if desc:
+                        parts[0] += f": {desc}"
+                    extras = []
+                    if svc:
+                        extras.append(f"via {svc}")
+                    if tools:
+                        extras.append(f"tools: {', '.join(tools[:8])}")
+                    if extras:
+                        parts[0] += f" ({', '.join(extras)})"
+                    lines.append(parts[0])
+                else:
+                    lines.append(f"- {a}")
+            base += "\n\nAvailable agents:\n" + "\n".join(lines)
+            base += "\n\nUse these exact names in the 'agent' field."
         return base
 
     @property

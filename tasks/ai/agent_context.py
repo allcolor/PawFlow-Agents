@@ -116,10 +116,22 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         _uid_for_agents = flowfile.get_attribute("http.auth.principal") or ""
         try:
             from core.resource_store import ResourceStore
+            from core.expression import resolve_value
             _all_agents = ResourceStore.instance().list_all("agent", _uid_for_agents)
-            _agent_names = [a["name"] for a in _all_agents]
+            _agent_infos = []
+            for _a in _all_agents:
+                _info = {"name": _a["name"]}
+                # First line of prompt as description
+                _prompt = _a.get("prompt", "") or ""
+                _first_line = _prompt.split("\n")[0].strip()[:120]
+                if _first_line:
+                    _info["description"] = _first_line
+                _info["llm_service"] = resolve_value(_a.get("llm_service", ""), owner=_uid_for_agents) or ""
+                if _a.get("tools"):
+                    _info["tools"] = _a["tools"]
+                _agent_infos.append(_info)
         except Exception:
-            _agent_names = []
+            _agent_infos = []
 
         # Tool result size limit — configurable from LLM service
         _svc_cfg = getattr(resolved_svc, 'config', {}) or {}
@@ -128,8 +140,8 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
         for h in registry.list_tools():
             if isinstance(h, SpawnAgentsHandler):
                 h.set_spawn_deps(client, _client_resolver, _sub_on_event, registry=registry)
-                if _agent_names:
-                    h.set_available_agents(_agent_names)
+                if _agent_infos:
+                    h.set_available_agents(_agent_infos)
 
             if hasattr(h, '_tool_result_max_chars'):
                 h._tool_result_max_chars = _tool_max

@@ -46,7 +46,9 @@ config/ssl/
 
 # ── Runtime state ──────────────────────────────────────────────
 continuous_state.json
-config/storage/
+config/storage/*.json
+config/storage/*.db
+config/storage/*.sqlite
 config/flow_versions/
 
 # ── Data (runtime, generated) ─────────────────────────────────

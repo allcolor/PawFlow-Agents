@@ -317,7 +317,7 @@ class TestToolRegistry(unittest.TestCase):
     def test_get_tool_definitions(self):
         registry = create_default_registry()
         defs = registry.get_tool_definitions()
-        assert len(defs) == 69
+        assert len(defs) == 75
         assert all("name" in d and "description" in d and "parameters" in d for d in defs)
 
     def test_execute_unknown_tool(self):
@@ -394,7 +394,7 @@ class TestAgentLoopTask(unittest.TestCase):
     def test_tool_registry_default(self):
         task = AgentLoopTask({"api_key": "test"})
         registry = task.get_tool_registry()
-        assert len(registry.list_tools()) == 67
+        assert len(registry.list_tools()) == 75
 
     def test_tool_registry_custom(self):
         task = AgentLoopTask({"api_key": "test"})
@@ -419,6 +419,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "system_prompt": "You are helpful.",
         })
         ff = FlowFile(content=b"Hi there")
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         assert len(results) == 1
@@ -455,6 +456,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "provider": "openai",
         })
         ff = FlowFile(content=b"What is 2+2?")
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         assert len(results) == 1
@@ -493,6 +495,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "max_iterations": 3,
         })
         ff = FlowFile(content=b"loop forever")
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         assert results[0].get_attribute("agent.iterations") == "3"
@@ -515,6 +518,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "conversation_attribute": "agent.history",
         })
         ff = FlowFile(content=b"Hello")
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         history_json = results[0].get_attribute("agent.history")
@@ -548,6 +552,7 @@ class TestAgentLoopTask(unittest.TestCase):
         })
         ff = FlowFile(content=b"How are you?")
         ff.set_attribute("agent.history", existing_history)
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         # Verify restored history + new user message were sent
@@ -584,6 +589,7 @@ class TestAgentLoopTask(unittest.TestCase):
 
         task = AgentLoopTask({"api_key": "test-key"})
         ff = FlowFile(content=b"Calculate both")
+        ff.set_attribute("http.auth.principal", "testuser")
         results = task.execute(ff)
 
         assert results[0].get_content() == b"4 and 9"
@@ -626,13 +632,16 @@ class TestAgentLoopTask(unittest.TestCase):
             "tools": custom_tools,
         })
         ff = FlowFile(content=b"What's the weather?")
+        ff.set_attribute("http.auth.principal", "testuser")
         task.execute(ff)
 
         call_args = mock_complete.call_args
         tools = call_args[1].get("tools", call_args[0][4] if len(call_args[0]) > 4 else None)
         assert tools is not None
         tool_names = [t.name for t in tools]
-        assert "weather" in tool_names
+        # Lazy tool discovery: LLM gets meta-tools, custom tools are in registry
+        assert "get_tool_schema" in tool_names
+        assert "use_tool" in tool_names
 
     def test_invalid_tools_json_raises(self):
         task = AgentLoopTask({
@@ -640,6 +649,7 @@ class TestAgentLoopTask(unittest.TestCase):
             "tools": "not valid json",
         })
         ff = FlowFile(content=b"test")
+        ff.set_attribute("http.auth.principal", "testuser")
         with self.assertRaises(ValueError):
             task.execute(ff)
 
@@ -1108,14 +1118,16 @@ class TestAgentLoopWithAgentTools(unittest.TestCase):
             },
         })
         ff = FlowFile(content=b"Hello")
+        ff.set_attribute("http.auth.principal", "test@test.com")
         task.execute(ff)
 
-        # The tool definitions sent to LLM should only have the calc tool
+        # Lazy discovery: LLM gets meta-tools, agent_tools are in registry
         call_args = mock_complete.call_args
         tools = call_args.kwargs.get("tools") or call_args[1].get("tools")
         assert tools is not None
-        assert len(tools) == 1
-        assert tools[0].name == "execute_script"
+        tool_names = [t.name for t in tools]
+        assert "get_tool_schema" in tool_names
+        assert "use_tool" in tool_names
 
     @patch.object(LLMClient, 'complete')
     def test_agent_tools_override_defaults(self, mock_complete):
@@ -1139,15 +1151,15 @@ class TestAgentLoopWithAgentTools(unittest.TestCase):
             },
         })
         ff = FlowFile(content=b"test")
+        ff.set_attribute("http.auth.principal", "test@test.com")
         task.execute(ff)
 
         call_args = mock_complete.call_args
         tools = call_args.kwargs.get("tools") or call_args[1].get("tools")
         names = [t.name for t in tools]
-        assert "my_api" in names
-        # Default builtins should NOT be present
-        assert "execute_script" not in names
-        assert "fetch_http" not in names
+        # Lazy discovery: LLM only gets meta-tools
+        assert "get_tool_schema" in names
+        assert "use_tool" in names
 
     def test_agent_no_agent_tools_uses_defaults(self):
         """Without agent_tools config, default builtins are used."""
@@ -1267,7 +1279,7 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
         ]
-        store.save("cx3", msgs)
+        store.save("cx3", msgs, user_id="testuser")
         store.save_context("cx3", [{"role": "system", "content": "short"}])
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
@@ -1298,7 +1310,7 @@ class TestAgentLoopPersistentContext(unittest.TestCase):
             {"role": "user", "content": "msg3"},
             {"role": "assistant", "content": "resp3"},
         ]
-        store.save("cx4", msgs)
+        store.save("cx4", msgs, user_id="testuser")
         task = self._make_task()
         ff = FlowFile(content=json.dumps({
             "action": "restart_from",
@@ -1394,7 +1406,7 @@ class TestContextActionsAsync(unittest.TestCase):
         store.save("ctx_async1", [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
-        ])
+        ], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "get_context",
             "conversation_id": "ctx_async1",
@@ -1413,7 +1425,7 @@ class TestContextActionsAsync(unittest.TestCase):
         store.save("ctx_edit1", [
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
-        ])
+        ], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "edit_context",
             "conversation_id": "ctx_edit1",
@@ -1431,7 +1443,7 @@ class TestContextActionsAsync(unittest.TestCase):
         """replace_context replaces the entire context via async path."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        store.save("ctx_repl1", [{"role": "user", "content": "old"}])
+        store.save("ctx_repl1", [{"role": "user", "content": "old"}], user_id="testuser")
         new_ctx = [
             {"role": "system", "content": "new sys"},
             {"role": "user", "content": "new msg"},
@@ -1455,7 +1467,7 @@ class TestContextActionsAsync(unittest.TestCase):
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "world"},
-        ])
+        ], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "delete_context_message",
             "conversation_id": "ctx_del1",
@@ -1472,7 +1484,7 @@ class TestContextActionsAsync(unittest.TestCase):
         """add_context_message appends a message via async path."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        store.save("ctx_add1", [{"role": "system", "content": "sys"}])
+        store.save("ctx_add1", [{"role": "system", "content": "sys"}], user_id="testuser")
         ack, data = self._exec_async(self._make_task(), {
             "action": "add_context_message",
             "conversation_id": "ctx_add1",
@@ -1584,22 +1596,7 @@ class TestRandomThought(unittest.TestCase):
         from core.conversation_store import ConversationStore
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
-        store.save("rt1", [{"role": "user", "content": "hi"}])
-        self._setup_agent("rt1")
-        task = self._make_task()
-        body = {
-            "action": "random_thought",
-            "conversation_id": "rt1",
-            "sub": "on",
-            "frequency": "2-3/h",
-        }
-        result = self._exec_rt(task, body)
-    def test_random_thought_on(self):
-        """Action 'on' stores config and creates schedule."""
-        from core.conversation_store import ConversationStore
-        from core.poll_scheduler import PollScheduler
-        store = ConversationStore.instance()
-        store.save("rt1", [{"role": "user", "content": "hi"}])
+        store.save("rt1", [{"role": "user", "content": "hi"}], user_id="testuser")
         self._setup_agent("rt1")
         task = self._make_task()
         body = {"action": "random_thought", "conversation_id": "rt1",
@@ -1621,7 +1618,7 @@ class TestRandomThought(unittest.TestCase):
         from core.conversation_store import ConversationStore
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
-        store.save("rt2", [{"role": "user", "content": "hi"}])
+        store.save("rt2", [{"role": "user", "content": "hi"}], user_id="testuser")
         self._setup_agent("rt2")
         task = self._make_task()
         # Turn on first
@@ -1641,7 +1638,7 @@ class TestRandomThought(unittest.TestCase):
         """Action 'status' returns config and next trigger."""
         from core.conversation_store import ConversationStore
         store = ConversationStore.instance()
-        store.save("rt3", [{"role": "user", "content": "hi"}])
+        store.save("rt3", [{"role": "user", "content": "hi"}], user_id="testuser")
         self._setup_agent("rt3")
         task = self._make_task()
         # Status when not configured
@@ -1663,7 +1660,7 @@ class TestRandomThought(unittest.TestCase):
         from core.conversation_store import ConversationStore
         from core.poll_scheduler import PollScheduler
         store = ConversationStore.instance()
-        store.save("rt4", [{"role": "user", "content": "hi"}])
+        store.save("rt4", [{"role": "user", "content": "hi"}], user_id="testuser")
         self._setup_agent("rt4")
         task = self._make_task()
         result = self._exec_rt(task, {"action": "random_thought",
@@ -1693,7 +1690,7 @@ class TestRandomThought(unittest.TestCase):
             {"role": "system", "content": "sys"},
             {"role": "user", "content": "hi"},
             {"role": "assistant", "content": "hello"},
-        ])
+        ], user_id="testuser")
         task._poll_once()
         # Thought should have been consumed from scheduler (not deferred)
         new_sched = sched.get("rt5::thought::assistant")

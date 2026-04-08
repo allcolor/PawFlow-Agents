@@ -58,7 +58,7 @@ class TestSubConversations:
             {"role": "user", "content": "Start"},
         ], user_id="test_user")
         self.store.append_messages(self.sub_id, [
-            {"role": "assistant", "content": "Done"},
+            {"role": "assistant", "content": "Done", "msg_id": "m1", "ts": 1000},
         ], user_id="test_user")
         loaded = self.store.load(self.sub_id, user_id="test_user")
         assert len(loaded) == 2

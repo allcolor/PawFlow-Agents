@@ -11,10 +11,7 @@ class TestCompleteGemini(unittest.TestCase):
     """Test _complete_gemini_cli with mocked subprocess."""
 
     def setUp(self):
-        self.client = LLMClient(
-            provider="gemini-cli", api_key="test-key",
-            default_model="gemini-2.5-flash", timeout=30,
-        )
+        self.client = LLMClient(provider="gemini-cli", config={"api_key": "test-key", "default_model": "gemini-2.5-flash", "timeout": 30})
 
     @patch("core.llm_providers.gemini_cli.subprocess.run")
     def test_basic_complete(self, mock_run):
@@ -102,10 +99,7 @@ class TestStreamGemini(unittest.TestCase):
     """Test _stream_gemini_cli with mocked subprocess."""
 
     def setUp(self):
-        self.client = LLMClient(
-            provider="gemini-cli", api_key="test-key",
-            default_model="gemini-2.5-flash",
-        )
+        self.client = LLMClient(provider="gemini-cli", config={"api_key": "test-key", "default_model": "gemini-2.5-flash"})
 
     @patch("core.llm_providers.gemini_cli.subprocess.Popen")
     def test_stream_basic(self, mock_popen):

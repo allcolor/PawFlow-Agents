@@ -17,5 +17,5 @@
   "qwen_llm_model": "qwen3.5",
   "claude_code_llm_service": "claude_code_llm_service",
   "summarizer_service": "claude_code_llm_service",
-  "private_gateway_enabled": "true"
+  "private_gateway_enabled": "false"
 }

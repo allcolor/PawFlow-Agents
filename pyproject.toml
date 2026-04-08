@@ -3,18 +3,18 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pyfi2"
-version = "1.0.0"
-description = "Apache NiFi-inspired data workflow framework in Python"
+name = "pawflow"
+version = "1.0.0a1"
+description = "Self-hosted AI agent orchestration platform — Apache NiFi meets Claude Code"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
-    {name = "PyFi2 Team"},
+    {name = "PawFlow Contributors"},
 ]
-keywords = ["dataflow", "workflow", "etl", "nifi", "pipeline"]
+keywords = ["ai", "agents", "orchestration", "nifi", "llm", "claude-code", "workflow"]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 3 - Alpha",
     "Framework :: FastAPI",
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
@@ -28,24 +28,41 @@ classifiers = [
 ]
 
 dependencies = [
+    # Core API
     "fastapi>=0.115.0",
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
     "pydantic>=2.0.0",
-    "streamlit>=1.28.0",
-    "streamlit-flow-component>=0.5.0",
+    # Data processing
     "pandas>=2.0.0",
     "numpy>=1.24.0",
     "pyyaml>=6.0",
+    # Database
     "sqlalchemy>=2.0.0",
+    # HTTP
     "requests>=2.31.0",
     "httpx>=0.25.0",
+    # Authentication
     "pyjwt>=2.8.0",
     "cryptography>=41.0.0",
+    # Git integration
     "GitPython>=3.1.0",
+    # Token counting
+    "tiktoken>=0.5.0",
+    # Document conversion (attachments)
+    "python-docx>=1.1.0",
+    "openpyxl>=3.1.0",
+    "python-pptx>=0.6.23",
+    "striprtf>=0.0.26",
+    "PyPDF2>=3.0.0",
+    "ebooklib>=0.18",
+    # Utilities
     "python-dateutil>=2.8.0",
     "jinja2>=3.1.0",
     "apscheduler>=3.10.0",
+    "diff-match-patch>=20230501",
+    # Code structure graph
+    "networkx>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -61,6 +78,14 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.0.0",
 ]
+scraping = ["scrapling[all]>=0.4.0"]
+embeddings = ["sentence-transformers>=2.2.0"]
+treesitter = [
+    "tree-sitter>=0.23.0",
+    "tree-sitter-python",
+    "tree-sitter-javascript",
+    "tree-sitter-typescript",
+]
 sftp = ["paramiko>=3.3.0"]
 s3 = ["boto3>=1.34.0"]
 kafka = ["kafka-python>=2.0.0"]
@@ -75,17 +100,17 @@ sdk = [
     "httpx>=0.25.0",
 ]
 all = [
-    "pyfi2[sftp,s3,kafka,mqtt,avro,parquet,gcs,azure,postgres,mysql,sdk]",
+    "pawflow[scraping,embeddings,treesitter,sftp,s3,kafka,mqtt,avro,parquet,gcs,azure,postgres,mysql,sdk]",
 ]
 
 [project.scripts]
-pyfi2 = "cli:main"
+pawflow = "cli:main"
 
 [project.urls]
-Homepage = "https://github.com/pyfi2/pyfi2"
-Documentation = "https://github.com/pyfi2/pyfi2/tree/main/docs"
-Repository = "https://github.com/pyfi2/pyfi2"
-Issues = "https://github.com/pyfi2/pyfi2/issues"
+Homepage = "https://github.com/allcolor/PawFlow-Agents"
+Documentation = "https://github.com/allcolor/PawFlow-Agents/tree/main/docs"
+Repository = "https://github.com/allcolor/PawFlow-Agents"
+Issues = "https://github.com/allcolor/PawFlow-Agents/issues"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

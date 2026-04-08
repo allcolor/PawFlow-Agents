@@ -1,7 +1,9 @@
 """Tests for editor features: undo/redo, duplicate, expression tester, flow search."""
 
+import importlib
 import json
 import copy
+import unittest
 from pathlib import Path
 import pytest
 from unittest.mock import patch, MagicMock
@@ -404,6 +406,15 @@ class TestAnnotations:
 # ============================================================================
 
 
+_has_streamlit_flow = False
+try:
+    import streamlit_flow
+    _has_streamlit_flow = True
+except ImportError:
+    pass
+
+
+@pytest.mark.skipif(not _has_streamlit_flow, reason="streamlit_flow not installed")
 class TestCanvasOptions:
     """Test canvas configuration options (minimap, controls, context menus)."""
 
@@ -427,6 +438,9 @@ class TestCanvasOptions:
         session = {"canvas_show_controls": False}
         assert session["canvas_show_controls"] is False
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("streamlit_flow"), "streamlit_flow not installed"
+    )
     def test_flow_canvas_node_is_draggable(self):
         """FlowCanvas nodes should be draggable by default."""
         from gui.components.flow_canvas import FlowCanvas
@@ -467,6 +481,7 @@ class TestCanvasOptions:
 # ============================================================================
 
 
+@pytest.mark.skipif(not _has_streamlit_flow, reason="streamlit_flow not installed")
 class TestProcessGroups:
     """Test process group management."""
 
@@ -836,6 +851,7 @@ class TestExecutionTimeline:
 # ============================================================================
 
 
+@pytest.mark.skipif(not _has_streamlit_flow, reason="streamlit_flow not installed")
 class TestDragAndDrop:
     """Tests for in-canvas drag & drop task palette."""
 

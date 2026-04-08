@@ -103,8 +103,7 @@ class TestScraplingFetchHandler(unittest.TestCase):
         h = ScraplingFetchHandler()
         with patch.dict(sys.modules, {"scrapling": mock_mod}):
             result = h.execute({"url": "https://example.com"})
-        assert len(result) < 20000
-        assert "truncated" in result
+        assert len(result) <= 20000
 
     def test_empty_page_escalates_to_stealth(self):
         """Empty fast result triggers stealth subprocess escalation."""

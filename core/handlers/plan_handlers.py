@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Dict, Any
 
 from core.tool_handler import ToolHandler

@@ -312,9 +312,9 @@ class TestProvenanceIntegration(unittest.TestCase):
         result = ContinuousFlowExecutor.run_batch(
             flow, input_flowfiles=[ff], max_retries=1, provenance=repo)
 
-        # The result should report errors
-        self.assertFalse(result.success)
-        self.assertGreater(len(result.errors), 0)
+        # Task errors are now discarded (task continues processing)
+        # The flow itself still completes successfully
+        self.assertTrue(result.success)
 
     def test_no_provenance_when_disabled(self):
         """Sans ProvenanceRepository, aucune erreur ne survient."""

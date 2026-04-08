@@ -1,14 +1,10 @@
-# PyFi2 - Dependencies
+# PawFlow — Dependencies
 
 # Core API
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
 python-multipart>=0.0.9
 pydantic>=2.0.0
-
-# GUI
-streamlit>=1.28.0
-streamlit-flow-component>=0.5.0
 
 # Data processing
 pandas>=2.0.0
@@ -21,9 +17,6 @@ sqlalchemy>=2.0.0
 # HTTP
 requests>=2.31.0
 httpx>=0.25.0
-
-# Web scraping (agent tools)
-scrapling[all]>=0.4.0
 
 # Authentication
 pyjwt>=2.8.0
@@ -43,54 +36,32 @@ striprtf>=0.0.26
 PyPDF2>=3.0.0
 ebooklib>=0.18
 
-# Terminal (Windows ConPTY)
-pywinpty>=2.0.0; sys_platform == "win32"
-
-# Embeddings (local semantic search)
-sentence-transformers>=2.2.0
-
-# Code structure graph (graphify integration — AST extraction)
-networkx>=3.0
-tree-sitter>=0.23.0
-tree-sitter-python
-tree-sitter-javascript
-tree-sitter-typescript
-tree-sitter-go
-tree-sitter-rust
-tree-sitter-java
-tree-sitter-c
-tree-sitter-cpp
-tree-sitter-ruby
-tree-sitter-c-sharp
-tree-sitter-kotlin
-tree-sitter-scala
-tree-sitter-php
-tree-sitter-swift
-tree-sitter-lua
-tree-sitter-zig
-tree-sitter-powershell
-tree-sitter-elixir
-
 # Utilities
 python-dateutil>=2.8.0
 jinja2>=3.1.0
 apscheduler>=3.10.0
+diff-match-patch>=20230501
 
-# Testing
-pytest>=7.4.0
-pytest-cov>=4.1.0
-pytest-asyncio>=0.21.0
+# Web scraping (agent tools — optional but useful)
+scrapling[all]>=0.4.0
 
-# Code quality
-mypy>=1.7.0
-black>=23.0.0
-isort>=5.12.0
+# Code structure graph
+networkx>=3.0
 
-# Documentation
-mkdocs>=1.5.0
-mkdocs-material>=9.0.0
+# GUI (optional — for the flow editor)
+# streamlit>=1.28.0
+# streamlit-flow-component>=0.5.0
 
-# Optional — uncomment as needed
+# Embeddings (optional — for semantic memory)
+# sentence-transformers>=2.2.0
+
+# Tree-sitter parsers (optional — for code graph)
+# tree-sitter>=0.23.0
+# tree-sitter-python
+# tree-sitter-javascript
+# tree-sitter-typescript
+
+# Optional connectors — uncomment as needed
 # paramiko>=3.3.0           # SFTP tasks
 # boto3>=1.34.0             # S3 tasks
 # kafka-python>=2.0.0       # Kafka tasks
@@ -101,5 +72,3 @@ mkdocs-material>=9.0.0
 # azure-storage-blob>=12.17.0   # Azure tasks
 # psycopg2-binary>=2.9.0   # PostgreSQL storage
 # pymysql>=1.1.0            # MySQL storage
-# pulsar-client>=3.3.0      # Pulsar messaging
-diff-match-patch>=20230501

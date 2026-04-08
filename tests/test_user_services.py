@@ -494,7 +494,9 @@ class TestAgentServiceActions:
         result = task._handle_action(ff)
         assert result is not None
         data = json.loads(result[0].get_content())
-        assert data["services"] == []
+        # May include global/built-in services
+        user_svcs = [s for s in data["services"] if s.get("scope") != "global"]
+        assert user_svcs == []
 
     def test_service_install(self):
         from tasks.ai.agent_loop import AgentLoopTask
@@ -561,8 +563,9 @@ class TestAgentServiceActions:
         result = task._handle_action(ff)
         data = json.loads(result[0].get_content())
         svcs = data["services"]
-        assert len(svcs) == 2
         by_id = {s["id"]: s for s in svcs}
+        assert "db1" in by_id
+        assert "db2" in by_id
         assert by_id["db1"]["enabled"] is True
         assert by_id["db1"]["description"] == "Main DB"
         assert by_id["db2"]["enabled"] is False

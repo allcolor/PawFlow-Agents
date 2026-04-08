@@ -148,7 +148,7 @@ class TestGlobalScopeBlocked:
         result = task._handle_action(ff)
         assert result is not None
         body = json.loads(result[0].get_content())
-        assert body.get("ok") is True
+        assert body.get("status") == "accepted"
         store.delete(conv_id)
 
 

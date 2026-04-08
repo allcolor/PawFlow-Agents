@@ -507,8 +507,7 @@ class TestParameterContextRegression:
         from core.expression import resolve_expression
         result = resolve_expression(
             "file=${filename} param=${env}",
-            attributes={"filename": "test.csv"},
-            parameters={"env": "prod"},
+            parameters={"filename": "test.csv", "env": "prod"},
         )
         assert result == "file=test.csv param=prod"
 

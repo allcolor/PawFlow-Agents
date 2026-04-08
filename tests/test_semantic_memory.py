@@ -362,7 +362,7 @@ class TestLLMClientEmbed:
 
     def test_mock_http_response_openai(self):
         from core.llm_client import LLMClient
-        client = LLMClient(provider="openai", api_key="test-key")
+        client = LLMClient(provider="openai", config={"api_key": "test-key"})
         mock_response = {
             "data": [
                 {"embedding": [0.1, 0.2, 0.3]},
@@ -376,13 +376,13 @@ class TestLLMClientEmbed:
 
     def test_error_for_non_openai_provider(self):
         from core.llm_client import LLMClient
-        client = LLMClient(provider="anthropic", api_key="test-key")
+        client = LLMClient(provider="anthropic", config={"api_key": "test-key"})
         with pytest.raises((ValueError, NotImplementedError, Exception)):
             client.embed(["hello"])
 
     def test_batching_large_input(self):
         from core.llm_client import LLMClient
-        client = LLMClient(provider="openai", api_key="test-key")
+        client = LLMClient(provider="openai", config={"api_key": "test-key"})
 
         def mock_post(path, body, headers=None):
             texts = body.get("input", [])

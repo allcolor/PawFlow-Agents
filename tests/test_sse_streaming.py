@@ -292,8 +292,9 @@ class TestAgentLoopStreaming(unittest.TestCase):
         })
         task._streaming_agent_loop = MagicMock()
 
-        ff = FlowFile(content=json.dumps({"message": "hello"}).encode())
-        results = task._execute_streaming(ff)
+        ff = FlowFile(content=json.dumps({"message": "hello", "conversation_id": "test-conv-123"}).encode())
+        with patch.object(ConversationStore.instance(), 'message_count', return_value=0):
+            results = task._execute_streaming(ff)
 
         assert len(results) == 1
         body = json.loads(results[0].get_content().decode())
@@ -343,7 +344,13 @@ class TestAgentLoopStreaming(unittest.TestCase):
         })
         task._streaming_agent_loop = MagicMock()
 
-        ff = FlowFile(content=b'{"message":"hi"}')
+        # Create conversation so message_count can find it
+        from core.conversation_store import ConversationStore
+        ConversationStore.reset()
+        store = ConversationStore.instance()
+        store.save("test-conv", [{"role": "user", "content": "hi"}], user_id="testuser")
+
+        ff = FlowFile(content=json.dumps({"message": "hi", "conversation_id": "test-conv", "target_agent": "test-agent"}).encode())
         task._execute_streaming(ff)
 
         writer.close()
@@ -499,7 +506,7 @@ class TestLLMClientCompleteStream(unittest.TestCase):
 
     def test_complete_stream_method_exists(self):
         from core.llm_client import LLMClient
-        client = LLMClient(provider="openai", api_key="test")
+        client = LLMClient(provider="openai", config={"api_key": "test"})
         assert hasattr(client, "complete_stream")
 
     def test_complete_stream_signature(self):
@@ -552,7 +559,7 @@ class TestStreamingFlowStructure(unittest.TestCase):
         path = Path("flows/pawflow_agent.json")
         data = json.loads(path.read_text(encoding="utf-8"))
         froms = [r["from"] for r in data["relations"]]
-        assert froms.count("http_in") == 7
+        assert froms.count("http_in") == 8
 
     def test_chat_ui_has_sse_path(self):
         path = Path("flows/pawflow_agent.json")

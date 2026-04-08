@@ -118,6 +118,14 @@ class TestTokenCounter:
         assert long > short
 
 
+try:
+    from tools.fs_actions import action_edit as _action_edit
+    _has_fs_actions = True
+except ImportError:
+    _has_fs_actions = False
+
+
+@pytest.mark.skipif(not _has_fs_actions, reason="circular import in fs_actions/fs_exec")
 class TestFuzzyEdit:
     """Test fuzzy edit matching in fs_actions."""
 

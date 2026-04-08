@@ -149,10 +149,11 @@ class TestMCPCRUD:
         assert result["auth"] == {}  # default
         assert result["discovered_tools"] == []  # default
 
-    def test_create_mcp_missing_url(self):
+    def test_create_mcp_no_url_allowed(self):
+        """MCP servers can be created without URL (command-based servers)."""
         store = ResourceStore.instance()
-        with pytest.raises(ValueError, match="Missing required field"):
-            store.create("mcp", "m1", "u1", {"auth": {}})
+        result = store.create("mcp", "m1", "u1", {"auth": {}})
+        assert result["name"] == "m1"
 
 
 class TestInvalidType:

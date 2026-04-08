@@ -91,6 +91,12 @@ class OAuthCallbackTask(BaseTask):
         if service is None:
             return [self._error_response(flowfile, 500, "OAuth service not configured")]
 
+        # Extract code and state from query parameters
+        query = flowfile.get_attribute("http.query") or ""
+        params = dict(urllib.parse.parse_qsl(query))
+        code = params.get("code", "")
+        state = params.get("state", "")
+
         # PawFlow auth gateway: delegate to gateway for code exchange + provisioning
         if getattr(service, 'provider', '') == 'pawflow':
             return self._handle_pawflow_callback(flowfile, service)

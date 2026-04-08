@@ -514,9 +514,9 @@ class TestSharedLLMClient:
 
     def test_default_urls(self):
         from core.llm_client import LLMClient
-        client = LLMClient(provider="openai", api_key="x")
+        client = LLMClient(provider="openai", config={"api_key": "x"})
         assert "openai" in client.base_url
-        client2 = LLMClient(provider="anthropic", api_key="x")
+        client2 = LLMClient(provider="anthropic", config={"api_key": "x"})
         assert "anthropic" in client2.base_url
 
     def test_llm_service_still_works(self):

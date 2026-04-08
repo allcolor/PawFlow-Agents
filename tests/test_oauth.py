@@ -260,8 +260,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
             "redirect_uri": "http://localhost/cb",
         })
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "auth-code-123")
-        ff.set_attribute("http.query.state", "invalid-state")
+        ff.set_attribute("http.query", "code=auth-code-123&state=invalid-state")
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "403"
 
@@ -292,8 +291,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         task.config["oauth_service_id"] = "oauth"
 
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "auth-code-123")
-        ff.set_attribute("http.query.state", state)
+        ff.set_attribute("http.query", f"code=auth-code-123&state={state}")
 
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "302"
@@ -322,8 +320,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         task.config["oauth_service_id"] = "oauth"
 
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "code")
-        ff.set_attribute("http.query.state", state)
+        ff.set_attribute("http.query", f"code=code&state={state}")
 
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "502"
@@ -347,8 +344,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         task.config["oauth_service_id"] = "oauth"
 
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "code")
-        ff.set_attribute("http.query.state", state)
+        ff.set_attribute("http.query", f"code=code&state={state}")
 
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "502"
@@ -380,8 +376,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         task.config["oauth_service_id"] = "oauth"
 
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "auth-code-relay")
-        ff.set_attribute("http.query.state", state)
+        ff.set_attribute("http.query", f"code=auth-code-relay&state={state}")
 
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "302"
@@ -420,8 +415,7 @@ class TestOAuthCallbackTask(unittest.TestCase):
         task.config["oauth_service_id"] = "oauth"
 
         ff = FlowFile(content=b"")
-        ff.set_attribute("http.query.code", "gh-code")
-        ff.set_attribute("http.query.state", state)
+        ff.set_attribute("http.query", f"code=gh-code&state={state}")
 
         results = task.execute(ff)
         assert results[0].get_attribute("http.response.status") == "302"

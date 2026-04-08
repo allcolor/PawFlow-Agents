@@ -1,17 +1,19 @@
-version: "3.8"
-
 services:
-  api:
+  pawflow:
     build: .
     ports:
-      - "8000:8000"
+      - "${PAWFLOW_PORT}:8000"
     environment:
-      - PAWFLOW_CORS_ORIGINS=http://localhost:8501,http://localhost:8000
-      - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY:-changeme}
-      - PAWFLOW_RATE_LIMIT=true
+      - PAWFLOW_CORS_ORIGINS=${PAWFLOW_CORS_ORIGINS}
+      - PAWFLOW_SECRET_KEY=${PAWFLOW_SECRET_KEY}
+      - PAWFLOW_AUTH_ENABLED=${PAWFLOW_AUTH_ENABLED}
+      - PAWFLOW_RATE_LIMIT=${PAWFLOW_RATE_LIMIT}
+      - PAWFLOW_RATE_LIMIT_MAX=${PAWFLOW_RATE_LIMIT_MAX}
+      - PAWFLOW_MAX_BODY_SIZE=${PAWFLOW_MAX_BODY_SIZE}
     volumes:
       - ./flows:/app/flows
       - ./config:/app/config
+      - ./data:/app/data
       - ./plugins:/app/plugins
     restart: unless-stopped
     healthcheck:
@@ -20,17 +22,18 @@ services:
       timeout: 5s
       retries: 3
 
-  gui:
-    build: .
-    command: ["python", "-m", "streamlit", "run", "gui/main.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
-    ports:
-      - "8501:8501"
+  # Optional: relay container for sandboxed tool execution
+  relay:
+    build: docker/relay-dev
+    volumes:
+      - relay-workspace:/workspace
     environment:
-      - PAWFLOW_API_URL=http://api:8000
+      - PAWFLOW_SERVER=ws://pawflow:8000/ws/relay
     depends_on:
-      api:
+      pawflow:
         condition: service_healthy
-    restart: unless-stopped
+    profiles:
+      - relay
 
   # Optional: PostgreSQL backend
   postgres:
@@ -40,7 +43,7 @@ services:
     environment:
       - POSTGRES_DB=pawflow
       - POSTGRES_USER=pawflow
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-pawflowsecret}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
     profiles:
@@ -48,3 +51,4 @@ services:
 
 volumes:
   pgdata:
+  relay-workspace:

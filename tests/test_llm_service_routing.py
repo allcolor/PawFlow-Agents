@@ -27,9 +27,10 @@ class TestLLMConnectionServiceCapacity(unittest.TestCase):
     def test_get_client_returns_llm_client(self):
         from services.llm_connection import LLMConnectionService
         svc = LLMConnectionService.__new__(LLMConnectionService)
-        svc._client = LLMClient(provider="openai", api_key="test")
+        svc._client = LLMClient(provider="openai", config={"api_key": "test"})
         svc._semaphore = None
         svc._max_concurrent = 0
+        svc.config = {"api_key": "test"}
         client = svc.get_client()
         self.assertIsInstance(client, LLMClient)
         self.assertEqual(client.api_key, "test")

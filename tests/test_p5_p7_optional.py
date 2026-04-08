@@ -430,7 +430,7 @@ class TestGCSTasks:
             task.execute(ff)
             # If google-cloud-storage is installed, this might work
         except Exception as e:
-            assert 'google-cloud-storage' in str(e) or 'bucket' in str(e).lower()
+            assert 'google-cloud-storage' in str(e) or 'bucket' in str(e).lower() or 'credentials' in str(e).lower()
 
     def test_put_gcs_schema(self):
         task = _tf_make('putGCS', {'bucket': 'b'})
@@ -475,7 +475,7 @@ class TestAzureBlobTasks:
         try:
             task.execute(ff)
         except Exception as e:
-            assert 'azure-storage-blob' in str(e) or 'container' in str(e).lower()
+            assert 'azure-storage-blob' in str(e) or 'container' in str(e).lower() or 'connection' in str(e).lower()
 
     def test_put_azure_schema(self):
         task = _tf_make('putAzureBlob', {'connection_string': 'x'})

@@ -19,8 +19,7 @@ RUN groupadd -r pawflow && useradd -r -g pawflow -d /app -s /sbin/nologin pawflo
 
 USER pawflow
 
-# Expose ports: API (8000) + GUI (8501)
-EXPOSE 8000 8501
+EXPOSE 8000
 
 # Default: run API server
 CMD ["uvicorn", "api.app:app", "--host", "0.0.0.0", "--port", "8000"]

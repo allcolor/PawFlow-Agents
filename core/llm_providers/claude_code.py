@@ -442,11 +442,36 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
             if not new_msgs:
                 return ""
 
+            # Filter: only messages from OTHER agents or user→other agent
+            # Messages from this agent or user→this agent are already in CC's session
+            filtered = []
+            for m in new_msgs:
+                src = m.get("source") or {}
+                src_type = src.get("type", "")
+                src_name = src.get("name", "")
+                # Skip our own agent's messages (CC already has them)
+                if src_type == "agent" and src_name == agent_name:
+                    continue
+                # Skip user messages directed at this agent (CC already has them)
+                if src_type == "user":
+                    target = src.get("target_agent", "")
+                    if not target or target == agent_name:
+                        continue
+                # Skip tool results and context injections
+                if m.get("role") == "tool" or m.get("tool_calls"):
+                    continue
+                if src_type == "context":
+                    continue
+                filtered.append(m)
+
+            if not filtered:
+                return ""
+
             # Format as XML block
             lines = ["<catch_up_context>",
                      "New messages from other participants since your last response:"]
             count = 0
-            for m in new_msgs:
+            for m in filtered:
                 content = m.get("content", "")
                 if not content or not isinstance(content, str):
                     continue

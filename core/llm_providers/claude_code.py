@@ -545,8 +545,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                                      mcp_config_path=_mcp_arg,
                                      workdir=workdir)
 
-        logger.info("claude-code stream: cwd=%s, containerize=%s",
-                     workdir, _containerize)
+        logger.info("claude-code stream: cwd=%s, containerize=%s, cmd=%s",
+                     workdir, _containerize, " ".join(str(c) for c in cmd[:20]))
+        if session_id:
+            # Verify session file exists at expected path
+            _expected_session_file = os.path.join(workdir, "projects", "-workspace", f"{session_id}.jsonl")
+            _exists = os.path.exists(_expected_session_file)
+            _size = os.path.getsize(_expected_session_file) if _exists else 0
+            logger.info("claude-code RESUME: session_id=%s file_exists=%s file_size=%d path=%s",
+                         session_id, _exists, _size, _expected_session_file)
 
         # Track pool container for cleanup
         self._pool_container_name = None
@@ -839,6 +846,15 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
                     # _prepare_agent_context (which checks for session to skip compact).
                     sid = event.get("session_id", "")
                     if sid and conv_id:
+                        if session_id and sid != session_id:
+                            logger.warning(
+                                "[claude-code] SESSION MISMATCH: sent --resume %s but CC returned %s "
+                                "(resume FAILED — CC created new session)",
+                                session_id[:12], sid[:12])
+                        elif session_id and sid == session_id:
+                            logger.info("[claude-code] RESUME OK: session %s reused", sid[:12])
+                        else:
+                            logger.info("[claude-code] NEW session: %s", sid[:12])
                         try:
                             from core.conversation_store import ConversationStore
                             ConversationStore.instance().set_extra(

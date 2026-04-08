@@ -564,8 +564,10 @@ class ClaudeCodeSessionMixin:
         When containerize=True, uses the pool (docker exec) or falls back
         to docker run if pool is disabled.
         """
-        claude_args = [
-            "-p",
+        claude_args = ["-p"]
+        if session_id:
+            claude_args.extend(["--resume", session_id])
+        claude_args.extend([
             "--input-format", "stream-json",
             "--output-format", "stream-json",
             "--model", model or "sonnet",
@@ -573,15 +575,14 @@ class ClaudeCodeSessionMixin:
             "--max-turns", "1000",
             "--verbose",
             "--strict-mcp-config",
-            "--disallowedTools", self._DISALLOWED_BUILTIN_TOOLS,
-        ]
+        ])
         _effort = self._cfg("effort", "")
         if _effort:
             claude_args.extend(["--effort", _effort])
         if mcp_config_path:
             claude_args.extend(["--mcp-config", mcp_config_path])
-        if session_id:
-            claude_args.extend(["--resume", session_id])
+        # disallowedTools LAST — variadic option, must not consume other flags
+        claude_args.extend(["--disallowedTools", self._DISALLOWED_BUILTIN_TOOLS])
 
         if not getattr(self, 'containerize', False):
             return [self.claude_binary] + claude_args

@@ -413,6 +413,7 @@ def main():
                 _log(f"USE_TOOL {tool_name} raw_type={type(tool_args_raw).__name__} raw={json.dumps(tool_args_raw, default=str)[:300]}")
                 # Unwrap JSON string arguments (CC sometimes double-encodes)
                 tool_args = tool_args_raw
+                _decode_failed = False
                 for _ in range(3):
                     if not isinstance(tool_args, str):
                         break
@@ -420,19 +421,19 @@ def main():
                         tool_args = json.loads(tool_args)
                     except (json.JSONDecodeError, TypeError) as _je:
                         _log(f"USE_TOOL {tool_name} JSON decode FAILED: {_je} raw={str(tool_args)[:200]}")
-                        # Don't silently swallow — return error to CC so it can retry
-                        tool_args = {"_decode_error": str(_je), "_raw": str(tool_args_raw)[:500]}
+                        _decode_failed = True
                         break
-                # If after unwrap we still have a string, something is wrong
-                if isinstance(tool_args, str):
+                # Decode failed on non-empty input → error (don't silently send {})
+                if _decode_failed and tool_args_raw and tool_args_raw != {} and tool_args_raw != "{}":
+                    result = (f"Error: failed to decode arguments for {tool_name}. "
+                              f"Arguments must be a JSON object, got: {str(tool_args_raw)[:200]}")
+                # Still a string after unwrap → same problem
+                elif isinstance(tool_args, str):
                     _log(f"USE_TOOL {tool_name} args still string after unwrap: {tool_args[:200]}")
-                    tool_args = {"_decode_error": "arguments is not a dict", "_raw": tool_args[:500]}
-                _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
-                # Empty args after unwrap — error if tool has required params
-                if tool_name and (not tool_args or tool_args == {}) and _has_required_args(tool_name):
-                    _log(f"SKIP phantom {tool_name}() — no args after unwrap")
-                    result = f"Error: {tool_name} called with no arguments. Required arguments are missing."
+                    result = (f"Error: arguments for {tool_name} must be a JSON object, "
+                              f"got string: {tool_args[:200]}")
                 else:
+                    _log(f"USE_TOOL {tool_name} final_type={type(tool_args).__name__} final={json.dumps(tool_args, default=str)[:300]}")
                     result = client.request("execute_tool",
                                             tool_name=tool_name,
                                             arguments=tool_args)

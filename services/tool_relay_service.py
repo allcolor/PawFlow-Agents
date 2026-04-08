@@ -209,20 +209,22 @@ class ToolRelayService(BaseService):
                                            conversation_id=conversation_id)
         elif method == "execute_tool":
             _raw_args = msg.get("arguments", {})
+            _tool = msg.get("tool_name", "")
             # Defensive: double-encoded JSON string
+            _decode_ok = True
             if isinstance(_raw_args, str):
+                _original = _raw_args
                 try:
                     _raw_args = json.loads(_raw_args)
                 except (json.JSONDecodeError, TypeError):
                     logger.warning("[tool-relay] JSON decode failed for %s args: %s",
-                                   msg.get("tool_name", "?"), str(_raw_args)[:200])
-            _tool = msg.get("tool_name", "")
-            if not _raw_args or _raw_args == {}:
-                logger.warning("[tool-relay] EMPTY ARGS for %s (request=%s) — returning error",
-                               _tool, request_id)
+                                   _tool, str(_original)[:200])
+                    _decode_ok = False
+            # Decode failed on non-empty input → error (don't silently send {})
+            if not _decode_ok and _original and _original != "{}" :
                 return {"type": "response", "request_id": request_id,
-                        "result": f"Error: {_tool} called with no arguments. "
-                                  "Required arguments are missing."}
+                        "result": f"Error: failed to decode arguments for {_tool}. "
+                                  f"Got: {str(_original)[:200]}"}
             return self._handle_execute(
                 request_id, _tool, _raw_args,
                 user_id, conversation_id, agent_name,

@@ -172,9 +172,16 @@ class ToolRegistry:
                     "edit_mode": "operation",  # NotebookEdit
                     "filesystem": "source",   # Read, Grep, Glob → "source" param
                 }
+                # Only apply alias if the handler's schema does NOT already
+                # have the CC name as a known property (e.g. edit has "filesystem"
+                # natively — don't rename it to "source")
+                _schema_props = set()
+                if hasattr(handler, 'parameters_schema'):
+                    _schema_props = set((handler.parameters_schema.get("properties") or {}).keys())
                 for _cc_name, _pf_name in _CC_ALIASES.items():
                     if _cc_name in args and _pf_name not in args:
-                        args[_pf_name] = args.pop(_cc_name)
+                        if _cc_name not in _schema_props:
+                            args[_pf_name] = args.pop(_cc_name)
             # Validate: reject unknown arguments so the LLM learns
             if isinstance(args, dict) and hasattr(handler, 'parameters_schema'):
                 _schema = handler.parameters_schema

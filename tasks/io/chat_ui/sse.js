@@ -352,59 +352,141 @@ function connectSSE(cid, onReady) {
     }
   });
 
-  // ── Delegate blocks ──────────────────────────────────────────
-  const _delegateBlocks = {};
+  // ── Delegate blocks (grouped) ─────────────────────────────────
+  // _delegateGroups[delegateTcId] = { el, content, summary, total, doneCount, subBlocks: {} }
+  // _delegateSubBlocks[taskId] = { el, content, summary, agent, taskId }
+  const _delegateGroups = {};
+  const _delegateSubBlocks = {};
 
-  function _getDelegateBlock(delegateTcId, srcAgent, dstAgent, llmService, message) {
+  function _getOrCreateGroup(delegateTcId, srcAgent, total) {
     if (!delegateTcId) return null;
-    if (_delegateBlocks[delegateTcId]) return _delegateBlocks[delegateTcId];
+    if (_delegateGroups[delegateTcId]) return _delegateGroups[delegateTcId];
     const details = document.createElement('details');
-    details.className = 'msg delegate-block';
+    details.className = 'msg delegate-block delegate-group';
     details.setAttribute('open', '');
     const summary = document.createElement('summary');
     summary.className = 'delegate-header';
-    const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
-    summary.innerHTML = '\u{1F500} <span class="delegate-src">' + escapeHtml(displayAgentName(srcAgent))
-      + '</span> \u2192 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
-      + svcLabel
-      + ' <span class="delegate-status">\u25cf running</span>';
+    const label = total > 1
+      ? '\u{1F500} ' + escapeHtml(displayAgentName(srcAgent)) + ' \u2192 Delegate (' + total + ' agents)'
+      : '\u{1F500} ' + escapeHtml(displayAgentName(srcAgent));
+    summary.innerHTML = label + ' <span class="delegate-status">\u25cf running</span>';
     details.appendChild(summary);
     const content = document.createElement('div');
     content.className = 'delegate-body';
     details.appendChild(content);
-    // Show the message from parent agent
-    if (message) {
-      const msgEl = document.createElement('div');
-      msgEl.className = 'delegate-message';
-      msgEl.innerHTML = '\u{1F4E9} ' + renderMarkdown(message);
-      content.appendChild(msgEl);
-    }
-    // Insert into DOM
     const container = document.getElementById('messages');
     const typingEl = document.getElementById('typing');
     if (typingEl) container.insertBefore(details, typingEl);
     else container.appendChild(details);
     scrollBottom();
-    _delegateBlocks[delegateTcId] = {el: details, content: content, summary: summary, agent: dstAgent, srcAgent: srcAgent};
-    return _delegateBlocks[delegateTcId];
+    _delegateGroups[delegateTcId] = { el: details, content, summary, total: total || 1, doneCount: 0, subBlocks: {} };
+    return _delegateGroups[delegateTcId];
   }
 
-  function _delegateBlockAppend(delegateTcId, childEl) {
-    const block = _delegateBlocks[delegateTcId];
+  function _getOrCreateSubBlock(delegateTcId, taskId, dstAgent, llmService, message) {
+    if (_delegateSubBlocks[taskId]) return _delegateSubBlocks[taskId];
+    // Ensure group exists (fallback for missing delegate_group_start)
+    let group = _delegateGroups[delegateTcId];
+    if (!group) group = _getOrCreateGroup(delegateTcId, '', 1);
+    const isMulti = group.total > 1;
+    // For single-agent, update the group header with arrow
+    if (!isMulti && dstAgent) {
+      const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+      group.summary.innerHTML = '\u{1F500} <span class="delegate-src">' + escapeHtml(displayAgentName(group.summary.dataset.src || ''))
+        + '</span> \u2192 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
+        + svcLabel + ' <span class="delegate-status">\u25cf running</span>';
+    }
+    // Create sub-block (details for multi, div for single)
+    let subEl, subContent, subSummary;
+    if (isMulti) {
+      subEl = document.createElement('details');
+      subEl.className = 'delegate-sub-block';
+      subEl.setAttribute('open', '');
+      subSummary = document.createElement('summary');
+      subSummary.className = 'delegate-sub-header';
+      const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+      subSummary.innerHTML = '\u25b8 <span class="delegate-dst">' + escapeHtml(displayAgentName(dstAgent)) + '</span>'
+        + svcLabel
+        + ' <span class="delegate-sub-status">\u25cf running</span>'
+        + ' <button class="delegate-cancel-btn" data-task-id="' + escapeHtml(taskId) + '" title="Cancel this agent">\u2715</button>';
+      subEl.appendChild(subSummary);
+      subContent = document.createElement('div');
+      subContent.className = 'delegate-sub-body';
+      subEl.appendChild(subContent);
+    } else {
+      // Single agent — content goes directly in the group body
+      subEl = group.el;
+      subContent = group.content;
+      subSummary = group.summary;
+      // Add cancel button to single-agent header
+      if (!subSummary.querySelector('.delegate-cancel-btn')) {
+        const btn = document.createElement('button');
+        btn.className = 'delegate-cancel-btn';
+        btn.dataset.taskId = taskId;
+        btn.title = 'Cancel this agent';
+        btn.textContent = '\u2715';
+        subSummary.appendChild(btn);
+      }
+    }
+    // Show the message from parent agent
+    if (message) {
+      const msgEl = document.createElement('div');
+      msgEl.className = 'delegate-message';
+      msgEl.innerHTML = '\u{1F4E9} ' + renderMarkdown(message);
+      subContent.appendChild(msgEl);
+    }
+    if (isMulti) {
+      group.content.appendChild(subEl);
+      scrollBottom();
+    }
+    const block = { el: subEl, content: subContent, summary: subSummary, agent: dstAgent, taskId };
+    _delegateSubBlocks[taskId] = block;
+    group.subBlocks[taskId] = block;
+    return block;
+  }
+
+  function _subBlockAppend(taskId, childEl) {
+    const block = _delegateSubBlocks[taskId];
     if (block && childEl) {
       block.content.appendChild(childEl);
       scrollBottom();
     }
   }
 
+  // Cancel button handler (event delegation)
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.delegate-cancel-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const taskId = btn.dataset.taskId;
+    if (taskId) {
+      fireAction('cancel_sub_agent', { task_id: taskId });
+      btn.disabled = true;
+      btn.textContent = '\u23f3';
+    }
+  });
+
+  // Group start: server tells us how many agents are being spawned
+  eventSource.addEventListener('delegate_group_start', (e) => {
+    lastSSEActivity = Date.now();
+    const data = JSON.parse(e.data);
+    if (data.delegate_tc_id) {
+      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', data.total || 1);
+      if (group) group.summary.dataset.src = data.source_agent || '';
+    }
+  });
+
   // Sub-agent visibility
   eventSource.addEventListener('sub_agent_start', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
     trackAgentStart(data.agent_name, data.message ? data.message.substring(0, 40) : '');
-    // Create delegate block if we have a tc_id
-    if (data.delegate_tc_id) {
-      _getDelegateBlock(data.delegate_tc_id, data.source_agent || '', data.agent_name || '', data.llm_service || '', data.message || '');
+    if (data.delegate_tc_id && data.task_id) {
+      // Ensure group exists (handles case where delegate_group_start wasn't received)
+      const group = _getOrCreateGroup(data.delegate_tc_id, data.source_agent || '', 1);
+      if (group) group.summary.dataset.src = data.source_agent || '';
+      _getOrCreateSubBlock(data.delegate_tc_id, data.task_id, data.agent_name || '', data.llm_service || '', data.message || '');
     }
   });
 
@@ -427,23 +509,23 @@ function connectSSE(cid, onReady) {
   eventSource.addEventListener('sub_agent_thinking', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+    if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('details');
       el.className = 'delegate-thinking';
       el.innerHTML = '<summary>\u{1F4AD} Thinking...</summary>'
         + '<div class="delegate-thinking-content">' + escapeHtml(data.thinking || '') + '</div>';
-      _delegateBlockAppend(data.delegate_tc_id, el);
+      _subBlockAppend(data.task_id, el);
     }
   });
 
   eventSource.addEventListener('sub_agent_text', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+    if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('div');
       el.className = 'delegate-text';
       el.innerHTML = renderMarkdown(data.text || '');
-      _delegateBlockAppend(data.delegate_tc_id, el);
+      _subBlockAppend(data.task_id, el);
     }
   });
 
@@ -452,8 +534,7 @@ function connectSSE(cid, onReady) {
     const data = JSON.parse(e.data);
     const agentName = data.agent_name || 'sub-agent';
     trackAgentTool(agentName, data.tool);
-    // Add tool call to delegate block
-    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
+    if (data.task_id && _delegateSubBlocks[data.task_id]) {
       const el = document.createElement('div');
       el.className = 'delegate-tool';
       if (data.tc_id) el.dataset.tcId = data.tc_id;
@@ -468,16 +549,15 @@ function connectSSE(cid, onReady) {
         }
       }
       el.innerHTML = '<span class="tc-bullet pending">\u25cf</span> ' + escapeHtml(display) + '(' + escapeHtml(argSummary) + ')';
-      _delegateBlockAppend(data.delegate_tc_id, el);
+      _subBlockAppend(data.task_id, el);
     }
   });
 
   eventSource.addEventListener('sub_agent_tool_result', (e) => {
     lastSSEActivity = Date.now();
     const data = JSON.parse(e.data);
-    // Attach result to tool call in delegate block
-    if (data.delegate_tc_id && data.tc_id && _delegateBlocks[data.delegate_tc_id]) {
-      const block = _delegateBlocks[data.delegate_tc_id];
+    if (data.task_id && data.tc_id && _delegateSubBlocks[data.task_id]) {
+      const block = _delegateSubBlocks[data.task_id];
       const tcEl = block.content.querySelector('[data-tc-id="' + data.tc_id + '"]');
       if (tcEl) {
         const bullet = tcEl.querySelector('.tc-bullet');
@@ -499,16 +579,23 @@ function connectSSE(cid, onReady) {
     const data = JSON.parse(e.data);
     const agent = data.agent_name || 'sub-agent';
     trackAgentDone(agent);
-    // Finalize delegate block
-    if (data.delegate_tc_id && _delegateBlocks[data.delegate_tc_id]) {
-      const block = _delegateBlocks[data.delegate_tc_id];
-      // Update status
-      const statusEl = block.summary.querySelector('.delegate-status');
+    const taskId = data.task_id;
+    const delegateTcId = data.delegate_tc_id;
+    // Finalize sub-block
+    if (taskId && _delegateSubBlocks[taskId]) {
+      const block = _delegateSubBlocks[taskId];
+      // Update sub-block status
+      const statusEl = block.summary.querySelector('.delegate-sub-status') || block.summary.querySelector('.delegate-status');
       if (data.status === 'completed') {
         if (statusEl) { statusEl.textContent = '\u2713 done'; statusEl.style.color = '#4ecdc4'; }
+      } else if (data.status === 'cancelled') {
+        if (statusEl) { statusEl.textContent = '\u2718 cancelled'; statusEl.style.color = '#f0ad4e'; }
       } else if (data.status === 'error' || data.status === 'timeout') {
         if (statusEl) { statusEl.textContent = '\u2718 ' + data.status; statusEl.style.color = '#e94560'; }
       }
+      // Remove cancel button
+      const cancelBtn = block.summary.querySelector('.delegate-cancel-btn');
+      if (cancelBtn) cancelBtn.remove();
       // Add response or error
       if (data.response) {
         const respEl = document.createElement('div');
@@ -522,7 +609,6 @@ function connectSSE(cid, onReady) {
         block.content.appendChild(errEl);
       }
       // Add stats line
-      const tokensK = ((data.tokens_in || 0) + (data.tokens_out || 0)) / 1000;
       const statsEl = document.createElement('div');
       statsEl.className = 'delegate-stats';
       const parts = [];
@@ -532,8 +618,20 @@ function connectSSE(cid, onReady) {
       parts.push((data.tools_called || []).length + ' tools');
       statsEl.textContent = parts.join(' \u00b7 ');
       block.content.appendChild(statsEl);
-      // Auto-collapse after brief display
-      setTimeout(() => { block.el.removeAttribute('open'); }, 2000);
+      // Auto-collapse sub-block in multi-agent mode
+      const group = delegateTcId && _delegateGroups[delegateTcId];
+      if (group && group.total > 1) {
+        setTimeout(() => { block.el.removeAttribute('open'); }, 1500);
+      }
+      // Check if all sub-blocks in group are done
+      if (group) {
+        group.doneCount++;
+        if (group.doneCount >= group.total) {
+          const groupStatus = group.summary.querySelector('.delegate-status');
+          if (groupStatus) { groupStatus.textContent = '\u2713 done'; groupStatus.style.color = '#4ecdc4'; }
+          setTimeout(() => { group.el.removeAttribute('open'); }, 2000);
+        }
+      }
       scrollBottom();
     } else {
       // Fallback: no delegate block — render as standalone message (legacy)
@@ -582,7 +680,7 @@ function connectSSE(cid, onReady) {
     // Hide delegate tool_call — the delegate block replaces it
     if (data.tool === 'delegate') {
       // Store tc_id so we can suppress the tool_result too
-      if (data.tc_id) _delegateBlocks['__tc__' + data.tc_id] = true;
+      if (data.tc_id) _delegateGroups['__tc__' + data.tc_id] = true;
       if (!data.task_id) document.getElementById('status').textContent = t('usingTool', {tool: data.tool});
       return;
     }
@@ -628,7 +726,7 @@ function connectSSE(cid, onReady) {
     if (data.agent_name) trackAgentToolDone(data.agent_name, data.tool);
     // Suppress delegate tool_result — the delegate block shows the response
     const tcId = data.tc_id || '';
-    if (tcId && _delegateBlocks['__tc__' + tcId]) return;
+    if (tcId && _delegateGroups['__tc__' + tcId]) return;
     // Try to attach to matching tool_call element
     if (tcId) {
       const tcEl = document.querySelector('[data-tc-id="' + tcId + '"]');

@@ -238,7 +238,53 @@ function addMsg(role, text, extra) {
   } else if (role === 'user') {
     el.innerHTML = replyQuoteHtml + actionsHtml + timeHtml + badge + escapeHtml(text);
   } else if (role === 'sub_agent_trace') {
-    el.className = 'msg delegate-block';
+    const dtcId = (extra && extra.source && extra.source.delegate_tc_id) || '';
+    const existingGroup = dtcId ? document.querySelector('[data-delegate-group="' + dtcId + '"]') : null;
+    if (existingGroup) {
+      const groupBody = existingGroup.querySelector('.delegate-body');
+      // On second trace, convert the inline content of the first trace into a sub-block
+      if (groupBody && !existingGroup.querySelector('.delegate-sub-block')) {
+        const firstSubEl = document.createElement('details');
+        firstSubEl.className = 'delegate-sub-block';
+        firstSubEl.setAttribute('open', '');
+        const firstAgent = existingGroup.dataset.firstAgent || 'sub-agent';
+        const firstSvc = existingGroup.dataset.firstSvc || '';
+        const svcL = firstSvc ? ' via ' + escapeHtml(firstSvc) : '';
+        firstSubEl.innerHTML = '<summary class="delegate-sub-header">\u25b8 '
+          + '<span class="delegate-dst">' + escapeHtml(displayAgentName(firstAgent)) + '</span>'
+          + svcL + ' <span class="delegate-sub-status" style="color:#4ecdc4">\u2713 done</span></summary>'
+          + '<div class="delegate-sub-body">' + groupBody.innerHTML + '</div>';
+        groupBody.innerHTML = '';
+        groupBody.appendChild(firstSubEl);
+        // Update group header to show "Delegate (N agents)"
+        const parentAgent = (extra && extra.source && extra.source.parent_agent) || existingGroup.dataset.parentAgent || '';
+        const summaryEl = existingGroup.querySelector('.delegate-header');
+        if (summaryEl) {
+          summaryEl.innerHTML = '\u{1F500} ' + escapeHtml(displayAgentName(parentAgent))
+            + ' \u2192 Delegate (<span class="delegate-group-count">2 agents</span>)'
+            + ' <span class="delegate-status" style="color:#4ecdc4">\u2713 done</span>';
+        }
+      }
+      // Add new sub-block
+      const subHtml = renderDelegateSubBlock(text, extra);
+      const subEl = document.createElement('details');
+      subEl.className = 'delegate-sub-block';
+      subEl.innerHTML = subHtml;
+      if (groupBody) groupBody.appendChild(subEl);
+      const countSpan = existingGroup.querySelector('.delegate-group-count');
+      if (countSpan) {
+        const n = existingGroup.querySelectorAll('.delegate-sub-block').length;
+        countSpan.textContent = n + ' agents';
+      }
+      return existingGroup;
+    }
+    // First trace for this delegate_tc_id — create group
+    el.className = 'msg delegate-block delegate-group';
+    if (dtcId) el.dataset.delegateGroup = dtcId;
+    const src = (extra && extra.source) || {};
+    el.dataset.firstAgent = src.name || 'sub-agent';
+    el.dataset.firstSvc = src.llm_service || '';
+    el.dataset.parentAgent = src.parent_agent || '';
     el.innerHTML = renderDelegateBlock(text, extra);
   } else if (role === 'error') {
     el.innerHTML = timeHtml + badge + renderMarkdown(text);
@@ -790,35 +836,11 @@ function renderMultiAgentTree(traces) {
   return html;
 }
 
-function renderDelegateBlock(content, extra) {
-  const source = (extra && extra.source) || {};
-  const trace = (extra && extra.trace) || [];
-  const agentName = source.name || 'sub-agent';
-  const parentAgent = source.parent_agent || '';
-  const llmService = source.llm_service || '';
-  const message = source.message || '';
-  const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
-  // Summary stats from trace
-  const doneEntry = trace.find(e => e.type === 'done');
-  const totalTools = trace.filter(e => e.type === 'tool_call').length;
-  const tokensIn = doneEntry ? (doneEntry.tokens_in || 0) : 0;
-  const tokensOut = doneEntry ? (doneEntry.tokens_out || 0) : 0;
-  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
-  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
-  const statusColor = status === 'completed' ? '#4ecdc4' : '#e94560';
-  // Header
-  let html = '<summary class="delegate-header">\u{1F500} '
-    + '<span class="delegate-src">' + escapeHtml(displayAgentName(parentAgent)) + '</span> \u2192 '
-    + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
-    + svcLabel
-    + ' <span class="delegate-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
-    + '</summary>';
-  html += '<div class="delegate-body">';
-  // Message from parent
+function _renderDelegateTraceContent(content, trace, message) {
+  let html = '';
   if (message) {
     html += '<div class="delegate-message">\u{1F4E9} ' + renderMarkdown(message) + '</div>';
   }
-  // Tool calls
   const toolCalls = trace.filter(e => e.type === 'tool_call');
   for (const tc of toolCalls) {
     const display = (_TOOL_DISPLAY[tc.tool] || tc.tool || '?');
@@ -834,18 +856,66 @@ function renderDelegateBlock(content, extra) {
     html += '<div class="delegate-tool"><span class="tc-bullet done">\u25cf</span> '
       + escapeHtml(display) + '(' + escapeHtml(argSummary) + ')</div>';
   }
-  // Response
+  const doneEntry = trace.find(e => e.type === 'done');
   if (content) {
     html += '<div class="delegate-response">\u{1F4E8} ' + renderMarkdown(content) + '</div>';
   } else if (doneEntry && doneEntry.error) {
     html += '<div class="delegate-error">\u274C ' + escapeHtml(doneEntry.error) + '</div>';
   }
-  // Stats
+  const tokensIn = doneEntry ? (doneEntry.tokens_in || 0) : 0;
+  const tokensOut = doneEntry ? (doneEntry.tokens_out || 0) : 0;
   const parts = [];
   if (doneEntry && doneEntry.model) parts.push(doneEntry.model);
   parts.push('\u2191' + tokensIn + ' \u2193' + tokensOut);
-  parts.push(totalTools + ' tools');
+  parts.push(trace.filter(e => e.type === 'tool_call').length + ' tools');
   html += '<div class="delegate-stats">' + parts.join(' \u00b7 ') + '</div>';
+  return html;
+}
+
+function renderDelegateBlock(content, extra) {
+  const source = (extra && extra.source) || {};
+  const trace = (extra && extra.trace) || [];
+  const agentName = source.name || 'sub-agent';
+  const parentAgent = source.parent_agent || '';
+  const llmService = source.llm_service || '';
+  const message = source.message || '';
+  const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+  const doneEntry = trace.find(e => e.type === 'done');
+  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
+  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
+  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'cancelled' ? '#f0ad4e' : '#e94560');
+  // Group header (first agent)
+  let html = '<summary class="delegate-header">\u{1F500} '
+    + '<span class="delegate-src">' + escapeHtml(displayAgentName(parentAgent)) + '</span> \u2192 '
+    + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
+    + svcLabel
+    + ' <span class="delegate-group-count"></span>'
+    + ' <span class="delegate-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
+    + '</summary>';
+  html += '<div class="delegate-body">';
+  html += _renderDelegateTraceContent(content, trace, message);
+  html += '</div>';
+  return html;
+}
+
+function renderDelegateSubBlock(content, extra) {
+  const source = (extra && extra.source) || {};
+  const trace = (extra && extra.trace) || [];
+  const agentName = source.name || 'sub-agent';
+  const llmService = source.llm_service || '';
+  const message = source.message || '';
+  const svcLabel = llmService ? ' via ' + escapeHtml(llmService) : '';
+  const doneEntry = trace.find(e => e.type === 'done');
+  const status = doneEntry ? (doneEntry.status || 'done') : 'done';
+  const statusIcon = status === 'completed' ? '\u2713 done' : '\u2718 ' + status;
+  const statusColor = status === 'completed' ? '#4ecdc4' : (status === 'cancelled' ? '#f0ad4e' : '#e94560');
+  let html = '<summary class="delegate-sub-header">\u25b8 '
+    + '<span class="delegate-dst">' + escapeHtml(displayAgentName(agentName)) + '</span>'
+    + svcLabel
+    + ' <span class="delegate-sub-status" style="color:' + statusColor + '">' + statusIcon + '</span>'
+    + '</summary>';
+  html += '<div class="delegate-sub-body">';
+  html += _renderDelegateTraceContent(content, trace, message);
   html += '</div>';
   return html;
 }

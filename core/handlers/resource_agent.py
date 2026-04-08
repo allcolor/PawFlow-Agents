@@ -480,6 +480,19 @@ class SpawnAgentsHandler(ToolHandler):
         if not agent_tasks:
             return "Error: no valid tasks to spawn."
 
+        # Emit group start event so the UI can create a parent container
+        if self._on_event and _delegate_tc_id:
+            self._on_event("delegate_group_start", {
+                "delegate_tc_id": _delegate_tc_id,
+                "source_agent": _src_agent,
+                "agents": [
+                    {"name": t.agent_name, "task_id": t.id,
+                     "message": t.message, "llm_service": t.llm_service}
+                    for t in agent_tasks
+                ],
+                "total": len(agent_tasks),
+            })
+
         # Create executor on-the-fly
         executor = SubAgentExecutor(
             self._default_client, self._registry, max_workers=4,

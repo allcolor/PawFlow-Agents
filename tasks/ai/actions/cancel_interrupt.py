@@ -138,6 +138,20 @@ def _handle_cancel_interrupt(self, action, body, store, user_id, flowfile):
         }).encode())
         return [flowfile]
 
+    if action == "cancel_sub_agent":
+        task_id = body.get("task_id", "")
+        if not task_id:
+            flowfile.set_content(json.dumps({"error": "Missing task_id"}).encode())
+            flowfile.set_attribute("http.response.status", "400")
+            return [flowfile]
+        from core.agent_executor import cancel_sub_agent_task
+        cancel_sub_agent_task(task_id)
+        logger.info("[cancel_sub_agent] task %s marked for cancellation", task_id)
+        flowfile.set_content(json.dumps({
+            "cancelled": True, "task_id": task_id,
+        }).encode())
+        return [flowfile]
+
     if action == "interrupt":
         conv_id = body.get("conversation_id", "")
         agent_name = body.get("agent_name", "")

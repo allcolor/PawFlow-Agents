@@ -33,6 +33,26 @@ _depth_lock = Lock()
 
 MAX_GLOBAL_DEPTH = 5  # absolute ceiling regardless of agent config
 
+# Global cancel registry for sub-agent tasks (delegate cancel)
+_cancelled_tasks: set = set()
+_cancelled_lock = Lock()
+
+
+def cancel_sub_agent_task(task_id: str):
+    """Mark a sub-agent task as cancelled. The agent loop checks this."""
+    with _cancelled_lock:
+        _cancelled_tasks.add(task_id)
+
+
+def _is_cancelled(task_id: str) -> bool:
+    with _cancelled_lock:
+        return task_id in _cancelled_tasks
+
+
+def _clear_cancelled(task_id: str):
+    with _cancelled_lock:
+        _cancelled_tasks.discard(task_id)
+
 
 @dataclass
 class AgentTask:
@@ -341,6 +361,11 @@ class SubAgentExecutor:
                     result.status = "timeout"
                     break
 
+                if _is_cancelled(task.id):
+                    result.error = "Cancelled by user"
+                    result.status = "cancelled"
+                    break
+
                 result.iterations = iteration
                 self._emit("sub_agent_iteration", {
                     "agent_name": task.agent_name,
@@ -419,6 +444,10 @@ class SubAgentExecutor:
                         result.error = f"Timeout during tool execution"
                         result.status = "timeout"
                         break
+                    if _is_cancelled(task.id):
+                        result.error = "Cancelled by user"
+                        result.status = "cancelled"
+                        break
                     result.tools_called.append(tc.name)
                     # Truncate args for SSE (avoid huge payloads)
                     _tc_args_preview = {}
@@ -488,7 +517,7 @@ class SubAgentExecutor:
                     except Exception:
                         pass
 
-                if result.status == "timeout":
+                if result.status in ("timeout", "cancelled"):
                     break
             else:
                 # Max iterations reached — force synthesis
@@ -505,6 +534,8 @@ class SubAgentExecutor:
             # Release capacity slot
             if resolved_svc and hasattr(resolved_svc, 'release'):
                 resolved_svc.release()
+            # Clean up cancel registry
+            _clear_cancelled(task.id)
 
         result.duration_ms = (time.time() - start) * 1000
         self._emit("sub_agent_done", {
@@ -542,7 +573,7 @@ class SubAgentExecutor:
                 logger.debug("Failed to append done trace: %s", _te)
 
         # Cleanup sub-conversation (unless agent scheduled continuation)
-        if sub_conv_id and result.status in ("completed", "error", "timeout"):
+        if sub_conv_id and result.status in ("completed", "error", "timeout", "cancelled"):
             try:
                 from core.conversation_store import ConversationStore
                 ConversationStore.instance().delete(sub_conv_id)

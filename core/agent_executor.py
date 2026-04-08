@@ -787,19 +787,23 @@ class SubAgentExecutor:
 
     def spawn(
         self, tasks: List[AgentTask], wait: bool = True,
+        on_bg_complete: Optional[Callable] = None,
     ) -> List[AgentResult]:
         """Spawn multiple sub-agents, optionally waiting for all to complete.
 
         Args:
             tasks: List of AgentTask to execute.
             wait: If True, block until all complete and return results.
-                  If False, return immediately with pending results
-                  (use get_results() to check later).
+                  If False, return immediately with pending results.
+            on_bg_complete: Callback(AgentResult, AgentTask) called when a
+                  background task (wait=False) finishes. Used to inject
+                  results into the parent conversation.
 
         Returns:
             List of AgentResult (completed if wait=True, pending if wait=False).
         """
         futures = {}
+        task_map = {t.id: t for t in tasks}
         for task in tasks:
             future = self._pool.submit(self.execute_agent, task)
             futures[task.id] = future
@@ -807,6 +811,23 @@ class SubAgentExecutor:
                 self._pending[task.id] = future
 
         if not wait:
+            # Attach completion callbacks for background notification
+            if on_bg_complete:
+                for task in tasks:
+                    fut = futures[task.id]
+                    def _on_done(f, _task=task):
+                        try:
+                            result = f.result(timeout=0)
+                        except Exception as e:
+                            result = AgentResult(
+                                task_id=_task.id, agent_name=_task.agent_name,
+                                error=str(e), status="error",
+                            )
+                        try:
+                            on_bg_complete(result, _task)
+                        except Exception:
+                            logger.debug("on_bg_complete callback failed for %s", _task.id)
+                    fut.add_done_callback(_on_done)
             return [
                 AgentResult(task_id=t.id, agent_name=t.agent_name, status="pending")
                 for t in tasks

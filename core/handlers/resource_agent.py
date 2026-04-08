@@ -513,14 +513,25 @@ class SpawnAgentsHandler(ToolHandler):
             client_resolver=self._client_resolver,
             on_event=self._on_event,
         )
-        results = executor.spawn(agent_tasks, wait=wait)
+
+        # Background completion callback: inject result into parent conv
+        _bg_callback = None
+        if not wait and self._conversation_id:
+            _conv_id = self._conversation_id
+            _uid = user_id
+            _src = _src_agent
+            def _bg_callback(result, task):
+                self._inject_bg_result(result, task, _conv_id, _uid, _src)
+
+        results = executor.spawn(agent_tasks, wait=wait,
+                                 on_bg_complete=_bg_callback)
 
         if not wait:
             ids = [r.task_id for r in results]
             return json.dumps({
                 "status": "spawned",
                 "task_ids": ids,
-                "message": f"Spawned {len(ids)} agents. Use get_agent_results to check.",
+                "message": f"Spawned {len(ids)} agents in background. Results will be injected into the conversation when ready.",
             })
 
         # Format results
@@ -588,6 +599,75 @@ class SpawnAgentsHandler(ToolHandler):
                                 f"\n{summary}"}]
 
         return []  # isolated
+
+    def _inject_bg_result(self, result, task, conv_id, user_id, source_agent):
+        """Inject a background agent's result into the parent conversation.
+
+        Called from the thread pool when a wait=false task completes.
+        Follows the same pattern as plan step injection.
+        """
+        import uuid as _uuid
+        try:
+            from core.conversation_event_bus import ConversationEventBus
+            bus = ConversationEventBus.instance()
+
+            # Build the result message
+            if result.status == "completed" and result.response:
+                _content = (
+                    f"[Background task completed] Agent '{result.agent_name}' "
+                    f"(task {result.task_id}) finished:\n\n{result.response}"
+                )
+            elif result.error:
+                _content = (
+                    f"[Background task failed] Agent '{result.agent_name}' "
+                    f"(task {result.task_id}): {result.error}"
+                )
+            elif result.question:
+                _content = (
+                    f"[Background agent needs input] Agent '{result.agent_name}' "
+                    f"(task {result.task_id}) asks:\n\n{result.question}\n\n"
+                    f"Use delegate with resume=\"{result.task_id}\" to respond."
+                )
+            else:
+                _content = (
+                    f"[Background task completed] Agent '{result.agent_name}' "
+                    f"(task {result.task_id}) finished with status: {result.status}"
+                )
+
+            _msg_id = _uuid.uuid4().hex[:12]
+
+            # Publish SSE event so the frontend renders the message
+            bus.publish_event(conv_id, "new_message", {
+                "role": "user",
+                "content": _content,
+                "msg_id": _msg_id,
+                "source": {
+                    "type": "system",
+                    "name": f"bg:{result.agent_name}",
+                    "task_id": result.task_id,
+                },
+            })
+
+            # Trigger agent loop processing (same as plan step injection)
+            body = json.dumps({
+                "message": _content,
+                "conversation_id": conv_id,
+                "msg_id": _msg_id,
+            })
+            from core import FlowFile
+            ff = FlowFile(body.encode("utf-8"))
+            ff.set_attribute("http.auth.principal", user_id)
+            from tasks.ai.agent_loop import AgentLoopTask
+            inst = AgentLoopTask._live_instance
+            if inst:
+                inst._execute_streaming(ff)
+                logger.info("[bg-delegate] Injected result for task %s agent '%s' into %s",
+                            result.task_id, result.agent_name, conv_id[:8])
+            else:
+                logger.warning("[bg-delegate] No AgentLoopTask instance to inject result")
+        except Exception as e:
+            logger.error("[bg-delegate] Failed to inject result for task %s: %s",
+                         result.task_id, e)
 
 
 class GetAgentResultsHandler(ToolHandler):

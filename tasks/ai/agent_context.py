@@ -75,7 +75,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
             raise ValueError("BUG: missing http.auth.principal on flowfile — all requests require authentication")
         task_llm_service = self._resolve_service_param("llm_service", _user_id_for_svc)
         if not task_llm_service:
-            _agent_hint = _target_agent or "(unknown agent)"
+            _agent_hint = self.config.get("agent_name", "(unknown agent)")
             raise RuntimeError(
                 f"No llm_service configured for agent '{_agent_hint}'. "
                 f"Set llm_service in the agent definition or flow config.")
@@ -973,7 +973,7 @@ class AgentContextMixin(AgentToolConfigMixin, AgentToolExecMixin):
                     _fs_svcs = []
                     from gui.services.user_service_registry import UserServiceRegistry
                     _ureg = UserServiceRegistry.get_instance()
-                    _uid = ctx.get("user_id", "") if hasattr(ctx, 'get') else user_id
+                    _uid = user_id
                     if _uid:
                         for _sid, _sdef in _ureg.get_all_for_user(_uid).items():
                             if getattr(_sdef, "service_type", "") in (

@@ -434,6 +434,7 @@ class AgentActionsMixin:
             pass
         # Clean up dead session data from workdir
         try:
+            import os
             import shutil
             from core.llm_providers.claude_code import _SESSIONS_BASE
             if not conv_id or not agent_name:

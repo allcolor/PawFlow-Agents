@@ -413,8 +413,9 @@ class AgentCoreMixin:
                                 finally:
                                     ctx["_precompact_running"] = False
 
-                            threading.Thread(target=_bg_precompact, daemon=True,
-                                             name=f"precompact-{conversation_id[:8]}").start()
+                            import threading as _threading
+                            _threading.Thread(target=_bg_precompact, daemon=True,
+                                              name=f"precompact-{conversation_id[:8]}").start()
 
                         # At threshold: use precompact snapshot if available
                         if _est > _max_ctx * _threshold and _precompact:
@@ -446,7 +447,7 @@ class AgentCoreMixin:
                                         conversation_id[:8], len(_snap["messages"]),
                                         len(_after), len(llm_context))
                             ctx["_precompact_snapshot"] = None  # consumed
-                            _snap_key = f"{conversation_id}:{_agent_name}"
+                            _snap_key = f"{conversation_id}:{ctx.get('active_agent_name', '')}"
                             self._precompact_snapshots.pop(_snap_key, None)
                             ctx["_context_diverged"] = True
                         else:

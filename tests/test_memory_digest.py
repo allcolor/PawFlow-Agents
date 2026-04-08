@@ -21,7 +21,7 @@ def _make_entry(text, tags=None, category="", created_at=0, agent=""):
     return MemoryEntry(
         text=text,
         tags=tags or [],
-        category=hall,
+        category=category,
         created_at=created_at or 1000.0,
         agent=agent,
     )

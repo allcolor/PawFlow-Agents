@@ -228,7 +228,8 @@ class LLMConnectionService(BaseService):
             raw = raw.strip()
             if raw.startswith("["):
                 try:
-                    return [k for k in json.loads(raw) if k]
+                    import json as _json
+                    return [k for k in _json.loads(raw) if k]
                 except Exception:
                     pass
             return [k.strip() for k in raw.split(",") if k.strip()]

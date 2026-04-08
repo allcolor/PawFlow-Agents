@@ -599,6 +599,7 @@ class LLMClaudeCodeMixin(ClaudeCodeSessionMixin):
         except FileNotFoundError:
             _bin = "docker" if _containerize else self.claude_binary
             if self._pool_container_name:
+                from core.claude_code_pool import ClaudeCodePool
                 ClaudeCodePool.instance().release(self._pool_container_name)
                 self._pool_container_name = None
             raise LLMClientError(

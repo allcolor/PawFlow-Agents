@@ -344,6 +344,7 @@ class TestClusterCoordinator:
         )
         cc.start()
         try:
+            import time; time.sleep(0.3)  # wait for first heartbeat
             instances = cc.get_instances()
             assert len(instances) >= 1
             self_inst = [i for i in instances if i["is_self"]]
@@ -395,6 +396,7 @@ class TestClusterCoordinator:
         )
         cc.start()
         try:
+            import time; time.sleep(0.3)  # wait for first heartbeat
             instances = cc.get_instances()
             self_inst = [i for i in instances if i["is_self"]][0]
             assert self_inst["metadata"]["region"] == "us-east-1"

@@ -607,6 +607,8 @@ class ScraplingFetchHandler(ToolHandler):
     def _http_fallback(self, url: str, scrapling_error: str) -> str:
         """Last-resort fallback using http.client."""
         try:
+            import ssl
+            import http.client
             from urllib.parse import urlparse as _up
             parsed = _up(url)
             ctx = ssl.create_default_context()
@@ -723,16 +725,18 @@ class ScraplingFetchHandler(ToolHandler):
         # If scrapling didn't give us usable bytes, download directly
         if not pdf_bytes or not pdf_bytes[:5].startswith(b'%PDF'):
             try:
+                import ssl as _ssl2
+                import http.client as _http2
                 from urllib.parse import urlparse as _up
                 parsed = _up(url)
-                ctx = ssl.create_default_context()
+                ctx = _ssl2.create_default_context()
                 host = parsed.hostname
                 port = parsed.port or (443 if parsed.scheme == 'https' else 80)
                 if parsed.scheme == 'https':
-                    conn = http.client.HTTPSConnection(host, port, timeout=30,
+                    conn = _http2.HTTPSConnection(host, port, timeout=30,
                                                        context=ctx)
                 else:
-                    conn = http.client.HTTPConnection(host, port, timeout=30)
+                    conn = _http2.HTTPConnection(host, port, timeout=30)
                 conn.request("GET", parsed.path or "/", headers={
                     "User-Agent": "Mozilla/5.0",
                     "Accept": "application/pdf,*/*",

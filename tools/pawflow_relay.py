@@ -1936,7 +1936,8 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                 resp += chunk
 
             if b"101" not in resp.split(b"\r\n")[0]:
-                raise ConnectionError(f"Handshake failed: {resp.split(b'\\r\\n')[0]}")
+                _status_line = resp.split(b"\r\n")[0]
+                raise ConnectionError(f"Handshake failed: {_status_line}")
 
             # Any bytes after \r\n\r\n are the start of the first WS frame
             # — push them back into the socket buffer via a wrapper
@@ -2129,8 +2130,11 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                          if 'fs_actions' in sys.modules else None
                         _child_docker_image = msg.get("docker_image", "")
 
+                        _docker_cpus = getattr(globals().get('args', None), 'docker_cpus', '2')
+                        _docker_memory = getattr(globals().get('args', None), 'docker_memory', '4g')
                         def _child_relay(_url, _tok, _sec, _rid, _root,
-                                         _docker_img="", _parent_has_docker=False):
+                                         _docker_img="", _parent_has_docker=False,
+                                         _cpus=_docker_cpus, _mem=_docker_memory):
                             _child_container = None
                             try:
                                 # Start child Docker container if parent uses Docker
@@ -2143,7 +2147,7 @@ def _ws_connect(url, token, secret, relay_id, root_dir, readonly, allow_exec=Fal
                                         "--name", _child_container,
                                         "-v", f"{_translate_path(_to_host_path(_root))}:/workspace",
                                         "-w", "/workspace",
-                                        "--cpus", args.docker_cpus, "--memory", args.docker_memory,
+                                        "--cpus", _cpus, "--memory", _mem,
                                         "--security-opt", "no-new-privileges",
                                         _img, "tail", "-f", "/dev/null",
                                     ], capture_output=True, text=True)

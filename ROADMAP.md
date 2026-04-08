@@ -98,7 +98,7 @@ These were shipped as part of the alpha development cycle:
 - `@file` mention in PawCode CLI
 - Agent instructions file (`.md`) that survives context compaction
 - Permission modes (read-only / approve-edits / auto) with quick toggle
-- `!cmd` inline bash execution in PawCode CLI
+- `/cmd` inline command execution in PawCode CLI
 - Ctrl+R history search in PawCode CLI
 - HTTP listener service (request/response flows)
 - Flow debugger with breakpoints, stepping, and FlowFile inspection

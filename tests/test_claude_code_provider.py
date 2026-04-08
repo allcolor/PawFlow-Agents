@@ -265,6 +265,9 @@ class TestCompleteClaude(unittest.TestCase):
         mock_proc = MagicMock()
         mock_proc.returncode = 0
         mock_proc.communicate.return_value = (json.dumps({"result": "ok"}), "")
+        cred_patcher = patch.object(client, '_setup_credentials')
+        cred_patcher.start()
+        self.addCleanup(cred_patcher.stop)
         patcher = patch.object(
             client, '_pool_popen',
             return_value=(mock_proc, None))
@@ -307,6 +310,10 @@ class TestStreamClaude(unittest.TestCase):
         self.client._conversation_id = "test-conv"
         self.client._agent_name = "test-agent"
         self.client._user_id = "test-user"
+        # Skip credential check — no real Claude Code on CI
+        self._cred_patcher = patch.object(self.client, '_setup_credentials')
+        self._cred_patcher.start()
+        self.addCleanup(self._cred_patcher.stop)
 
     def test_stream_basic(self):
         events = [

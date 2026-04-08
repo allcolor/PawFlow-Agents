@@ -51,6 +51,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
        tenacity backoff \
        tqdm tabulate colorama \
        python-docx openpyxl python-pptx striprtf PyPDF2 ebooklib \
+       networkx graphifyy tree-sitter \
+       tree-sitter-python tree-sitter-javascript tree-sitter-typescript \
+       tree-sitter-go tree-sitter-rust tree-sitter-java \
+       tree-sitter-c tree-sitter-cpp tree-sitter-ruby \
+       tree-sitter-c-sharp tree-sitter-kotlin tree-sitter-scala \
+       tree-sitter-php tree-sitter-swift tree-sitter-lua \
+       tree-sitter-zig tree-sitter-powershell tree-sitter-elixir \
     && rm -rf /var/lib/apt/lists/*
 
 # ── Node.js / TypeScript ────────────────────────────────────────────

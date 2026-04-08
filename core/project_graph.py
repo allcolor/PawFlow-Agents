@@ -60,10 +60,10 @@ if not files:
     print(json.dumps({"status": "skipped", "reason": "no code files found"}))
     sys.exit(0)
 
-# Try tree-sitter extraction
+# Try tree-sitter extraction (graphify must be installed on the relay)
 try:
-    from core.graphify.extract import extract
-    from core.graphify.build import build
+    from graphify.extract import extract
+    from graphify.build import build
     extraction = extract(files)
     G = build([extraction])
 
@@ -116,7 +116,7 @@ except Exception as e:
         nodes.append({"id": fid, "label": rel, "file_type": "code", "source_file": rel})
         try:
             content = f.read_text(encoding="utf-8", errors="ignore")
-            for match in re.findall(r"^(?:from|import)\\s+([\\w.]+)", content, re.MULTILINE):
+            for match in re.findall("^(?:from|import)\\s+([\\w.]+)", content, re.MULTILINE):
                 edges.append({
                     "source": fid, "target": match.replace(".", "_"),
                     "relation": "imports", "confidence": "EXTRACTED",
